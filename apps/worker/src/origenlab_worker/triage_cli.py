@@ -51,6 +51,7 @@ from origenlab_worker.database import (
     write_ca_file,
 )
 from origenlab_worker.errors import ConfigRefused
+from origenlab_worker.flags import ENV_BID_ENABLED, bid_enabled
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import (
     DEFAULT_SINCE_DAYS,
@@ -71,7 +72,6 @@ ENV_TRIAGE_ENABLED = "ORIGENLAB_WORKER_TRIAGE_ENABLED"
 ENV_TRIAGE_MODEL_ENABLED = "ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED"
 ENV_ANTHROPIC_API_KEY = "ORIGENLAB_WORKER_ANTHROPIC_API_KEY"
 ENV_TRIAGE_MODEL = "ORIGENLAB_WORKER_TRIAGE_MODEL"
-ENV_BID_ENABLED = "ORIGENLAB_WORKER_BID_ENABLED"
 ENV_BID_READ_MODEL = "ORIGENLAB_WORKER_BID_READ_MODEL"
 ENV_BID_FILL_MODEL = "ORIGENLAB_WORKER_BID_FILL_MODEL"
 ENV_BID_MATCH_MODEL = "ORIGENLAB_WORKER_BID_MATCH_MODEL"
@@ -253,10 +253,6 @@ def run_memory_backfill(args: Any, env: Mapping[str, str], started: float, *,
 # ── the tender child ────────────────────────────────────────────────────────────────────────
 
 
-def bid_enabled(env: Mapping[str, str]) -> bool:
-    return _flag(env, ENV_BID_ENABLED)
-
-
 @dataclass(frozen=True)
 class BidConfig:
     database: WorkerTarget = field(repr=False)
@@ -311,16 +307,24 @@ def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
         run_bid_sweep,
     )
 
+    def connect() -> Any:
+        # A remote target carries TCP keepalives (`database.KEEPALIVES`): the session stays up
+        # through a model call of several minutes.
+        return open_verified_connection(config.database, application_name=APP_NAME_BID,
+                                        privileges=BID_REQUIRED_PRIVILEGES, policies=BID_REQUIRED_POLICIES)
+
     def sweep() -> dict[str, Any]:
-        with open_verified_connection(config.database, application_name=APP_NAME_BID,
-                                      privileges=BID_REQUIRED_PRIVILEGES, policies=BID_REQUIRED_POLICIES) as conn:
+        with connect() as conn:
             store = S3EmlStore(config.storage.client(), bucket=DOCUMENTS_BUCKET)
-            return run_bid_sweep(conn, store, config.reader, config.models, now=lambda: datetime.now(UTC))
+            return run_bid_sweep(conn, store, config.reader, config.models, now=lambda: datetime.now(UTC),
+                                 reconnect=connect)
 
     return sweep
 
 
-def run_tender_worker(env: Mapping[str, str], started: float) -> int:  # pragma: no cover - needs a database
+def run_tender_worker(env: Mapping[str, str], started: float) -> int:
+    """The tender child. A setting it refuses (no key, an unpriced model) is logged and the child
+    idles: a supervised child that exits would take the triage down with it."""
     from origenlab_worker import task_queue
 
     line: dict[str, Any] = {"event": "tender_worker", "mode": "start", "exit": EXIT_OK, "error": None}
@@ -328,6 +332,12 @@ def run_tender_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
         if not bid_enabled(env):  # the supervisor starts this child only when tenders are on
             raise ConfigRefused("bid_disabled")
         config = bid_config_from_env(env)
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", error=exc.code)
+        _emit(line, started)
+        _idle_until_terminated("tender_worker")
+        return EXIT_OK
+    try:  # pragma: no cover - needs a database
         task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
         line["models"] = {"read": config.models.read, "fill": config.models.fill, "match": config.models.match}
         _emit(dict(line), started)
@@ -341,14 +351,12 @@ def run_tender_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
 
         asyncio.run(serve())
         line["mode"] = "stopped"
-    except ConfigRefused as exc:
-        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
-    except Exception as exc:  # noqa: BLE001 — the class, never the text
+    except Exception as exc:  # noqa: BLE001 — the class, never the text  # pragma: no cover
         line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
-    return _emit(line, started)
+    return _emit(line, started)  # pragma: no cover
 
 
-def _idle_until_terminated() -> None:
+def _idle_until_terminated(event: str = "triage_worker") -> None:
     """Paused on Render: a Background Worker that exits is restarted in a loop, so it idles."""
     stop = threading.Event()
     try:
@@ -356,7 +364,7 @@ def _idle_until_terminated() -> None:
     except ValueError:  # pragma: no cover - not the main thread
         pass
     while not stop.wait(PAUSED_HEARTBEAT_S):
-        print(json.dumps({"event": "triage_worker", "mode": "paused"}), flush=True)
+        print(json.dumps({"event": event, "mode": "paused"}), flush=True)
 
 
 def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma: no cover - needs a database

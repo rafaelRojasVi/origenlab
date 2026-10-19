@@ -5,9 +5,13 @@ the worst-case cost of that call is added to the month's spend and, if the sum w
 the call is refused (`BudgetReached`). A call that lands exactly on the cap is allowed.
 
 Money is `Decimal` throughout, quantised to six places (the column is numeric(12, 6)). A model
-with no price is refused (`UnpricedModel`) rather than guessed. When the API may serve a different
-model than the one requested (fallbacks), pass the dearest fallback in `fallback_models` to
-`worst_case_usd` and the model actually served as `served_model` to `record_usage`.
+with no price is refused (`UnpricedModel`) rather than guessed.
+
+Server-side fallbacks (claude-api skill, «Billing»): a declined attempt is billed at its own
+model's rates and the fallback attempt at the fallback's, and the top-level `usage` covers only the
+attempt that produced the message. So `worst_case_usd` adds every attempt the chain may make
+(`fallback_models`), and `record_usage` records each entry of `usage.iterations` at that entry's
+model, falling back to the top-level usage (priced at `served_model`) only when there are none.
 """
 
 from __future__ import annotations
@@ -96,13 +100,19 @@ def cost_usd(model: str, *, input_tokens: int, output_tokens: int,
 def worst_case_usd(model: str, *, input_tokens_estimate: int, max_tokens: int,
                    fallback_models: tuple[str, ...] = ()) -> Decimal:
     """Every input token at the dearer of the input and cache-write rates plus every output token
-    allowed; the dearest of `model` and its fallbacks. Raises `UnpricedModel` (before any paid call)."""
-    worst = []
+    allowed, for `model` and for each fallback attempt after it, summed: each attempt of a fallback
+    chain may be billed. Raises `UnpricedModel` (before any paid call)."""
+    total = Decimal(0)
     for m in (model, *fallback_models):
         p = _price(m)
         rate = Price(max(p.input, p.cache_write), p.output, p.cache_read, p.cache_write)
-        worst.append(cost_usd(m, input_tokens=input_tokens_estimate, output_tokens=max_tokens, _price_override=rate))
-    return max(worst)
+        total += cost_usd(m, input_tokens=input_tokens_estimate, output_tokens=max_tokens, _price_override=rate)
+    return _q(total)
+
+
+def dearest_model(models: tuple[str, ...]) -> str:
+    """The model of `models` whose worst case per token is highest (for a conservative record)."""
+    return max(models, key=lambda m: (_price(m).output, max(_price(m).input, _price(m).cache_write)))
 
 
 def month_window(now: datetime) -> tuple[datetime, datetime]:
@@ -147,11 +157,26 @@ def ensure_within_cap(cur: Any, feature: str, now: datetime, next_call_worst_usd
 
 def record_usage(cur: Any, *, feature: str, step: str, model: str, usage: Any,
                  bid_preparation_id: Any, served_model: str | None = None) -> Decimal:
-    """Insert one `platform.model_usage` row and return its cost.
+    """Insert the `platform.model_usage` rows of one call and return their total cost.
 
-    `served_model` (the response's `model`) is priced and stored instead of `model` when given.
+    With `usage.iterations` (server-side fallbacks, tool loops): one row per attempt, priced at the
+    attempt's own model (an entry without one is the requested `model`). Without: one row from the
+    top-level usage, priced at `served_model` (the response's `model`) when given, else `model`.
     """
-    model = served_model or model
+    iterations = getattr(usage, "iterations", None)
+    if isinstance(iterations, list | tuple) and iterations:
+        total = Decimal(0)
+        for entry in iterations:
+            entry_model = getattr(entry, "model", None)
+            total += _record_one(cur, feature=feature, step=step,
+                                 model=entry_model if isinstance(entry_model, str) and entry_model else model,
+                                 usage=entry, bid_preparation_id=bid_preparation_id)
+        return _q(total)
+    return _record_one(cur, feature=feature, step=step, model=served_model or model, usage=usage,
+                       bid_preparation_id=bid_preparation_id)
+
+
+def _record_one(cur: Any, *, feature: str, step: str, model: str, usage: Any, bid_preparation_id: Any) -> Decimal:
     tokens = {
         "input_tokens": getattr(usage, "input_tokens", None) or 0,
         "output_tokens": getattr(usage, "output_tokens", None) or 0,

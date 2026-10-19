@@ -15,12 +15,13 @@ NOW = datetime(2026, 10, 19, 15, 0, tzinfo=UTC)
 
 class Cur:
     def __init__(self, spent="0"):
-        self.spent, self.inserted, self.sql = spent, None, []
+        self.spent, self.inserted, self.sql, self.inserts = spent, None, [], []
 
     def execute(self, sql, params=()):
         self.sql.append(sql)
         if sql.lstrip().startswith("insert"):
             self.inserted = params
+            self.inserts.append(params)
 
     def fetchone(self):
         return (Decimal(self.spent),)
@@ -45,11 +46,39 @@ def test_the_default_fallback_model_is_priced():
     assert cost_usd("claude-opus-4-8", input_tokens=1_000_000, output_tokens=1_000_000) == Decimal("30")
 
 
-def test_worst_case_covers_dearest_fallback():
+def test_worst_case_counts_every_attempt_a_fallback_may_bill():
+    """A declined attempt bills at its model's rates and the fallback attempt at its own (claude-api
+    skill, server-side fallbacks → Billing): the worst case is their sum, not the dearest one."""
     cheap = worst_case_usd("claude-haiku-5-5", input_tokens_estimate=1000, max_tokens=1000)
+    dear = worst_case_usd("claude-opus-4-8", input_tokens_estimate=1000, max_tokens=1000)
     covered = worst_case_usd("claude-haiku-5-5", input_tokens_estimate=1000, max_tokens=1000,
-                             fallback_models=("claude-opus-5-5",))
-    assert covered == worst_case_usd("claude-opus-5-5", input_tokens_estimate=1000, max_tokens=1000) > cheap
+                             fallback_models=("claude-opus-4-8",))
+    assert covered == cheap + dear
+
+
+def test_record_usage_records_each_billed_attempt_at_its_own_model():
+    cur = Cur()
+    usage = SimpleNamespace(
+        input_tokens=1_000_000, output_tokens=1_000_000,  # top level: only the returned attempt
+        iterations=[
+            SimpleNamespace(type="message", model=None, input_tokens=1_000_000, output_tokens=500_000,
+                            cache_read_input_tokens=0, cache_creation_input_tokens=0),
+            SimpleNamespace(type="fallback_message", model="claude-opus-4-8", input_tokens=1_000_000,
+                            output_tokens=1_000_000, cache_read_input_tokens=0, cache_creation_input_tokens=0),
+        ])
+    cost = record_usage(cur, feature="licitaciones", step="read", model="claude-opus-5-5", usage=usage,
+                        bid_preparation_id=None, served_model="claude-opus-4-8")
+    assert cost == Decimal("14") + Decimal("30")  # opus 5.5: 4 + 10; opus 4.8: 5 + 25
+    assert [(row[1], row[8]) for row in cur.inserts] == [("claude-opus-5-5", Decimal("14")),
+                                                          ("claude-opus-4-8", Decimal("30"))]
+
+
+def test_record_usage_without_iterations_uses_the_top_level_usage():
+    cur = Cur()
+    usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=0, iterations=None)
+    assert record_usage(cur, feature="licitaciones", step="read", model="claude-opus-5-5", usage=usage,
+                        bid_preparation_id=None) == Decimal("4")
+    assert len(cur.inserts) == 1
 
 
 def test_month_window_santiago_boundary():

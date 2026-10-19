@@ -4,7 +4,7 @@ write the result back with what the model calls cost (spec 2026-10-19 §6.4, pla
 Single flight: one sweep at a time holds the session lock `LOCK_NAME` and runs preparations one by
 one, in the tender worker's own child process (ruling R4). That is what keeps the monthly cap: the
 cap is checked in a short transaction before each call (`model_spend.ensure_within_cap`, against the
-worst case of the call and of the fallback model), the call runs with no transaction open, and its
+worst case of every attempt the call may bill), the call runs with no transaction open, and its
 usage is recorded right after — no second spender can run in between. A row found `running` when
 the lock is taken was left by a process that died; it is failed `interrupted`, so the case can ask
 again.
@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, Final
 from uuid import UUID
 
@@ -26,12 +29,12 @@ from origenlab_api.v2.model_spend import (
     FEATURE_LICITACIONES,
     BudgetReached,
     UnpricedModel,
+    dearest_model,
     ensure_within_cap,
     record_usage,
     with_cap_lock,
     worst_case_usd,
 )
-from origenlab_api.v2.catalog.enrichment import supports_fallbacks
 from origenlab_worker.storage import StorageError
 from origenlab_worker.tender.extract import AnnexSetTooLarge, AnnexText, extract_annex, render_for_model
 from origenlab_worker.tender.read_model import (
@@ -112,22 +115,64 @@ class BidModels:
 
 
 class PreparationFailed(Exception):
-    def __init__(self, code: str, status: str = STATUS_FAILED) -> None:
+    def __init__(self, code: str, status: str = STATUS_FAILED, result: dict[str, Any] | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.status = status
+        self.result = result or {}
+
+
+class ConnectionLost(Exception):
+    """The worker's session died after a model call. Its usage was recorded and its row failed on a
+    fresh connection (when one could be opened); the single-flight lock went with the session, so the
+    sweep must stop."""
+
+
+def call_worst_case(request: dict[str, Any], model: str) -> Decimal:
+    """What one call may bill: the requested model's worst case plus, when the request carries
+    server-side fallbacks, the fallback attempt's — each attempt is billed (claude-api skill)."""
+    fallbacks = FALLBACK_WORST_MODELS if request.get("fallbacks") else ()
+    return worst_case_usd(model, input_tokens_estimate=input_tokens_estimate(request), max_tokens=MAX_TOKENS,
+                          fallback_models=fallbacks)
+
+
+def _sent_and_maybe_billed(exc: BaseException) -> bool:
+    """False only when the API answered with an error status before generating anything (nothing is
+    billed); a stream cut after it started, a timeout or a lost connection may have been billed."""
+    try:
+        import anthropic
+    except ImportError:  # pragma: no cover - the SDK is a worker dependency
+        return True
+    return not isinstance(exc, anthropic.APIStatusError)
+
+
+_CONNECTION_ERRORS: tuple[type[BaseException], ...]
+try:
+    import psycopg as _psycopg
+
+    _CONNECTION_ERRORS = (_psycopg.OperationalError, _psycopg.InterfaceError)
+except ImportError:  # pragma: no cover
+    _CONNECTION_ERRORS = ()
 
 
 class BidPreparer:
-    """Runs preparations on one verified autocommit worker connection."""
+    """Runs preparations on one verified autocommit worker connection.
+
+    The remote connection has TCP keepalives on (`database.KEEPALIVES`), so it survives a model call
+    of several minutes. If it is gone anyway when the usage must be recorded, `reconnect` (a context
+    manager factory for a fresh verified connection) records it there and fails the row
+    `connection_lost`, and :class:`ConnectionLost` stops the sweep (fail closed).
+    """
 
     def __init__(self, conn: Any, store: Any, reader: ModelReader, models: BidModels, *,
-                 now: Callable[[], datetime]) -> None:
+                 now: Callable[[], datetime],
+                 reconnect: Callable[[], AbstractContextManager[Any]] | None = None) -> None:
         self._conn = conn
         self._store = store
         self._reader = reader
         self._models = models
         self._now = now
+        self._reconnect = reconnect
 
     # ── the queue ───────────────────────────────────────────────────────────────────────────
 
@@ -160,8 +205,10 @@ class BidPreparer:
         try:
             result = self._read(prep_id, opportunity_id, annex_ids, models)
         except PreparationFailed as exc:
-            self._finish(prep_id, exc.status, exc.code, {}, models)
+            self._finish(prep_id, exc.status, exc.code, exc.result, models)
             return exc.status
+        except ConnectionLost:
+            raise
         except Exception:  # noqa: BLE001 — the row must never stay `running`; the class is not stored
             self._finish(prep_id, STATUS_FAILED, "internal_error", {}, models)
             raise
@@ -169,11 +216,29 @@ class BidPreparer:
         return STATUS_READY
 
     def _finish(self, prep_id: UUID, status: str, code: str | None, result: dict[str, Any],
-                models: dict[str, str]) -> None:
+                models: dict[str, str], *, conn: Any = None) -> None:
         from psycopg.types.json import Jsonb
 
-        with self._conn.transaction(), self._conn.cursor() as cur:
+        conn = conn or self._conn
+        with conn.transaction(), conn.cursor() as cur:
             cur.execute(_FINISH, (status, code, Jsonb(result), Jsonb(models), prep_id))
+
+    def _record(self, prep_id: UUID, models: dict[str, str], **usage: Any) -> None:
+        """Record one call's usage; on a dead session, on a fresh one, then stop (`ConnectionLost`)."""
+        def write(conn: Any) -> None:
+            with conn.transaction(), conn.cursor() as cur:
+                record_usage(cur, feature=FEATURE_LICITACIONES, step="read", bid_preparation_id=prep_id, **usage)
+
+        try:
+            write(self._conn)
+            return
+        except _CONNECTION_ERRORS:
+            if self._reconnect is None:
+                raise ConnectionLost("usage_not_recorded") from None
+        with self._reconnect() as fresh:
+            write(fresh)
+            self._finish(prep_id, STATUS_FAILED, "connection_lost", {}, models, conn=fresh)
+        raise ConnectionLost("connection_lost")
 
     # ── the read phase ──────────────────────────────────────────────────────────────────────
 
@@ -214,9 +279,9 @@ class BidPreparer:
             raise PreparationFailed("annex_set_too_large") from None
         model = self._models.read
         request = build_read_request(rendered, self._case(opportunity_id), model=model)
+        attempts = (model, *FALLBACK_WORST_MODELS) if request.get("fallbacks") else (model,)
         try:
-            worst = worst_case_usd(model, input_tokens_estimate=input_tokens_estimate(request), max_tokens=MAX_TOKENS,
-                                   fallback_models=FALLBACK_WORST_MODELS if supports_fallbacks(model) else ())
+            worst = call_worst_case(request, model)
         except UnpricedModel:
             raise PreparationFailed("model_unpriced") from None
         try:
@@ -228,19 +293,22 @@ class BidPreparer:
 
         try:
             message = self._reader(request)  # no transaction is open during the call
-        except Exception:  # noqa: BLE001 — network, 4xx/5xx, timeout: the code, never the text
+        except Exception as exc:  # noqa: BLE001 — network, 4xx/5xx, timeout: the code, never the text
+            if _sent_and_maybe_billed(exc):
+                # What it really cost is unknown: one attempt's worst case at the dearest model.
+                conservative = SimpleNamespace(input_tokens=input_tokens_estimate(request), output_tokens=MAX_TOKENS)
+                self._record(prep_id, models, model=dearest_model(attempts), usage=conservative)
             raise PreparationFailed("request_failed") from None
         served = getattr(message, "model", None)
         served = served if isinstance(served, str) and served else model
         models["read"] = served
         # Recorded before the answer is judged: a refused or truncated call may still be billed.
-        with self._conn.transaction(), self._conn.cursor() as cur:
-            record_usage(cur, feature=FEATURE_LICITACIONES, step="read", model=model,
-                         usage=getattr(message, "usage", None), bid_preparation_id=prep_id, served_model=served)
+        self._record(prep_id, models, model=model, usage=getattr(message, "usage", None), served_model=served)
         try:
             answer = parse_read(message)
         except ReadFailed as exc:
-            raise PreparationFailed(exc.code) from None
+            extra = {"refusal_category": exc.category} if exc.code == "model_refused" else None
+            raise PreparationFailed(exc.code, result=extra) from None
         result = validate_read(answer, annexes)
         result["annexes"] = [{"document_id": a.document_id, "filename": a.filename, "outcome": a.outcome}
                              for a in annexes]
@@ -248,17 +316,20 @@ class BidPreparer:
 
 
 def run_bid_sweep(conn: Any, store: Any, reader: ModelReader, models: BidModels, *,
-                  now: Callable[[], datetime], limit: int = SWEEP_LIMIT) -> dict[str, Any]:
+                  now: Callable[[], datetime], limit: int = SWEEP_LIMIT,
+                  reconnect: Callable[[], AbstractContextManager[Any]] | None = None) -> dict[str, Any]:
     """One sweep: take the single-flight lock, fail rows a dead process left `running`, then claim
-    and run queued preparations one at a time. Counts only — never a case, a file or a text."""
+    and run queued preparations one at a time. Counts only — never a case, a file or a text: an
+    unexpected error is reported by its class (a database error's text may quote row values), and
+    the sweep stops; a lost connection stops it too (the lock went with the session)."""
     with conn.cursor() as cur:
         cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK_NAME,))
         if not cur.fetchone()[0]:
             return {"outcome": "locked"}
+    counts: dict[str, Any] = {"outcome": "ran", "interrupted": 0, "claimed": 0, "statuses": {}}
     try:
-        preparer = BidPreparer(conn, store, reader, models, now=now)
-        counts: dict[str, Any] = {"outcome": "ran", "interrupted": preparer.recover_interrupted(), "claimed": 0,
-                                  "statuses": {}}
+        preparer = BidPreparer(conn, store, reader, models, now=now, reconnect=reconnect)
+        counts["interrupted"] = preparer.recover_interrupted()
         for _ in range(max(1, limit)):
             prep = preparer.claim()
             if prep is None:
@@ -266,14 +337,20 @@ def run_bid_sweep(conn: Any, store: Any, reader: ModelReader, models: BidModels,
             counts["claimed"] += 1
             try:
                 status = preparer.run(prep)
+            except ConnectionLost:
+                counts["outcome"] = "connection_lost"
+                return counts
             except Exception:  # noqa: BLE001 — the row is already failed; the next one still runs
                 status = "error"
             counts["statuses"][status] = counts["statuses"].get(status, 0) + 1
         return counts
+    except Exception as exc:  # noqa: BLE001 — the class only; never the text
+        counts.update(outcome="error", error=type(exc).__name__)
+        return counts
     finally:
-        with conn.cursor() as cur:
+        with suppress(Exception), conn.cursor() as cur:
             cur.execute("select pg_advisory_unlock(hashtextextended(%s, 0))", (LOCK_NAME,))
 
 
 __all__ = ["BID_REQUIRED_POLICIES", "BID_REQUIRED_PRIVILEGES", "DOCUMENTS_BUCKET", "LOCK_NAME", "SUPPORTED_PHASES",
-           "BidModels", "BidPreparer", "PreparationFailed", "run_bid_sweep"]
+           "BidModels", "BidPreparer", "ConnectionLost", "PreparationFailed", "call_worst_case", "run_bid_sweep"]

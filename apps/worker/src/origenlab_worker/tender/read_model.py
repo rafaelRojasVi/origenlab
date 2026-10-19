@@ -127,12 +127,22 @@ READ_SCHEMA: dict[str, Any] = {
 }
 
 
-class ReadFailed(Exception):
-    """The answer cannot be used; `code` (never model text) is the preparation's failure code."""
+#: `stop_details.category` of a refusal (SDK `BetaRefusalStopDetails`); anything else is stored as null.
+REFUSAL_CATEGORIES: Final = ("cyber", "bio", "frontier_llm", "reasoning_extraction", "general_harms")
 
-    def __init__(self, code: str) -> None:
+
+class ReadFailed(Exception):
+    """The answer cannot be used; `code` (never model text) is the preparation's failure code, and
+    `category` the refusal's closed policy category when there is one."""
+
+    def __init__(self, code: str, category: str | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.category = category
+
+
+class CallInterrupted(Exception):
+    """The stream broke after the API had started answering: the call was sent and may be billed."""
 
 
 def user_content(rendered: str, case: dict[str, Any]) -> str:
@@ -147,7 +157,8 @@ def build_read_request(rendered: str, case: dict[str, Any], *, model: str) -> di
     request: dict[str, Any] = {
         "model": model,
         "max_tokens": MAX_TOKENS,
-        "system": [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        # Not cached: the prompt is below the cacheable minimum, and one preparation is one call.
+        "system": [{"type": "text", "text": SYSTEM_PROMPT}],
         "messages": [{"role": "user", "content": user_content(rendered, case)}],
         "output_config": {"format": {"type": "json_schema", "schema": READ_SCHEMA}},
     }
@@ -170,7 +181,8 @@ def parse_read(message: Any) -> dict[str, Any]:
     """The answer object, or :class:`ReadFailed`. Checks `stop_reason` before the content."""
     stop = getattr(message, "stop_reason", None)
     if stop == "refusal":
-        raise ReadFailed("model_refused")
+        category = getattr(getattr(message, "stop_details", None), "category", None)
+        raise ReadFailed("model_refused", category if category in REFUSAL_CATEGORIES else None)
     if stop == "max_tokens":
         raise ReadFailed("model_truncated")
     text = next((b.text for b in getattr(message, "content", None) or [] if getattr(b, "type", None) == "text"), None)
@@ -317,7 +329,10 @@ def validate_read(answer: dict[str, Any], annexes: list[AnnexText]) -> dict[str,
 def streaming_reader(api_key: str, *, timeout_s: float = 900.0, max_retries: int = 2,
                      client: Any = None) -> ModelReader:
     """The production reader for long anexo sets: `client.beta.messages.stream(**request)` and its
-    `get_final_message()` (ruling R5) — the connection stays alive while the answer is written."""
+    `get_final_message()` (ruling R5) — the connection stays alive while the answer is written.
+
+    An error opening the stream (an HTTP error status: nothing was generated) is raised as it is; a
+    failure once events have arrived is :class:`CallInterrupted` — that call is billed."""
     if client is None:
         import anthropic
 
@@ -325,11 +340,19 @@ def streaming_reader(api_key: str, *, timeout_s: float = 900.0, max_retries: int
 
     def read(request: dict[str, Any]) -> Any:
         with client.beta.messages.stream(**request) as stream:
-            return stream.get_final_message()
+            started = False
+            try:
+                for _event in stream:
+                    started = True
+                return stream.get_final_message()
+            except Exception as exc:
+                if started:
+                    raise CallInterrupted(type(exc).__name__) from None
+                raise
 
     return read
 
 
-__all__ = ["CHECKLIST_TYPES", "CONVERT_TO_WORD", "DEFAULT_READ_MODEL", "EFFORT", "FALLBACK_WORST_MODELS",
+__all__ = ["CallInterrupted", "REFUSAL_CATEGORIES", "CHECKLIST_TYPES", "CONVERT_TO_WORD", "DEFAULT_READ_MODEL", "EFFORT", "FALLBACK_WORST_MODELS",
            "MAX_TOKENS", "READ_SCHEMA", "RESUMEN_FIELDS", "ReadFailed", "SYSTEM_PROMPT", "build_read_request",
            "input_tokens_estimate", "parse_read", "streaming_reader", "user_content", "validate_read"]

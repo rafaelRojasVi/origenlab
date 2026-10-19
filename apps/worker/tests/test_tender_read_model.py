@@ -16,6 +16,7 @@ from origenlab_worker.tender.read_model import (
     MAX_TOKENS,
     READ_SCHEMA,
     RESUMEN_FIELDS,
+    CallInterrupted,
     ReadFailed,
     build_read_request,
     parse_read,
@@ -95,6 +96,53 @@ def test_the_schema_is_closed_everywhere() -> None:
     assert tipo["enum"] == ["formulario", "documento", "certificado", "garantia", "declaracion", "otro"]
 
 
+def test_the_system_prompt_is_not_marked_for_caching_below_the_minimum() -> None:
+    assert "cache_control" not in build_read_request("x", {}, model=MODEL)["system"][0]
+
+
+class _Stream:
+    def __init__(self, events, final=None, fail_at=None):
+        self.events, self.final, self.fail_at = events, final, fail_at
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        for n, event in enumerate(self.events):
+            if n == self.fail_at:
+                raise ConnectionError("stream cut")
+            yield event
+
+    def get_final_message(self):
+        return self.final
+
+
+def _client(stream_or_error):
+    class Messages:
+        def stream(self, **request):
+            if isinstance(stream_or_error, Exception):
+                raise stream_or_error
+            return stream_or_error
+
+    return SimpleNamespace(beta=SimpleNamespace(messages=Messages()))
+
+
+def test_a_stream_cut_after_it_started_is_a_billed_interruption() -> None:
+    read = streaming_reader("k", client=_client(_Stream(["message_start", "delta", "delta"], fail_at=2)))
+    with pytest.raises(CallInterrupted):
+        read({"model": MODEL})
+
+
+def test_a_refusal_to_open_the_stream_is_raised_as_is() -> None:
+    err = ValueError("400")
+    read = streaming_reader("k", client=_client(err))
+    with pytest.raises(ValueError):
+        read({"model": MODEL})
+
+
 def test_the_streaming_reader_returns_the_final_message() -> None:
     final = object()
     seen = {}
@@ -105,6 +153,9 @@ def test_the_streaming_reader_returns_the_final_message() -> None:
 
         def __exit__(self, *exc):
             return False
+
+        def __iter__(self):
+            return iter(())
 
         def get_final_message(self):
             return final
@@ -128,6 +179,16 @@ def test_a_refused_or_truncated_answer_fails_by_code(stop, code) -> None:
     with pytest.raises(ReadFailed) as exc:
         parse_read(_message({"resumen": {}}, stop=stop))
     assert exc.value.code == code
+
+
+@pytest.mark.parametrize("details,category", [
+    (SimpleNamespace(category="cyber"), "cyber"), (SimpleNamespace(category="inventada"), None), (None, None)])
+def test_a_refusal_keeps_its_closed_category(details, category) -> None:
+    message = _message({}, stop="refusal")
+    message.stop_details = details
+    with pytest.raises(ReadFailed) as exc:
+        parse_read(message)
+    assert exc.value.code == "model_refused" and exc.value.category == category
 
 
 @pytest.mark.parametrize("text", ["no es json", "[]"])
@@ -209,3 +270,20 @@ def test_lists_and_texts_are_bounded() -> None:
     out = validate_read(answer, [annex("a", ["p.1"])])
     assert len(out["resumen"]["objeto"]["texto"]) <= 4000
     assert len(out["items"]) <= 500
+
+
+def test_the_call_worst_case_adds_the_fallback_attempt() -> None:
+    from origenlab_api.v2.model_spend import worst_case_usd
+
+    from origenlab_worker.tender.job import call_worst_case
+
+    request = build_read_request("x" * 10_000, {}, model=MODEL)
+    from origenlab_worker.tender.read_model import input_tokens_estimate
+
+    est = input_tokens_estimate(request)
+    single = worst_case_usd(MODEL, input_tokens_estimate=est, max_tokens=MAX_TOKENS)
+    fallback = worst_case_usd("claude-opus-4-8", input_tokens_estimate=est, max_tokens=MAX_TOKENS)
+    assert call_worst_case(request, MODEL) == single + fallback
+    haiku = build_read_request("x", {}, model="claude-haiku-5-5")
+    assert call_worst_case(haiku, "claude-haiku-5-5") == worst_case_usd(
+        "claude-haiku-5-5", input_tokens_estimate=input_tokens_estimate(haiku), max_tokens=MAX_TOKENS)

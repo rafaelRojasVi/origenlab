@@ -107,3 +107,20 @@ def test_the_flag_is_strict() -> None:
     assert triage_cli.bid_enabled({triage_cli.ENV_BID_ENABLED: " TRUE "})
     assert not triage_cli.bid_enabled({triage_cli.ENV_BID_ENABLED: "1"})
     assert not triage_cli.bid_enabled({})
+
+
+def test_a_tender_child_with_a_bad_setting_idles_instead_of_taking_triage_down(monkeypatch, capsys) -> None:
+    idled = []
+    monkeypatch.setattr(triage_cli, "_idle_until_terminated", lambda event="triage_worker": idled.append(event))
+    assert triage_cli.run_tender_worker(_env(**{triage_cli.ENV_ANTHROPIC_API_KEY: None}), 0.0) == 0
+    out = capsys.readouterr().out
+    assert '"config_refused"' in out and "anthropic_api_key_missing" in out and idled == ["tender_worker"]
+
+
+def test_mail_worker_does_not_import_the_triage_cli() -> None:
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(mail_worker))
+    imported = {n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)}
+    assert "origenlab_worker.triage_cli" not in imported

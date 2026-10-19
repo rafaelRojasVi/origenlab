@@ -19,7 +19,7 @@ import time
 from collections.abc import Mapping, Sequence
 
 from origenlab_worker.capture_queue import enabled
-from origenlab_worker.triage_cli import bid_enabled
+from origenlab_worker.flags import bid_enabled
 
 SHUTDOWN_SECONDS = 20
 

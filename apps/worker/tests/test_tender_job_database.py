@@ -26,9 +26,10 @@ from origenlab_worker.tender.job import (
     DOCUMENTS_BUCKET,
     BidModels,
     BidPreparer,
+    ConnectionLost,
     run_bid_sweep,
 )
-from origenlab_worker.tender.read_model import RESUMEN_FIELDS
+from origenlab_worker.tender.read_model import RESUMEN_FIELDS, CallInterrupted
 from test_quote_reader import _minimal_pdf
 from v2_command_harness import build_disposable_database, needs_worker_db, worker_dsn
 
@@ -106,20 +107,39 @@ def _answer(doc: str) -> dict:
 
 
 class Reader:
-    def __init__(self, answer=None, *, stop="end_turn", error=None):
-        self.answer, self.stop, self.error = answer, stop, error
+    def __init__(self, answer=None, *, stop="end_turn", error=None, usage=None, model=None, stop_details=None,
+                 during=None):
+        self.answer, self.stop, self.error, self.usage = answer, stop, error, usage
+        self.model, self.stop_details, self.during = model, stop_details, during
         self.calls = 0
         self.requests: list[dict] = []
 
     def __call__(self, request):
         self.calls += 1
         self.requests.append(request)
+        if self.during is not None:
+            self.during()
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(stop_reason=self.stop, model=request["model"],
+        return SimpleNamespace(stop_reason=self.stop, model=self.model or request["model"],
+                               stop_details=self.stop_details,
                                content=[SimpleNamespace(type="text", text=json.dumps(self.answer or {}))],
-                               usage=SimpleNamespace(input_tokens=1000, output_tokens=200,
-                                                     cache_read_input_tokens=0, cache_creation_input_tokens=0))
+                               usage=self.usage or SimpleNamespace(input_tokens=1000, output_tokens=200,
+                                                                   cache_read_input_tokens=0,
+                                                                   cache_creation_input_tokens=0))
+
+
+def _status_error(status: int):
+    import anthropic
+    import httpx
+
+    response = httpx.Response(status, request=httpx.Request("POST", "https://api.example.test/v1/messages"))
+    return anthropic.APIStatusError("refused", response=response, body=None)
+
+
+def _usage_rows(dsn, prep: str):
+    return owner_rows(dsn, "select model, input_tokens, output_tokens, usd_cost::text from platform.model_usage "
+                           "where bid_preparation_id = %s order by created_at, id", (prep,))
 
 
 def _row(dsn, prep: str):
@@ -175,11 +195,75 @@ def test_a_truncated_answer_fails_the_row(dsn, store, operator) -> None:
     assert _row(dsn, prep)[:2] == ("failed", "model_truncated")
 
 
-def test_an_api_error_fails_the_row_without_usage(dsn, store, operator) -> None:
+def test_an_api_status_error_fails_the_row_without_usage(dsn, store, operator) -> None:
     case, doc, prep = _queued(dsn, store, operator)
     with _conn(dsn) as conn:
-        BidPreparer(conn, store, Reader(error=RuntimeError("upstream")), MODELS, now=_now).run(uuid.UUID(prep))
+        BidPreparer(conn, store, Reader(error=_status_error(529)), MODELS, now=_now).run(uuid.UUID(prep))
     assert _row(dsn, prep)[:2] == ("failed", "request_failed") and _usage(dsn, prep) == 0
+
+
+@pytest.mark.parametrize("error", [CallInterrupted(), TimeoutError("read timed out")])
+def test_a_call_lost_after_it_was_sent_is_recorded_at_its_worst_case(dsn, store, operator, error) -> None:
+    case, doc, prep = _queued(dsn, store, operator)
+    with _conn(dsn) as conn:
+        BidPreparer(conn, store, Reader(error=error), MODELS, now=_now).run(uuid.UUID(prep))
+    assert _row(dsn, prep)[:2] == ("failed", "request_failed")
+    [(model, input_tokens, output_tokens, _cost)] = _usage_rows(dsn, prep)
+    assert (model, output_tokens) == ("claude-opus-4-8", 32000) and input_tokens > 0
+
+
+def test_every_billed_attempt_of_a_fallback_is_recorded(dsn, store, operator) -> None:
+    case, doc, prep = _queued(dsn, store, operator)
+    usage = SimpleNamespace(input_tokens=1000, output_tokens=300, iterations=[
+        SimpleNamespace(type="message", model=None, input_tokens=1000, output_tokens=100,
+                        cache_read_input_tokens=0, cache_creation_input_tokens=0),
+        SimpleNamespace(type="fallback_message", model="claude-opus-4-8", input_tokens=1000, output_tokens=300,
+                        cache_read_input_tokens=0, cache_creation_input_tokens=0)])
+    reader = Reader(_answer(doc), usage=usage, model="claude-opus-4-8")
+    with _conn(dsn) as conn:
+        assert BidPreparer(conn, store, reader, MODELS, now=_now).run(uuid.UUID(prep)) == "ready"
+    assert sorted(r[:3] for r in _usage_rows(dsn, prep)) == [("claude-opus-4-8", 1000, 300),
+                                                             ("claude-opus-5-5", 1000, 100)]
+    assert _row(dsn, prep)[3] == {"read": "claude-opus-4-8"}
+
+
+def test_the_refusal_category_is_kept_on_the_failed_row(dsn, store, operator) -> None:
+    case, doc, prep = _queued(dsn, store, operator)
+    reader = Reader(stop="refusal", stop_details=SimpleNamespace(category="bio"))
+    with _conn(dsn) as conn:
+        BidPreparer(conn, store, reader, MODELS, now=_now).run(uuid.UUID(prep))
+    assert _row(dsn, prep)[:3] == ("failed", "model_refused", {"refusal_category": "bio"})
+
+
+def test_a_connection_lost_during_the_call_records_usage_on_a_fresh_one_and_stops(dsn, store, operator) -> None:
+    case, doc, prep = _queued(dsn, store, operator)
+    with _conn(dsn) as conn:
+        reader = Reader(_answer(doc), during=conn.close)  # the session dies while the model answers
+        preparer = BidPreparer(conn, store, reader, MODELS, now=_now, reconnect=lambda: _conn(dsn))
+        with pytest.raises(ConnectionLost):
+            preparer.run(uuid.UUID(prep))
+    assert _usage(dsn, prep) == 1
+    assert _row(dsn, prep)[:2] == ("failed", "connection_lost")
+
+
+def test_the_sweep_stops_when_the_connection_is_lost(dsn, store, operator) -> None:
+    case, doc, prep = _queued(dsn, store, operator)
+    with _conn(dsn) as conn:
+        reader = Reader(_answer(doc), during=conn.close)
+        counts = run_bid_sweep(conn, store, reader, MODELS, now=_now, reconnect=lambda: _conn(dsn))
+    assert counts["outcome"] == "connection_lost" and counts["claimed"] == 1
+    assert _row(dsn, prep)[:2] == ("failed", "connection_lost")
+
+
+def test_an_unexpected_queue_error_is_reported_by_class_only(dsn, store, operator, monkeypatch) -> None:
+    def boom(self):
+        raise psycopg.DataError("valor secreto de una fila")
+
+    monkeypatch.setattr(BidPreparer, "claim", boom)
+    with _conn(dsn) as conn:
+        counts = run_bid_sweep(conn, store, Reader(), MODELS, now=_now)
+    assert counts["outcome"] == "error" and counts["error"] == "DataError"
+    assert "secreto" not in json.dumps(counts)
 
 
 def test_no_readable_annex_fails_before_the_model(dsn, store, operator) -> None:
