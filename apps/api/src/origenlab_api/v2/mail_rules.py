@@ -21,8 +21,8 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R12 | inbound, no thread or quote number placed it, and the context matcher (`case_match:v1`, the worker's triage) is sure: layer 1 «exact», or the AI's pick with confidence «high» — also for a supplier writing about a client's deal | auto: link to that open case (a won case keeps it closed); a medium or low pick stays a suggestion |
 | R13 | outbound, a NEW CN number in a PDF on a new thread, answering the client's open request with no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names its institution) | auto: link + «Enviada» + quote on that request; two requests → a proposal |
 | R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
-| R14 | outbound from contacto@, already linked to exactly one open case (by a rule or a person), carrying exactly one CN PDF whose number no case records | auto: the R1 gates (requesting institution, open stage, correlative not under another year), then «Enviada» + quote on that case; no link (it is there). The one rule that still reads an email another rule acted on |
-| R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes; none or several → left to a person). Keyed by the institution's id, not an email |
+| R14 | outbound from contacto@, sent in the last `LATE_QUOTE_WINDOW_DAYS`, already linked to exactly one open case (by a rule or a person), carrying exactly one CN PDF whose number no case records | auto: the R1 gates (requesting institution, open stage, correlative not under another year), then «Enviada» + quote on that case; no link (it is there). The one rule that still reads an email another rule acted on |
+| R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes, naming which institution, not only a kind; else a person); confirmed with no operator named. Keyed by the institution's id, not an email |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -239,6 +239,9 @@ class Snapshot:
     applied_pairs: frozenset[tuple[str, str]] = frozenset()
     #: Institutions «por confirmar» (R15).
     institutions: tuple[InstitutionFacts, ...] = ()
+    #: R14 acts only on email sent at or after this instant (ISO; the repository sets it to
+    #: `LATE_QUOTE_WINDOW_DAYS` ago, as Operaciones lists them). None: no email qualifies.
+    late_quote_since: str | None = None
 
 
 @dataclass(frozen=True)
@@ -479,6 +482,7 @@ def _is_pdf(doc: MailDocument) -> bool:
 
 class _Index:
     def __init__(self, snapshot: Snapshot) -> None:
+        self.late_quote_since = snapshot.late_quote_since
         self.cases = {c.id: c for c in snapshot.cases}
         self.by_thread: dict[str, list[CaseState]] = {}
         for c in snapshot.cases:
@@ -1258,6 +1262,10 @@ def _late_quote_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     institution, another year, two new PDFs, a closed case — is left to a person in Operaciones."""
     if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
         return None
+    # A backfilled old email on a case still open must never record an old quote or move the stage.
+    since, sent = _instant(ix.late_quote_since), _instant(e.sent_at)
+    if since is None or sent is None or sent < since:
+        return None
     open_cases = [ix.cases[c] for c in e.linked_case_ids if c in ix.cases and not ix.cases[c].closed]
     if len(open_cases) != 1:
         return None
@@ -1290,6 +1298,8 @@ def _late_quote_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
 
 
+#: R14: how far back a sent email may be (the same window as Operaciones' «sin registrar» list).
+LATE_QUOTE_WINDOW_DAYS = 60
 #: R15: a quote must have stood this long, not undone, before its institution is confirmed.
 SETTLE_DAYS = 3
 #: What may have created an institution R15 confirms: the mail rules R4 and R10, and «Completar con
@@ -1301,10 +1311,23 @@ CONFIRM_ORGANIZATION_RECORD = "confirm-organization-record"
 UNCONFIRM_ORGANIZATION_RECORD = "unconfirm-organization-record"
 
 
+_NAME_STOPWORDS = frozenset({"de", "del", "la", "las", "el", "los", "y", "e", "en"})
+
+
+def _names_an_institution(segment: str) -> bool:
+    """R15 renames unattended, so a segment must say *which* institution, not only what kind:
+    at least two meaningful words (no 1-letter crumbs, articles or the parenthetical), one of them
+    not a kind/legal-form marker. «Laboratorio», «Laboratorio Chile», «Centro (CEN)» → False;
+    «Acme Ejemplo SpA», «Instituto Ficticio (IFI)» → True."""
+    words = [w for w in re.findall(r"[a-z0-9]+", fold(_PARENTHETICAL.sub(" ", segment)))
+             if len(w) >= 2 and w not in _NAME_STOPWORDS]
+    return len(words) >= 2 and any(not _INSTITUTION_MARKER.fullmatch(w) for w in words)
+
+
 def _confirm_institution_rule(f: InstitutionFacts, ix: _Index) -> PlannedAction | None:
     """R15 (owner, 2026-10-19): an institution a machine created «por confirmar» is confirmed once a
     quote to it has stood `SETTLE_DAYS` days without being undone. It must not be a supplier, nor a
-    free-mail domain. One named after its domain (R4: «agromar.test») is first renamed to the
+    free-mail domain. One named after its domain (R4: «nuevo-cliente.example») is first renamed to the
     institution its quote PDFs name (`institution_segment`) — only when exactly one distinct segment
     exists across them, and no other institution already has that name; otherwise a person decides."""
     o = ix.orgs.get(f.organization_id)
@@ -1326,6 +1349,8 @@ def _confirm_institution_rule(f: InstitutionFacts, ix: _Index) -> PlannedAction 
         if len(segments) != 1:
             return None
         rename = next(iter(segments.values()))
+        if not _names_an_institution(rename):
+            return None
         if any(other.id != o.id for k in institution_keys(rename) for other in ix.by_name.get(k, [])):
             return None
     count = len(f.settled_quote_files)
@@ -1576,7 +1601,7 @@ __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
     "RULE_IDS", "SYSTEM_LABEL", "ATTACH_FORWARD", "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
-    "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
+    "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
     "gmail_quote_key", "mail_direction", "plan", "quote_key", "quote_number_tokens", "santiago_year",
     "token_quote_keys",

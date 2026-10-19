@@ -11,6 +11,8 @@ import hashlib
 import itertools
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -57,11 +59,16 @@ def _doc(filename, cn_tokens=()):
             "cn_tokens": list(cn_tokens)}
 
 
-def _mail(conn, *, thread, sender, recipients, subject, documents=(), direction="outbound"):
+#: The quote year the rules read from a message sent now (the Santiago year of `sent_at`).
+YY = datetime.now(ZoneInfo("America/Santiago")).year % 100
+
+
+def _mail(conn, *, thread, sender, recipients, subject, documents=(), direction="outbound", days_ago=0):
     gid = uuid.uuid4().hex[:16]
+    sent_at = (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
     payload = {"gmail_message_id": gid, "gmail_thread_id": thread, "direction_hint": "external",
                "sender": sender, "recipients": recipients, "subject_raw": subject,
-               "sent_at": "2026-10-01T15:00:00+00:00", "documents": list(documents)}
+               "sent_at": sent_at, "documents": list(documents)}
     record = conn.execute(
         "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
         "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
@@ -106,6 +113,19 @@ def _planned(repo, evidence_id):
     return {a["rule_id"] for a in repo.preview()["actions"] if a["evidence_id"] == evidence_id}
 
 
+def _name_requester(db, repo, world, case_id):
+    """A person names the client as the case's requesting institution (`add_case_organization`)."""
+    from origenlab_api.v2.case_commands import ADD_CASE_ORGANIZATION, AddCaseOrganizationBody, validated_case
+
+    version = _one(db, "select version from crm.opportunity where id = %s", case_id)[0]
+    org_version = _one(db, "select version from crm.organization where id = %s", world["client"])[0]
+    fields = validated_case(ADD_CASE_ORGANIZATION, AddCaseOrganizationBody(
+        opportunity_id=case_id, opportunity_version=version, organization_id=world["client"],
+        organization_version=org_version, role="requesting_institution", note="la persona nombra la institución"))
+    repo.execute(command_name=ADD_CASE_ORGANIZATION, operator=_operator(world["admin"]), fields=fields,
+                 idempotency_key=f"add-org-{case_id}", digest="d" * 64)
+
+
 # ------------------------------------------------------------------ R14
 
 
@@ -128,7 +148,7 @@ def test_r14_records_the_quote_an_earlier_link_left_unrecorded_once_and_undoes_w
     assert linked["case_id"] == case_id
 
     applied = _apply(repo, world["admin"], both, "R14")
-    assert (applied["case_id"], applied["quote_number"]) == (case_id, f"0{s + 1}-26")
+    assert (applied["case_id"], applied["quote_number"]) == (case_id, f"0{s + 1}-{YY}")
     assert [step["command"] for step in applied["steps"]] == ["record_historical_quotation"]
     assert applied["created"]["opportunity_evidence_ids"] == []
     revision = applied["created"]["quote_revision_id"]
@@ -148,6 +168,30 @@ def test_r14_records_the_quote_an_earlier_link_left_unrecorded_once_and_undoes_w
                     "and unlinked_at is null", both)[0] == 1
     assert "R14" not in _planned(repo, both)
 
+    # A stale manual «Aplicar» of another rule on that email is still refused (R14's receipt counts).
+    from origenlab_api.v2.mail_rules import AUTO, PlannedAction
+
+    stale = repo.apply_planned(_operator(world["admin"]), PlannedAction(both, "R1", AUTO, ("viejo",)))
+    assert stale["code"] == "already_applied"
+
+
+def test_r14_leaves_a_backfilled_old_email_alone(db, world) -> None:
+    # Sent 90 days ago, captured now, on a case still open: no old quote, no stage move.
+    repo = _repo(db)
+    s = world["serial"] + 7
+    with _owner(db) as conn:
+        case_id = conn.execute(
+            "insert into crm.opportunity (title, stage, owner_operator_id) "
+            "values ('Caso abierto ficticio', 'lead', %s) returning id::text", (world["admin"],)).fetchone()[0]
+        old = _mail(conn, thread=f"t7-{world['tag']}", sender="contacto@origenlab.cl",
+                    recipients=f"compras@{world['client_domain']}", subject="Cotización",
+                    documents=[_doc(f"CN0{s}-cliente.pdf", [f"CN0{s}"])], days_ago=90)
+        conn.execute("insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                     "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case_id, old, world["admin"]))
+    _name_requester(db, repo, world, case_id)
+    assert "R14" not in _planned(repo, old)
+    assert _one(db, "select stage from crm.opportunity where id = %s", case_id)[0] == "lead"
+
 
 def test_r14_walks_a_request_to_enviada_and_leaves_one_without_institution_to_a_person(db, world) -> None:
     repo = _repo(db)
@@ -164,15 +208,7 @@ def test_r14_walks_a_request_to_enviada_and_leaves_one_without_institution_to_a_
                      "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (with_org, sent, admin))
     assert "R14" not in _planned(repo, sent)  # no requesting institution: a person names it
 
-    from origenlab_api.v2.case_commands import ADD_CASE_ORGANIZATION, AddCaseOrganizationBody, validated_case
-
-    version = _one(db, "select version from crm.opportunity where id = %s", with_org)[0]
-    org_version = _one(db, "select version from crm.organization where id = %s", world["client"])[0]
-    fields = validated_case(ADD_CASE_ORGANIZATION, AddCaseOrganizationBody(
-        opportunity_id=with_org, opportunity_version=version, organization_id=world["client"],
-        organization_version=org_version, role="requesting_institution", note="la persona nombra la institución"))
-    repo.execute(command_name=ADD_CASE_ORGANIZATION, operator=_operator(admin), fields=fields,
-                 idempotency_key=f"add-org-{world['tag']}", digest="d" * 64)
+    _name_requester(db, repo, world, with_org)
     applied = _apply(repo, admin, sent, "R14")
     assert [step["command"] for step in applied["steps"]] == [
         "advance_case_stage", "advance_case_stage", "advance_case_stage", "record_historical_quotation"]
@@ -196,7 +232,7 @@ def _r4_institution(db, world, filename_tail):
 
 
 def test_r15_renames_and_confirms_an_r4_institution_once_its_quote_has_stood_and_undo_restores_it(db, world) -> None:
-    tail = f"Persona Ficticia - Agromar Ficticio {world['tag']} SpA"
+    tail = f"Persona Ficticia - Acme Ejemplo {world['tag']} SpA"
     org_id, _ = _r4_institution(db, world, tail)
     assert "R15" not in _planned(_repo(db), org_id)  # the quote was sent today: not yet
     repo = _repo(db, settle_days=0)
@@ -204,10 +240,20 @@ def test_r15_renames_and_confirms_an_r4_institution_once_its_quote_has_stood_and
     assert [step["command"] for step in applied["steps"]] == ["update-organization", "confirm-organization-record"]
     name, confirmation, by = _one(db, "select name, confirmation, confirmed_by_operator_id::text "
                                       "from crm.organization where id = %s", org_id)
-    assert (name, confirmation, by) == (f"Agromar Ficticio {world['tag']} SpA", "confirmed", world["admin"])
-    assert _one(db, "select array_agg(event_type order by seq), bool_and(actor_kind = 'worker') from crm.domain_event "
+    # Confirmed by the machine: no person is named as having looked.
+    assert (name, confirmation, by) == (f"Acme Ejemplo {world['tag']} SpA", "confirmed", None)
+    assert _one(db, "select array_agg(event_type order by seq), bool_and(actor_kind = 'worker'), "
+                    "bool_and(actor_operator_id is null) from crm.domain_event "
                     "where aggregate_id = %s and payload -> 'attribution' ->> 'rule_id' = 'R15'", org_id) == (
-        ["organization.updated", "organization.confirmed"], True)
+        ["organization.updated", "organization.confirmed"], True, True)
+    assert _one(db, "select payload ->> 'confirmed_from' from crm.domain_event where aggregate_id = %s "
+                    "and event_type = 'organization.confirmed'", org_id)[0] == "mail_rule"
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    card = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db)).organization_authoring(org_id)
+    assert card["organization"]["confirmed_by_system"] is True
     assert "R15" not in _planned(repo, org_id)
 
     undone = repo.undo(_operator(world["admin"]), applied["command_receipt_id"], "aún no está claro")
@@ -230,10 +276,17 @@ def test_r15_does_not_confirm_after_the_quote_was_undone(db, world) -> None:
     assert "R15" not in _planned(repo, org_id)
 
 
+def test_both_kill_flags_default_off() -> None:
+    from origenlab_api.settings import Settings
+
+    settings = Settings(_env_file=None)
+    assert settings.v2_auto_rule_r14_enabled is False and settings.v2_auto_rule_r15_enabled is False
+
+
 def test_the_automatic_run_skips_a_rule_switched_off_by_its_flag(db, world) -> None:
     from origenlab_api.v2.mail_rules_auto import AutoMailRules
 
-    org_id, _ = _r4_institution(db, world, f"Persona - Centro Ficticio {world['tag']}")
+    org_id, _ = _r4_institution(db, world, f"Persona - Centro Ejemplo {world['tag']}")
     repo = _repo(db, settle_days=0)
     auto = AutoMailRules(repo, interval_seconds=60, disabled_rules=frozenset({"R15"}))
     auto.set_enabled(_operator(world["admin"]), True, "prueba de bandera", f"auto-{world['tag']}")
@@ -248,7 +301,7 @@ def test_the_automatic_run_skips_a_rule_switched_off_by_its_flag(db, world) -> N
         with _owner(db) as conn, conn.cursor() as cur:
             facts = read_operation_facts(cur)
         row = next(a for a in facts["actions"] if a["rule_id"] == "R15" and a["organization_id"] == org_id)
-        assert row["automatic"] and row["organization_name"] == f"Centro Ficticio {world['tag']}"
+        assert row["automatic"] and row["organization_name"] == f"Centro Ejemplo {world['tag']}"
         # «Hoy» lists emails the system filed or opened; an institution is Operaciones' only.
         assert all(a["rule_id"] != "R15" for a in repo.recent_automatic())
     finally:

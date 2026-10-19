@@ -16,8 +16,8 @@ applies, and **which** rules may apply without a person pressing «Aplicar»:
 | R5, R6, R10 | no | terminal win/loss actions and a PDF-named new institution still wait for an admin |
 
 **Kill flags.** R14 and R15 each have their own deploy setting
-(`ORIGENLAB_V2_AUTO_RULE_R14_ENABLED`, `ORIGENLAB_V2_AUTO_RULE_R15_ENABLED`, default true): false
-keeps the rule out of the automatic pass while the switch is on; «Aplicar» can still apply it.
+(`ORIGENLAB_V2_AUTO_RULE_R14_ENABLED`, `ORIGENLAB_V2_AUTO_RULE_R15_ENABLED`, default **false**):
+until the owner turns one on, that rule stays out of the automatic pass; «Aplicar» can still apply it.
 
 **The switch.** An admin turns the automatic run on or off in Revisión → «Acciones automáticas»
 (`POST /v2/commands/set-auto-mail-rules`). Each flip is one `platform.command_receipt`

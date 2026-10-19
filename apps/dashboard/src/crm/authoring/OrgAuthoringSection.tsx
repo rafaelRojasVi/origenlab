@@ -330,7 +330,9 @@ function ConfirmationBar({
       <p className="flex flex-wrap items-center gap-1.5 text-xs text-ink-muted" data-testid="org-confirmation">
         <Badge tone="good">Confirmada</Badge>
         <span>
-          {organization.confirmed_by_name ? `por ${organization.confirmed_by_name}` : "por un operador"}
+          {organization.confirmed_by_system
+            ? "por el sistema (cotización enviada)"
+            : organization.confirmed_by_name ? `por ${organization.confirmed_by_name}` : "por un operador"}
           {organization.confirmed_at ? ` el ${fmtDate(organization.confirmed_at)}` : ""}
         </span>
       </p>

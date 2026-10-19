@@ -147,7 +147,22 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                                            and p2.address_norm = 'contacto@origenlab.cl'
          where m2.mailbox_id = m.mailbox_id and m2.provider_thread_id = m.provider_thread_id
            and m2.direction = 'outbound'
-           and m2.internal_date > m.internal_date) as answered_at
+           and m2.internal_date > m.internal_date
+           -- An answer goes to someone outside OrigenLab who is not a supplier: forwarding the
+           -- request to a supplier for a price is not answering it.
+           and exists (select 1 from comms.message_participant p3
+                        where p3.message_id = m2.id and p3.role in ('to', 'cc')
+                          and split_part(p3.address_norm, '@', 2) <> 'origenlab.cl'
+                          and not exists (
+                              select 1 from crm.organization_domain d
+                                join crm.organization o on o.id = d.organization_id
+                               where d.removed_at is null and d.domain_norm = split_part(p3.address_norm, '@', 2)
+                                 and (o.kind in ('supplier', 'manufacturer')
+                                      or exists (select 1 from crm.organization_relationship rel
+                                                  where rel.organization_id = o.id
+                                                    and rel.role in ('supplier', 'manufacturer')
+                                                    and (rel.valid_to is null or rel.valid_to > current_date)))))
+       ) as answered_at
   from readings r
   join evidence.source_record sr on sr.id = r.source_record_id
   -- The context matcher's suggestion for the same email (`apps/worker` case_match.py) and its latest verdict.

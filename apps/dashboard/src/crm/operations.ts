@@ -186,7 +186,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     cuando: "Una institución «por confirmar» que creó el sistema desde un correo (R4, R10 o «Completar con la cotización») tiene una cotización enviada hace 3 días o más, sin deshacer; no es proveedor ni un correo gratuito.",
     hace: "La confirma. Si se llamaba como su dominio, antes toma el nombre de institución que dan los PDF de sus cotizaciones (si dan uno solo; si no dan ninguno o dan varios, queda para una persona).",
     automatica: true,
-    ejemplo: "«agromar-ficticio.cl», con «CN09876-Persona Ficticia - Agromar Ficticio SpA.pdf» enviada hace 4 días → «Agromar Ficticio SpA», confirmada.",
+    ejemplo: "«acme-ejemplo.example», con «CN09876-Persona Ficticia - Acme Ejemplo SpA.pdf» enviada hace 4 días → «Acme Ejemplo SpA», confirmada.",
   },
 };
 

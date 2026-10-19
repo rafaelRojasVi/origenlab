@@ -15,11 +15,18 @@ from origenlab_api.v2.mail_rules import (
     MailEvidence,
     Organization,
     QuoteRevision,
-    Snapshot,
     plan,
 )
+from origenlab_api.v2.mail_rules import Snapshot as _Snapshot
 
 PDF_SHA = "a" * 64
+#: R14's window start, as the repository sets it (60 days back); the test emails are sent after it.
+SINCE = "2026-09-01T00:00:00+00:00"
+
+
+def Snapshot(**kw) -> _Snapshot:  # noqa: N802 - the dataclass, with R14's window filled in
+    kw.setdefault("late_quote_since", SINCE)
+    return _Snapshot(**kw)
 
 
 def mail(**over) -> MailEvidence:
@@ -109,6 +116,17 @@ def test_r14_never_touches_a_closed_case_or_a_number_already_recorded() -> None:
     assert r14(recorded) == []
 
 
+def test_r14_never_records_an_email_sent_before_its_window() -> None:
+    # A backfilled old email on a case still open: no old quote recorded, no stage moved.
+    old = Snapshot(evidence=(mail(sent_at="2026-08-01T15:00:00+00:00"),), cases=(case(stage="qualified"),),
+                   organizations=(org(),))
+    assert r14(old) == []
+    no_window = Snapshot(evidence=(mail(),), cases=(case(),), organizations=(org(),), late_quote_since=None)
+    assert r14(no_window) == []
+    undated = Snapshot(evidence=(mail(sent_at=None),), cases=(case(),), organizations=(org(),))
+    assert r14(undated) == []
+
+
 def test_r14_needs_one_open_case_contacto_and_one_new_pdf() -> None:
     two = Snapshot(evidence=(mail(linked_case_ids=("c-1", "c-2")),),
                    cases=(case(), case(id="c-2")), organizations=(org(),))
@@ -128,15 +146,15 @@ def test_r14_needs_one_open_case_contacto_and_one_new_pdf() -> None:
 
 
 def proposed(**over) -> Organization:
-    base = dict(id="o-9", name="agromar-ficticio.test", version=2, confirmation="machine_proposed",
-                domains=("agromar-ficticio.test",), is_supplier=False)
+    base = dict(id="o-9", name="acme-ejemplo.example", version=2, confirmation="machine_proposed",
+                domains=("acme-ejemplo.example",), is_supplier=False)
     base.update(over)
     return Organization(**base)
 
 
 def facts(**over) -> InstitutionFacts:
     base = dict(organization_id="o-9", created_by="R4",
-                settled_quote_files=("CN01300-Persona Ficticia - Agromar Ficticio SpA.pdf",))
+                settled_quote_files=("CN01300-Persona Ficticia - Acme Ejemplo SpA.pdf",))
     base.update(over)
     return InstitutionFacts(**base)
 
@@ -148,13 +166,13 @@ def r15(snapshot: Snapshot):
 def test_r15_renames_a_domain_named_institution_from_its_quote_and_confirms_it() -> None:
     [a] = r15(Snapshot(evidence=(), cases=(), organizations=(proposed(),), institutions=(facts(),)))
     assert (a.mode, a.evidence_id, a.organization_id, a.organization_name) == (
-        "auto", "o-9", "o-9", "Agromar Ficticio SpA")
+        "auto", "o-9", "o-9", "Acme Ejemplo SpA")
     assert [c["command"] for c in a.commands] == ["update-organization", "confirm-organization-record"]
     rename, confirm = (c["inputs"] for c in a.commands)
     assert rename == {"organization_id": "o-9", "expected_version": "@organization_version",
-                      "name": "Agromar Ficticio SpA", "note": rename["note"]}
+                      "name": "Acme Ejemplo SpA", "note": rename["note"]}
     assert confirm["expected_version"] == "@organization_version"
-    assert a.context == {"organization": "o-9", "organization_version": 2, "previous_name": "agromar-ficticio.test"}
+    assert a.context == {"organization": "o-9", "organization_version": 2, "previous_name": "acme-ejemplo.example"}
 
 
 def test_r15_confirms_an_institution_the_pdf_named_without_renaming() -> None:
@@ -166,9 +184,9 @@ def test_r15_confirms_an_institution_the_pdf_named_without_renaming() -> None:
 
 
 def test_r15_counts_one_segment_across_quotes_and_refuses_none_or_several() -> None:
-    same = facts(settled_quote_files=("CN01300-Una Persona - Agromar Ficticio SpA.pdf", "CN01301-Otra Persona - Agromar Ficticio SpA.pdf"))
+    same = facts(settled_quote_files=("CN01300-Una Persona - Acme Ejemplo SpA.pdf", "CN01301-Otra Persona - Acme Ejemplo SpA.pdf"))
     assert len(r15(Snapshot(evidence=(), cases=(), organizations=(proposed(),), institutions=(same,)))) == 1
-    several = facts(settled_quote_files=("CN01300-Una Persona - Agromar Ficticio SpA.pdf", "CN01301-Laboratorio Ficticio Ltda.pdf"))
+    several = facts(settled_quote_files=("CN01300-Una Persona - Acme Ejemplo SpA.pdf", "CN01301-Laboratorio Ficticio Ltda.pdf"))
     assert r15(Snapshot(evidence=(), cases=(), organizations=(proposed(),), institutions=(several,))) == []
     none = facts(settled_quote_files=("CN01300-Persona Ficticia.pdf", None))
     assert r15(Snapshot(evidence=(), cases=(), organizations=(proposed(),), institutions=(none,))) == []
@@ -187,8 +205,19 @@ def test_r15_refuses_free_mail_suppliers_people_and_unsettled_quotes() -> None:
     assert len(planned(proposed(), facts(created_by="complete_case"))) == 1
 
 
+def test_r15_never_renames_to_a_generic_word() -> None:
+    # The unattended rename must say which institution, not only what kind of one.
+    for tail in ("Persona Ficticia - Laboratorio", "Persona Ficticia - Laboratorio Chile",
+                 "Persona Ficticia - Centro (CEN)", "Persona Ficticia - Comercial"):
+        f = facts(settled_quote_files=(f"CN01300-{tail}.pdf",))
+        assert r15(Snapshot(evidence=(), cases=(), organizations=(proposed(),), institutions=(f,))) == [], tail
+    ok = facts(settled_quote_files=("CN01300-Persona Ficticia - Laboratorio Ejemplo Ltda.pdf",))
+    [a] = r15(Snapshot(evidence=(), cases=(), organizations=(proposed(),), institutions=(ok,)))
+    assert a.organization_name == "Laboratorio Ejemplo Ltda"
+
+
 def test_r15_leaves_a_rename_that_would_duplicate_another_institution() -> None:
-    twin = org(id="o-2", name="Agromar Ficticio SpA", domains=())
+    twin = org(id="o-2", name="Acme Ejemplo SpA", domains=())
     assert r15(Snapshot(evidence=(), cases=(), organizations=(proposed(), twin), institutions=(facts(),))) == []
 
 

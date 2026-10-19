@@ -1950,7 +1950,9 @@ The API applies rules R1 (same Gmail thread) and R2 (same quote number) by itsel
   removes it, with every other command.
 - **One rule off** (2026-10-19): `ORIGENLAB_V2_AUTO_RULE_R14_ENABLED=false` (record a sent quote
   already on its case) or `ORIGENLAB_V2_AUTO_RULE_R15_ENABLED=false` (confirm an institution a
-  sent quote settled) keeps that rule out of the timer; default true. «Aplicar» still offers it.
+  sent quote settled) is **false by default**: that rule stays out of the timer until the owner,
+  having read it in the «Aplicar» preview, sets it `true` on the API and redeploys. «Aplicar» offers
+  it either way.
 - **A wrong link:** «Deshacer» on the row in «Acciones aplicadas» (marked «automática»). An undone
   email is never linked again by the rules.
 - **«Activo, sin actuar»:** the admin who switched it on is no longer an active admin; another

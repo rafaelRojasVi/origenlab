@@ -1353,6 +1353,11 @@ def _handle_confirm_organization_record(
     if org["version"] != expected_version:
         raise CommandRefused(409, "stale_version", "organization was modified since you loaded it")
 
+    # The machine (rule R15, through the email-rules executor) confirms without naming a person:
+    # `confirmed_by_operator_id` stays empty — the check allows it — and the event is the worker's
+    # with `confirmed_from: mail_rule`, so no screen reads it as «a person looked».
+    by_system = bool(getattr(operator, "acts_as_system", False))
+    confirmer = None if by_system else operator.operator_id
     cur.execute(
         """
         update crm.organization
@@ -1360,7 +1365,7 @@ def _handle_confirm_organization_record(
                version = version + 1, updated_at = now()
          where id = %s::uuid and version = %s
         """,
-        (operator.operator_id, org_id, expected_version),
+        (confirmer, org_id, expected_version),
     )
     if cur.rowcount == 0:
         raise CommandRefused(409, "stale_version", "concurrent modification")
@@ -1370,13 +1375,13 @@ def _handle_confirm_organization_record(
         aggregate_kind="organization",
         aggregate_id=org_id,
         event_type="organization.confirmed",
-        payload={"confirmed_from": "crm_authoring", "note": note_text},
+        payload={"confirmed_from": "mail_rule" if by_system else "crm_authoring", "note": note_text},
         operator=operator,
         receipt_id=receipt_id,
     )
     return {
         "ok": True, "organization_id": org_id, "version": expected_version + 1,
-        "already_confirmed": False, "confirmed_by_operator_id": operator.operator_id,
+        "already_confirmed": False, "confirmed_by_operator_id": confirmer, "confirmed_by_system": by_system,
     }
 
 
@@ -2510,7 +2515,8 @@ def _handle_archive_note(
 # ─────────────────────────────────────────────────────────────────────────── repository ──
 
 class V2CrmAuthoringRepository(CommandTransaction):
-    """30 CRM authoring commands, each in one transaction."""
+    """29 CRM authoring routes, each in one transaction, plus `unconfirm-organization-record`, which only
+    the email-rules undo runs (no route, not on the proxy)."""
 
     _restore_domain_row = _restore_domain_row
 

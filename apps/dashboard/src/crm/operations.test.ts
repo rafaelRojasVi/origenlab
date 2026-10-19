@@ -33,8 +33,8 @@ describe("actionSentence", () => {
   it("says R14 recorded a quote on its case and R15 confirmed an institution", () => {
     expect(actionSentence({ ...base, rule_id: "R14", quote_number: "09876-26" }))
       .toBe("Registró la cotización 09876-26 en el caso «Caso X» — el correo ya estaba en el caso (R14)");
-    expect(actionSentence({ ...base, rule_id: "R15", case_id: null, case_title: null, organization_name: "Agromar Ficticio SpA" }))
-      .toBe("Confirmó la institución «Agromar Ficticio SpA» — cotización enviada hace 3 días o más (R15)");
+    expect(actionSentence({ ...base, rule_id: "R15", case_id: null, case_title: null, organization_name: "Acme Ejemplo SpA" }))
+      .toBe("Confirmó la institución «Acme Ejemplo SpA» — cotización enviada hace 3 días o más (R15)");
   });
   it("says when it was undone", () => {
     expect(actionSentence({ ...base, undone: true })).toMatch(/· deshecho$/);

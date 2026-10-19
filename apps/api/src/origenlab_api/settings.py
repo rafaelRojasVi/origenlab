@@ -230,13 +230,13 @@ class Settings(BaseSettings):
     deploy-level stop, for when the dashboard itself cannot be reached."""
     v2_auto_mail_rules_interval_seconds: int = Field(default=300, ge=0, le=86_400)
     """Kill flag for rule R14 in the automatic pass (a sent quote on an email already on its one open
-    case is recorded there). Default **true**: it runs whenever an admin has the automatic run on;
-    false keeps it for «Aplicar» only."""
-    v2_auto_rule_r14_enabled: bool = True
+    case is recorded there). Default **false**: the first deploy changes nothing until the owner has
+    read the rule in the «Aplicar» preview and turns it on; false keeps it for «Aplicar» only."""
+    v2_auto_rule_r14_enabled: bool = False
     """Kill flag for rule R15 in the automatic pass (an institution a rule created «por confirmar» is
     confirmed, renamed from its quote PDF when named after its domain, once a quote stood 3 days).
-    Default **true**; false keeps it for «Aplicar» only."""
-    v2_auto_rule_r15_enabled: bool = True
+    Default **false**, like R14's; false keeps it for «Aplicar» only."""
+    v2_auto_rule_r15_enabled: bool = False
     """Mount POST /v2/commands/{create,save}-campaign-draft (writes outbound.campaign drafts).
 
     Default **false** and separate from `v2_commands_enabled`: writing email copy and recording

@@ -2083,7 +2083,12 @@ class CrmWorkspaceRepository:
                        cop.display_name as confirmed_by_name,
                        (select max(e.recorded_at)::text from crm.domain_event e
                          where e.aggregate_kind = 'organization' and e.aggregate_id = o.id
-                           and e.event_type = 'organization.confirmed') as confirmed_at
+                           and e.event_type = 'organization.confirmed') as confirmed_at,
+                       -- Rule R15 confirmed it (the newest confirmation is the worker's), not a person.
+                       coalesce((select e.actor_kind = 'worker' from crm.domain_event e
+                                  where e.aggregate_kind = 'organization' and e.aggregate_id = o.id
+                                    and e.event_type = 'organization.confirmed'
+                                  order by e.seq desc limit 1), false) as confirmed_by_system
                   from crm.organization o
                   left join platform.operator cop on cop.id = o.confirmed_by_operator_id
                  where o.id = %s::uuid

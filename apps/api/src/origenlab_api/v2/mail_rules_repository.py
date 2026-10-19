@@ -62,6 +62,7 @@ from origenlab_api.v2.mail_rules import (
     AUTO,
     CONFIRM_ORGANIZATION_RECORD,
     CREATE_REQUEST_FROM_FORWARD_STEP,
+    LATE_QUOTE_WINDOW_DAYS,
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     SETTLE_DAYS,
@@ -376,6 +377,10 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
     pairs = frozenset((r[0], r[1]) for r in cur.fetchall() if r[0])
     applied = frozenset(e for e, _ in pairs)
 
+    # R14: the window of sent mail it may record (Operaciones lists the same 60 days).
+    cur.execute("select now() - make_interval(days => %s)", (LATE_QUOTE_WINDOW_DAYS,))
+    since = cur.fetchone()[0]
+
     # R15: institutions «por confirmar» and their settled quotes.
     cur.execute(_INSTITUTIONS_SQL, {"days": int(settle_days)})
     institutions = tuple(InstitutionFacts(organization_id=oid, created_by=created_by,
@@ -398,7 +403,7 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                             "sent_at": g.get("received_at"), "direction": "inbound"}
     return Snapshot(evidence=tuple(evidence), cases=cases, organizations=organizations,
                     applied_evidence_ids=applied, forwards=tuple(forwards), applied_pairs=pairs,
-                    institutions=institutions), display
+                    institutions=institutions, late_quote_since=since.isoformat() if since else None), display
 
 
 # ─────────────────────────────────────────────────────────────── the repository ──
@@ -608,10 +613,10 @@ class MailRulesRepository(V2CaseCommandRepository):
                     (APPLY_COMMAND, action.evidence_id, action.rule_id),
                 )
             else:
+                # Any earlier receipt on this email (R14's included) refuses a stale «Aplicar».
                 cur.execute(
                     "select operator_id::text, idempotency_key from platform.command_receipt "
-                    "where command_name = %s and status = 'completed' and response_body ->> 'evidence_id' = %s "
-                    "and coalesce(response_body ->> 'rule_id', '') not in ('R14')",
+                    "where command_name = %s and status = 'completed' and response_body ->> 'evidence_id' = %s",
                     (APPLY_COMMAND, action.evidence_id),
                 )
             done = cur.fetchone()

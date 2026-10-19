@@ -353,9 +353,8 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
  * contact_point, classification and product-line links, supplier-candidate resolution, and
  * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
- * Thirty exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
- * «Confirmar institución», a record-level confirm that needs no assertion) and its inverse
- * `unconfirm-organization-record` (2026-10-19, the «Deshacer» of rule R15) among them. None is
+ * Twenty-nine exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
+ * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
  * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the six case
@@ -382,7 +381,6 @@ export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/archive-organization$/,
   /^\/v2\/commands\/restore-organization$/,
   /^\/v2\/commands\/confirm-organization-record$/,
-  /^\/v2\/commands\/unconfirm-organization-record$/,
   /^\/v2\/commands\/add-organization-identifier$/,
   /^\/v2\/commands\/remove-organization-identifier$/,
   /^\/v2\/commands\/add-organization-domain$/,
