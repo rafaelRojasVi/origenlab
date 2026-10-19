@@ -2,8 +2,7 @@
 import { equipmentScope, scopeById } from '../../data/equipmentScope';
 import { publicClaim } from '../../data/claims';
 import { getBrandByFamilyId, getBrandsByFamilyId, getProductBySlug } from '../../lib/catalog';
-import { imageSourcesFor, productImageSources } from '../../lib/productImage';
-import { imageForModel } from '../../data/productImages';
+import { productImageSources } from '../../lib/productImage';
 import BrandLogo from '../ui/BrandLogo.astro';
 import FamilyMotif from './FamilyMotif.astro';
 import Notice from '../ui/Notice.astro';
@@ -16,17 +15,15 @@ import Icon from '../ui/Icon.astro';
  * orden no es un flujo de trabajo y la sección lo dice en voz alta: son
  * capacidades modulares y cada laboratorio combina las que su método pide.
  *
- *   1. Medición          dos familias en paralelo, escala media. Pesaje abre
- *                        con la fotografía del MB120 de OHAUS, con su recuento
- *                        y el enlace a la marca; osmometría, con su motivo
+ *   1. Medición          dos familias en paralelo, escala media, motivo arriba
  *   2. Preparación       dos familias en una banda de fondo distinto, asimétrica
  *   3. Separación        la única fotografía aprobada, a gran escala, dos columnas
  *   4. Análisis          logotipo del fabricante y recuento, sin ilustración
  *
  * Centrifugación aparece la tercera, después de cuatro familias. Es deliberado:
- * su fotografía es la mayor de la sección y, puesta primero, se la come entera.
+ * es la única con fotografía y, puesta primero, se come la sección entera.
  *
- * Las familias sin fotografía no llevan una imagen de relleno ni la de
+ * Las cinco familias sin fotografía no llevan una imagen de relleno ni la de
  * otro fabricante: llevan un diagrama propio de lo que el equipo le hace a la
  * muestra. Ver `src/lib/familyMotif.ts` y `src/data/sourceRegistry.ts`.
  */
@@ -48,16 +45,6 @@ const analisisBrand = analisis ? getBrandByFamilyId(analisis.id) : undefined;
 const centrifugeCount = separacion?.countClaimId ? publicClaim(separacion.countClaimId) : undefined;
 const servaCount = analisis?.countClaimId ? publicClaim(analisis.countClaimId) : undefined;
 
-/**
- * Pesaje: fotografía del MB120 (modelo exacto, permiso del 2026-10-19), el
- * recuento de modelos OHAUS y el enlace a su página. Adam Equipment conserva
- * su logotipo junto al de OHAUS.
- */
-// La caja va a la medida del motivo de su pareja (15rem) con `style`: la hoja
-// de la portada está al límite del presupuesto de 60 kB de CSS.
-const weighingImage = imageSourcesFor(imageForModel('ohaus-mb120'));
-const ohausCount = publicClaim('modelos-ohaus-publicados');
-
 /** Una familia puede tener más de un fabricante (pesaje: Adam Equipment y OHAUS). */
 const brandsFor = (id: string) => getBrandsByFamilyId(id);
 ---
@@ -73,8 +60,8 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id);
       </div>
       <div>
         <p class="t-body families__body">
-          Tres familias tienen ficha publicada en este sitio, con especificaciones y documentación
-          del fabricante. Las otras tres se cotizan a partir de su aplicación: nos cuenta qué
+          Dos familias tienen ficha publicada en este sitio, con especificaciones y documentación
+          del fabricante. Las otras cuatro se cotizan a partir de su aplicación: nos cuenta qué
           necesita hacer y acotamos las alternativas antes de que exista un precio.
         </p>
         <p class="t-small families__note">
@@ -93,37 +80,9 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id);
         {
           medicion.map((entry, index) => (
             <article class="pair__item" data-reveal data-reveal-delay={index + 1}>
-              {entry.id === 'pesaje-humedad' && weighingImage ? (
-                <div
-                  class="pair__motif feature__media"
-                  style="max-width:15rem"
-                >
-                  <picture>
-                    <source
-                      type="image/avif"
-                      srcset={weighingImage.avifSrcset}
-                      sizes="(min-width: 768px) 15rem, 60vw"
-                    />
-                    <source
-                      type="image/webp"
-                      srcset={weighingImage.webpSrcset}
-                      sizes="(min-width: 768px) 15rem, 60vw"
-                    />
-                    <img
-                      src={weighingImage.src}
-                      alt={weighingImage.alt}
-                      width={weighingImage.width}
-                      height={weighingImage.height}
-                      loading="lazy"
-                      decoding="async"
-                    />
-                  </picture>
-                </div>
-              ) : (
-                <div class="pair__motif">
-                  <FamilyMotif familyId={entry.id} />
-                </div>
-              )}
+              <div class="pair__motif">
+                <FamilyMotif familyId={entry.id} />
+              </div>
               <div class="pair__body">
                 {brandsFor(entry.id).length > 0 && (
                   <div class="pair__logo">
@@ -135,15 +94,6 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id);
                 <h4 class="family-name family-name--md">{entry.name}</h4>
                 <p class="t-small family-purpose">{entry.purpose}</p>
                 <p class="family-question">{entry.question}</p>
-                {entry.id === 'pesaje-humedad' && weighingImage && (
-                  <div class="feature__foot">
-                    {ohausCount && <span class="t-data family-count">{ohausCount}</span>}
-                    <a href="/marcas/ohaus/" class="link-arrow">
-                      Ver OHAUS
-                      <Icon name="arrow-right" size={18} class="arrow" />
-                    </a>
-                  </div>
-                )}
               </div>
             </article>
           ))
