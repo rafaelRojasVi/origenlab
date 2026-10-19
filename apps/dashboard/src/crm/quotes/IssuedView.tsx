@@ -13,7 +13,8 @@ import { useId, type ReactNode } from "react";
 import { fmtDay } from "../catalog/catalogApi";
 import { formatMoney } from "../money";
 import { Badge } from "../ui";
-import type { QuoteStoredLine, QuoteWorkspace, QuoteWorkspaceRevision } from "./quoteApi";
+import { CostStrip } from "./CostStrip";
+import type { LineEconomics, QuoteStoredLine, QuoteWorkspace, QuoteWorkspaceRevision } from "./quoteApi";
 import { quoteLabel } from "./quoteLabel";
 
 export const REVISION_STATUS: Record<string, { label: string; tone: "warn" | "good" | "info" | "neutral" }> = {
@@ -183,7 +184,7 @@ export function IssuedView({ workspace }: { workspace: QuoteWorkspace }) {
         <h2 id={`${ids}-productos`} className="px-5 pb-3 pt-4 text-[17px] font-semibold text-ink">
           Productos
         </h2>
-        <StoredLines lines={items} currency={currency} />
+        <StoredLines lines={items} currency={currency} economics={cur.line_economics ?? null} />
       </section>
       {fixed.length || snapshot?.validityDays != null || snapshot?.extra.length ? (
         <section aria-labelledby={`${ids}-condiciones`} className={CARD}>
@@ -221,7 +222,8 @@ function Term({ label, value }: { label: string; value: string }) {
 
 const GRID = "grid grid-cols-[minmax(240px,1fr)_80px_130px_140px] gap-3";
 
-function StoredLines({ lines, currency }: { lines: QuoteStoredLine[]; currency: string }) {
+/** The approved lines; under each, the cost strip as approval froze it (sales and admin only, as the whole page). */
+function StoredLines({ lines, currency, economics }: { lines: QuoteStoredLine[]; currency: string; economics: LineEconomics[] | null }) {
   const money = (v: string | null) => formatMoney(v, currency) ?? "—";
   // A stored quantity reads «2», not «2.000000»: trailing zeros dropped, decimal comma; no arithmetic.
   const qty = (v: string | null) => (v == null ? "—" : v.replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "").replace(".", ","));
@@ -243,8 +245,11 @@ function StoredLines({ lines, currency }: { lines: QuoteStoredLine[]; currency: 
         {lines.length === 0 ? (
           <p className="px-5 py-6 text-[13px] text-ink-muted">Esta revisión no tiene líneas guardadas.</p>
         ) : (
-          lines.map((l) => (
-            <div key={l.line_no} role="row" className={`${GRID} items-start border-b border-line/60 px-5 py-3 text-[13.5px] last:border-b-0`}>
+          lines.map((l, i) => {
+            const strip = economics?.find((e) => e.line_no === l.line_no) ?? null;
+            return (
+            <div key={l.line_no} className="border-b border-line/60 px-5 py-3 last:border-b-0">
+            <div role="row" className={`${GRID} items-start text-[13.5px]`}>
               <span role="cell" className="min-w-0">
                 <span className="block break-words text-ink">{l.description ?? "—"}</span>
                 {l.line_note_es ? <span className="mt-0.5 block text-[12.5px] text-ink-muted">{l.line_note_es}</span> : null}
@@ -259,7 +264,10 @@ function StoredLines({ lines, currency }: { lines: QuoteStoredLine[]; currency: 
                 {money(l.line_total_qc)}
               </span>
             </div>
-          ))
+            {strip ? <CostStrip economics={strip} n={i + 1} /> : null}
+            </div>
+            );
+          })
         )}
       </div>
     </div>

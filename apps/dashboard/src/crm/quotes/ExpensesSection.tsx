@@ -1,12 +1,22 @@
 /**
  * The Cotizador's «Gastos de importación» card (canvas): how the import expenses are worked out —
- * «Perfil» (the Plantilla's flat amounts), «DHL calculado» (weights and the negotiated DHL rate) or
- * «Manual» — and one card per expense. Internal: the page hides it in «Vista cliente».
+ * «Perfil» (the Plantilla's flat amounts) or «Manual» — and one card per expense. Internal: the
+ * page hides it in «Vista cliente».
  *
- * In Perfil / DHL the amounts are the API's and read-only; «Editar montos» (ruling B5) switches to
- * Manual with a copy of what was computed, so the operator edits from the numbers they saw. Going
- * back to a derived method drops the manual expenses: the API adds manual expenses on top of the
- * derived ones in every method, so keeping them would count them twice.
+ * In Perfil the amounts are the API's and read-only; «Editar montos» (ruling B5) switches to Manual
+ * with a copy of what was computed, so the operator edits from the numbers they saw. Going back to
+ * Perfil drops the manual expenses: the API adds manual expenses on top of the derived ones in every
+ * method, so keeping them would count them twice.
+ *
+ * A manual expense is a «Tipo» chosen from a list (Flete, Agente de aduana, …), an optional detail
+ * and an amount, stored in its label as «Tipo — Detalle» (`expenseKind`): the economics split reads
+ * the type, never a guess (owner, 2026-10-19). An older free label shows the type the API reads in
+ * it and is kept as typed until the row is changed.
+ *
+ * «DHL calculado» is no longer offered (2026-10-19): the catalog has no weights or origins and no
+ * DHL rates are loaded, so it always fell back to the profile. A draft saved with it opens as it was
+ * — the API still prices it, its lines are shown read-only — with a note; nothing is changed until
+ * the operator picks Perfil or «Editar montos» (which copies its lines into Manual).
  *
  * Every amount shown is the API's `computed` (or, in Manual, what the operator typed), only formatted.
  */
@@ -21,18 +31,20 @@ import {
   updateManualExpense,
   type DraftProblem,
 } from "./draftEditor";
+import { EXPENSE_KINDS, encodeExpenseLabel, parseExpenseLabel } from "./expenseKind";
 import { NumberInput } from "./LineRow";
-import type { Computed, QuoteDraft, QuoteDraftExpense } from "./quoteApi";
+import type { Computed, ImportCostKind, QuoteDraft, QuoteDraftExpense } from "./quoteApi";
 import { ConfirmDialog } from "../ui";
 import { amountTextToDecimal, decimalEditText, formatPct } from "./quoteFormat";
 
 type Method = QuoteDraft["expense_method"];
 
+// «dhl_calc» stays a value the API reads (older drafts), not one the editor offers.
 const METHODS: { value: Method; label: string }[] = [
   { value: "profile", label: "Perfil" },
-  { value: "dhl_calc", label: "DHL calculado" },
   { value: "manual", label: "Manual" },
 ];
+const MAX_LABEL = 120;
 
 const CURRENCIES = ["CLP", "EUR", "USD"] as const;
 const MAX_MANUAL = 20;
@@ -121,6 +133,9 @@ function ManualExpense({
   onRemove: () => void;
 }) {
   const n = index + 1;
+  const { kind, detail } = parseExpenseLabel(expense.label);
+  // What is typed in «Detalle» while it has the focus (a trailing space stays in the box, not in the label).
+  const [typing, setTyping] = useState<string | null>(null);
   // A field's problem shows once it has content or was left: a row just added is not red on arrival
   // (the draft still is not sent while it is incomplete).
   const [left, setLeft] = useState({ label: false, amount: false });
@@ -129,50 +144,89 @@ function ManualExpense({
   const amountProblem = shown("amount") ? (problems.find((p) => p.field === "manual_expenses.amount")?.message_es ?? null) : null;
   // A value with a problem is shown as typed, never re-formatted.
   const display = amountProblem ? expense.amount : (formatMoney(expense.amount, expense.currency) ?? expense.amount);
+  const room = kind ? MAX_LABEL - encodeExpenseLabel(kind, "x").length + 1 : MAX_LABEL;
   return (
-    <li className="flex flex-col gap-2 rounded-[10px] border border-line px-3 py-2.5">
-      <input
-        type="text"
-        aria-label={`Nombre del gasto ${n}`}
-        aria-invalid={labelProblem ? true : undefined}
-        value={expense.label}
-        placeholder="Nombre del gasto"
-        disabled={disabled}
-        onChange={(e) => onPatch({ label: e.target.value })}
-        onBlur={() => setLeft((l) => ({ ...l, label: true }))}
-        className={FIELD_CLS}
-      />
-      <div className="flex items-center gap-1.5">
-        <span className="min-w-0 flex-1">
-          <NumberInput
-            label={`Monto del gasto ${n}`}
-            display={display}
-            editValue={amountProblem ? expense.amount : decimalEditText(expense.amount)}
-            placeholder="monto"
-            disabled={disabled}
-            invalid={!!amountProblem}
-            className={AMOUNT_CLS}
-            onBlur={() => setLeft((l) => ({ ...l, amount: true }))}
-            onChange={(t) => onPatch({ amount: amountTextToDecimal(t) ?? "" })}
-          />
-        </span>
+    <li className="flex flex-col gap-1.5 rounded-[10px] border border-line px-3 py-2.5 md:border-0 md:px-0 md:py-0">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(160px,200px)_minmax(0,1fr)_minmax(180px,220px)_auto] md:items-center">
         <select
-          aria-label={`Moneda del gasto ${n}`}
-          value={expense.currency}
+          aria-label={`Tipo del gasto ${n}`}
+          aria-invalid={labelProblem ? true : undefined}
+          value={kind ?? ""}
           disabled={disabled}
-          onChange={(e) =>
-            onPatch({
-              currency: e.target.value as QuoteDraftExpense["currency"],
-            })
-          }
-          className="h-10 w-[64px] shrink-0 rounded-md border border-line-strong bg-canvas-raised px-1 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
+          onChange={(e) => {
+            if (e.target.value) onPatch({ label: encodeExpenseLabel(e.target.value as ImportCostKind, typing ?? detail) });
+          }}
+          onBlur={() => setLeft((l) => ({ ...l, label: true }))}
+          className={FIELD_CLS}
         >
-          {CURRENCIES.map((c) => (
-            <option key={c} value={c}>
-              {c}
+          <option value="" disabled>
+            Elige el tipo
+          </option>
+          {EXPENSE_KINDS.map((k) => (
+            <option key={k.kind} value={k.kind}>
+              {k.label}
             </option>
           ))}
         </select>
+        <input
+          type="text"
+          aria-label={`Detalle del gasto ${n}`}
+          value={typing ?? detail}
+          placeholder="Detalle (opcional)"
+          maxLength={room}
+          disabled={disabled || !kind}
+          onFocus={() => setTyping(detail)}
+          onChange={(e) => {
+            setTyping(e.target.value);
+            if (kind) onPatch({ label: encodeExpenseLabel(kind, e.target.value) });
+          }}
+          onBlur={() => setTyping(null)}
+          className={FIELD_CLS}
+        />
+        <div className="col-span-2 flex items-center gap-1.5 md:col-span-1">
+          <span className="min-w-0 flex-1">
+            <NumberInput
+              label={`Monto del gasto ${n}`}
+              display={display}
+              editValue={amountProblem ? expense.amount : decimalEditText(expense.amount)}
+              placeholder="monto"
+              disabled={disabled}
+              invalid={!!amountProblem}
+              className={AMOUNT_CLS}
+              onBlur={() => setLeft((l) => ({ ...l, amount: true }))}
+              onChange={(t) => onPatch({ amount: amountTextToDecimal(t) ?? "" })}
+            />
+          </span>
+          <select
+            aria-label={`Moneda del gasto ${n}`}
+            value={expense.currency}
+            disabled={disabled}
+            onChange={(e) =>
+              onPatch({
+                currency: e.target.value as QuoteDraftExpense["currency"],
+              })
+            }
+            className="h-10 w-[64px] shrink-0 rounded-md border border-line-strong bg-canvas-raised px-1 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:opacity-50"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+        {disabled ? (
+          <span className="hidden md:block" />
+        ) : (
+          <button
+            type="button"
+            aria-label={`Quitar el gasto ${n}`}
+            onClick={onRemove}
+            className="col-span-2 min-h-[36px] justify-self-end rounded-md px-2 text-[12.5px] font-medium text-ink-muted hover:bg-canvas-sunken hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 md:col-span-1"
+          >
+            Quitar
+          </button>
+        )}
       </div>
       {labelProblem || amountProblem ? (
         <div className="flex flex-col gap-0.5">
@@ -180,19 +234,6 @@ function ManualExpense({
           {amountProblem ? <p className="text-[12px] text-bad">{amountProblem}</p> : null}
         </div>
       ) : null}
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11.5px] text-ink-muted">manual</span>
-        {disabled ? null : (
-          <button
-            type="button"
-            aria-label={`Quitar el gasto ${n}`}
-            onClick={onRemove}
-            className="min-h-[32px] rounded-md px-2 text-[12.5px] font-medium text-ink-muted hover:bg-canvas-sunken hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-          >
-            Quitar
-          </button>
-        )}
-      </div>
     </li>
   );
 }
@@ -293,10 +334,24 @@ export function ExpensesSection({
         </div>
       </header>
 
+      {draft.expense_method === "dhl_calc" ? (
+        <p role="note" className="rounded-md border border-warn/30 bg-warn-bg px-3 py-2 text-[12.5px] text-ink">
+          Este borrador usa «DHL calculado», que ya no se ofrece. Sus gastos siguen como estaban; para cambiarlos, elige Perfil o
+          «Editar montos».
+        </p>
+      ) : null}
+
       {manual ? (
         <>
           {draft.manual_expenses.length ? (
-            <ul aria-label="Gastos manuales" className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+            <>
+            <div aria-hidden="true" className="hidden grid-cols-[minmax(160px,200px)_minmax(0,1fr)_minmax(180px,220px)_auto] gap-2 text-[12px] text-ink-muted md:grid">
+              <span>Tipo</span>
+              <span>Detalle (opcional)</span>
+              <span className="text-right">Monto</span>
+              <span className="w-[52px]" />
+            </div>
+            <ul aria-label="Gastos manuales" className="flex flex-col gap-2.5 md:gap-2">
               {draft.manual_expenses.map((e, i) => (
                 <ManualExpense
                   key={e.uid ?? `at-${i}`}
@@ -309,6 +364,7 @@ export function ExpensesSection({
                 />
               ))}
             </ul>
+            </>
           ) : (
             <p className="text-[13px] text-ink-muted">Sin gastos de importación.</p>
           )}
@@ -327,7 +383,7 @@ export function ExpensesSection({
               </button>
             )}
             <span className="text-[12px] text-ink-muted">
-              Si vuelves a Perfil o DHL calculado, estos montos se descartan y se calculan de nuevo.
+              Si vuelves a Perfil, estos montos se descartan y se calculan de nuevo.
             </span>
           </div>
         </>
@@ -356,9 +412,7 @@ export function ExpensesSection({
           {n}
         </p>
       ))}
-      {draft.expense_method === "profile" && !notices.length ? (
-        <span className="text-[12.5px] text-ink-muted">Con pesos en el catálogo, «DHL calculado» usa la tarifa DHL negociada.</span>
-      ) : null}
+
       {confirmLeave ? (
         <ConfirmDialog
           title={`¿Volver a ${METHODS.find((m) => m.value === confirmLeave)?.label ?? confirmLeave}?`}

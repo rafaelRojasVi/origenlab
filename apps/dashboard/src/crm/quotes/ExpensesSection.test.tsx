@@ -1,6 +1,8 @@
 /**
- * «Gastos de importación»: how the expenses are worked out (Perfil / DHL calculado / Manual), one
- * card per expense the API computed, and the manual ones edited by hand. Every value is invented;
+ * «Gastos de importación»: how the expenses are worked out (Perfil / Manual), one card per expense
+ * the API computed, and the manual ones edited by hand — each with its «Tipo» chosen, stored in its
+ * label («Flete — DHL envío») so the economics split never guesses. «DHL calculado» is no longer
+ * offered; a draft saved with it keeps its lines and says so. Every value is invented;
  * the amounts on screen are the API's `computed`, only formatted.
  */
 import "@testing-library/jest-dom";
@@ -104,37 +106,68 @@ describe("ExpensesSection — derived expenses", () => {
     expect(screen.getByText("Se reparten según el costo de cada línea.")).toBeInTheDocument();
   });
 
+  it("offers only Perfil and Manual", async () => {
+    await setup();
+    const group = screen.getByRole("group", { name: "Cómo calcular los gastos" });
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["Perfil", "Manual"]);
+    expect(screen.queryByText(/DHL calculado/)).not.toBeInTheDocument();
+  });
+
   it("switches the method on click, with no manual expenses", async () => {
-    const { latest, edit } = await setup();
-    fireEvent.click(method("DHL calculado"));
+    const { latest, edit } = await setup({ initial: draft({ expense_method: "manual", manual_expenses: [] }), computed: priced({ expenses: [] }) });
+    fireEvent.click(method("Perfil"));
     expect(edit).toHaveBeenCalledTimes(1);
-    expect(latest.draft).toMatchObject({ expense_method: "dhl_calc", manual_expenses: [] });
-    expect(method("DHL calculado")).toHaveAttribute("aria-pressed", "true");
+    expect(latest.draft).toMatchObject({ expense_method: "profile", manual_expenses: [] });
+    expect(method("Perfil")).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("summarises the DHL calculation, and warns when it fell back to the profile", async () => {
-    await setup({
-      initial: draft({ expense_method: "dhl_calc" }),
-      computed: priced({
-        expenses: [
-          { line_no: 3, label: "Flete DHL (Proveedor Uno)", amount: "410000", currency: "CLP", method: "dhl_calc", allocated_to_line_no: 1, calc_inputs: { chargeable_kg: "12.5", zone: "3" } },
-          { line_no: 4, label: "Derechos", amount: "90000", currency: "CLP", method: "dhl_calc", allocated_to_line_no: 1, calc_inputs: { duty_rate: "0.06", origin_country: "DE" } },
-        ],
-      }),
-    });
-    const cards = screen.getAllByRole("listitem");
-    expect(cards[0]).toHaveTextContent("DHL · 12,5 kg · zona 3");
-    expect(cards[1]).toHaveTextContent("DHL · 6,0 % · origen DE");
-    expect(screen.queryByText(/Faltan pesos o datos/)).not.toBeInTheDocument();
-  });
+  describe("a draft saved with «DHL calculado»", () => {
+    const dhl = () =>
+      setup({
+        initial: draft({ expense_method: "dhl_calc" }),
+        computed: priced({
+          expenses: [
+            { line_no: 3, label: "Flete DHL (Proveedor Uno)", amount: "410000", currency: "CLP", method: "dhl_calc", allocated_to_line_no: 1, calc_inputs: { chargeable_kg: "12.5", zone: "3" } },
+            { line_no: 4, label: "Derechos", amount: "90000", currency: "CLP", method: "dhl_calc", allocated_to_line_no: 1, calc_inputs: { duty_rate: "0.06", origin_country: "DE" } },
+          ],
+        }),
+      });
 
-  it("says when DHL could not run and the profile was used, and names a missing profile parameter", async () => {
-    await setup({
-      initial: draft({ expense_method: "dhl_calc" }),
-      computed: priced({ warnings: ["dhl_fallback:dhl_weight_missing", "profile_parameter_missing:profile_customs_clp"] }),
+    it("opens unchanged, with its lines and a note, and neither method pressed", async () => {
+      const { latest, edit } = await dhl();
+      expect(edit).not.toHaveBeenCalled();
+      expect(latest.draft.expense_method).toBe("dhl_calc");
+      expect(screen.getByRole("note")).toHaveTextContent(
+        "Este borrador usa «DHL calculado», que ya no se ofrece. Sus gastos siguen como estaban; para cambiarlos, elige Perfil o «Editar montos».",
+      );
+      const cards = screen.getAllByRole("listitem");
+      expect(cards[0]).toHaveTextContent("DHL · 12,5 kg · zona 3");
+      expect(cards[1]).toHaveTextContent("DHL · 6,0 % · origen DE");
+      expect(method("Perfil")).toHaveAttribute("aria-pressed", "false");
+      expect(method("Manual")).toHaveAttribute("aria-pressed", "false");
     });
-    expect(screen.getByText("Faltan pesos o datos: se usó el perfil de la Plantilla.")).toBeInTheDocument();
-    expect(screen.getByText("Falta el parámetro profile_customs_clp del perfil.")).toBeInTheDocument();
+
+    it("«Editar montos» turns it into Manual with the same lines, typed by what they are", async () => {
+      const { latest } = await dhl();
+      fireEvent.click(screen.getByRole("button", { name: "Editar montos" }));
+      expect(latest.draft.expense_method).toBe("manual");
+      expect(latest.draft.manual_expenses.map(({ label, amount }) => [label, amount])).toEqual([
+        ["Flete DHL (Proveedor Uno)", "410000"],
+        ["Derechos", "90000"],
+      ]);
+      expect(screen.getByLabelText("Tipo del gasto 1")).toHaveValue("freight");
+      expect(screen.getByLabelText("Tipo del gasto 2")).toHaveValue("customs");
+      expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    });
+
+    it("still says when it fell back to the profile", async () => {
+      await setup({
+        initial: draft({ expense_method: "dhl_calc" }),
+        computed: priced({ warnings: ["dhl_fallback:dhl_weight_missing", "profile_parameter_missing:profile_customs_clp"] }),
+      });
+      expect(screen.getByText("Faltan pesos o datos: se usó el perfil de la Plantilla.")).toBeInTheDocument();
+      expect(screen.getByText("Falta el parámetro profile_customs_clp del perfil.")).toBeInTheDocument();
+    });
   });
 
   it("copies nothing while the amounts shown are for an older draft", async () => {
@@ -154,7 +187,9 @@ describe("ExpensesSection — derived expenses", () => {
       { label: "Flete", amount: "620000", currency: "CLP" },
       { label: "Agente de aduana", amount: "180000", currency: "CLP" },
     ]);
-    expect(screen.getByLabelText("Nombre del gasto 1")).toHaveValue("Flete");
+    expect(screen.getByLabelText("Tipo del gasto 1")).toHaveValue("freight");
+    expect(screen.getByLabelText("Detalle del gasto 1")).toHaveValue("");
+    expect(screen.getByLabelText("Tipo del gasto 2")).toHaveValue("agent");
   });
 });
 
@@ -168,36 +203,68 @@ describe("ExpensesSection — manual expenses", () => {
       ],
     });
 
-  it("edits each expense: name, amount (read the Chilean way) and currency", async () => {
+  it("each expense is a chosen type, an optional detail and an amount, stored as «Tipo — Detalle»", async () => {
     const { latest } = await setup({ initial: manual(), computed: priced({ expenses: [] }) });
     expect(screen.queryByRole("button", { name: "Editar montos" })).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Nombre del gasto 1"), { target: { value: "Flete DHL" } });
+    const types = within(screen.getByLabelText("Tipo del gasto 1")).getAllByRole("option").map((o) => o.textContent);
+    expect(types).toEqual(["Elige el tipo", "Flete", "Agente de aduana", "Derechos y aduana", "Transporte local", "Otro"]);
+    fireEvent.change(screen.getByLabelText("Detalle del gasto 1"), { target: { value: "DHL envío " } });
+    // A trailing space while typing stays in the box, not in what is stored.
+    expect(screen.getByLabelText("Detalle del gasto 1")).toHaveValue("DHL envío ");
+    fireEvent.change(screen.getByLabelText("Tipo del gasto 2"), { target: { value: "agent" } });
+    fireEvent.change(screen.getByLabelText("Detalle del gasto 2"), { target: { value: "Agente Ficticio" } });
     const amount = screen.getByLabelText("Monto del gasto 1");
     fireEvent.focus(amount);
     fireEvent.change(amount, { target: { value: "1.250.000" } });
     fireEvent.change(screen.getByLabelText("Moneda del gasto 2"), { target: { value: "EUR" } });
     expect(latest.draft.manual_expenses).toEqual([
-      { uid: "e1", label: "Flete DHL", amount: "1250000", currency: "CLP" },
-      { uid: "e2", label: "Seguro", amount: "50", currency: "EUR" },
+      { uid: "e1", label: "Flete — DHL envío", amount: "1250000", currency: "CLP" },
+      { uid: "e2", label: "Agente de aduana — Agente Ficticio", amount: "50", currency: "EUR" },
     ]);
   });
 
-  it("adds and removes an expense; a new row asks for what is missing only once left", async () => {
+  it("an old free label shows the type read in it and the label as its detail, unchanged until edited", async () => {
+    const { latest, edit } = await setup({
+      initial: draft({
+        expense_method: "manual",
+        manual_expenses: [
+          { uid: "e1", label: "DHL Envio", amount: "350000", currency: "CLP" },
+          { uid: "e2", label: "Persona Ficticia", amount: "80000", currency: "CLP" },
+        ],
+      }),
+      computed: priced({ expenses: [] }),
+    });
+    expect(screen.getByLabelText("Tipo del gasto 1")).toHaveValue("freight");
+    expect(screen.getByLabelText("Detalle del gasto 1")).toHaveValue("DHL Envio");
+    expect(screen.getByLabelText("Tipo del gasto 2")).toHaveValue("other");
+    expect(edit).not.toHaveBeenCalled();
+    // Choosing the type is what fixes it: an agent, not «Otros gastos».
+    fireEvent.change(screen.getByLabelText("Tipo del gasto 2"), { target: { value: "agent" } });
+    expect(latest.draft.manual_expenses[1].label).toBe("Agente de aduana — Persona Ficticia");
+    expect(latest.draft.manual_expenses[0].label).toBe("DHL Envio");
+  });
+
+  it("adds and removes an expense; a new row asks for its type first, and only once left", async () => {
     const { latest } = await setup({ initial: manual(), computed: priced({ expenses: [] }) });
     fireEvent.click(screen.getByRole("button", { name: "+ Agregar gasto" }));
     expect(latest.draft.manual_expenses).toHaveLength(3);
-    const third = screen.getByLabelText("Nombre del gasto 3").closest("li") as HTMLElement;
-    expect(within(third).queryByText(/Escribe/)).not.toBeInTheDocument();
+    const third = screen.getByLabelText("Tipo del gasto 3").closest("li") as HTMLElement;
+    expect(screen.getByLabelText("Tipo del gasto 3")).toHaveValue("");
+    expect(screen.getByLabelText("Detalle del gasto 3")).toBeDisabled();
+    expect(within(third).queryByText(/Elige/, { selector: "p" })).not.toBeInTheDocument();
     expect(draftProblems(latest.draft).length).toBeGreaterThan(0);
-    fireEvent.blur(screen.getByLabelText("Nombre del gasto 3"));
-    expect(within(third).getByText("Escribe el nombre del gasto.")).toBeInTheDocument();
+    fireEvent.blur(screen.getByLabelText("Tipo del gasto 3"));
+    expect(within(third).getByText("Elige el tipo de gasto.")).toBeInTheDocument();
     expect(within(third).queryByText("Escribe el monto del gasto.")).not.toBeInTheDocument();
     const amount = screen.getByLabelText("Monto del gasto 3");
     fireEvent.focus(amount);
     fireEvent.blur(amount);
     expect(within(third).getByText("Escribe el monto del gasto.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Tipo del gasto 3"), { target: { value: "transport" } });
+    expect(latest.draft.manual_expenses[2].label).toBe("Transporte local");
+    expect(screen.getByLabelText("Detalle del gasto 3")).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Quitar el gasto 1" }));
-    expect(latest.draft.manual_expenses.map((e) => e.label)).toEqual(["Seguro", ""]);
+    expect(latest.draft.manual_expenses.map((e) => e.label)).toEqual(["Seguro", "Transporte local"]);
   });
 
   it("edits an amount without the API's trailing zeros", async () => {
@@ -222,7 +289,7 @@ describe("ExpensesSection — manual expenses", () => {
 
   it("going back to a derived method asks first, then drops the manual expenses", async () => {
     const { latest } = await setup({ initial: manual(), computed: priced({ expenses: [] }) });
-    expect(screen.getByText(/Si vuelves a Perfil o DHL calculado, estos montos se descartan/)).toBeInTheDocument();
+    expect(screen.getByText(/Si vuelves a Perfil, estos montos se descartan/)).toBeInTheDocument();
     fireEvent.click(method("Perfil"));
     const dialog = screen.getByRole("alertdialog");
     expect(within(dialog).getByText("Se borrarán los gastos escritos a mano.")).toBeInTheDocument();
@@ -230,11 +297,11 @@ describe("ExpensesSection — manual expenses", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(latest.draft.expense_method).toBe("manual");
     expect(latest.draft.manual_expenses).toHaveLength(2);
-    fireEvent.click(method("DHL calculado"));
+    fireEvent.click(method("Perfil"));
     const again = screen.getByRole("alertdialog");
     fireEvent.click(within(again).getByRole("checkbox"));
     fireEvent.click(within(again).getByRole("button", { name: "Borrar y cambiar" }));
-    expect(latest.draft).toMatchObject({ expense_method: "dhl_calc", manual_expenses: [] });
+    expect(latest.draft).toMatchObject({ expense_method: "profile", manual_expenses: [] });
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
@@ -247,7 +314,8 @@ describe("ExpensesSection — manual expenses", () => {
 
   it("is read-only when the draft cannot be edited", async () => {
     await setup({ initial: manual(), computed: priced({ expenses: [] }), disabled: true });
-    expect(screen.getByLabelText("Nombre del gasto 1")).toBeDisabled();
+    expect(screen.getByLabelText("Tipo del gasto 1")).toBeDisabled();
+    expect(screen.getByLabelText("Detalle del gasto 1")).toBeDisabled();
     expect(method("Perfil")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "+ Agregar gasto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Quitar el gasto 1" })).not.toBeInTheDocument();

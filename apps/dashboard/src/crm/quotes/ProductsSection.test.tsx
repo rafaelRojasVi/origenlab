@@ -3,14 +3,14 @@
  * invented. The numbers on screen are the API's `computed`, only formatted here.
  */
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { CatalogIndex } from "../catalog/catalogIndex";
 import type { IndexItem } from "../catalog/catalogSearch";
 import { draftProblems } from "./draftEditor";
 import type { Computed, ComputedLine, QuoteDraft, QuoteWorkspace } from "./quoteApi";
-import { computedFixture, workspaceFixture } from "./quoteFixtures";
+import { computedFixture, lineEconomics, workspaceFixture } from "./quoteFixtures";
 import { ProductsSection } from "./ProductsSection";
 
 function item(over: Partial<IndexItem> & Pick<IndexItem, "id" | "model_number" | "name">): IndexItem {
@@ -550,5 +550,36 @@ describe("ProductsSection — a cost being cleared stays editable", () => {
     fireEvent.blur(price);
     expect(price).toHaveValue("mil");
     expect(screen.getByText(/El precio debe ser un número/)).toBeInTheDocument();
+  });
+});
+
+describe("ProductsSection — the cost strip under each line", () => {
+  // Line 2 is priced first in the API's list: each row must find its own by line_no.
+  const withStrip = (): Computed => ({
+    ...computed(),
+    line_economics: [
+      lineEconomics({ line_no: 2, product_cost_clp: null, expenses_clp: "0", cost_clp: null, sale_net_clp: "60000", gain_clp: null, gross_margin: null, margin_state: "no_cost", iva_clp: "11400", total_with_iva_clp: "71400" }),
+      lineEconomics({ line_no: 1, product_cost_clp: "7500000", expenses_clp: "800000", cost_clp: "8300000", sale_net_clp: "11620000", gain_clp: "3320000", gross_margin: "0.2857", iva_clp: "2207800", total_with_iva_clp: "13827800" }),
+    ],
+  });
+
+  it("shows what the line costs with its expenses, the margin and what is charged", async () => {
+    await setup({ priced: withStrip() });
+    const first = within(screen.getByRole("row", { name: /Agitador de prueba/ })).getByTestId("cost-strip");
+    expect(first).toHaveTextContent("Me cuesta$ 8.300.000equipo $ 7.500.000 + gastos $ 800.000");
+    expect(first).toHaveTextContent("28,6 %");
+    expect(first).toHaveTextContent("gano $ 3.320.000");
+    expect(first).toHaveTextContent("+ IVA = $ 13.827.800");
+    const second = within(screen.getByRole("row", { name: /Servicio de prueba/ })).getByTestId("cost-strip");
+    expect(second).toHaveTextContent("Sin costo");
+    expect(second).toHaveTextContent("$ 60.000");
+  });
+
+  it("is never in «Vista cliente», nor before the API answers", async () => {
+    await setup({ priced: withStrip(), clientView: true });
+    expect(screen.queryByTestId("cost-strip")).not.toBeInTheDocument();
+    cleanup();
+    await setup();
+    expect(screen.queryByTestId("cost-strip")).not.toBeInTheDocument();
   });
 });

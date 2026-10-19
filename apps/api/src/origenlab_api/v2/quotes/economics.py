@@ -89,14 +89,59 @@ def economics_json(inp: EngineInput, result: EngineResult) -> dict[str, Any]:
     return _plain(economics(inp, result))
 
 
+def line_economics(inp: EngineInput, result: EngineResult) -> list[dict[str, Any]]:
+    """Each item line's «Me cuesta → margen → Le cobro» (the Cotizador's cost strip), off the engine's result.
+
+    `cost_clp` is quantity × the line's cost in pesos (J15) plus the import expenses the engine
+    allocated to it (P15) — quantity × its unit base (R15) —; `sale_net_clp` its total (W15);
+    `gain_clp` the difference; `gross_margin` and `margin_state` the engine's own (V15). The IVA is the
+    quote's rate over the line's neto, for information. A line without a cost has no cost, gain or
+    margin; one without a price has nothing but its cost.
+    """
+    by_no = {line.line_no: line for line in inp.items}
+    out: list[dict[str, Any]] = []
+    for r in result.lines:
+        quantity = by_no[r.line_no].quantity
+        product = None if r.cost_clp_unit is None else peso(quantity * r.cost_clp_unit)
+        cost = None if product is None else peso(quantity * r.cost_clp_unit + r.expense_to_line)
+        sale = r.line_total
+        iva = None if sale is None else peso(sale * inp.iva_rate)
+        out.append({
+            "line_no": r.line_no, "product_cost_clp": product, "expenses_clp": r.expense_to_line,
+            "cost_clp": cost, "sale_net_clp": sale,
+            "gain_clp": None if cost is None or sale is None else sale - cost,
+            "gross_margin": r.gross_margin, "margin_state": r.margin_state,
+            "iva_clp": iva, "total_with_iva_clp": None if sale is None else sale + iva,
+        })
+    return out
+
+
+def line_economics_json(inp: EngineInput, result: EngineResult) -> list[dict[str, Any]]:
+    """`line_economics` with every amount as a string: what a response carries."""
+    return _plain(line_economics(inp, result))
+
+
+def _frozen(revision: dict[str, Any], lines: list[dict[str, Any]],
+            params: dict[str, Decimal | str]) -> tuple[EngineInput, EngineResult] | None:
+    try:
+        inp = engine_input_from_rows(revision, lines, params)
+        return inp, compute(inp)
+    except EngineError:
+        return None
+
+
 def frozen_economics(revision: dict[str, Any], lines: list[dict[str, Any]],
                      params: dict[str, Decimal | str]) -> dict[str, Any] | None:
     """A stored revision's economics, priced as approval prices it; None when it cannot be priced."""
-    try:
-        inp = engine_input_from_rows(revision, lines, params)
-        return economics(inp, compute(inp))
-    except EngineError:
-        return None
+    priced = _frozen(revision, lines, params)
+    return None if priced is None else economics(*priced)
+
+
+def frozen_line_economics(revision: dict[str, Any], lines: list[dict[str, Any]],
+                          params: dict[str, Decimal | str]) -> list[dict[str, Any]] | None:
+    """A stored revision's per-line cost strip (`line_economics`, as strings); None when it cannot be priced."""
+    priced = _frozen(revision, lines, params)
+    return None if priced is None else line_economics_json(*priced)
 
 
 # -- the period report (`GET /v2/quotes/economics`)

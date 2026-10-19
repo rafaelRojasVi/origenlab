@@ -107,6 +107,8 @@ export function ProductsSection({
   const onQuote = new Set(draft.items.map((i) => i.product_id).filter(Boolean));
 
   const lineOf = (i: number): ComputedLine | null => computedLineFor(computed, computedKeys, draft.items[i].uid);
+  const economicsOf = (line: ComputedLine | null) =>
+    (line && computed?.line_economics?.find((e) => e.line_no === line.line_no)) || null;
 
   function productOf(i: number, line: ComputedLine | null): LineProduct | null {
     const id = draft.items[i].product_id;
@@ -237,6 +239,7 @@ export function ProductsSection({
                   index={i}
                   item={item}
                   line={line}
+                  economics={economicsOf(line)}
                   product={productOf(i, line)}
                   currency={currency}
                   problems={invalid.filter((p) => p.index === i && p.field.startsWith("items."))}

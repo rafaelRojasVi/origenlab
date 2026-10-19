@@ -5,6 +5,7 @@ the method and falls back to the profile when the DHL calculation cannot run.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Mapping
@@ -45,20 +46,39 @@ _DHL_PARAMS = (
 )
 
 
-#: «Rentabilidad»'s split of a quote's import costs. A profile line says its parameter; a DHL or a
-#: manual line is read by its label (the DHL labels are the ones `dhl_expenses` writes; a manual one
-#: is whatever the operator typed, so a word it starts with decides, else `other`).
+#: «Rentabilidad»'s split of a quote's import costs. A profile line says its parameter; a manual line
+#: typed in the editor says its type («Flete — DHL envío»: the type the operator chose, then « — »
+#: and an optional detail), which decides whatever the detail says. Any other label (a DHL line, an
+#: old free label) is read by its words: a word it starts with decides, else a word in it, else `other`.
 EXPENSE_CATEGORIES = ("freight", "agent", "customs", "transport", "other")
 _PARAMETER_CATEGORY = {
     "profile_freight_clp": "freight", "profile_agent_clp": "agent", "profile_customs_clp": "customs",
     "profile_transport_clp": "transport", "domestic_transport_clp": "transport",
 }
+#: The editor's «Tipo» choices and the separator between a type and its detail.
+EXPENSE_TYPE_LABELS = {
+    "flete": "freight", "agente de aduana": "agent", "derechos y aduana": "customs",
+    "transporte local": "transport", "otro": "other",
+}
+EXPENSE_TYPE_SEPARATOR = " — "
 _LABEL_CATEGORY = (
-    ("flete", "freight"), ("freight", "freight"), ("courier", "freight"),
+    ("flete", "freight"), ("freight", "freight"), ("courier", "freight"), ("dhl", "freight"),
+    ("envío", "freight"), ("envio", "freight"), ("fedex", "freight"), ("ups", "freight"),
     ("agente", "agent"), ("despacho", "agent"), ("desaduanaje", "agent"),
     ("derecho", "customs"), ("aduana", "customs"), ("arancel", "customs"),
     ("transporte", "transport"), ("traslado", "transport"),
 )
+# Short courier names are whole words only («ups» is not «grupos»); the rest start a word.
+_WHOLE_WORD = frozenset({"ups", "dhl"})
+_WORD = {word: re.compile(rf"\b{re.escape(word)}\b" if word in _WHOLE_WORD else rf"\b{re.escape(word)}")
+         for word, _ in _LABEL_CATEGORY}
+
+
+def typed_expense_category(label: str | None) -> str | None:
+    """The category of a label the editor wrote («Tipo» or «Tipo — Detalle»), else None."""
+    text = (label or "").strip().lower()
+    head = text.split(EXPENSE_TYPE_SEPARATOR, 1)[0].strip() if EXPENSE_TYPE_SEPARATOR in text else text
+    return EXPENSE_TYPE_LABELS.get(head)
 
 
 def expense_category(label: str | None, calc_inputs: Mapping | None) -> str:
@@ -66,12 +86,15 @@ def expense_category(label: str | None, calc_inputs: Mapping | None) -> str:
     parameter = (calc_inputs or {}).get("parameter") if isinstance(calc_inputs, Mapping) else None
     if parameter in _PARAMETER_CATEGORY:
         return _PARAMETER_CATEGORY[parameter]
+    typed = typed_expense_category(label)
+    if typed is not None:
+        return typed
     text = (label or "").strip().lower()
     for word, category in _LABEL_CATEGORY:
-        if text.startswith(word):
+        if text.startswith(word) and _WORD[word].match(text):
             return category
     for word, category in _LABEL_CATEGORY:
-        if word in text:
+        if _WORD[word].search(text):
             return category
     return "other"
 

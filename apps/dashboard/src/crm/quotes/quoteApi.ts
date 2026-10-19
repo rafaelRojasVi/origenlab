@@ -153,6 +153,24 @@ export interface QuoteEconomics {
   cost_coverage: { state: "full" | "partial" | "none"; item_lines: number; lines_without_cost: number };
 }
 
+/**
+ * One item line's «Me cuesta → margen → Le cobro» (`v2/quotes/economics.line_economics`): its cost
+ * in pesos with the import expenses the engine allocated to it, its neto, the difference and the
+ * engine's margin; the IVA over its neto for information. All the API's; null where unknowable.
+ */
+export interface LineEconomics {
+  line_no: number;
+  product_cost_clp: Decimal | null;
+  expenses_clp: Decimal;
+  cost_clp: Decimal | null;
+  sale_net_clp: Decimal | null;
+  gain_clp: Decimal | null;
+  gross_margin: Decimal | null;
+  margin_state: string;
+  iva_clp: Decimal | null;
+  total_with_iva_clp: Decimal | null;
+}
+
 export interface Computed {
   lines: ComputedLine[];
   expenses: {
@@ -179,6 +197,8 @@ export interface Computed {
   warnings: string[];
   /** Absent from an older API. */
   economics?: QuoteEconomics;
+  /** The cost strip under each line; absent from an older API. */
+  line_economics?: LineEconomics[];
 }
 
 /* ── GET /v2/quotes/{id} ──────────────────────────────────────────────────── */
@@ -283,6 +303,8 @@ export interface QuoteWorkspaceCurrent {
   party_snapshot?: unknown | null;
   /** Its economics: a draft's live ones (= `computed.economics`), an issued one's as frozen; null for an imported quote. */
   economics?: QuoteEconomics | null;
+  /** An issued revision's cost strip per line, as approval froze it; null for an imported quote. */
+  line_economics?: LineEconomics[] | null;
 }
 
 export interface QuoteWorkspace {
