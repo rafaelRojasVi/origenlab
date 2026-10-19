@@ -3295,3 +3295,23 @@ equals «Gastos de importación» (the card says so if it ever does not). No API
 Cotizador's API refuses a viewer; hidden in «Vista cliente»), never in `printableQuote` or the print
 view (tested); not shown for an imported quote. Tests: vitest `enteredExpenses.test.ts`,
 `SummaryRail.test.tsx`, `QuotePrintView.test.tsx`.
+
+### 2.7.139 Licitaciones fase 1, schema: tender cases, bidder data, anexos, preparations, model spend, 2026-10-19 — built, migration not applied
+
+Spec «Licitaciones con IA» §6.10 (tenders in their own space). Migration `20261020100000`
+([`DOMAIN.md`](DOMAIN.md) §7.11): `crm.opportunity.kind` (`sale` | `tender`, existing cases `sale`,
+never changed — guard `crm.opportunity_kind_fixed`) and `tender_status`; `crm.opportunity_document`
+also holds `tender_annex` (Word/Excel too); tables #60 `crm.bidder_profile` (append-only), #61
+`crm.bidder_document` (retired once — guard `crm.bidder_document_retire_once`), #62
+`evidence.bid_preparation` (one queued/running row per case and phase), #63
+`platform.model_usage` (append-only); the API inserts `procurement.notice`; the worker reads
+`catalog.product_document`; six events and the aggregate kinds `bidder` and `notice`. Inventory:
+tables **59** (`crm` 24, `evidence` 6, `platform` 7), policies **209**, foreign keys **184** (151
+unconditionally covered), functions **40**, migrations **63**; the Slice 0 evidence set moved in the
+same change (pgTAP `099_tender_bid_preparation.sql`, 69 assertions).
+
+- **Schema only.** No API, worker or dashboard code reads or writes these yet (Licitaciones fase 1,
+  later tasks). Nothing excludes tenders from general reads yet either — there are none until the
+  open-tender command exists.
+- **Not yet.** The migration is not applied on hosted; it must be, before the API and worker that
+  use it deploy.

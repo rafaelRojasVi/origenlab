@@ -1,4 +1,4 @@
--- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 55 tables, ownership, RLS
+-- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 59 tables, ownership, RLS
 -- posture, no SECURITY DEFINER function, pinned search_path, `public` empty, forbidden columns
 -- absent, send flags false. docs/DOMAIN.md §7; docs/ARCHITECTURE.md §3, §6.1, §6.2.
 begin;
@@ -19,7 +19,7 @@ select is(
       and nspowner = 'origenlab_owner'::regrole),
   7, 'all seven application schemas are owned by origenlab_owner');
 
--- Exactly the reviewed 55 application tables (DOMAIN.md §7, §7.1, §7.2, §7.3).
+-- Exactly the reviewed 59 application tables (DOMAIN.md §7, §7.1, §7.2, §7.3).
 select set_eq(
   $$ select n.nspname || '.' || c.relname
        from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -46,9 +46,10 @@ select set_eq(
     'catalog.product_image', 'catalog.supplier_terms',
     'catalog.fx_rate', 'catalog.cost_parameter', 'evidence.document_line',
     'evidence.triage_review', 'crm.opportunity_document', 'catalog.product_document',
-    'evidence.subject_memory', 'catalog.product_model_alias'
+    'evidence.subject_memory', 'catalog.product_model_alias',
+    'crm.bidder_profile', 'crm.bidder_document', 'evidence.bid_preparation', 'platform.model_usage'
   ],
-  'exactly the reviewed 55 application tables exist');
+  'exactly the reviewed 59 application tables exist');
 
 select results_eq(
   $$ select n.nspname::text collate "default", count(*)::int
@@ -56,8 +57,8 @@ select results_eq(
       where c.relkind = 'r'
         and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       group by 1 order by 1 $$,
-  $$ values ('catalog', 8), ('comms', 4), ('crm', 22), ('evidence', 5), ('outbound', 9), ('platform', 6), ('procurement', 1) $$,
-  'counts by schema: crm 22, comms 4, outbound 9, evidence 5, catalog 8, procurement 1, platform 6');
+  $$ values ('catalog', 8), ('comms', 4), ('crm', 24), ('evidence', 6), ('outbound', 9), ('platform', 7), ('procurement', 1) $$,
+  'counts by schema: crm 24, comms 4, outbound 9, evidence 6, catalog 8, procurement 1, platform 7');
 
 -- No views, materialized views, partitions or foreign tables in Slice 0.
 select is(
@@ -127,8 +128,9 @@ select set_eq(
         'platform.begin_pin_attempt', 'platform.finish_pin_attempt',
         'evidence.document_line_review_guard', 'crm.opportunity_document_immutable',
         'crm.quote_line_authored_draft_only', 'crm.quote_revision_authored_frozen',
-        'catalog.product_model_alias_guard'],
-  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the four W10/contact-control functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper, the two PIN-attempt definers, the document-line review guard, the case-document guard, the quote-line draft guard, the issued-revision freeze and the model-alias guard exist');
+        'catalog.product_model_alias_guard',
+        'crm.opportunity_kind_fixed', 'crm.bidder_document_retire_once'],
+  'exactly the three Slice 0 helper functions, the five commercial-case guards, the stage guard, the historical-revision guard, the campaign-content guard, the two audience-freeze guards, the two campaign-planning guards, the four W10/contact-control functions, the three campaign-block functions, the archived-campaign guard, the campaign-content-archive guard, the note guard, the three sign-in version guards, the session guard, the audit-actor guard, the HMAC helper, the two PIN-attempt definers, the document-line review guard, the case-document guard, the quote-line draft guard, the issued-revision freeze, the model-alias guard, the case-kind guard and the bidder-document guard exist');
 
 -- `public` holds nothing.
 select is(
@@ -150,13 +152,13 @@ select hasnt_column('crm', 'external_identifier', 'entity_id', 'external_identif
 select hasnt_column('crm', 'address', 'parent_type', 'address is bound by a typed FK, not a parent_type/parent_id pair');
 select col_not_null('crm', 'address', 'organization_id', 'address.organization_id is NOT NULL');
 
--- RLS enabled on all 55 tables and never forced (the owner crosses it by ownership).
+-- RLS enabled on all 59 tables and never forced (the owner crosses it by ownership).
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and c.relrowsecurity),
-  55, 'RLS is enabled on all 55 tables');
+  59, 'RLS is enabled on all 59 tables');
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
@@ -176,7 +178,7 @@ select is(
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §7 #%'),
-  55, 'every table is commented with its DOMAIN.md §7 inventory number');
+  59, 'every table is commented with its DOMAIN.md §7 inventory number');
 
 select * from finish();
 rollback;

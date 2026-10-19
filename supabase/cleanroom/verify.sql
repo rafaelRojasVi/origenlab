@@ -109,6 +109,10 @@ union all select 'crm.opportunity_document', count(*)::text from crm.opportunity
 union all select 'catalog.product_document', count(*)::text from catalog.product_document
 union all select 'evidence.subject_memory', count(*)::text from evidence.subject_memory
 union all select 'catalog.product_model_alias', count(*)::text from catalog.product_model_alias
+union all select 'crm.bidder_profile', count(*)::text from crm.bidder_profile
+union all select 'crm.bidder_document', count(*)::text from crm.bidder_document
+union all select 'evidence.bid_preparation', count(*)::text from evidence.bid_preparation
+union all select 'platform.model_usage', count(*)::text from platform.model_usage
 ;
 
 commit;

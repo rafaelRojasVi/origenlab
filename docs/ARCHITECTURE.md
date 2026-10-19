@@ -626,6 +626,12 @@ role and no Data-API-facing role is ever inside these predefined roles.
   /v2/workspace/opportunities/{id}/documents/{doc}/url`. Without Storage
   configured those routes answer 503 and the session says
   `case_documents_enabled: false`.
+  Since 2026-10-19 ([`DOMAIN.md`](DOMAIN.md) §7.11) the same bucket holds a tender's anexos under the
+  same case path (`kind = 'tender_annex'`, PDF/images/Word/Excel), the files a bid preparation
+  generates under `opportunities/<case>/bid/<preparation>/` (listed in
+  `evidence.bid_preparation.outputs`, not rows of their own), and the bidder's standard documents
+  under `bidder/<sha256>.<ext>` (`crm.bidder_document.storage_path`). The API writes anexos and
+  bidder documents; the worker reads them and writes a preparation's outputs.
 - **Catalog documents stay in Google Drive (2026-10-13).** Data sheets and supplier
   price lists are not copied into Storage: `catalog.product_document` holds the
   Drive file id and the dashboard opens `drive.google.com/file/d/<id>/view` in a

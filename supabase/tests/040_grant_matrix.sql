@@ -95,7 +95,9 @@ insert into expected values
     ('catalog', 'product', 'origenlab_worker', 'S', null, 'S'),
     ('catalog', 'supplier_product', 'origenlab_api', 'SI', null, 'SI'),
     ('catalog', 'supplier_product', 'origenlab_worker', 'SI', null, 'SI'),
-    ('procurement', 'notice', 'origenlab_api', 'S', array['promoted_opportunity_id', 'updated_at'], 'SU'),
+    -- 20261020100000: the API also inserts the notice of a tender opened by hand and records what it
+    -- read from it.
+    ('procurement', 'notice', 'origenlab_api', 'SI', array['promoted_opportunity_id', 'updated_at', 'last_seen_at', 'head', 'head_history', 'buyer_name', 'buyer_code', 'title', 'closes_at'], 'SIU'),
     ('procurement', 'notice', 'origenlab_worker', 'SIU', null, 'SIU'),
     -- 20260928192000: the runtime API role reads operators and never writes one.
     ('platform', 'operator', 'origenlab_api', 'S', null, 'S'),
@@ -151,9 +153,9 @@ insert into expected values
     ('crm', 'opportunity_document', 'origenlab_api', 'SI', array['removed_at', 'removed_by_operator_id', 'remove_reason'], 'SIU'),
     ('crm', 'opportunity_document', 'origenlab_worker', 'S', null, 'S'),
     -- 20261013120000: catalog.product_document — api reads, records and retires (status only);
-    -- the worker has no access.
+    -- since 20261020100000 the worker reads (the spec sheets of a tender bid).
     ('catalog', 'product_document', 'origenlab_api', 'SI', array['status', 'version', 'updated_at'], 'SIU'),
-    ('catalog', 'product_document', 'origenlab_worker', '', null, ''),
+    ('catalog', 'product_document', 'origenlab_worker', 'S', null, 'S'),
     -- 20261015120000: evidence.subject_memory — append-only machine memory per case/org/person:
     -- the worker inserts new versions and reads; the api reads for the /memory endpoint.
     ('evidence', 'subject_memory', 'origenlab_api', 'S', null, 'S'),
@@ -161,9 +163,21 @@ insert into expected values
     -- 20261016200000: catalog.product_model_alias — api reads, adds and retires (only the two
     -- retirement columns); the worker reads (the mail triage matches models by alias).
     ('catalog', 'product_model_alias', 'origenlab_api', 'SI', array['retired_at', 'retired_by_operator_id'], 'SIU'),
-    ('catalog', 'product_model_alias', 'origenlab_worker', 'S', null, 'S');
+    ('catalog', 'product_model_alias', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261020100000: tender bid preparation. crm.bidder_profile is append-only (api saves, worker
+    -- reads); crm.bidder_document is retired once (api: the three retirement columns); the API
+    -- requests an evidence.bid_preparation and the worker writes its run back; the worker records
+    -- platform.model_usage and the API reads it.
+    ('crm', 'bidder_profile', 'origenlab_api', 'SI', null, 'SI'),
+    ('crm', 'bidder_profile', 'origenlab_worker', 'S', null, 'S'),
+    ('crm', 'bidder_document', 'origenlab_api', 'SI', array['retired_at', 'retired_by_operator_id', 'retire_reason'], 'SIU'),
+    ('crm', 'bidder_document', 'origenlab_worker', 'S', null, 'S'),
+    ('evidence', 'bid_preparation', 'origenlab_api', 'SI', null, 'SI'),
+    ('evidence', 'bid_preparation', 'origenlab_worker', 'S', array['status', 'started_at', 'finished_at', 'failure_code', 'result', 'outputs', 'models', 'updated_at'], 'SU'),
+    ('platform', 'model_usage', 'origenlab_api', 'S', null, 'S'),
+    ('platform', 'model_usage', 'origenlab_worker', 'SI', null, 'SI');
 
-select is((select count(*)::int from expected), 110, 'the matrix covers all 55 tables for both runtime roles');
+select is((select count(*)::int from expected), 118, 'the matrix covers all 59 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
