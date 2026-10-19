@@ -14,7 +14,8 @@ pattern = "origenlab.cl/api/web/*"
 zone_name = "origenlab.cl"
 
 # Rate-limit binding for the public web quote form.
-# Owner: replace namespace_id with the output of: wrangler ratelimit create --name "web-form-submissions"
+# namespace_id is a number this account chooses (Cloudflare: a positive integer unique within the
+# account); nothing has to be created first. 5 submissions per IP per 60 s (period is 10 or 60).
 [[ratelimits]]
 name = "WEB_FORM_RATE_LIMIT"
 namespace_id = "1001"
