@@ -332,11 +332,30 @@ export function isAllowedCaseCommandPostPath(pathname: string): boolean {
   return CASE_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
 }
 
-/** The body limit for one marketing (or email-rules, or case) command path. */
+/**
+ * «Licitaciones» commands (spec 2026-10-19 §6.10), one list for the whole family: `open-tender-case`
+ * (a tender case from a Mercado Público code or link) now; set-tender-status, the bidder data and the
+ * bid preparation join it as they are built. Upstream each needs an active `sales` or `admin`
+ * operator from the verified session (a `viewer` is 403), an `Idempotency-Key`, and mounts only
+ * behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the case commands
+ * (`marketingCommandRefusal` in index.ts).
+ */
+export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [/^\/v2\/commands\/open-tender-case$/];
+
+/** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */
+export const TENDER_COMMAND_MAX_BYTES = 16_384;
+
+export function isAllowedTenderCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return TENDER_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/** The body limit for one marketing (or email-rules, case or tender) command path. */
 export function marketingCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (isAllowedMailRulesCommandPostPath(pathOnly)) return MAIL_RULES_MAX_BYTES;
   if (isAllowedCaseCommandPostPath(pathOnly)) return CASE_COMMAND_MAX_BYTES;
+  if (isAllowedTenderCommandPostPath(pathOnly)) return TENDER_COMMAND_MAX_BYTES;
   if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
   if (UNSUBSCRIBE_REVIEW_PATH_RE.test(pathOnly)) return UNSUBSCRIBE_REVIEW_MAX_BYTES;
   if (CAMPAIGN_BLOCK_PATH_RE.test(pathOnly)) return CAMPAIGN_BLOCK_MAX_BYTES;
@@ -529,6 +548,7 @@ export function isAllowedPostPath(pathname: string): boolean {
     isAllowedCrmAuthoringCommandPostPath(pathname) ||
     isAllowedMailRulesCommandPostPath(pathname) ||
     isAllowedCaseCommandPostPath(pathname) ||
+    isAllowedTenderCommandPostPath(pathname) ||
     isAllowedCatalogCommandPostPath(pathname) ||
     isAllowedCatalogUploadPostPath(pathname) ||
     isAllowedQuotePreviewPostPath(pathname) ||

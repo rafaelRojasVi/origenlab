@@ -515,6 +515,32 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
+  it("lists the tender commands in their own list, exactly, never a neighbour", async () => {
+    const {
+      TENDER_COMMAND_POST_PATHS,
+      isAllowedCaseCommandPostPath,
+      isAllowedPostPath,
+      isAllowedTenderCommandPostPath,
+      isAllowedUpstreamPath,
+      marketingCommandMaxBytes,
+    } = await import("./allowlist");
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(1);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/open-tender-case")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/open-tender-case")).toBe(true);
+    expect(isAllowedCaseCommandPostPath("/v2/commands/open-tender-case")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/open-tender-case")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/open-tender-case")).toBe(16_384);
+    for (const path of [
+      "/v2/commands/open-tender-case/",
+      "/v2/commands/open-tender-case-all",
+      "/v2/commands/open-tender",
+      "/v2/tenders/open-tender-case",
+    ]) {
+      expect(isAllowedTenderCommandPostPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
   it("matches the allowed case command paths exactly, never a neighbour", async () => {
     const { isAllowedPostPath, marketingCommandMaxBytes } = await import("./allowlist");
     expect(marketingCommandMaxBytes("/v2/commands/advance-case-stage")).toBe(16_384);
