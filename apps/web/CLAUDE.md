@@ -73,8 +73,9 @@ remoto, marca y modelo del catálogo, dimensiones y alt, ninguna fila sin
 permiso renderizada, y toda imagen de familia rotulada como representativa. Que
 una imagen sea visible en público no implica permiso de reutilización. La base
 de permiso vigente para las seis primeras marcas es la autorización previa del
-fabricante que el titular del negocio confirmó el 2026-09-07 (no cubre a OHAUS,
-que por eso no publica fotografía)
+fabricante que el titular del negocio confirmó el 2026-09-07; la de OHAUS es el
+permiso que el titular concedió el 2026-10-19 para sus imágenes oficiales y su
+logotipo (`OHAUS_AUTHORIZATION_BASIS`)
 (`MANUFACTURER_AUTHORIZATION_BASIS`): no es una licencia pública y no se
 inventa documento, cláusula, vigencia ni exclusividad. Permiso y procedencia van
 separados: cada fila nombra la página, folleto o activo oficial exacto del que

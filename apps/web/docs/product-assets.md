@@ -61,6 +61,28 @@ de la familia». Los PDF del fabricante se leen para extraer la imagen incrustad
 cuando es la única fuente oficial accesible por máquina (IKA, dos fichas de
 Adam); no se rehospedan.
 
+### Base de permiso de OHAUS (2026-10-19)
+
+OHAUS entró al sitio el 2026-10-19 y la confirmación anterior no la cubre. Ese
+día el titular del negocio concedió por escrito el permiso para usar las
+imágenes oficiales de producto y el logotipo de OHAUS en origenlab.cl, con
+OrigenLab como distribuidor de OHAUS: «I'm allowing these images to be taken
+and used — we have permission, use them». Se registra como
+`OHAUS_AUTHORIZATION_BASIS` en `src/data/productImages.ts`, con la misma
+reserva que la base anterior: no se afirma licencia pública, documento,
+cláusula, vigencia ni exclusividad.
+
+| Entrada | Clasificación | Original (`public/products/ohaus/`) | Fuente |
+|---|---|---|---|
+| Pioneer PX | familia representativa | `pioneer-px.jpg`, 600 × 600 | foto de tienda DMX-ID 4294988787, ficha PX224 en us.ohaus.com |
+| Ranger Count 3000 | familia representativa | `ranger-count-3000.jpg`, 600 × 600 | foto de tienda DMX-ID 30684, página oficial en mx.ohaus.com |
+| MB120 | modelo exacto | `mb120.jpg`, 600 × 600 | foto de tienda DMX-ID 4294974243, página oficial en mx.ohaus.com |
+| MB32 | modelo exacto | `mb32.jpg`, 600 × 600 | foto de tienda DMX-ID 4295015507, página oficial en mx.ohaus.com |
+
+La imagen principal de la familia Pioneer en mx.ohaus.com lleva un rótulo
+publicitario («Economy & Accuracy») incrustado; se descartó en favor de la foto
+de tienda limpia del mismo equipo, porque aquí no se recorta ni recompone nada.
+
 ### Cobertura (2026-09-07): 24 de 24 entradas publicadas
 
 | Fabricante | Entradas | Clasificación | Origen |

@@ -21,8 +21,8 @@
  *   Sin base documentada, la fila queda en `ASSET_PERMISSION_NEEDED` y el sitio
  *   **no** incrusta la imagen: compone la familia sin fotografía. La base de la
  *   fotografía de producto de las seis primeras marcas es hoy la autorización
- *   previa del fabricante confirmada por el titular del negocio el 2026-09-07
- *   (OHAUS, incorporada después, no está cubierta y no publica fotografía); se registra
+ *   previa del fabricante confirmada por el titular del negocio el 2026-09-07;
+ *   la de OHAUS, el permiso que el titular concedió el 2026-10-19; se registra
  *   por imagen en `productImages.ts`, y permiso y procedencia van separados.
  * - Ninguna imagen de un fabricante ilustra a otro. Jamás.
  *
@@ -146,10 +146,11 @@ export const brandSources: readonly BrandSource[] = [
     officialPdfUrl: null,
     imageSourceUrl: null,
     localAssetPath: '/brands/ohaus-logo.png',
-    permissionBasis: LOGO_PERMISSION_PENDING,
+    permissionBasis:
+      'Permiso concedido por el titular del negocio el 2026-10-19 para usar el logotipo y las imágenes oficiales de producto de OHAUS en origenlab.cl, con OrigenLab como distribuidor de OHAUS. Base completa por imagen en productImages.ts (OHAUS_AUTHORIZATION_BASIS).',
     lastVerified: '2026-10-19',
-    status: 'ASSET_PERMISSION_NEEDED',
-    note: 'Marca incorporada el 2026-10-19 por instrucción escrita del titular del negocio. Páginas oficiales del sitio de OHAUS para Latinoamérica (mx.ohaus.com/es-mx, al que redirigió www.ohaus.com al leerlo) y fichas PDF del fabricante en dmx.ohaus.com, leídas el 2026-10-19; OHAUS publica ficha por línea y no un catálogo general, de modo que la fila no declara PDF de familia. Los servidores de OHAUS no envían el certificado intermedio: los navegadores lo completan, pero curl o Node sin ese intermedio fallan la verificación TLS, y por eso las páginas se leyeron sin verificarla y nada de ohaus.com se incrusta. Logotipo: recortado a 600 dpi de la ficha oficial «Compass CR Datasheet LA 80775692», guardada en la carpeta OHAUS del Drive del negocio (public/email/brands/README.md) y pasado a una tinta; no tiene URL pública propia. Fotografía de equipo: no se publica; la autorización del fabricante confirmada el 2026-09-07 cubre a las seis marcas de entonces y no a OHAUS, y la página se compone sin fotografía.',
+    status: 'VERIFIED',
+    note: 'Marca incorporada el 2026-10-19 por instrucción escrita del titular del negocio. Páginas oficiales del sitio de OHAUS para Latinoamérica (mx.ohaus.com/es-mx, al que redirigió www.ohaus.com al leerlo) y fichas PDF del fabricante en dmx.ohaus.com, leídas el 2026-10-19; OHAUS publica ficha por línea y no un catálogo general, de modo que la fila no declara PDF de familia. Los servidores de OHAUS no envían el certificado intermedio: los navegadores lo completan, pero curl o Node sin ese intermedio fallan la verificación TLS, y por eso las páginas se leyeron sin verificarla y nada de ohaus.com se incrusta. Logotipo: recortado a 600 dpi de la ficha oficial «Compass CR Datasheet LA 80775692», guardada en la carpeta OHAUS del Drive del negocio (public/email/brands/README.md) y pasado a una tinta; no tiene URL pública propia. Fotografía de equipo: publicada con el permiso que el titular del negocio concedió el 2026-10-19 (la confirmación del 2026-09-07 no cubría a OHAUS); procedencia por imagen en productImages.ts. Las cuatro fotografías son las de tienda que OHAUS publica en la página oficial de cada línea (600 × 600 px).',
   },
   {
     brandId: 'loeser',
