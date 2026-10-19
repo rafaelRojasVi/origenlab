@@ -88,7 +88,7 @@ class RemoveCaseDocumentBody(DecisionBody):
     document_id: str
 
 
-def _storage(request: Request, name: str) -> Any:
+def document_storage(request: Request, name: str) -> Any:
     storage = getattr(request.app.state, name, None)
     if storage is None:
         raise HTTPException(503, detail=_STORAGE_UNAVAILABLE)
@@ -144,7 +144,7 @@ def _store(request: Request, opportunity_id: str, data: bytes) -> dict[str, Any]
     sha256 = hashlib.sha256(data).hexdigest()
     path = document_path(opportunity_id, sha256, content_type)
     try:
-        _storage(request, "case_document_storage").put_if_absent(path, data, content_type)
+        document_storage(request, "case_document_storage").put_if_absent(path, data, content_type)
     except StorageUnavailable:
         raise HTTPException(503, detail=_STORAGE_UNAVAILABLE) from None
     return {"storage_path": path, "sha256": sha256, "content_type": content_type, "byte_size": len(data)}
@@ -156,7 +156,7 @@ def _too_large() -> HTTPException:
     return HTTPException(413, detail={"code": "document_too_large", "message": "the document is larger than 20 MiB"})
 
 
-async def _read_capped_body(request: Request, max_bytes: int) -> bytes:
+async def read_capped_body(request: Request, max_bytes: int) -> bytes:
     declared = request.headers.get("content-length")
     if declared is not None:
         try:
@@ -175,7 +175,7 @@ async def _read_capped_body(request: Request, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-async def _parse_form(request: Request, body: bytes) -> FormData:
+async def parse_form(request: Request, body: bytes) -> FormData:
     async def replay() -> dict[str, Any]:
         return {"type": "http.request", "body": body, "more_body": False}
 
@@ -186,8 +186,32 @@ async def _parse_form(request: Request, body: bytes) -> FormData:
                                          "message": "the body is not a valid multipart form with one document"}) from None
 
 
-def _form_invalid(errors: list[dict[str, Any]]) -> RequestValidationError:
+def form_invalid(errors: list[dict[str, Any]]) -> RequestValidationError:
     return RequestValidationError([{k: e[k] for k in ("type", "loc", "msg") if k in e} for e in errors])
+
+
+async def read_document_form(request: Request, form_model: type[BaseModel]) -> tuple[Any, bytes, str]:
+    """Read one multipart upload: the capped body, the text fields validated by `form_model`, the
+    file's bytes (at most 20 MiB + 1) and its cleaned name. Shared by the case and bidder uploads."""
+    form = await parse_form(request, await read_capped_body(request, MAX_UPLOAD_BODY_BYTES))
+    try:
+        items = form.multi_items()
+        repeated = sorted(k for k, n in Counter(k for k, _ in items).items() if n > 1)
+        if repeated:
+            raise form_invalid([{"type": "duplicate_field", "loc": ("body", name), "msg": "field sent more than once"}
+                                for name in repeated])
+        upload = form.get("file")
+        if not isinstance(upload, UploadFile):
+            raise form_invalid([{"type": "missing", "loc": ("body", "file"), "msg": "a document file is required"}])
+        try:
+            parsed = form_model(**{k: v for k, v in items if k != "file"})
+        except ValidationError as exc:
+            raise form_invalid(exc.errors()) from None
+        data = await upload.read(MAX_DOCUMENT_BYTES + 1)
+        filename = clean_filename(upload.filename)
+    finally:
+        await form.close()
+    return parsed, data, filename
 
 
 _ATTACH_OPENAPI = {"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
@@ -216,25 +240,8 @@ async def attach_case_document(request: Request, operator: Deciding,
         key = require_idempotency_key(idempotency_key)
     except CommandRefused as exc:
         raise _refused(exc) from exc
-    _storage(request, "case_document_storage")
-    form = await _parse_form(request, await _read_capped_body(request, MAX_UPLOAD_BODY_BYTES))
-    try:
-        items = form.multi_items()
-        repeated = sorted(k for k, n in Counter(k for k, _ in items).items() if n > 1)
-        if repeated:
-            raise _form_invalid([{"type": "duplicate_field", "loc": ("body", name), "msg": "field sent more than once"}
-                                 for name in repeated])
-        upload = form.get("file")
-        if not isinstance(upload, UploadFile):
-            raise _form_invalid([{"type": "missing", "loc": ("body", "file"), "msg": "a document file is required"}])
-        try:
-            parsed = AttachCaseDocumentForm(**{k: v for k, v in items if k != "file"})
-        except ValidationError as exc:
-            raise _form_invalid(exc.errors()) from None
-        data = await upload.read(MAX_DOCUMENT_BYTES + 1)
-        filename = clean_filename(upload.filename)
-    finally:
-        await form.close()
+    document_storage(request, "case_document_storage")
+    parsed, data, filename = await read_document_form(request, AttachCaseDocumentForm)
     fields = _common_fields(parsed)
     stored = await run_in_threadpool(_store, request, fields["opportunity_id"], data)
     fields.update(stored, original_filename=filename, source="upload", source_record_id=None)
@@ -306,8 +313,8 @@ def copy_email_attachment(repo: Any, documents: Any, mail: Any, opportunity_id: 
 
 def _copy_from_email(request: Request, opportunity_id: str, source_record_id: str, sha256: str) -> dict[str, Any]:
     try:
-        return copy_email_attachment(_repo(request), _storage(request, "case_document_storage"),
-                                     _storage(request, "mail_storage"), opportunity_id, source_record_id, sha256)
+        return copy_email_attachment(_repo(request), document_storage(request, "case_document_storage"),
+                                     document_storage(request, "mail_storage"), opportunity_id, source_record_id, sha256)
     except CopyRefused as exc:
         raise HTTPException(exc.status, detail={"code": exc.code, "message": exc.message}) from None
 
@@ -324,8 +331,8 @@ def attach_case_document_from_email(body: AttachCaseDocumentFromEmailBody, reque
         source_record_id = as_uuid(body.source_record_id, "source_record_id")
     except CommandRefused as exc:
         raise _refused(exc) from exc
-    _storage(request, "case_document_storage")
-    _storage(request, "mail_storage")
+    document_storage(request, "case_document_storage")
+    document_storage(request, "mail_storage")
     fields = _common_fields(body)
     copied = _copy_from_email(request, fields["opportunity_id"], source_record_id, sha256)
     hint = copied.pop("number_hint")
@@ -356,7 +363,7 @@ def case_document_url(opportunity_id: UUID, document_id: UUID, request: Request,
     Every active role may open a case's documents, as they may read the case. A removed document,
     or one of another case, is the same 404 as one that does not exist.
     """
-    storage = _storage(request, "case_document_storage")
+    storage = document_storage(request, "case_document_storage")
     repo = _repo(request)
     with repo._write() as cur:
         cur.execute(
@@ -373,3 +380,7 @@ def case_document_url(opportunity_id: UUID, document_id: UUID, request: Request,
         raise HTTPException(503, detail=_STORAGE_UNAVAILABLE) from None
     response.headers["Cache-Control"] = "no-store"
     return {"url": url, "expires_in": SIGNED_URL_SECONDS, "filename": row["original_filename"]}
+
+
+# The names this module used before they were shared.
+_read_capped_body, _parse_form, _form_invalid, _storage = read_capped_body, parse_form, form_invalid, document_storage

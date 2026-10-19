@@ -220,6 +220,11 @@ def test_add_a_document_then_retire_it_twice(db, client, storage) -> None:
     assert client.get(f"/v2/bidder/documents/{document_id}/url", headers=headers()).status_code == 404
     kinds = [e[0] for e in events(db, document_id)]
     assert kinds == ["bidder.document_added", "bidder.document_retired"]
+    retired_payload = events(db, document_id)[1][1]
+    assert retired_payload == {"document_id": document_id}
+    with _owner(db) as conn:
+        assert conn.execute("select retire_reason from crm.bidder_document where id = %s",
+                            (document_id,)).fetchone()[0] == "Documento vencido"
     with psycopg.connect(runtime_dsn(db)) as conn, conn.cursor() as cur:
         assert document_id not in [d["id"] for d in live_bidder_documents(cur)]
 

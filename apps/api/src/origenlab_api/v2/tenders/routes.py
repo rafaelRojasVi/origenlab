@@ -27,24 +27,17 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections import Counter
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.exceptions import RequestValidationError
-from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import UploadFile
 
 from origenlab_api.v2.case_document_routes import (
-    MAX_UPLOAD_BODY_BYTES,
-    _form_invalid,
-    _parse_form,
-    _read_capped_body,
-    _storage,
+    document_storage,
+    read_document_form,
 )
-from origenlab_api.v2.case_documents import MAX_DOCUMENT_BYTES, DocumentRefused, clean_filename
+from origenlab_api.v2.case_documents import DocumentRefused
 from origenlab_api.v2.catalog.storage import SIGNED_URL_SECONDS, StorageUnavailable
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
@@ -255,7 +248,7 @@ def _store_bidder_document(request: Request, data: bytes) -> dict[str, Any]:
     sha256 = hashlib.sha256(data).hexdigest()
     path = bidder_document_path(sha256, content_type)
     try:
-        _storage(request, "case_document_storage").put_if_absent(path, data, content_type)
+        document_storage(request, "case_document_storage").put_if_absent(path, data, content_type)
     except StorageUnavailable:
         raise HTTPException(503, detail={"code": "storage_unavailable",
                                          "message": "document storage is unavailable"}) from None
@@ -286,25 +279,8 @@ async def add_bidder_document_route(
         key = require_idempotency_key(idempotency_key)
     except CommandRefused as exc:
         raise HTTPException(exc.status_code, detail=_detail(exc)) from exc
-    _storage(request, "case_document_storage")
-    form = await _parse_form(request, await _read_capped_body(request, MAX_UPLOAD_BODY_BYTES))
-    try:
-        items = form.multi_items()
-        repeated = sorted(k for k, n in Counter(k for k, _ in items).items() if n > 1)
-        if repeated:
-            raise _form_invalid([{"type": "duplicate_field", "loc": ("body", name), "msg": "field sent more than once"}
-                                 for name in repeated])
-        upload = form.get("file")
-        if not isinstance(upload, UploadFile):
-            raise _form_invalid([{"type": "missing", "loc": ("body", "file"), "msg": "a document file is required"}])
-        try:
-            parsed = AddBidderDocumentForm(**{k: v for k, v in items if k != "file"})
-        except ValidationError as exc:
-            raise _form_invalid(exc.errors()) from None
-        data = await upload.read(MAX_DOCUMENT_BYTES + 1)
-        filename = clean_filename(upload.filename)
-    finally:
-        await form.close()
+    document_storage(request, "case_document_storage")
+    parsed, data, filename = await read_document_form(request, AddBidderDocumentForm)
     stored = await run_in_threadpool(_store_bidder_document, request, data)
     fields = {"kind": parsed.kind, "title": parsed.title, "original_filename": filename, **stored}
     return await run_in_threadpool(_execute_add_document, request, operator, key, fields)
@@ -322,7 +298,7 @@ def get_bidder(_: BidderOperator, repo: ReadRepo, response: Response) -> dict[st
 def bidder_document_url(document_id: str, _: BidderOperator, repo: ReadRepo, request: Request,
                         response: Response) -> dict[str, Any]:
     """A signed URL for one live document, valid `SIGNED_URL_SECONDS` (10 minutes)."""
-    storage = _storage(request, "case_document_storage")
+    storage = document_storage(request, "case_document_storage")
     not_found = HTTPException(404, detail={"code": "document_not_found", "message": "No existe ese documento."})
     try:
         document_uuid = str(uuid.UUID(document_id))

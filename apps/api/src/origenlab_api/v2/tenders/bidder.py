@@ -47,6 +47,8 @@ DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 EXTENSIONS = {"application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", DOCX: "docx", XLSX: "xlsx"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+#: The table's CHECK: valid_rut also accepts 1-9 digit bodies, which the column refuses.
+_STORED_RUT = re.compile(r"^[0-9]{7,8}-[0-9K]$")
 
 #: The profile columns a save sets, in the order the page shows them.
 PROFILE_FIELDS = (
@@ -139,11 +141,11 @@ def prepare_save_bidder_profile(body: BidderProfileBody) -> dict[str, Any]:
     """The checks that need no database: RUTs normalised and verified, a representative only for a company."""
     fields = body.model_dump()
     fields["rut"] = normalize_rut(body.rut)
-    if not valid_rut(fields["rut"]):
+    if not (valid_rut(fields["rut"]) and _STORED_RUT.match(fields["rut"])):
         raise CommandRefused(422, "rut_invalid", "El RUT del oferente no es válido.")
     if body.legal_rep_rut is not None:
         fields["legal_rep_rut"] = normalize_rut(body.legal_rep_rut)
-        if not valid_rut(fields["legal_rep_rut"]):
+        if not (valid_rut(fields["legal_rep_rut"]) and _STORED_RUT.match(fields["legal_rep_rut"])):
             raise CommandRefused(422, "rut_invalid", "El RUT del representante legal no es válido.")
     if body.bidder_kind != "company" and (body.legal_rep_name is not None or body.legal_rep_rut is not None):
         raise CommandRefused(
@@ -195,6 +197,8 @@ def sniff_bidder_document_type(data: bytes) -> str | None:
             names = set(archive.namelist())
     except (zipfile.BadZipFile, ValueError, NotImplementedError):
         return None
+    if any(name.lower().endswith("vbaproject.bin") for name in names):
+        return None  # macro-enabled: not a document this boundary keeps
     if "word/document.xml" in names and "[Content_Types].xml" in names:
         return DOCX
     if "xl/workbook.xml" in names and "[Content_Types].xml" in names:
@@ -278,7 +282,7 @@ def retire_bidder_document(
         (operator.operator_id, fields["reason"], fields["document_id"]))
     event_id = repo._append_event(
         cur, aggregate_kind="bidder", aggregate_id=fields["document_id"], event_type="bidder.document_retired",
-        payload={"document_id": fields["document_id"], "reason": fields["reason"]},
+        payload={"document_id": fields["document_id"]},
         operator=operator, receipt_id=receipt_id)
     return {"command": RETIRE_BIDDER_DOCUMENT, "document_id": fields["document_id"], "event_ids": [event_id]}
 

@@ -57,6 +57,18 @@ def test_rut_is_normalised_and_checked() -> None:
     assert rep.value.code == "rut_invalid"
 
 
+def test_a_rut_must_fit_the_column_shape_without_echoing_it() -> None:
+    # "1-9" and a 9-digit body both pass the check digit but not 7-8 digits (the table's CHECK).
+    for rut in ("1-9", "100.000.000-1"):
+        with pytest.raises(CommandRefused) as exc:
+            prepare_save_bidder_profile(profile(rut=rut))
+        assert (exc.value.status_code, exc.value.code) == (422, "rut_invalid")
+        assert rut not in exc.value.message
+    with pytest.raises(CommandRefused) as rep:
+        prepare_save_bidder_profile(profile(bidder_kind="company", legal_rep_name="Rep", legal_rep_rut="1-9"))
+    assert rep.value.code == "rut_invalid"
+
+
 def test_legal_rep_is_for_a_company_only() -> None:
     company = prepare_save_bidder_profile(profile(bidder_kind="company", legal_rep_name="Rep Ejemplo",
                                                   legal_rep_rut="61.111.111-8"))
@@ -86,7 +98,12 @@ def test_the_bytes_decide_the_document_type() -> None:
     assert check_bidder_document(b"\x89PNG\r\n\x1a\n ejemplo") == "image/png"
     assert check_bidder_document(office_zip("word/document.xml")) == DOCX
     assert check_bidder_document(office_zip("xl/workbook.xml")) == XLSX
-    for data in (b"hola", b"PK\x03\x04 not a zip", office_zip("otra/cosa.xml"), b""):
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", "<x/>")
+        archive.writestr("word/vbaProject.bin", b"macro")
+    for data in (out.getvalue(), b"hola", b"PK\x03\x04 not a zip", office_zip("otra/cosa.xml"), b""):
         with pytest.raises(DocumentRefused) as exc:
             check_bidder_document(data)
         assert exc.value.status_code == 415
