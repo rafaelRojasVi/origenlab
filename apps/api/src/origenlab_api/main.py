@@ -673,7 +673,11 @@ def _mount_v2_command_boundary(
     # Mercado Público ticket reads a tender's detail by code; without one the operator types the buyer.
     from origenlab_api.v2.tenders.mercado_publico import resolve_ticket
     from origenlab_api.v2.tenders.open_case import V2TenderCommandRepository
-    from origenlab_api.v2.tenders.routes import tender_command_router, tender_read_router
+    from origenlab_api.v2.tenders.routes import (
+        bidder_read_router,
+        tender_command_router,
+        tender_read_router,
+    )
 
     app.state.v2_tender_command_repository = V2TenderCommandRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
@@ -688,6 +692,7 @@ def _mount_v2_command_boundary(
     )
     app.include_router(tender_command_router)
     app.include_router(tender_read_router)
+    app.include_router(bidder_read_router)
     # A case's documents (its purchase order): the private `crm-documents` bucket, and the
     # worker's `mail` bucket read to copy an email attachment. Without Storage configured the
     # routes answer 503 `storage_unavailable`; everything else here still works.

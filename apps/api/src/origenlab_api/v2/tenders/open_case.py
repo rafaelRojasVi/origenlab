@@ -45,6 +45,14 @@ from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.org_web_suggestions import valid_rut
 from origenlab_api.v2.quote_document_identity import normalize_rut
+from origenlab_api.v2.tenders.bidder import (
+    ADD_BIDDER_DOCUMENT,
+    RETIRE_BIDDER_DOCUMENT,
+    SAVE_BIDDER_PROFILE,
+    add_bidder_document,
+    retire_bidder_document,
+    save_bidder_profile,
+)
 from origenlab_api.v2.tenders.codes import TenderReferenceInvalid, parse_tender_reference, portal_url
 from origenlab_api.v2.tenders.mercado_publico import TenderDetail, fetch_tender_detail
 from origenlab_api.v2.tenders.status import SET_TENDER_STATUS, set_tender_status
@@ -344,7 +352,13 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
     """The tender commands: the case writers (`_open_case_for_client`, `_link_evidence_row`) with
     their own dispatch, so no general case command can be called through this repository."""
 
-    _HANDLERS = {OPEN_TENDER_CASE: open_tender_case, SET_TENDER_STATUS: set_tender_status}
+    _HANDLERS = {
+        OPEN_TENDER_CASE: open_tender_case,
+        SET_TENDER_STATUS: set_tender_status,
+        SAVE_BIDDER_PROFILE: save_bidder_profile,
+        ADD_BIDDER_DOCUMENT: add_bidder_document,
+        RETIRE_BIDDER_DOCUMENT: retire_bidder_document,
+    }
 
 
 __all__ = [

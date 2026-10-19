@@ -129,6 +129,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // the page answers 403 `role_may_not_view_bidder` to a `viewer` upstream. A UUID-shaped segment,
   // no tail: nothing else under `/v2/tenders` is reachable.
   /^\/v2\/tenders$/,
+  // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
+  // document's signed link. GET-only; a `viewer` is 403 `role_may_not_view_bidder` upstream.
+  /^\/v2\/bidder$/,
+  /^\/v2\/bidder\/documents\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/url$/,
   /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/workspace\/pipeline$/,
   /^\/v2\/workspace\/drive$/,
@@ -340,8 +344,8 @@ export function isAllowedCaseCommandPostPath(pathname: string): boolean {
 
 /**
  * «Licitaciones» commands (spec 2026-10-19 §6.10), one list for the whole family: `open-tender-case`
- * (a tender case from a Mercado Público code or link) and `set-tender-status` now; the bidder data and the
- * bid preparation join it as they are built. Upstream each needs an active `sales` or `admin`
+ * (a tender case from a Mercado Público code or link), `set-tender-status` and the bidder's profile and
+ * document retirement now; the bid preparation joins it as it is built. Upstream each needs an active `sales` or `admin`
  * operator from the verified session (a `viewer` is 403), an `Idempotency-Key`, and mounts only
  * behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the case commands
  * (`marketingCommandRefusal` in index.ts).
@@ -350,6 +354,10 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/open-tender-case$/,
   // The estado of a tender (preparando, postulada, perdida; «adjudicada» is refused upstream until phase 3).
   /^\/v2\/commands\/set-tender-status$/,
+  // The bidder's profile (a new row) and the retirement of a standard document. The upload of one
+  // (`add-bidder-document`) is multipart and listed with the other uploads.
+  /^\/v2\/commands\/save-bidder-profile$/,
+  /^\/v2\/commands\/retire-bidder-document$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */
@@ -494,9 +502,13 @@ export const CATALOG_COMMAND_MAX_BYTES = 65_536;
  */
 export const CASE_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-case-document$/;
 
+/** A standard document of the bidder (`add-bidder-document`), the same 20 MiB cap. */
+export const BIDDER_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/add-bidder-document$/;
+
 export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-product-image$/,
   CASE_DOCUMENT_UPLOAD_PATH_RE,
+  BIDDER_DOCUMENT_UPLOAD_PATH_RE,
 ];
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
@@ -505,7 +517,9 @@ export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
 /** The body limit for one catalog command path: the upload's, a quote draft's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
-  if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
+  if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly) || BIDDER_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) {
+    return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
+  }
   if (QUOTE_DRAFT_BODY_PATHS.some((pattern) => pattern.test(pathOnly))) return QUOTE_COMMAND_MAX_BYTES;
   return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathOnly))
     ? CATALOG_UPLOAD_MAX_BYTES

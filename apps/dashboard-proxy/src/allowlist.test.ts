@@ -545,7 +545,7 @@ describe("V2 durable read boundary allowlist", () => {
       isAllowedUpstreamPath,
       marketingCommandMaxBytes,
     } = await import("./allowlist");
-    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(2);
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(4);
     expect(isAllowedTenderCommandPostPath("/v2/commands/set-tender-status")).toBe(true);
     expect(isAllowedPostPath("/v2/commands/set-tender-status")).toBe(true);
     expect(isAllowedCaseCommandPostPath("/v2/commands/set-tender-status")).toBe(false);
@@ -566,6 +566,59 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/tenders",
     ]) {
       expect(isAllowedTenderCommandPostPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows GET of the bidder profile and one document's link, nothing beside them, never a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    for (const path of ["/v2/bidder", `/v2/bidder/documents/${uuid}/url`]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/bidder/",
+      "/v2/bidder/profile",
+      "/v2/bidder/documents",
+      `/v2/bidder/documents/${uuid}`,
+      `/v2/bidder/documents/${uuid}/url/`,
+      `/v2/bidder/documents/${uuid.toUpperCase()}/url`,
+      "/v2/bidder/documents/not-a-uuid/url",
+      `/v2/bidder/documents/${uuid}/../url`,
+      "/v2/bidderx",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("lists the bidder commands exactly, with the upload apart", async () => {
+    const {
+      isAllowedCatalogUploadPostPath,
+      isAllowedPostPath,
+      isAllowedTenderCommandPostPath,
+      isAllowedUpstreamPath,
+      marketingCommandMaxBytes,
+    } = await import("./allowlist");
+    for (const path of ["/v2/commands/save-bidder-profile", "/v2/commands/retire-bidder-document"]) {
+      expect(isAllowedTenderCommandPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(marketingCommandMaxBytes(path), path).toBe(16_384);
+    }
+    // The upload is multipart: a catalog-style upload path, not a tender JSON command.
+    expect(isAllowedTenderCommandPostPath("/v2/commands/add-bidder-document")).toBe(false);
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/add-bidder-document")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/add-bidder-document")).toBe(true);
+    for (const path of [
+      "/v2/commands/save-bidder-profile/",
+      "/v2/commands/save-bidder-profiles",
+      "/v2/commands/retire-bidder-document/",
+      "/v2/commands/add-bidder-document/",
+      "/v2/commands/add-bidder-documents",
+      "/v2/commands/delete-bidder-document",
+      "/v2/bidder",
+    ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
     }
   });
