@@ -157,7 +157,7 @@ describe("web form handler", () => {
     expect(resp.status).toBe(201);
     expect(fetchMock).toHaveBeenCalledOnce();
 
-    const [upstreamReq] = fetchMock.mock.calls[0] as [Request];
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
     const upstreamUrl = typeof upstreamReq === "string" ? upstreamReq : upstreamReq.url;
     expect(upstreamUrl).toContain(WEB_FORM_UPSTREAM_PATH);
     expect(upstreamUrl).toContain("api.origenlab.cl");
@@ -195,7 +195,7 @@ describe("web form handler", () => {
     });
     await handleWebFormRequest(req, TEST_ENV);
     expect(fetchMock).toHaveBeenCalledOnce();
-    const [upstreamReq] = fetchMock.mock.calls[0] as [Request];
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
     const sentHeaders = (upstreamReq as Request).headers;
     expect(sentHeaders.get("Cookie")).toBeNull();
   });
