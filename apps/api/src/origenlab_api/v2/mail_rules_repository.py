@@ -64,6 +64,7 @@ from origenlab_api.v2.mail_rules import (
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     SYSTEM_LABEL,
+    WEB_QUOTE_ORIGIN,
     CaseQuote,
     CaseState,
     ForwardRequest,
@@ -121,9 +122,9 @@ def _json(value: Any) -> Any:
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
        requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent,
-       case_match.value as case_match
+       case_match.value as case_match, web_form.is_web_form, web_form.reply_to
   from evidence.source_record sr
-  join lateral (select cm.direction, cm.provider_thread_id from comms.message cm
+  join lateral (select cm.id, cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
                  order by cm.created_at limit 1) m on true
   left join lateral (
@@ -153,6 +154,18 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         order by a.created_at desc
         limit 1
   ) case_match on true
+  left join lateral (
+       -- A web-quote-form submission: the triage worker saw the x-origenlab-origin marker (the raw
+       -- headers are not stored, so its reason is the persisted proof) and the Reply-To address is
+       -- the enquirer, kept in comms.message_participant.
+       select exists (select 1 from evidence.assertion a
+                       where a.source_record_id = sr.id and a.kind = 'message_triage'
+                         and a.value_norm ~ '^triage:v[0-9]+$'
+                         and a.value -> 'reasons' ? 'header:x-origenlab-origin') as is_web_form,
+              (select p.address_norm from comms.message_participant p
+                where p.message_id = m.id and p.role = 'reply_to'
+                order by p.address_norm limit 1) as reply_to
+  ) web_form on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -286,6 +299,8 @@ def read_snapshot(cur: Any) -> tuple[Snapshot, dict[str, dict[str, Any]]]:
             body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
             model_intent=r.get("model_intent"),
             case_match=_json(r.get("case_match")) or None,
+            extra_headers=({"x-origenlab-origin": WEB_QUOTE_ORIGIN} if r.get("is_web_form") else {}),
+            reply_to=(r.get("reply_to") if r.get("is_web_form") else None),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
