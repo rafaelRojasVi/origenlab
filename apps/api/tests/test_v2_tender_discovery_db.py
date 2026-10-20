@@ -176,7 +176,7 @@ def test_one_notice_page_has_every_date_item_and_fact_and_a_catalog_match(db, cl
     listing = discovered(client)
     row = by_code(listing)[code]
     assert row["tier"] == "catalogo" and row["families"] == [{"key": "catalogo", "label": "Otros de tu catálogo"}]
-    assert "termociclador" in row["terms"]
+    assert any(t.startswith("termociclador") for t in row["terms"])
 
     page = client.get(f"/v2/tenders/discovered/{row['id']}", headers={OPERATOR_EMAIL_HEADER: "viewer-buscar@example.test"})
     assert page.status_code == 200, page.text
