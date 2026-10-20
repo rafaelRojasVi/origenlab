@@ -7,7 +7,8 @@ cap is checked in a short transaction before each call (`model_spend.ensure_with
 worst case of every attempt the call may bill), the call runs with no transaction open, and its
 usage is recorded right after — no second spender can run in between. A row found `running` when
 the lock is taken was left by a process that died; it is failed `interrupted`, so the case can ask
-again.
+again, and — when no usage was recorded for it since its claim — charged the worst case of one call
+of its phase, so a call whose usage was lost does not leak past the cap.
 
 Two phases (`SUPPORTED_PHASES`). `read` reads every anexo into a cited summary, a checklist and the
 items, then matches the items to catalog products (step `match`, plan Task 12a). `fill` (Task 12)
@@ -34,6 +35,7 @@ from types import SimpleNamespace
 from typing import Any, Final
 from uuid import UUID
 
+from origenlab_api.v2.catalog.enrichment import supports_fallbacks
 from origenlab_api.v2.model_spend import (
     FEATURE_LICITACIONES,
     BudgetReached,
@@ -50,7 +52,14 @@ from origenlab_worker.drive_client import DriveError
 from origenlab_worker.drive_filing import DriveTarget, FilingRefused, file_tender_package
 from origenlab_worker.storage import StorageError
 from origenlab_worker.tender import package
-from origenlab_worker.tender.extract import AnnexSetTooLarge, AnnexText, extract_annex, render_for_model
+from origenlab_worker.tender.extract import (
+    MAX_RENDERED_CHARS,
+    AnnexSetTooLarge,
+    AnnexText,
+    extract_annex,
+    render_for_model,
+)
+from origenlab_worker.tender.fill_model import MAX_TOKENS as FILL_MAX_TOKENS
 from origenlab_worker.tender.fill_model import build_fill_request, validate_fill, validate_sections
 from origenlab_worker.tender.forms import (
     NOT_FILLABLE,
@@ -63,6 +72,7 @@ from origenlab_worker.tender.forms import (
 from origenlab_worker.tender.match_model import build_match_request, candidate_view, validate_match
 from origenlab_worker.tender.read_model import (
     CONVERT_TO_WORD,
+    SYSTEM_PROMPT as READ_SYSTEM_PROMPT,
     FALLBACK_TARGETS,
     MAX_TOKENS,
     ReadFailed,
@@ -135,10 +145,14 @@ update evidence.bid_preparation
 _SAVE_OUTPUTS = """
 update evidence.bid_preparation set outputs = %s, updated_at = now() where id = %s and status = 'running'
 """
+# Each row failed here, and whether any usage was recorded for it since its last claim.
 _INTERRUPTED = """
-update evidence.bid_preparation
+update evidence.bid_preparation p
    set status = 'failed', failure_code = 'interrupted', finished_at = now(), updated_at = now()
  where status = 'running'
+returning p.id, p.phase,
+          exists (select 1 from platform.model_usage u
+                   where u.bid_preparation_id = p.id and u.created_at >= p.started_at) as covered
 """
 _ANNEXES = """
 select id::text, original_filename, content_type, storage_path, sha256
@@ -215,6 +229,26 @@ class ConnectionLost(Exception):
     """The worker's session died after a model call. Its usage was recorded and its row failed on a
     fresh connection (when one could be opened); the single-flight lock went with the session, so the
     sweep must stop."""
+
+
+#: The largest prompt one call may carry, in `input_tokens_estimate`'s tokens (two characters each,
+#: plus its 1000): the anexos at the render limit, the system prompt and room for the case and the
+#: instructions around them.
+WORST_INPUT_TOKENS: Final = (MAX_RENDERED_CHARS + len(READ_SYSTEM_PROMPT)) // 2 + 1000 + 10_000
+
+
+def _interrupted_call(phase: str, models: BidModels) -> tuple[str, int, tuple[str, ...]]:
+    """(model, max_tokens, every attempt it may bill) of the dearest single call of `phase`."""
+    model, max_tokens = (models.fill, FILL_MAX_TOKENS) if phase == "fill" else (models.read, MAX_TOKENS)
+    return model, max_tokens, call_attempts({"fallbacks": supports_fallbacks(model)}, model)
+
+
+def interrupted_worst_usd(phase: str, models: BidModels) -> Decimal:
+    """What the recovery charges a row that died with no usage recorded since its claim: the worst
+    case of one call of its phase, every attempt it may bill included."""
+    model, max_tokens, attempts = _interrupted_call(phase, models)
+    return worst_case_usd(model, input_tokens_estimate=WORST_INPUT_TOKENS, max_tokens=max_tokens,
+                          fallback_models=attempts[1:])
 
 
 def call_attempts(request: dict[str, Any], model: str) -> tuple[str, ...]:
@@ -310,10 +344,25 @@ class BidPreparer:
         return row[0] if row else None
 
     def recover_interrupted(self) -> int:
-        """Fail every `running` row. Call only while holding `LOCK_NAME`: then none is really running."""
+        """Fail every `running` row. Call only while holding `LOCK_NAME`: then none is really running.
+
+        A row with no usage recorded since its last claim may have died in a paid call whose usage
+        was never written (the session and the reconnect both failed, or the process was killed): it
+        is charged the worst case of one call of its phase (`interrupted_worst_usd`, step = phase),
+        so the monthly cap does not leak. A row with usage since its claim is not charged again."""
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(_INTERRUPTED)
-            return cur.rowcount
+            rows = cur.fetchall()
+            for prep_id, phase, covered in rows:
+                if covered:
+                    continue
+                model, max_tokens, attempts = _interrupted_call(phase, self._models)
+                usage = SimpleNamespace(iterations=[
+                    worst_usage(m, input_tokens_estimate=WORST_INPUT_TOKENS, max_tokens=max_tokens)
+                    for m in attempts])
+                record_usage(cur, feature=FEATURE_LICITACIONES, step=phase, model=model, usage=usage,
+                             bid_preparation_id=prep_id)
+            return len(rows)
 
     def run(self, prep_id: UUID) -> str:
         """Run one preparation to its final status (`ready`, `failed` or `budget_stopped`)."""
@@ -364,7 +413,8 @@ class BidPreparer:
             if self._reconnect is None:
                 raise ConnectionLost("usage_not_recorded") from None
         # If reconnect() itself fails, its error propagates: the usage stays unrecorded, the row is
-        # left `running` (the next sweep fails it `interrupted`), and the sweep stops — fail closed.
+        # left `running` (the next sweep fails it `interrupted` and charges it a worst-case call), and
+        # the sweep stops — fail closed.
         with self._reconnect() as fresh:
             write(fresh)
             self._finish(prep_id, STATUS_FAILED, "connection_lost", {}, models, conn=fresh)
@@ -929,4 +979,5 @@ def run_bid_sweep(conn: Any, store: Any, reader: ModelReader, models: BidModels,
 
 
 __all__ = ["BID_REQUIRED_POLICIES", "BID_REQUIRED_PRIVILEGES", "DOCUMENTS_BUCKET", "LOCK_NAME", "SUPPORTED_PHASES",
-           "BidModels", "BidPreparer", "ConnectionLost", "PreparationFailed", "call_worst_case", "run_bid_sweep"]
+           "BidModels", "BidPreparer", "ConnectionLost", "PreparationFailed", "WORST_INPUT_TOKENS", "call_worst_case",
+           "interrupted_worst_usd", "run_bid_sweep"]

@@ -332,6 +332,54 @@ def test_the_sweep_takes_the_lock_recovers_an_interrupted_row_and_runs_the_queue
     assert _row(dsn, stuck)[:2] == ("failed", "interrupted") and _row(dsn, prep)[0] == "ready"
 
 
+def _stuck(dsn, store, operator, *, started: str = "now()") -> str:
+    _case_id, _doc, prep = _queued(dsn, store, operator)
+    owner_rows(dsn, f"update evidence.bid_preparation set status = 'running', started_at = {started} "
+                    "where id = %s", (prep,))
+    return prep
+
+
+def _spent(dsn, prep: str) -> tuple[list[str], str]:
+    rows = owner_rows(dsn, "select step, usd_cost from platform.model_usage where bid_preparation_id = %s "
+                           "order by created_at, id", (prep,))
+    return [r[0] for r in rows], str(sum((r[1] for r in rows), start=0))
+
+
+def test_an_interrupted_row_with_no_usage_since_its_claim_is_charged_one_worst_case_call(dsn, store,
+                                                                                       operator) -> None:
+    """A model call whose usage could not be written (the session and the reconnect both failed)
+    leaves the row `running` with nothing recorded: the recovery charges the cap the worst case of
+    one call of its phase, so the cap does not leak."""
+    from origenlab_worker.tender.job import interrupted_worst_usd
+
+    prep = _stuck(dsn, store, operator)
+    with _conn(dsn) as conn:
+        assert BidPreparer(conn, store, Reader(), MODELS, now=_now).recover_interrupted() == 1
+    steps, total = _spent(dsn, prep)
+    assert steps and set(steps) == {"read"}
+    assert total == str(interrupted_worst_usd("read", MODELS)) and interrupted_worst_usd("read", MODELS) > 0
+    assert _row(dsn, prep)[:2] == ("failed", "interrupted")
+
+
+def test_an_interrupted_row_whose_usage_was_recorded_after_its_claim_is_not_charged_again(dsn, store,
+                                                                                        operator) -> None:
+    prep = _stuck(dsn, store, operator)
+    owner_rows(dsn, "insert into platform.model_usage (feature, model, step, bid_preparation_id, usd_cost) "
+                    "values ('licitaciones', 'claude-opus-5-5', 'read', %s, 0.5)", (prep,))
+    with _conn(dsn) as conn:
+        BidPreparer(conn, store, Reader(), MODELS, now=_now).recover_interrupted()
+    assert _spent(dsn, prep) == (["read"], "0.500000")
+
+
+def test_usage_from_before_the_last_claim_does_not_cover_the_interrupted_one(dsn, store, operator) -> None:
+    prep = _stuck(dsn, store, operator, started="now() + interval '1 minute'")
+    owner_rows(dsn, "insert into platform.model_usage (feature, model, step, bid_preparation_id, usd_cost) "
+                    "values ('licitaciones', 'claude-opus-5-5', 'read', %s, 0.5)", (prep,))
+    with _conn(dsn) as conn:
+        BidPreparer(conn, store, Reader(), MODELS, now=_now).recover_interrupted()
+    assert len(_spent(dsn, prep)[0]) > 1
+
+
 def test_a_second_sweep_while_one_holds_the_lock_does_nothing(dsn, store, operator) -> None:
     from origenlab_worker.tender.job import LOCK_NAME
 

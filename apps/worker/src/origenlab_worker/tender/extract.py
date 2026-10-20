@@ -143,7 +143,12 @@ def extract_annex(document_id: str, filename: str, content_type: str, data: byte
     return AnnexText(document_id, filename, outcome, pages, warnings)
 
 
-def render_for_model(annexes: list[AnnexText], *, max_chars: int = 600_000) -> str:
+#: The most anexo text one model call carries (`render_for_model`); the recovery's worst case of an
+#: interrupted call (`job.interrupted_worst_usd`) is priced from it.
+MAX_RENDERED_CHARS: Final = 600_000
+
+
+def render_for_model(annexes: list[AnnexText], *, max_chars: int = MAX_RENDERED_CHARS) -> str:
     blocks: list[str] = []
     total = 0
     for annex in annexes:
