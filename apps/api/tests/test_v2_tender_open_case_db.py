@@ -1,7 +1,7 @@
 """`open-tender-case` against a real, disposable database, as `origenlab_api`.
 
 Every value is invented (public repository): buyer codes 7xxx, «Hospital Ejemplo …», the RUTs
-61.111.111-8 (ruling R2: a valid check digit), 61.222.222-3, 61.333.333-9 and 60.910.000-1, and codes of the
+61.111.111-8 (ruling R2: a valid check digit), 61.222.222-3, 61.333.333-9 and 76.543.210-3, and codes of the
 shape 1234567-12-LE26. One database serves the module, so each test names its own RUT.
 """
 
@@ -220,9 +220,9 @@ def test_known_buyer_code_reuses_org(db, operator_id, world) -> None:
 
 
 def test_known_rut_reuses_org(db, operator_id, world) -> None:
-    rut = "60910000-1"
+    rut = "76543210-3"
     org_id = _org(db, f"Universidad Ficticia {world['buyer_code']}", rut=rut)
-    r = open_tender_case(db, operator_id, reference=world["code"], buyer={"name": "Otro Nombre", "rut": "60.910.000-1"})
+    r = open_tender_case(db, operator_id, reference=world["code"], buyer={"name": "Otro Nombre", "rut": "76.543.210-3"})
     assert r["organization_id"] == org_id
 
 
