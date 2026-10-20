@@ -39,15 +39,24 @@ select ok(
                        'opportunity.bid_preparation_requested', 'opportunity.tender_status_set',
                        'notice.promoted', 'product.model_alias_retired']) t),
   'event vocabulary: the six tender events, keeping the newest earlier type');
--- The CHECK helper runs as the role that inserts events.
-set local role origenlab_api;
-select ok(crm.domain_event_is_valid('bidder', 'bidder.profile_saved', 1::smallint, '{}'::jsonb),
+-- The CHECK helper runs as the role that inserts events; pgTAP's ok() stays with the session
+-- user (origenlab_api has no usage on the extensions schema).
+create function pg_temp.valid_as_api(p_kind text, p_type text) returns boolean
+language plpgsql as $f$
+declare r boolean;
+begin
+  set local role origenlab_api;
+  r := crm.domain_event_is_valid(p_kind, p_type, 1::smallint, '{}'::jsonb);
+  reset role;
+  return r;
+end
+$f$;
+select ok(pg_temp.valid_as_api('bidder', 'bidder.profile_saved'),
   'aggregate kind bidder carries the bidder.* family');
-select ok(crm.domain_event_is_valid('notice', 'notice.promoted', 1::smallint, '{}'::jsonb),
+select ok(pg_temp.valid_as_api('notice', 'notice.promoted'),
   'aggregate kind notice carries the notice.* family');
-select ok(not crm.domain_event_is_valid('bidder', 'notice.promoted', 1::smallint, '{}'::jsonb),
+select ok(not pg_temp.valid_as_api('bidder', 'notice.promoted'),
   'a family never crosses aggregate kinds');
-reset role;
 
 -- ── fixtures ────────────────────────────────────────────────────────────────────────────────
 set local role origenlab_owner;
