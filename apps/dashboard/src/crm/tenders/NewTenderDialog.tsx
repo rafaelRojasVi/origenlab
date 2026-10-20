@@ -134,7 +134,6 @@ export function NewTenderDialog({ navigate, onClose }: { navigate: Navigate; onC
                 e.preventDefault();
                 open(existing);
               }}
-              role="button"
               className="inline-flex min-h-[44px] items-center rounded-md border border-line bg-canvas-raised px-3 text-[13px] font-medium text-brand-700 hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
             >
               Abrir

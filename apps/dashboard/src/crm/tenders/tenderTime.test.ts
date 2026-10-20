@@ -19,6 +19,16 @@ describe("closingLabel (America/Santiago)", () => {
     expect(closingLabel("2026-10-19T18:00:00Z", new Date("2026-10-19T01:30:00Z"))).toBe("cierra mañana");
   });
 
+  it("counts calendar days across the September DST change", () => {
+    // Chile moves to summer time on 2026-09-06: the gap is 47 hours, still two calendar days.
+    expect(closingLabel("2026-09-07T15:00:00Z", new Date("2026-09-05T23:30:00Z"))).toBe("cierra en 2 días");
+  });
+
+  it("a close at 23:59 Santiago is still today", () => {
+    // 23:59 on the 19th in Santiago (UTC-3) is 02:59Z on the 20th.
+    expect(closingLabel("2026-10-20T02:59:00Z", NOW)).toBe("cierra hoy");
+  });
+
   it("says «cerró» once the time has passed", () => {
     expect(closingLabel("2026-10-19T14:00:00Z", NOW)).toBe("cerró");
     expect(closingLabel("2026-10-10T14:00:00Z", NOW)).toBe("cerró");

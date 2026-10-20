@@ -80,7 +80,7 @@ describe("NewTenderDialog", () => {
     type(REF, "1234567-12-LE26");
     submit();
     expect(await screen.findByText("Esta licitación ya está abierta")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Abrir" }));
+    fireEvent.click(screen.getByRole("link", { name: "Abrir" }));
     expect(navigate).toHaveBeenCalledWith("licitaciones", OLD_ID);
     expect(onClose).toHaveBeenCalled();
   });
