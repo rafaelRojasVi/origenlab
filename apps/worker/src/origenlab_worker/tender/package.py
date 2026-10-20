@@ -13,7 +13,7 @@ import re
 import zipfile
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any, BinaryIO, Final
 from zoneinfo import ZoneInfo
 
@@ -119,7 +119,9 @@ def offer_payload(revision: dict[str, Any]) -> dict[str, Any]:
     internal costs (spread into the item prices) and are not printed."""
     decimals = int(revision.get("price_decimals") or 0)
     rate = Decimal(revision.get("tax_rate") if revision.get("tax_rate") is not None else "0.19")
+    quantum = Decimal(1) if decimals == 0 else Decimal("0.01")
     lineas: list[dict[str, Any]] = []
+    nets: list[Decimal] = []
     net_sum = Decimal(0)
     for line in revision.get("lines") or []:
         if line.get("line_kind") == "logistics" or line.get("line_total_qc") is None:
@@ -127,18 +129,41 @@ def offer_payload(revision: dict[str, Any]) -> dict[str, Any]:
         neto = Decimal(line["line_total_qc"])
         quantity = Decimal(line.get("quantity") or 1)
         unit = Decimal(line["unit_price_qc"]) if line.get("unit_price_qc") is not None else neto / quantity
-        iva = (neto * rate).quantize(Decimal(1) if decimals == 0 else Decimal("0.01"), ROUND_HALF_UP)
+        iva = (neto * rate).quantize(quantum, ROUND_HALF_UP)
         net_sum += neto
+        nets.append(neto)
         lineas.append({"descripcion": str(line.get("description") or ""), "cantidad": _quantity(quantity),
                        "precio_unitario_neto": _money(unit, decimals), "neto": _money(neto, decimals),
                        "iva": _money(iva, decimals), "total": _money(neto + iva, decimals)})
     neto = Decimal(revision["tax_base"]) if revision.get("tax_base") is not None else net_sum
     iva = Decimal(revision["tax_total"]) if revision.get("tax_total") is not None else neto * rate
+    _allocate_iva(lineas, nets, rate, quantum, decimals, net_sum, neto, iva)
     total = Decimal(revision["grand_total"]) if revision.get("grand_total") is not None else neto + _q(iva, decimals)
     return {"numero": revision.get("quote_number"),
             "fecha": _date(revision.get("approved_at")) or _date(revision.get("created_at")),
             "lineas": lineas, "neto": _money(neto, decimals), "iva": _money(iva, decimals),
             "total": _money(total, decimals)}
+
+
+def _allocate_iva(lineas: list[dict[str, Any]], nets: list[Decimal], rate: Decimal, quantum: Decimal,
+                  decimals: int, net_sum: Decimal, stored_net: Decimal, stored_iva: Decimal) -> None:
+    """Make the printed lines add up to the quote's stored IVA (as the printed quote does): when the
+    line netos sum to the stored neto and the half-up IVAs miss the stored IVA, start from each
+    line's floor and give the missing pesos to the largest rounding remainders (ties: the earlier
+    line). Zero-neto lines take none. Otherwise the lines stay as computed."""
+    if not lineas or net_sum != stored_net or sum(Decimal(str(x["iva"])) for x in lineas) == stored_iva:
+        return
+    floors = [((n * rate) / quantum).to_integral_value(ROUND_FLOOR) * quantum for n in nets]
+    extra = (stored_iva - sum(floors)) / quantum
+    if extra < 0 or extra > len(lineas) or extra != extra.to_integral_value():
+        return
+    order = sorted((i for i, n in enumerate(nets) if n != 0),
+                   key=lambda i: (-(nets[i] * rate - floors[i]), i))
+    up = set(order[: int(extra)])
+    for i, line in enumerate(lineas):
+        iva = floors[i] + (quantum if i in up else 0)
+        line["iva"] = _money(iva, decimals)
+        line["total"] = _money(nets[i] + iva, decimals)
 
 
 def _q(value: Decimal, decimals: int) -> Decimal:

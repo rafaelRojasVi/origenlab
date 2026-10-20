@@ -70,6 +70,19 @@ def test_offer_payload_rounds_iva_per_line_half_up_and_keeps_a_fractional_quanti
     assert (payload["neto"], payload["iva"], payload["total"]) == (2525, 480, 3005)
 
 
+def test_offer_payload_allocates_the_iva_remainder_so_the_lines_add_up_to_the_quote() -> None:
+    """3 x 1003 neto: each line rounds to 191 (573) but the quote stores 572, so the last of the
+    equal remainders gives a peso back: 191/191/190."""
+    lines = [{"line_kind": "item", "description": f"Equipo {n}", "quantity": Decimal("1"),
+              "unit_price_qc": Decimal("1003"), "line_total_qc": Decimal("1003")} for n in (1, 2, 3)]
+    payload = offer_payload(_revision(tax_base=Decimal("3009"), tax_total=Decimal("572"),
+                                      grand_total=Decimal("3581"), lines=lines))
+    assert [line["iva"] for line in payload["lineas"]] == [191, 191, 190]
+    assert [line["total"] for line in payload["lineas"]] == [1194, 1194, 1193]
+    assert sum(line["iva"] for line in payload["lineas"]) == payload["iva"] == 572
+    assert sum(line["total"] for line in payload["lineas"]) == payload["total"] == 3581
+
+
 def test_checklist_status_listo_falta_firmar() -> None:
     entry = {"documento": "Anexo 1", "tipo": "formulario", "requiere_firma": False}
     done = [{"file_key": "formulario_01", "completar_count": 0}]
