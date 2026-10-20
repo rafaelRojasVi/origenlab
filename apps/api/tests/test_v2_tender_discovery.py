@@ -126,3 +126,50 @@ def test_all_items_keeps_every_item_and_says_what_each_matched() -> None:
     match = classify("Equipamiento", head, _vocabulary(), all_items=True)
     assert [i["name"] for i in match["items"]] == ["Termocicladores", "Mesa de trabajo"]
     assert match["items"][0]["terms"] == ["t100", "termocicladores"] and match["items"][1]["terms"] == []
+
+
+def _junji_vocabulary():
+    from origenlab_api.v2.tenders.discovery import build_vocabulary
+
+    return build_vocabulary([
+        ("Material de referencia certificado", None, None, "Fabricante Uno", "MR100"),
+        ("Programas de calibración", None, None, "Fabricante Dos", "PC200"),
+        ("Centrífuga refrigerada", None, None, "Ortoalresa", "DIGI22"),
+        ("Agitador magnético", None, None, "IKA", "RCT5"),
+        ("Contador de colonias digital", None, None, "Fabricante Tres", "CC300"),
+    ])
+
+
+def test_a_kindergartens_teaching_material_is_not_a_centrifuge() -> None:
+    """2026-10-20, as seen live: «Material de enseñanza no fungible» for kindergartens matched
+    «Centrífugas» and «Agitadores» through toy sets, and «material» / «programas» through the catalog."""
+    head = _detail(
+        {"CodigoProducto": 60101500, "NombreProducto": "Juegos educativos", "Descripcion": "SET DE CIENCIAS CON CENTRIFUGA Y AGITADOR"},
+        {"CodigoProducto": 60101501, "NombreProducto": "Juegos educativos", "Descripcion": "SET DE 3 CANASTOS DE MIMBRE CON ASAS"},
+    )
+    match = classify("ADQUISICIÓN DE MATERIAL DE ENSEÑANZA NO FUNGIBLE", head, _junji_vocabulary())
+    assert match == {"tier": None, "families": [], "terms": [], "items": []}
+
+
+def test_an_item_coded_as_equipment_or_not_coded_is_read_one_coded_otherwise_is_not() -> None:
+    v = _junji_vocabulary()
+    coded = classify("Compra", _detail({"CodigoProducto": 41103800, "NombreProducto": "Centrífugas",
+                                        "Descripcion": "centrífuga refrigerada"}), v)
+    assert coded["families"] == ["centrifugas"] and coded["terms"] == ["centrifugas"]
+    medical = classify("Compra", _detail({"CodigoProducto": 42181500, "NombreProducto": "Centrífuga clínica"}), v)
+    assert medical["families"] == ["centrifugas"]
+    uncoded = classify("Compra", _detail({"NombreProducto": "Centrífuga de mesa"}), v)
+    assert uncoded["families"] == ["centrifugas"]
+    furniture = classify("Compra", _detail({"CodigoProducto": 56101500, "NombreProducto": "Mueble para centrífuga"}), v)
+    assert furniture["families"] == [] and furniture["tier"] is None
+
+
+def test_common_words_are_never_catalog_types_and_a_title_type_needs_laboratory_context() -> None:
+    v = _junji_vocabulary()
+    assert v.hits("Programas de material didáctico") == []
+    # A type in the title alone counts with laboratory context, a model or maker always.
+    assert classify("Contador de colonias", {}, v)["terms"] == []
+    assert classify("Contador de colonias para laboratorio", {}, v)["terms"] == ["contador de colonias"]
+    # A curated family is context enough: «agitador» is one.
+    assert classify("Agitador magnético", {}, v)["terms"] == ["agitador"]
+    assert classify("Equipo IKA RCT5", {}, v)["terms"] == ["rct5", "ika"]

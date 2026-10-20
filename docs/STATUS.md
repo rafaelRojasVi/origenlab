@@ -3362,7 +3362,7 @@ No schema change: the worker already had `select, insert, update` on `procuremen
   `test_task_queue.py`, dashboard `LicitacionesPage.test.tsx`, proxy `allowlist.test.ts`.
 
 
-### 2.7.141 Licitaciones: the whole catalog in the match, a notice's own page, the dashboard's look, 2026-10-20 — built, deploys on merge
+### 2.7.141 Licitaciones: the whole catalog in the match, a notice's own page, the dashboard's look, 2026-10-20 — merged (#804) and deployed 2026-10-20
 
 - **The catalog itself** (`CatalogVocabulary` in `origenlab_api.v2.tenders.discovery`): every live
   equipment product's type (first word of `name_es`, or `category_es`; an everyday or vague first word
@@ -3381,3 +3381,10 @@ No schema change: the worker already had `select, insert, update` on `procuremen
   rows rise in (`crm-rise`), a pulsing dot within two days, all off under reduced motion.
 - **Not yet.** Documents are linked, not downloaded; history, winners and prices («Mercado») are
   the next pieces.
+- **Precision fix (same day, after the first live look).** A kindergarten's «material de enseñanza
+  no fungible» showed as «Centrífugas» and «Agitadores» (toy science sets) and «Calza con: material ·
+  programas». Now an item is read for a match only when its UNSPSC is segment 41 (laboratory) or 42
+  (medical equipment), or it has no code; common procurement words («material», «programa», «insumo»,
+  …) are never catalog types; a catalog type in the title counts only with laboratory context (a
+  curated family, a laboratory item, «laboratorio»); a model or a maker always counts; singular and
+  plural are one word in «Calza con».

@@ -72,6 +72,10 @@ _TITLE_ONLY = re.compile(r"laboratorio")
 #: Lab services and supplies, not equipment: they never make the second tier on their own.
 _SERVICE = re.compile(r"\bexamen(es)?\b|\banalisis clinicos\b|\bservicios? de laboratorio|\breactivos?\b")
 LAB_UNSPSC_SEGMENT = "41"
+#: An item coded outside these UNSPSC segments (41 laboratory, 42 medical equipment) is not read for
+#: a match: a «centrífuga» inside a kindergarten's toy set (segment 60) says nothing. An item with no
+#: code is read.
+EQUIPMENT_UNSPSC_SEGMENTS = frozenset({"41", "42"})
 
 #: A product name's first word that says nothing on its own: the next word is taken with it
 #: («Procesador ultrasónico», «Baño termostático»).
@@ -96,6 +100,17 @@ _GENERIC_MAKER_WORDS = frozenset({
     "the", "electronics", "medical", "systems", "chile", "sociedad", "comercial",
 })
 _CONNECTORS = frozenset({"de", "del", "para", "con", "y", "e", "a", "en", "la", "el", "los", "las"})
+#: Words every kind of tender uses: never a catalog type, whatever a product's name starts with.
+_COMMON_WORDS = frozenset({
+    "material", "materiales", "programa", "programas", "producto", "productos", "insumo", "insumos",
+    "articulo", "articulos", "elemento", "elementos", "herramienta", "herramientas", "implemento",
+    "equipamiento", "mobiliario", "suministro", "licencia", "software", "capacitacion", "mantencion",
+    "mantenimiento", "reparacion", "reactivo", "reactivos", "solucion", "soluciones", "estandar",
+    "libro", "libros", "mueble", "computador", "notebook", "vehiculo", "alimento", "alimentos",
+    "combustible", "uniforme", "bolsa", "guante", "guantes", "mascarilla", "jeringa", "aguja", "agujas",
+    "control", "calibracion", "certificado", "manual", "curso", "proyecto", "estudio", "general",
+    "standard", "estuche", "maleta", "sistema", "modelo", "version", "nuevo", "digital", "electronico",
+})
 
 
 @dataclass(frozen=True)
@@ -106,10 +121,11 @@ class CatalogVocabulary:
     makers: re.Pattern[str] | None = None
     models: re.Pattern[str] | None = None
 
-    def hits(self, text: str | None) -> list[str]:
+    def hits(self, text: str | None, *, types: bool = True) -> list[str]:
+        """The catalog words in `text`: models, makers, then types (left out with `types=False`)."""
         folded = fold(text)
         found: list[str] = []
-        for pattern in (self.models, self.makers, self.types):
+        for pattern in (self.models, self.makers, self.types if types else None):
             if pattern is None or not folded:
                 continue
             for m in pattern.finditer(folded):
@@ -137,11 +153,11 @@ def _type_of(name: str | None) -> str | None:
     if not words or words[0].isdigit():
         return None
     head = words[0]
-    if head in _NO_TYPE:
+    if head in _NO_TYPE or head in _COMMON_WORDS:
         return None
     if head in _GENERIC_HEADS:
         rest = [w for w in words[1:] if w not in _CONNECTORS]
-        if not rest or len(rest[0]) < 5 or any(c.isdigit() for c in rest[0]):
+        if not rest or len(rest[0]) < 5 or any(c.isdigit() for c in rest[0]) or rest[0] in _COMMON_WORDS:
             return None
         return f"{head} {rest[0]}"
     if len(head) < 6 or any(c.isdigit() for c in head):
@@ -243,6 +259,19 @@ def has_detail(head: dict[str, Any] | None) -> bool:
     return isinstance((head or {}).get("Comprador"), dict)
 
 
+def _same_word(a: str, b: str) -> bool:
+    """«centrifuga» and «centrifugas» are one word for «Calza con»."""
+    def stem(w: str) -> str:
+        return w[:-2] if w.endswith("es") and len(w) > 7 else w[:-1] if w.endswith("s") else w
+    return stem(a) == stem(b)
+
+
+def _add_terms(terms: list[str], new: list[str]) -> None:
+    for t in new:
+        if not any(_same_word(t, seen) for seen in terms):
+            terms.append(t)
+
+
 def _item_row(item: dict[str, Any], unspsc: str, families: list[str], terms: list[str], *, is_lab: bool) -> dict[str, Any]:
     return {
         "name": _str(item.get("NombreProducto")) or _str(item.get("Descripcion")),
@@ -267,20 +296,26 @@ def classify(title: str | None, head: dict[str, Any] | None,
     terms: list[str] = []
     for text in texts:
         found += [f for f in families_in(text) if f not in found]
-        terms += [t for t in vocabulary.hits(text) if t not in terms]
+        # A model or a maker always counts; a type in the title waits for laboratory context (below).
+        _add_terms(terms, vocabulary.hits(text, types=False))
     matched_items: list[dict[str, Any]] = []
     lab_item = False
     for item in head_items(head):
         text = " ".join(str(item.get(k) or "") for k in ("NombreProducto", "Descripcion", "Categoria"))
-        item_families = families_in(text)
-        item_terms = vocabulary.hits(text)
         unspsc = str(item.get("CodigoProducto") or item.get("CodigoCategoria") or "")
-        is_lab = unspsc.startswith(LAB_UNSPSC_SEGMENT) or bool(_LAB_EQUIPMENT.search(fold(text)))
+        in_scope = not unspsc or unspsc[:2] in EQUIPMENT_UNSPSC_SEGMENTS
+        item_families = families_in(text) if in_scope else []
+        item_terms = vocabulary.hits(text) if in_scope else []
+        is_lab = unspsc.startswith(LAB_UNSPSC_SEGMENT) or (in_scope and bool(_LAB_EQUIPMENT.search(fold(text))))
         lab_item = lab_item or is_lab
         found += [f for f in item_families if f not in found]
-        terms += [t for t in item_terms if t not in terms]
+        _add_terms(terms, item_terms)
         if all_items or item_families or item_terms or is_lab:
             matched_items.append(_item_row(item, unspsc, item_families, item_terms, is_lab=is_lab))
+    folded_texts = " ".join(fold(t) for t in texts)
+    if found or lab_item or _TITLE_ONLY.search(folded_texts) or _LAB_EQUIPMENT.search(folded_texts):
+        for text in texts:
+            _add_terms(terms, vocabulary.hits(text))
     if not found and terms:
         found = [CATALOG_FAMILY[0]]
     order = {key: n for n, key in enumerate([k for k, _, _ in FAMILIES] + [CATALOG_FAMILY[0]])}
@@ -290,7 +325,7 @@ def classify(title: str | None, head: dict[str, Any] | None,
     elif lab_item:
         tier = "laboratorio"
     else:
-        folded = " ".join(fold(t) for t in texts)
+        folded = folded_texts
         named = bool(_LAB_EQUIPMENT.search(folded))
         # Before its detail arrives a title-only candidate is shown, unless it reads as a service.
         pending = not has_detail(head) and bool(_TITLE_ONLY.search(folded)) and not _SERVICE.search(folded)
