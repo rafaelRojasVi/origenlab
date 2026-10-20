@@ -4,7 +4,8 @@
  * «Nueva licitación» (`open-tender-case`); one tender's page
  * (`GET /v2/tenders/{id}`, `set-tender-status`, `attach-tender-annexes` (multipart), «Quitar anexo»
  * (`remove-tender-annex`), `prepare-tender-bid`,
- * `create-tender-offer-quote` and an output file's signed link); and the bidder's data and standard
+ * `create-tender-offer-quote` and an output file's signed link); «Nos interesa» / «No es nuestro»
+ * (`review-notice`); and the bidder's data and standard
  * documents («Datos para licitaciones» in Preferencias) — `GET /v2/bidder`, `save-bidder-profile`,
  * `add-bidder-document` (multipart), `retire-bidder-document` and a document's signed link.
  *
@@ -107,11 +108,24 @@ export interface DiscoveredNotice {
   portal_url: string;
   /** The open tender case already made from it, if any. */
   opportunity_id: string | null;
+  /** A person's latest verdict («Nos interesa» / «No es nuestro»), if any. */
+  review?: NoticeReview | null;
+}
+
+export type NoticeVerdict = "interesa" | "no_es_nuestro";
+
+export interface NoticeReview {
+  verdict: NoticeVerdict;
+  reason: string | null;
+  at: string | null;
+  by: string | null;
 }
 
 export interface DiscoveredList {
   notices: DiscoveredNotice[];
-  counts: Record<DiscoveryTier, number>;
+  /** The ones a person said are not ours: off the list, under «Descartadas». */
+  dismissed?: DiscoveredNotice[];
+  counts: Record<DiscoveryTier, number> & { interesa?: number; descartadas?: number };
   families: { key: string; label: string }[];
   last_checked_at: string | null;
 }
@@ -243,6 +257,12 @@ export const fetchBidder = () => fetchJsonGet<BidderView>(operatorApiUrl("/v2/bi
 /** Open a tender case from a Mercado Público code or link; the receipt names the new case. */
 export const openTenderCase = (body: OpenTenderCaseBody, idempotencyKey: string = newTenderCommandKey()) =>
   post("/v2/commands/open-tender-case", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);
+
+/** «Nos interesa» / «No es nuestro» on a notice (sales and admin). */
+export const reviewNotice = (
+  body: { notice_id: string; verdict: NoticeVerdict; reason?: string | null },
+  idempotencyKey: string = newTenderCommandKey(),
+) => post("/v2/commands/review-notice", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);
 
 export const saveBidderProfile = (body: BidderProfileBody, idempotencyKey: string = newTenderCommandKey()) =>
   post("/v2/commands/save-bidder-profile", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);

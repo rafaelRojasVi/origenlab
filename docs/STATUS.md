@@ -3388,3 +3388,26 @@ No schema change: the worker already had `select, insert, update` on `procuremen
   …) are never catalog types; a catalog type in the title counts only with laboratory context (a
   curated family, a laboratory item, «laboratorio»); a model or a maker always counts; singular and
   plural are one word in «Calza con».
+
+### 2.7.142 Licitaciones: every new tender read, its match stored, «Nos interesa» / «No es nuestro», 2026-10-20 — built, deploys on merge
+
+Migration `20261020180000` ([`DOMAIN.md`](DOMAIN.md) §7 #64): `procurement.notice.relevance` (the
+worker's match, machine evidence) and `crm.notice_review` (a person's verdict, append-only), event
+`notice.reviewed`.
+
+- **Layer 1 — nothing missed for its title.** The sweep inserts **every** new open tender, not only
+  matching titles, and reads each one's detail (150 per run, matching titles first, then the newest;
+  the ~4,600 backlog takes about eight hours, then a few new ones per run). Each read stores its match
+  in `relevance` (tier, families, catalog words, matched items, version, the catalog's fingerprint);
+  an item coded 41/42 can make a tender ours whatever its title says. A notice read and found not
+  ours is not refreshed again unless a person reviewed it. Up to 500 stored matches per run are
+  re-made when the match version or the catalog changes (no API call).
+- **The list reads the stored match**: no re-matching per page view. A notice not read yet shows on a
+  candidate title alone (`detail: false`).
+- **Layer 4 — the operator's verdict.** `review-notice` (sales, admin; Idempotency-Key; event
+  `notice.reviewed` with the previous verdict): «Nos interesa» pins the notice first and marks it,
+  «No es nuestro» moves it to «Descartadas» (where «Sí, nos interesa» brings it back). On the list
+  and on the notice's page. The verdicts are the labelled examples the next layers (embeddings, a model
+  as judge) will learn from.
+- **Not yet.** Deploys on merge with the migration (`production-db-migrations`); nothing manual.
+

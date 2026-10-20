@@ -128,6 +128,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/remove-tender-annex",
     "/v2/commands/prepare-tender-bid",
     "/v2/commands/create-tender-offer-quote",
+    "/v2/commands/review-notice",
   ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";

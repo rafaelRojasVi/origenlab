@@ -25,7 +25,9 @@ the head (type, contract length, delivery address, the buyer's complaint count).
 
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -121,6 +123,12 @@ class CatalogVocabulary:
     makers: re.Pattern[str] | None = None
     models: re.Pattern[str] | None = None
 
+    @property
+    def fingerprint(self) -> str:
+        """Changes when the catalog teaches a different word: the worker then re-matches."""
+        text = "|".join(p.pattern if p is not None else "" for p in (self.types, self.makers, self.models))
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
     def hits(self, text: str | None, *, types: bool = True) -> list[str]:
         """The catalog words in `text`: models, makers, then types (left out with `types=False`)."""
         folded = fold(text)
@@ -201,9 +209,22 @@ select p.name_es, p.name, p.category_es, o.name as maker, p.model_number
 """
 
 
-def load_vocabulary(cur: Any) -> CatalogVocabulary:
+#: The catalog changes rarely; a read rebuilds the vocabulary at most this often (seconds).
+VOCABULARY_TTL_S = 300.0
+_cached: tuple[float, CatalogVocabulary] | None = None
+
+
+def load_vocabulary(cur: Any, *, cache: bool = False) -> CatalogVocabulary:
+    """The catalog's vocabulary. `cache` (the API's reads) reuses one built in the last
+    `VOCABULARY_TTL_S`; the worker builds it fresh every run."""
+    global _cached
+    if cache and _cached is not None and time.monotonic() - _cached[0] < VOCABULARY_TTL_S:
+        return _cached[1]
     cur.execute(CATALOG_VOCABULARY_SQL)
-    return build_vocabulary(cur.fetchall())
+    vocabulary = build_vocabulary(cur.fetchall())
+    if cache:
+        _cached = (time.monotonic(), vocabulary)
+    return vocabulary
 
 
 def chile_time(raw: Any) -> datetime | None:
@@ -356,19 +377,62 @@ def _instant(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+#: The latest verdict of a person on each notice (`crm.notice_review`, append-only: newest wins).
+_REVIEW_JOIN = """
+  left join lateral (
+        select x.verdict, x.reason, x.reviewed_at, x.reviewed_by_operator_id
+          from crm.notice_review x
+         where x.notice_id = n.id
+         order by x.reviewed_at desc, x.id desc limit 1) r on true
+  left join platform.operator op on op.id = r.reviewed_by_operator_id
+"""
+
 #: Open notices only: seen in Mercado Público's open list in the last two days (the sweep refreshes
-#: `last_seen_at` every run), not withdrawn, closing in the future (or with no date yet).
+#: `last_seen_at` every run), not withdrawn, closing in the future (or with no date yet). The head is
+#: cut down to what a row shows; the match is the worker's (`relevance`), so nothing is re-read here.
 DISCOVERED_SQL = """
 select n.id::text as id, n.codigo_externo as code, n.title, n.buyer_name, n.closes_at, n.published_at,
-       n.first_seen_at, n.head, n.source_status,
-       case when o.closed_at is null then o.id::text end as opportunity_id
+       n.first_seen_at, n.source_status, n.relevance,
+       jsonb_build_object('Comprador', n.head->'Comprador', 'MontoEstimado', n.head->'MontoEstimado',
+                          'Moneda', n.head->'Moneda') as head,
+       (n.head ? 'Comprador') as detail,
+       case when o.closed_at is null then o.id::text end as opportunity_id,
+       r.verdict, r.reason as review_reason, r.reviewed_at, op.display_name as reviewed_by
   from procurement.notice n
   left join crm.opportunity o on o.id = n.promoted_opportunity_id
+""" + _REVIEW_JOIN + """
  where n.disappeared_at is null
    and (n.closes_at is null or n.closes_at > %(now)s)
    and n.last_seen_at > %(now)s - interval '2 days'
+   and (n.relevance is null or n.relevance->>'tier' is not null or r.verdict is not null)
  order by n.closes_at asc nulls last, n.codigo_externo
 """
+
+#: The match the worker stores in `procurement.notice.relevance`; a new version re-reads every notice.
+RELEVANCE_VERSION = 2
+
+
+def relevance_of(title: str | None, head: dict[str, Any] | None, vocabulary: CatalogVocabulary,
+                 checked_at: datetime) -> dict[str, Any]:
+    """What the worker stores: the match, its version and the catalog it was made against."""
+    match = classify(title, head, vocabulary)
+    return {
+        "version": RELEVANCE_VERSION,
+        "vocabulary": vocabulary.fingerprint,
+        "checked_at": checked_at.isoformat(),
+        "tier": match["tier"],
+        "families": match["families"],
+        "terms": match["terms"],
+        "items": match["items"][:8],
+        "item_count": len(head_items(head)),
+    }
+
+
+def _review(row: dict[str, Any]) -> dict[str, Any] | None:
+    if not row.get("verdict"):
+        return None
+    return {"verdict": row["verdict"], "reason": row.get("review_reason"),
+            "at": _instant(row.get("reviewed_at")), "by": row.get("reviewed_by")}
 
 
 def discovered_row(row: dict[str, Any], match: dict[str, Any]) -> dict[str, Any]:
@@ -386,34 +450,56 @@ def discovered_row(row: dict[str, Any], match: dict[str, Any]) -> dict[str, Any]
         "first_seen_at": _instant(row.get("first_seen_at")),
         "estimated_amount": {"amount": amount, "currency": _str(head.get("Moneda")) or "CLP"} if amount else None,
         "tier": match["tier"],
-        "families": [{"key": f, "label": FAMILY_LABELS[f]} for f in match["families"]],
-        "terms": match["terms"],
+        "families": [{"key": f, "label": FAMILY_LABELS[f]} for f in match["families"] if f in FAMILY_LABELS],
+        "terms": match.get("terms", []),
         "items": match["items"][:8],
-        "item_count": len(head_items(head)),
-        "detail": has_detail(head),
+        "item_count": match.get("item_count", len(head_items(head))),
+        "detail": bool(row["detail"]) if "detail" in row else has_detail(head),
         "portal_url": portal_url(row["code"]),
         "opportunity_id": row.get("opportunity_id"),
+        "review": _review(row),
     }
 
 
 def discovered_notices(cur: Any, now: datetime) -> dict[str, Any]:
-    """Every open notice that fits, catalog families first, then by closing time."""
-    vocabulary = load_vocabulary(cur)
+    """Every open notice that fits — the ones a person said interest first, then the catalog, then
+    by closing — and, apart, the ones a person said are not ours («Descartadas»).
+
+    A notice the worker has matched carries its stored match. One not matched yet (its detail is
+    still to be read) is shown on its title alone, `detail: false`, when the title is a candidate.
+    """
+    vocabulary = load_vocabulary(cur, cache=True)
     cur.execute(DISCOVERED_SQL, {"now": now})
     columns = [c.name for c in cur.description]
     shown: list[dict[str, Any]] = []
+    dismissed: list[dict[str, Any]] = []
     for values in cur.fetchall():
         row = dict(zip(columns, values, strict=True))
-        match = classify(row.get("title"), row.get("head"), vocabulary)
-        if match["tier"] is not None:
-            shown.append(discovered_row(row, match))
-    shown.sort(key=lambda r: (r["tier"] != "catalogo", r["closes_at"] is None, r["closes_at"] or ""))
+        stored = row.get("relevance")
+        if stored is None:
+            if not title_candidate(row.get("title"), vocabulary):
+                continue
+            match = classify(row.get("title"), {}, vocabulary)
+            match.setdefault("item_count", 0)
+        else:
+            match = stored
+        if match.get("tier") is None and row.get("verdict") != "interesa":
+            if row.get("verdict") == "no_es_nuestro":
+                dismissed.append(discovered_row(row, {**match, "tier": "laboratorio"}))
+            continue
+        target = dismissed if row.get("verdict") == "no_es_nuestro" else shown
+        target.append(discovered_row(row, {**match, "tier": match.get("tier") or "laboratorio"}))
+    shown.sort(key=lambda r: (not (r["review"] and r["review"]["verdict"] == "interesa"), r["tier"] != "catalogo",
+                              r["closes_at"] is None, r["closes_at"] or ""))
     counts = {"catalogo": sum(r["tier"] == "catalogo" for r in shown),
-              "laboratorio": sum(r["tier"] == "laboratorio" for r in shown)}
+              "laboratorio": sum(r["tier"] == "laboratorio" for r in shown),
+              "interesa": sum(bool(r["review"]) for r in shown),
+              "descartadas": len(dismissed)}
     cur.execute("select max(last_seen_at) from procurement.notice where promoted_opportunity_id is null")
     (last_seen,) = cur.fetchone()
     families = [{"key": k, "label": l} for k, l, _ in FAMILIES] + [{"key": CATALOG_FAMILY[0], "label": CATALOG_FAMILY[1]}]
-    return {"notices": shown, "counts": counts, "families": families, "last_checked_at": _instant(last_seen)}
+    return {"notices": shown, "dismissed": dismissed, "counts": counts, "families": families,
+            "last_checked_at": _instant(last_seen)}
 
 
 #: The head's dates, in the order a tender lives them (`Fechas.*`; `FechaCierre` also at the top).
@@ -472,12 +558,21 @@ def notice_facts(head: dict[str, Any]) -> list[dict[str, str]]:
     return [{"label": label, "value": value} for label, value in rows if value]
 
 
-DISCOVERED_ONE_SQL = DISCOVERED_SQL.split(" where ")[0] + " where n.id = %(id)s::uuid"
+DISCOVERED_ONE_SQL = """
+select n.id::text as id, n.codigo_externo as code, n.title, n.buyer_name, n.closes_at, n.published_at,
+       n.first_seen_at, n.head, n.source_status,
+       case when o.closed_at is null then o.id::text end as opportunity_id,
+       r.verdict, r.reason as review_reason, r.reviewed_at, op.display_name as reviewed_by
+  from procurement.notice n
+  left join crm.opportunity o on o.id = n.promoted_opportunity_id
+""" + _REVIEW_JOIN + """
+ where n.id = %(id)s::uuid
+"""
 
 
 def discovered_notice(cur: Any, notice_id: str, now: datetime) -> dict[str, Any] | None:
     """One notice's page: the list row plus every date, every item and the head's facts."""
-    vocabulary = load_vocabulary(cur)
+    vocabulary = load_vocabulary(cur, cache=True)
     cur.execute(DISCOVERED_ONE_SQL, {"id": notice_id})
     values = cur.fetchone()
     if values is None:

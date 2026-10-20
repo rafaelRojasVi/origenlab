@@ -175,9 +175,13 @@ insert into expected values
     ('evidence', 'bid_preparation', 'origenlab_api', 'SI', null, 'SI'),
     ('evidence', 'bid_preparation', 'origenlab_worker', 'S', array['status', 'started_at', 'finished_at', 'failure_code', 'result', 'outputs', 'models', 'updated_at'], 'SU'),
     ('platform', 'model_usage', 'origenlab_api', 'S', null, 'S'),
-    ('platform', 'model_usage', 'origenlab_worker', 'SI', null, 'SI');
+    ('platform', 'model_usage', 'origenlab_worker', 'SI', null, 'SI'),
+    -- 20261020180000: crm.notice_review — the human verdict on a notice; append-only (api inserts,
+    -- worker reads). No UPDATE or DELETE grant on either role.
+    ('crm', 'notice_review', 'origenlab_api', 'SI', null, 'SI'),
+    ('crm', 'notice_review', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 118, 'the matrix covers all 59 tables for both runtime roles');
+select is((select count(*)::int from expected), 120, 'the matrix covers all 60 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

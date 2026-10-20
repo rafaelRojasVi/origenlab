@@ -113,6 +113,7 @@ union all select 'crm.bidder_profile', count(*)::text from crm.bidder_profile
 union all select 'crm.bidder_document', count(*)::text from crm.bidder_document
 union all select 'evidence.bid_preparation', count(*)::text from evidence.bid_preparation
 union all select 'platform.model_usage', count(*)::text from platform.model_usage
+union all select 'crm.notice_review', count(*)::text from crm.notice_review
 ;
 
 commit;

@@ -20,12 +20,22 @@ from v2_command_harness import build_disposable_database, needs_db, runtime_dsn
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
 from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, OperatorLookup
+from origenlab_api.v2.tenders.discovery import load_vocabulary, relevance_of
+from origenlab_api.v2.tenders.open_case import V2TenderCommandRepository
 from origenlab_api.v2.tenders.reads import TenderReadRepository
-from origenlab_api.v2.tenders.routes import tender_read_router
+from origenlab_api.v2.tenders.routes import tender_command_router, tender_read_router
 
 pytestmark = needs_db
 LOOPBACK = "postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev"
 _SERIALS = itertools.count(1)
+
+
+@pytest.fixture(autouse=True)
+def fresh_vocabulary(monkeypatch):
+    """Each test sees the catalog it seeded, not a vocabulary cached by an earlier one."""
+    from origenlab_api.v2.tenders import discovery
+
+    monkeypatch.setattr(discovery, "_cached", None)
 
 
 @pytest.fixture(scope="module")
@@ -66,7 +76,9 @@ class _Lookup(OperatorLookup):
 def client(db, operators) -> TestClient:
     app = FastAPI()
     app.include_router(tender_read_router)
+    app.include_router(tender_command_router)
     app.state.v2_tender_read_repository = TenderReadRepository(psycopg.connect, runtime_dsn(db))
+    app.state.v2_tender_command_repository = V2TenderCommandRepository(psycopg.connect, runtime_dsn(db))
     app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(operators))
     return TestClient(app)
 
@@ -84,13 +96,30 @@ def notice(db, title: str, *, head: dict | None = None, closes_in: timedelta | N
     now = datetime.now(UTC)
     seen = now - seen_ago
     with _owner(db) as conn:
+        # As the worker leaves it: a notice whose detail was read carries its match (`relevance`).
+        relevance = None
+        if head and "Comprador" in head:
+            with conn.cursor() as cur:
+                relevance = json.dumps(relevance_of(title, head, load_vocabulary(cur), now))
         conn.execute(
             "insert into procurement.notice (codigo_externo, title, buyer_name, closes_at, head, first_seen_at, "
-            "last_seen_at, disappeared_at, promoted_opportunity_id) values (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s)",
+            "last_seen_at, disappeared_at, promoted_opportunity_id, relevance) "
+            "values (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s::jsonb)",
             (code, title, "Hospital Ejemplo Sur" if head and "Comprador" in head else None,
              now + closes_in if closes_in is not None else None, json.dumps(head or {"CodigoExterno": code}),
-             seen, seen, seen if disappeared else None, promoted_to))
+             seen, seen, seen if disappeared else None, promoted_to, relevance))
     return code
+
+
+def notice_id(db, code: str) -> str:
+    with _owner(db) as conn:
+        return conn.execute("select id::text from procurement.notice where codigo_externo = %s", (code,)).fetchone()[0]
+
+
+def review(client, notice: str, verdict: str, *, role: str = "sales", key: str | None = None):
+    return client.post("/v2/commands/review-notice", json={"notice_id": notice, "verdict": verdict},
+                       headers={OPERATOR_EMAIL_HEADER: f"{role}-buscar@example.test",
+                                "Idempotency-Key": key or f"pytest-review-{uuid.uuid4().hex}"})
 
 
 def discovered(client, role: str = "sales") -> dict:
@@ -195,4 +224,77 @@ def test_an_unknown_or_malformed_notice_is_404(db, client) -> None:
     for path in (f"/v2/tenders/discovered/{uuid.uuid4()}", "/v2/tenders/discovered/no-es-un-id"):
         response = client.get(path, headers={OPERATOR_EMAIL_HEADER: "sales-buscar@example.test"})
         assert response.status_code == 404
+
+
+def test_a_notice_not_matched_yet_shows_on_a_candidate_title_only(db, client) -> None:
+    candidate = notice(db, "Adquisición de microcentrífugas")  # list head only: no relevance yet
+    other = notice(db, "Servicio de aseo de oficinas")
+    rows = by_code(discovered(client))
+    assert rows[candidate]["detail"] is False and rows[candidate]["tier"] == "catalogo"
+    assert other not in rows
+
+
+def test_the_stored_match_decides_and_nothing_is_re_read(db, client) -> None:
+    code = notice(db, "Adquisición de equipamiento", head={
+        "Comprador": {"NombreOrganismo": "Hospital Ejemplo Sur"},
+        "Items": {"Listado": [{"CodigoProducto": 41103800, "NombreProducto": "Centrífuga refrigerada", "Cantidad": 1}]}})
+    row = by_code(discovered(client))[code]
+    assert row["tier"] == "catalogo" and [f["key"] for f in row["families"]] == ["centrifugas"]
+    assert row["item_count"] == 1 and row["detail"] is True
+    with _owner(db) as conn:  # the worker re-matched it: nothing of ours after all
+        conn.execute("update procurement.notice set relevance = relevance || '{\"tier\": null}'::jsonb "
+                     "where codigo_externo = %s", (code,))
+    assert code not in by_code(discovered(client))
+
+
+def test_review_notice_records_the_verdict_with_an_event_and_moves_the_notice(db, operators, client) -> None:
+    code = notice(db, "Adquisición de balanzas de precisión", head={
+        "Comprador": {"NombreOrganismo": "Hospital Ejemplo Sur"},
+        "Items": {"Listado": [{"CodigoProducto": 41111500, "NombreProducto": "Balanza de precisión", "Cantidad": 2}]}})
+    nid = notice_id(db, code)
+
+    response = review(client, nid, "interesa")
+    assert response.status_code == 200, response.text
+    assert response.json()["verdict"] == "interesa" and response.json()["previous_verdict"] is None
+    listing = discovered(client)
+    assert listing["notices"][0]["code"] == code  # «te interesa» first
+    assert listing["notices"][0]["review"]["verdict"] == "interesa"
+    assert listing["notices"][0]["review"]["by"] == "Operador sales"
+    assert review(client, nid, "interesa").status_code == 409  # already so
+
+    assert review(client, nid, "no_es_nuestro").status_code == 200
+    listing = discovered(client)
+    assert code not in by_code(listing)
+    assert code in {n["code"] for n in listing["dismissed"]}
+    assert listing["counts"]["descartadas"] >= 1
+    with _owner(db) as conn:
+        events = conn.execute("select event_type, payload->>'verdict', payload->>'previous_verdict' from crm.domain_event "
+                              "where aggregate_kind = 'notice' and aggregate_id = %s::uuid order by recorded_at",
+                              (nid,)).fetchall()
+        rows = conn.execute("select verdict from crm.notice_review where notice_id = %s::uuid order by reviewed_at",
+                            (nid,)).fetchall()
+    assert events == [("notice.reviewed", "interesa", None), ("notice.reviewed", "no_es_nuestro", "interesa")]
+    assert [r[0] for r in rows] == ["interesa", "no_es_nuestro"]  # append-only: the history stays
+
+    page = client.get(f"/v2/tenders/discovered/{nid}", headers={OPERATOR_EMAIL_HEADER: "sales-buscar@example.test"})
+    assert page.json()["review"]["verdict"] == "no_es_nuestro"
+
+
+def test_a_notice_the_machine_dropped_stays_listed_when_a_person_said_it_interests(db, client) -> None:
+    code = notice(db, "Servicio de arriendo de equipos", head={"Comprador": {"NombreOrganismo": "Hospital Ejemplo Sur"},
+                                                               "Items": {"Listado": []}})
+    assert code not in by_code(discovered(client))
+    assert review(client, notice_id(db, code), "interesa").status_code == 200
+    assert by_code(discovered(client))[code]["review"]["verdict"] == "interesa"
+
+
+def test_review_notice_refusals(db, client) -> None:
+    code = notice(db, "Centrífuga de mesa")
+    nid = notice_id(db, code)
+    assert review(client, nid, "interesa", role="viewer").status_code == 403
+    assert review(client, str(uuid.uuid4()), "interesa").status_code == 404
+    assert review(client, "no-es-un-id", "interesa").status_code == 422
+    bad = client.post("/v2/commands/review-notice", json={"notice_id": nid, "verdict": "quizas"},
+                      headers={OPERATOR_EMAIL_HEADER: "sales-buscar@example.test", "Idempotency-Key": "pytest-review-bad"})
+    assert bad.status_code == 422
 

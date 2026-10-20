@@ -71,6 +71,8 @@ EXPECTED_EXTRA_TABLES = {
     "bidder_document",
     "bid_preparation",
     "model_usage",
+    # 20261020180000_slice7_notice_relevance_review.sql — DOMAIN.md §7 #64.
+    "notice_review",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -326,6 +328,10 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "evidence.bid_preparation.bid_preparation_quote_revision_id_fkey",
     "evidence.bid_preparation.bid_preparation_requested_by_operator_id_fkey",
     "platform.model_usage.model_usage_bid_preparation_id_fkey",
+    # 20261020180000_slice7_notice_relevance_review.sql — both covered by plain unconditional
+    # indexes: notice_review_notice_idx (notice_id leads it) and notice_review_operator_idx.
+    "crm.notice_review.notice_review_notice_id_fkey",
+    "crm.notice_review.notice_review_reviewed_by_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -338,7 +344,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # ten slice-7 catalog and document-line keys and the later slice-7 keys (case documents, product
 # documents, merge, memory, quote authoring, model aliases, tender bid preparation) by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 65
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 67
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -346,18 +352,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 60,
+        "relation_count": 61,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 59,
+        "table_count": 60,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 209,
+        "policy_count": 212,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -438,8 +444,8 @@ def main() -> int:
 
     # The inventory delta must be precisely the reviewed tables of
     # EXPECTED_EXTRA_TABLES: the three commercial-case tables,
-    # outbound.campaign_block, the four sign-in tables, the four slice-6 tables
-    # and the five slice-7 catalog and evidence tables.
+    # outbound.campaign_block, the four sign-in tables, the four slice-6 tables,
+    # the five slice-7 catalog and evidence tables and crm.notice_review.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -471,10 +477,10 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "26 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly twenty-six extra tables")
+    if "27 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly twenty-seven extra tables")
 
-    # The 84 policy additions must belong to those same twenty-six reviewed tables, plus one each on
+    # The 87 policy additions must belong to those same twenty-seven reviewed tables, plus one each on
     # two existing tables (crm.quote_line and procurement.notice, below):
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
@@ -496,7 +502,8 @@ def main() -> int:
     # bidder_profile (api select/insert, worker select), four for bidder_document (api
     # select/insert/update, worker select), four for bid_preparation (api select/insert, worker
     # select/update), three for model_usage (worker select/insert, api select), one worker select
-    # on product_document and one api insert on notice (an existing Slice 0 table).
+    # on product_document and one api insert on notice (an existing Slice 0 table); and from
+    # 20261020180000, three for notice_review (api select/insert, worker select).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -518,8 +525,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "84 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly eighty-four extra policies")
+    if "87 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly eighty-seven extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -543,7 +550,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 60, expected 34"],
+        "a04": ["relations in scope: observed 61, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
@@ -563,8 +570,8 @@ def main() -> int:
         "ok: current local head differs from frozen Slice 0 only by the "
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
         "unsubscribe, campaign-block, shared-sign-in, slice-6 campaign-content-archive "
-        "and crm-authoring and slice-7 catalog and document-line schema delta, less the revoked runtime "
-        "writes on platform.operator"
+        "and crm-authoring, slice-7 catalog and document-line, and notice-relevance-review "
+        "schema delta, less the revoked runtime writes on platform.operator"
     )
     return 0
 

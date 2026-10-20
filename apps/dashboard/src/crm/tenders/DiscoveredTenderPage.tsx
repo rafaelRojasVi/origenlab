@@ -3,10 +3,17 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { formatMoney } from "../money";
-import { Badge, Button, Panel, ResourceGate, Skeleton, buttonClass, isSafeExternalHref } from "../ui";
+import { Badge, Button, Panel, ResourceGate, Skeleton, buttonClass, isSafeExternalHref, toast } from "../ui";
 import { useResource } from "../useResource";
 import { NewTenderDialog } from "./NewTenderDialog";
-import { fetchDiscoveredTender, type DiscoveredNoticePage } from "./tenderApi";
+import {
+  fetchDiscoveredTender,
+  newTenderCommandKey,
+  reviewNotice,
+  tenderRefusal,
+  type DiscoveredNoticePage,
+  type NoticeVerdict,
+} from "./tenderApi";
 import { closingLabel, closingWhen } from "./tenderTime";
 
 /**
@@ -15,7 +22,8 @@ import { closingLabel, closingWhen } from "./tenderTime";
  *
  * - **The header**: code, families, estado, title, institution; «Abrir en Mercado Público ↗» (the
  *   notice's own page, where its bases and anexos are) and «Preparar oferta» (sales and admin: opens
- *   it through «Nueva licitación», code filled in) — or «Abrir» on the case already made from it.
+ *   it through «Nueva licitación», code filled in) — or «Abrir» on the case already made from it;
+ *   «Nos interesa» / «No es nuestro» (sales and admin, `review-notice`) and the verdict once given.
  * - **A stat line**: when it closes, the estimate, the items, what of the catalog it names.
  * - **Fechas**: every date of the head on one track (publication … award), the passed ones filled,
  *   the next one marked; Santiago time.
@@ -31,7 +39,22 @@ export function DiscoveredTenderPage({ noticeId, navigate, now }: { noticeId: st
   const { session } = useAuthSession();
   const mayOpen = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
   const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
   const at = now ?? new Date();
+
+  async function review(verdict: NoticeVerdict) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await reviewNotice({ notice_id: noticeId, verdict }, newTenderCommandKey());
+      toast(verdict === "interesa" ? "Marcada: te interesa." : "Descartada: ya no aparece en la lista.");
+      reload();
+    } catch (err) {
+      toast(tenderRefusal(err)?.message ?? "No se pudo guardar. Intenta de nuevo.", "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -48,7 +71,7 @@ export function DiscoveredTenderPage({ noticeId, navigate, now }: { noticeId: st
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
         {(n) => (
           <>
-            <Header notice={n} navigate={navigate} mayOpen={mayOpen} onPrepare={() => setAsking(true)} />
+            <Header notice={n} navigate={navigate} mayOpen={mayOpen} onPrepare={() => setAsking(true)} busy={busy} onReview={(v) => void review(v)} />
             <Stats notice={n} now={at} />
             <Dates notice={n} now={at} />
             <div className="flex flex-wrap items-start gap-4">
@@ -82,17 +105,27 @@ function Header({
   navigate,
   mayOpen,
   onPrepare,
+  busy,
+  onReview,
 }: {
   notice: DiscoveredNoticePage;
   navigate: Navigate;
   mayOpen: boolean;
   onPrepare: () => void;
+  busy: boolean;
+  onReview: (verdict: NoticeVerdict) => void;
 }) {
+  const verdict = n.review?.verdict ?? null;
   return (
     <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
       <div className="min-w-0 flex-[1_1_520px]">
         <div className="mb-1 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
           <span className="tabular-nums">{n.code}</span>
+          {verdict ? (
+            <Badge tone={verdict === "interesa" ? "good" : "neutral"} title={n.review?.by ? `Marcada por ${n.review.by}` : undefined}>
+              {verdict === "interesa" ? "te interesa" : "descartada"}
+            </Badge>
+          ) : null}
           {n.families.map((f) => (
             <Badge key={f.key} tone="brand" glyph={false}>
               {f.label}
@@ -126,6 +159,16 @@ function Header({
         ) : mayOpen && n.open ? (
           <Button variant="primary" onClick={onPrepare}>
             Preparar oferta
+          </Button>
+        ) : null}
+        {mayOpen && verdict !== "interesa" ? (
+          <Button disabled={busy} onClick={() => onReview("interesa")}>
+            Nos interesa
+          </Button>
+        ) : null}
+        {mayOpen && verdict !== "no_es_nuestro" ? (
+          <Button variant="quiet" disabled={busy} onClick={() => onReview("no_es_nuestro")}>
+            No es nuestro
           </Button>
         ) : null}
       </div>

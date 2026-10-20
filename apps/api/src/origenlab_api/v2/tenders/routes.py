@@ -86,6 +86,7 @@ from origenlab_api.v2.tenders.preparation import (
     output_storage_path,
 )
 from origenlab_api.v2.tenders.reads import TenderReadRepository
+from origenlab_api.v2.tenders.review import REVIEW_NOTICE, ReviewNoticeBody, prepare_review_notice
 from origenlab_api.v2.tenders.status import (
     SET_TENDER_STATUS,
     SetTenderStatusBody,
@@ -169,6 +170,23 @@ def set_tender_status_route(
         fields = prepare_set_tender_status(body)
         return repo.execute(command_name=SET_TENDER_STATUS, operator=operator, fields=fields,
                             idempotency_key=key, digest=request_digest(SET_TENDER_STATUS, body))
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+@tender_command_router.post("/review-notice")
+def review_notice_route(
+    body: ReviewNoticeBody,
+    operator: Deciding,
+    repo: V2TenderCommandRepository = Depends(get_tender_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Nos interesa» / «No es nuestro» on a notice of «En Mercado Público» (sales and admin)."""
+    try:
+        key = require_idempotency_key(idempotency_key)
+        fields = prepare_review_notice(body)
+        return repo.execute(command_name=REVIEW_NOTICE, operator=operator, fields=fields,
+                            idempotency_key=key, digest=request_digest(REVIEW_NOTICE, body))
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
 

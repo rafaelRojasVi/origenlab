@@ -68,6 +68,7 @@ from origenlab_api.v2.tenders.preparation import (
     create_tender_offer_quote,
     request_bid_preparation,
 )
+from origenlab_api.v2.tenders.review import REVIEW_NOTICE, review_notice
 from origenlab_api.v2.tenders.status import SET_TENDER_STATUS, set_tender_status
 
 OPEN_TENDER_CASE = "open-tender-case"
@@ -375,6 +376,7 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
         RETIRE_BIDDER_DOCUMENT: retire_bidder_document,
         PREPARE_TENDER_BID: request_bid_preparation,
         CREATE_TENDER_OFFER_QUOTE: create_tender_offer_quote,
+        REVIEW_NOTICE: review_notice,
     }
 
     def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS, *,
