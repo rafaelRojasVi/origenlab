@@ -10,7 +10,8 @@ read; these are the tender-only counterpart). Its notice is the origin evidence
 * **`tenders_closing`** is Hoy's only tender signal: tenders still `preparando` or `postulada` whose
   notice closes tomorrow, Chilean calendar.
 
-Amounts are the offer quote's neto (its current revision), else the notice's `MontoEstimado`.
+Amounts are the offer's neto, else the notice's `MontoEstimado`. A `viewer` reads the list but never
+an offer price: for one, the amount is the notice's estimate only.
 """
 
 from __future__ import annotations
@@ -24,15 +25,15 @@ from zoneinfo import ZoneInfo
 from origenlab_api.v2.model_spend import spend_summary
 from origenlab_api.v2.tenders.bidder import current_bidder_profile
 from origenlab_api.v2.tenders.codes import portal_url
-from origenlab_api.v2.tenders.preparation import public_outputs
+from origenlab_api.v2.tenders.preparation import offer_revision_sql, public_outputs
 
 SANTIAGO = ZoneInfo("America/Santiago")
 TENDER_STATUSES: tuple[str, ...] = ("preparando", "postulada", "adjudicada", "perdida")
 OPEN_TENDER_STATUSES: tuple[str, ...] = ("preparando", "postulada")
 PHASES: tuple[str, ...] = ("read", "fill")
 
-# One row per tender case. The notice is the case's origin evidence; the offer is the newest quote
-# on the case, at its current revision (not superseded, not void).
+# One row per tender case. The notice is the case's origin evidence; the offer is the one the fill
+# uses (`offer_revision_sql`: the newest live authored revision across the case's quotes).
 _TENDER_ROWS = """
 select o.id::text as id, o.version as version, o.tender_status as status, o.title as case_title,
        n.id::text as notice_id, n.codigo_externo as code, n.title as notice_title, n.closes_at,
@@ -51,13 +52,9 @@ select o.id::text as id, o.version as version, o.tender_status as status, o.titl
          where e.opportunity_id = o.id and e.relation = 'origin' and e.unlinked_at is null
          order by e.linked_at desc limit 1) n on true
   left join crm.organization org on org.id = o.organization_id
-  left join lateral (
-        select q2.* from crm.quote q2 where q2.opportunity_id = o.id
-         order by q2.created_at desc, q2.id desc limit 1) q on true
-  left join lateral (
-        select r2.* from crm.quote_revision r2
-         where r2.quote_id = q.id and r2.superseded_by_revision_no is null and r2.status <> 'void'
-         order by r2.revision_no desc limit 1) r on true
+  left join lateral (""" + offer_revision_sql("o.id") + """) offer on true
+  left join crm.quote_revision r on r.id = offer.id
+  left join crm.quote q on q.id = r.quote_id
  where o.kind = 'tender'
 """
 
@@ -101,8 +98,8 @@ def _offer_neto(row: dict[str, Any]) -> Decimal | None:
     return row["lines_total"]
 
 
-def _amount(row: dict[str, Any]) -> dict[str, Any] | None:
-    neto = _offer_neto(row)
+def _amount(row: dict[str, Any], *, offer_price: bool = True) -> dict[str, Any] | None:
+    neto = _offer_neto(row) if offer_price else None
     if neto is not None:
         return {"neto": _number(neto), "currency": row["revision_currency"], "source": "oferta"}
     estimate, currency = _estimated(row["head"])
@@ -115,8 +112,9 @@ def _instant(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def tender_row(row: dict[str, Any], preparation: dict[str, str | None]) -> dict[str, Any]:
-    """`TenderRow` (spec §6.10) from one `_TENDER_ROWS` row and the latest status of each phase."""
+def tender_row(row: dict[str, Any], preparation: dict[str, str | None], *, offer_price: bool = True) -> dict[str, Any]:
+    """`TenderRow` (spec §6.10) from one `_TENDER_ROWS` row and the latest status of each phase.
+    Without `offer_price` (a viewer) the amount is the notice's estimate only."""
     return {
         "id": row["id"],
         "version": int(row["version"]),
@@ -129,7 +127,7 @@ def tender_row(row: dict[str, Any], preparation: dict[str, str | None]) -> dict[
         },
         "closes_at": _instant(row["closes_at"]),
         "status": row["status"],
-        "amount": _amount(row),
+        "amount": _amount(row, offer_price=offer_price),
         "offer_quote_number": row["offer_quote_number"] if row["revision_id"] is not None else None,
         "preparation": {"read": preparation.get("read"), "fill": preparation.get("fill")},
     }
@@ -218,7 +216,7 @@ class TenderReadRepository:
             found.setdefault(r["opportunity_id"], {})[r["phase"]] = r
         return found
 
-    def list_tenders(self, status: str | None = None) -> dict[str, Any]:
+    def list_tenders(self, status: str | None = None, *, offer_prices: bool = True) -> dict[str, Any]:
         with self._read() as cur:
             cur.execute(_TENDER_ROWS + _ORDER)
             rows = _row_dicts(cur)
@@ -228,7 +226,8 @@ class TenderReadRepository:
             counts[r["status"]] += 1
         shown = [r for r in rows if status is None or r["status"] == status]
         tenders = [
-            tender_row(r, {p: (prep.get(r["id"], {}).get(p) or {}).get("status") for p in PHASES}) for r in shown
+            tender_row(r, {p: (prep.get(r["id"], {}).get(p) or {}).get("status") for p in PHASES},
+                       offer_price=offer_prices) for r in shown
         ]
         return {"tenders": tenders, "counts": counts}
 

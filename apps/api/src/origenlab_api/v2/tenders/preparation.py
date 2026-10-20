@@ -4,8 +4,8 @@
 row and writes `opportunity.bid_preparation_requested`; the worker (a later task) runs it.
 
 * `read` takes every live `tender_annex` of the case.
-* `fill` takes the case's newest `ready` read (and that read's annexes) plus the offer: the current
-  revision of the newest quote on the case. The offer must be APPROVED in the Cotizador (ruling
+* `fill` takes the case's newest `ready` read (and that read's annexes) plus the offer: the newest
+  live authored revision across the case's quotes (`offer_revision_sql`, the page shows the same). The offer must be APPROVED in the Cotizador (ruling
   R9: no price leaves unseen), and the bidder's profile must exist.
 
 Refusals, in the order they are checked:
@@ -68,15 +68,28 @@ def _running_refusal() -> CommandRefused:
                           "Ya hay una preparación en curso para esta licitación; espera a que termine.")
 
 
-def _offer_revision(cur: Any, opportunity_id: str) -> tuple[str, str] | None:
-    """(revision id, status) of the current revision of the newest quote on the case, or None."""
-    cur.execute(
-        """select r.id::text, r.status
+_OFFER_CASE = re.compile(r"^(%s::uuid|[a-z_][a-z0-9_]*\.id)$")
+
+
+def offer_revision_sql(case: str) -> str:
+    """The one selection of a tender's offer, shared by the fill, the offer-quote command and the
+    tender's page and list: the newest live (neither superseded nor void) authored revision across
+    every quote of the case. Selects `id` and `status`; `case` is `%s::uuid` (a parameter) or an
+    outer query's `<alias>.id`."""
+    if not _OFFER_CASE.fullmatch(case):
+        raise ValueError(f"not a case reference: {case!r}")
+    return f"""select r.id, r.status
              from crm.quote q
              join crm.quote_revision r on r.quote_id = q.id
-            where q.opportunity_id = %s::uuid and r.origin = 'authored'
+            where q.opportunity_id = {case} and r.origin = 'authored'
               and r.superseded_by_revision_no is null and r.status <> 'void'
-            order by r.created_at desc, r.revision_no desc, r.id desc limit 1""", (opportunity_id,))
+            order by r.created_at desc, r.revision_no desc, r.id desc limit 1"""
+
+
+def _offer_revision(cur: Any, opportunity_id: str) -> tuple[str, str] | None:
+    """(revision id, status) of the case's offer (`offer_revision_sql`), or None."""
+    cur.execute(f"select id::text, status from ({offer_revision_sql('%s::uuid')}) offer",  # noqa: S608 - constant
+                (opportunity_id,))
     row = cur.fetchone()
     return (row[0], row[1]) if row else None
 
@@ -306,11 +319,10 @@ def create_tender_offer_quote(
         raise CommandRefused(422, "too_many_items", "La cotización admite hasta 60 líneas; la lectura trae más.")
 
     cur.execute(
-        """select q.id::text, q.quote_number, r.id::text, r.status
-             from crm.quote q join crm.quote_revision r on r.quote_id = q.id
-            where q.opportunity_id = %s::uuid and r.origin = 'authored' and r.status <> 'void'
-              and r.superseded_by_revision_no is null
-            order by (r.status in ('draft', 'in_review')) desc, r.created_at desc, r.revision_no desc limit 1""",
+        f"""select q.id::text, q.quote_number, r.id::text, r.status
+              from ({offer_revision_sql('%s::uuid')}) offer
+              join crm.quote_revision r on r.id = offer.id
+              join crm.quote q on q.id = r.quote_id""",  # noqa: S608 - a constant
         (opportunity_id,))
     found = cur.fetchone()
     if found is not None:

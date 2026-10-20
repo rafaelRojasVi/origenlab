@@ -182,15 +182,16 @@ ReadRepo = Annotated[TenderReadRepository, Depends(get_tender_read_repository)]
 
 @tender_read_router.get("")
 def list_tenders(
-    _: Operator,
+    operator: Operator,
     repo: ReadRepo,
     status: Annotated[Literal["preparando", "postulada", "adjudicada", "perdida"] | None, Query()] = None,
 ) -> dict[str, Any]:
     """The tenders, open ones first by closing time, with the count per estado.
 
-    No bidder data is in a row, so any signed-in operator (a `viewer` too) reads it.
+    No bidder data is in a row, so any signed-in operator (a `viewer` too) reads it; a `viewer` gets
+    the notice's estimate as the amount, never the offer's price.
     """
-    return repo.list_tenders(status)
+    return repo.list_tenders(status, offer_prices=operator.role != "viewer")
 
 
 @tender_read_router.get("/{tender_id}")

@@ -209,7 +209,7 @@ def test_amount_is_the_offer_neto_else_the_estimate_else_nothing(db, operators, 
     add_offer(db, operators, offered, number="09001-26", status="approved", tax_base=1200000)
     add_offer(db, operators, drafted, number="09002-26", status="draft", tax_base=None, lines_total=800000)
 
-    body = client.get("/v2/tenders", headers=headers("viewer")).json()
+    body = client.get("/v2/tenders", headers=headers("sales")).json()
     assert row_of(body, estimated)["amount"] == {"neto": 1500000, "currency": "CLP", "source": "estimado"}
     assert row_of(body, estimated)["offer_quote_number"] is None
     o = row_of(body, offered)
@@ -218,6 +218,19 @@ def test_amount_is_the_offer_neto_else_the_estimate_else_nothing(db, operators, 
     # A draft has no frozen totals yet: its neto is what its lines add up to, and it still beats the estimate.
     assert row_of(body, drafted)["amount"] == {"neto": 800000, "currency": "CLP", "source": "oferta"}
     assert row_of(body, bare)["amount"] is None
+
+
+def test_a_viewer_sees_only_the_notice_estimate_never_the_offer_price(db, operators, client) -> None:
+    offered = open_tender(db, operators, closes_at=tomorrow_at(12, 3), head_extra={"MontoEstimado": 1500000})
+    unestimated = open_tender(db, operators, closes_at=tomorrow_at(12, 3))
+    add_offer(db, operators, offered, number="09011-26", status="approved", tax_base=1234567)
+    add_offer(db, operators, unestimated, number="09012-26", status="draft", tax_base=None, lines_total=7654321)
+
+    response = client.get("/v2/tenders", headers=headers("viewer"))
+    assert response.status_code == 200
+    assert row_of(response.json(), offered)["amount"] == {"neto": 1500000, "currency": "CLP", "source": "estimado"}
+    assert row_of(response.json(), unestimated)["amount"] is None
+    assert "1234567" not in response.text and "7654321" not in response.text
 
 
 def test_the_list_is_readable_by_a_viewer_and_holds_no_bidder_field(db, operators, client) -> None:
@@ -251,6 +264,20 @@ def test_page_for_sales_carries_the_offer_annexes_spend_and_readiness(db, operat
         1000000, 190000, 1190000)
     assert page["spend"]["reached"] is False and page["spend"]["cap_usd"] == "60"
     assert page["bidder_ready"] is False
+
+
+def test_the_page_shows_the_offer_the_fill_would_use_even_on_an_older_quote(db, operators, client) -> None:
+    """One selector for the offer (`preparation.offer_revision_sql`): the newest live authored revision
+    across the case's quotes. A newer quote whose only revision is void does not hide an older
+    approved one."""
+    tender = open_tender(db, operators, closes_at=tomorrow_at(12, 3))
+    add_offer(db, operators, tender, number="09013-26", status="approved", tax_base=1000000)
+    add_offer(db, operators, tender, number="09014-26", status="void", tax_base=None)
+    page = client.get(f"/v2/tenders/{tender['id']}", headers=headers("sales")).json()
+    assert page["offer_quote"] is not None
+    assert (page["offer_quote"]["number"], page["offer_quote"]["status"]) == ("09013-26", "approved")
+    listed = row_of(client.get("/v2/tenders", headers=headers("sales")).json(), tender)
+    assert listed["offer_quote_number"] == "09013-26" and listed["amount"]["source"] == "oferta"
 
 
 def test_page_lists_annexes_and_the_latest_preparation_of_each_phase(db, operators, client) -> None:
