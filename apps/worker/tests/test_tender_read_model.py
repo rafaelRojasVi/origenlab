@@ -288,3 +288,27 @@ def test_the_call_worst_case_adds_the_fallback_attempt() -> None:
     haiku = build_read_request("x", {}, model="claude-haiku-5-5")
     assert call_worst_case(haiku, "claude-haiku-5-5") == worst_case_usd(
         "claude-haiku-5-5", input_tokens_estimate=input_tokens_estimate(haiku), max_tokens=MAX_TOKENS)
+
+
+def test_the_paid_client_never_retries_on_its_own(monkeypatch) -> None:
+    """A retry inside the SDK is a second billed attempt the cap never checked: the job fails the
+    call cleanly instead, so the client is built with `max_retries=0` (read, match and fill)."""
+    import anthropic
+
+    built: list[dict] = []
+    monkeypatch.setattr(anthropic, "Anthropic", lambda **kw: built.append(kw) or object())
+    streaming_reader("clave-ficticia")
+    assert built and built[0]["max_retries"] == 0
+    from origenlab_worker import triage_cli
+
+    built.clear()
+    env = {triage_cli.ENV_BID_ENABLED: "true", triage_cli.ENV_ANTHROPIC_API_KEY: "clave-ficticia",
+           "ORIGENLAB_WORKER_DATABASE_URL": "postgresql://origenlab_worker.ref:pw@db.example.test:5432/postgres",
+           "ORIGENLAB_WORKER_DATABASE_EXPECTED_HOST": "db.example.test",
+           "ORIGENLAB_WORKER_DATABASE_CA_PEM": "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
+           "ORIGENLAB_WORKER_STORAGE_S3_ENDPOINT": "https://ref.storage.supabase.co/storage/v1/s3",
+           "ORIGENLAB_WORKER_STORAGE_S3_REGION": "sa-east-1",
+           "ORIGENLAB_WORKER_STORAGE_S3_ACCESS_KEY_ID": "id-ficticio",
+           "ORIGENLAB_WORKER_STORAGE_S3_SECRET_ACCESS_KEY": "secreto-ficticio"}
+    triage_cli.bid_config_from_env(env)
+    assert [kw["max_retries"] for kw in built] == [0]

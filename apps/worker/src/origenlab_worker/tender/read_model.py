@@ -327,13 +327,17 @@ def validate_read(answer: dict[str, Any], annexes: list[AnnexText]) -> dict[str,
     return {"resumen": resumen, "checklist": checklist, "items": items}
 
 
-def streaming_reader(api_key: str, *, timeout_s: float = 900.0, max_retries: int = 2,
+def streaming_reader(api_key: str, *, timeout_s: float = 900.0, max_retries: int = 0,
                      client: Any = None) -> ModelReader:
     """The production reader for long anexo sets: `client.beta.messages.stream(**request)` and its
     `get_final_message()` (ruling R5) — the connection stays alive while the answer is written.
 
     An error opening the stream (an HTTP error status: nothing was generated) is raised as it is; a
-    failure once events have arrived is :class:`CallInterrupted` — that call is billed."""
+    failure once events have arrived is :class:`CallInterrupted` — that call is billed.
+
+    The SDK never retries (`max_retries=0`): a retry is another billed attempt the cap check did not
+    count. Every paid call of a preparation (read, match, fill) goes through this reader, and the job
+    fails a call that did not come back cleanly; the operator asks again."""
     if client is None:
         import anthropic
 
