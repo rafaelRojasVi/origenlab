@@ -36,6 +36,7 @@ import {
 } from "./preferenceFields";
 import { QuoteRefusal, newQuoteCommandKey, setCostParameter, type SetCostParameterBody } from "./quoteApi";
 import { quoteRefusalText } from "./quoteRefusal";
+import { BidderPreferences } from "../tenders/BidderPreferences";
 
 export const REASON_MIN = 3;
 const REASON_MAX = 500;
@@ -103,6 +104,8 @@ export function PreferencesPage({ save = setCostParameter }: { save?: Save }) {
           </>
         )}
       </ResourceGate>
+      {/* «Datos para licitaciones»: its own read, hidden for a viewer (the card checks the role). */}
+      <BidderPreferences />
     </div>
   );
 }

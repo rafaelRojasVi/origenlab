@@ -112,6 +112,15 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/set-cost-parameter",
   ];
   const QUOTE_PREVIEW_PATH = "/v2/quotes/preview";
+  // «Licitaciones» (2026-10-19): tenderApi.ts POSTs the bidder commands from «Preferencias»
+  // (save the profile, add or retire a standard document; sales or admin upstream, each with an
+  // Idempotency-Key). Nothing is sent to Mercado Público or anyone else from here.
+  const TENDER_API_FILE = "../crm/tenders/tenderApi.ts";
+  const TENDER_API_PATHS = [
+    "/v2/commands/save-bidder-profile",
+    "/v2/commands/add-bidder-document",
+    "/v2/commands/retire-bidder-document",
+  ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -222,6 +231,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === TENDER_API_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...TENDER_API_PATHS].sort())) {
+          hits.push(`${path} (tender command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path === CASE_DOCUMENTS_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -267,7 +287,7 @@ describe("dashboard read-only policy", () => {
   });
 
   it("names no V2 command outside the campaign, CRM authoring, email-rules, case-command and quote clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE]);
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);
