@@ -30,7 +30,7 @@ export function ProvidersPage() {
     <div className="space-y-4">
       <PageHeader
         title="Proveedores"
-        subtitle="Las seis marcas que OrigenLab representa, los proveedores registrados en casos y, aparte, los candidatos detectados por máquina que nadie ha revisado."
+        subtitle="Las siete marcas con las que trabaja OrigenLab, los proveedores registrados en casos y, aparte, los candidatos detectados por máquina que nadie ha revisado."
         actions={
           mayAuthor ? (
             <button

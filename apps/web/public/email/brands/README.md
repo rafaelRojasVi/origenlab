@@ -3,8 +3,8 @@
 Este directorio es el almacén de originales para **dos** salidas distintas, que
 desde 2026-09-06 ya no coinciden:
 
-- **Sitio público** (`npm run build:brand-logos` → `public/brands/`): las seis
-  marcas aprobadas — Hielscher, Ortoalresa, IKA, Adam Equipment, Löser y SERVA.
+- **Sitio público** (`npm run build:brand-logos` → `public/brands/`): las siete
+  marcas aprobadas — Hielscher, Ortoalresa, IKA, Adam Equipment, OHAUS, Löser y SERVA.
 - **Firma de correo** (`npm run build:email-brands`): sigue con el conjunto
   anterior, que incluye Ollital y CRTOP y no incluye a Adam ni a Löser.
   **Pendiente de regenerar**; ver `docs/design/CONTENT_NEEDED.md`.
@@ -24,7 +24,7 @@ Official sources (downloaded to `*-source.*` for regeneration):
 | Hielscher | https://www.hielscher.com/wp-content/uploads/hielscher-logo2.svg |
 | Adam Equipment | https://adamequipment.com/media/logo/default/Adam_Logo_2.png |
 | Löser Messtechnik | http://www.loeser-osmometer.de/LoeLogo.jpg |
-| OHAUS | Ficha oficial «Compass CR Datasheet LA 80775692» (PDF del fabricante, Drive OHAUS); logo recortado a 600 dpi y pasado a gris `#2b2e30` → `ohaus-logo.png` (sólo firma de correo) |
+| OHAUS | Ficha oficial «Compass CR Datasheet LA 80775692» (PDF del fabricante, Drive OHAUS); logo recortado a 600 dpi y pasado a gris `#2b2e30` → `ohaus-logo.png`; desde 2026-10-19 es también el original de `public/brands/ohaus-logo.png` (modo `alpha`) |
 
 ## Outputs
 

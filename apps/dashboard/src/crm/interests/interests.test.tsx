@@ -106,13 +106,13 @@ describe("ProvidersPage", () => {
     ],
   };
 
-  it("shows the six canonical suppliers first and keeps candidates collapsed", async () => {
+  it("shows the seven canonical suppliers first and keeps candidates collapsed", async () => {
     respond({ "/v2/workspace/providers": body });
     render(<ProvidersPage />);
     const dir = await screen.findByTestId("supplier-directory");
     const names = within(dir).getAllByTestId("directory-card").map((c) => c.querySelector("p")?.textContent);
     expect(names).toEqual([
-      "Hielscher Ultrasonics", "Ortoalresa", "IKA", "Adam Equipment", "Löser Messtechnik", "SERVA Electrophoresis",
+      "Hielscher Ultrasonics", "Ortoalresa", "IKA", "Adam Equipment", "OHAUS", "Löser Messtechnik", "SERVA Electrophoresis",
     ]);
     const candidates = screen.getByTestId("supplier-candidates") as HTMLDetailsElement;
     expect(candidates.open).toBe(false);

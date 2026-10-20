@@ -268,16 +268,31 @@ export function v1LaneBannerState(campaign: V1LaneCampaign, today: string): V1La
   return "active";
 }
 
+/** The last declared send day of a V1-lane campaign. */
+export function v1LaneLastSendDay(campaign: V1LaneCampaign): string {
+  return campaign.send_days[campaign.send_days.length - 1];
+}
+
+/** A V1-lane campaign is finished once its last send day is before today (Santiago day). */
+export function isV1LaneFinished(campaign: V1LaneCampaign, today: string): boolean {
+  return v1LaneLastSendDay(campaign) < today;
+}
+
 export interface MarketingOverviewFigures {
   lastSend: { day: string; campaignName: string; daysAgo: number } | null;
-  nextPlanned: { day: string; campaignName: string; campaignId: string; inDays: number; time: string | null } | null;
+  /** `campaignId` is null for a V1-lane campaign, which has no CRM page to open. */
+  nextPlanned: { day: string; campaignName: string; campaignId: string | null; inDays: number; time: string | null } | null;
   sent: number;
   drafts: number;
   frozen: number;
   planned: number;
 }
 
-export function overviewFigures(campaigns: CampaignSummary[], today: string): MarketingOverviewFigures {
+export function overviewFigures(
+  campaigns: CampaignSummary[],
+  today: string,
+  v1Lane: V1LaneCampaign[] = [],
+): MarketingOverviewFigures {
   let lastSend: MarketingOverviewFigures["lastSend"] = null;
   let lastInstant = "";
   let nextPlanned: MarketingOverviewFigures["nextPlanned"] = null;
@@ -301,6 +316,19 @@ export function overviewFigures(campaigns: CampaignSummary[], today: string): Ma
       }
     }
   }
+  for (const v of v1Lane) {
+    // Last send: the latest declared send day that is not in the future (running or finished).
+    const done = v.send_days.filter((d) => d <= today);
+    const lastDay = done[done.length - 1];
+    if (lastDay && (!lastSend || lastDay > lastSend.day)) {
+      lastSend = { day: lastDay, campaignName: v.name, daysAgo: daysBetween(lastDay, today) };
+    }
+    // Next: the first send day after today, used when it is nearer than any planned CRM campaign.
+    const nextDay = v.send_days.find((d) => d > today);
+    if (nextDay && (!nextPlanned || nextDay < nextPlanned.day)) {
+      nextPlanned = { day: nextDay, campaignName: v.name, campaignId: null, inDays: daysBetween(today, nextDay), time: v.send_time };
+    }
+  }
   return {
     lastSend,
     nextPlanned,
@@ -322,4 +350,26 @@ export function inText(days: number): string {
   if (days <= 0) return "hoy";
   if (days === 1) return "mañana";
   return `en ${days} días`;
+}
+
+export type ListItem = { kind: "crm"; campaign: CampaignSummary } | { kind: "v1"; campaign: V1LaneCampaign };
+
+/**
+ * Puts the finished V1-lane campaigns among the CRM campaigns by date, newest first, leaving the
+ * CRM order untouched: each goes before the first CRM campaign dated earlier than its last send day.
+ */
+export function mergeFinishedV1(crm: CampaignSummary[], finished: V1LaneCampaign[]): ListItem[] {
+  const dayOf = (c: CampaignSummary) => {
+    const at = c.last_sent_at ?? c.updated_at ?? c.created_at;
+    return at ? santiagoDay(at) : "";
+  };
+  const items: ListItem[] = crm.map((campaign) => ({ kind: "crm", campaign }));
+  for (const v of [...finished].sort((a, b) => v1LaneLastSendDay(b).localeCompare(v1LaneLastSendDay(a)))) {
+    const day = v1LaneLastSendDay(v);
+    const at = items.findIndex((i) => i.kind === "crm" && dayOf(i.campaign) < day);
+    const entry: ListItem = { kind: "v1", campaign: v };
+    if (at === -1) items.push(entry);
+    else items.splice(at, 0, entry);
+  }
+  return items;
 }

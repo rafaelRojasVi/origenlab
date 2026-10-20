@@ -282,7 +282,8 @@ console.log('\nRiel de marcas (1440 px)');
   check(playing.name !== 'none', `la pista tiene animación (${playing.name})`);
   check(playing.state === 'running', 'la pista se mueve al cargar');
 
-  // Las seis, en el orden de la lista cerrada y sin repetir enlaces.
+  // Las seis de la portada (OHAUS no va en la portada: HOME_HIDDEN_BRAND_IDS), en el orden de
+  // la lista cerrada y sin repetir enlaces.
   const ORDER = [
     'Hielscher Ultrasonics',
     'Ortoalresa',
@@ -311,13 +312,13 @@ console.log('\nRiel de marcas (1440 px)');
     'la copia del bucle no contiene nada enfocable',
   );
 
-  // Igualdad óptica: los seis logotipos comparten opacidad de reposo.
+  // Igualdad óptica: los siete logotipos comparten opacidad de reposo.
   const opacities = await page
     .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
     .evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
   check(
     opacities.length === 1,
-    `los seis logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`,
+    `los siete logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`,
   );
 
   // Pausa: el cursor, el foco y el control explícito.
@@ -397,7 +398,7 @@ console.log('\nMovimiento reducido');
   await page.mouse.move(0, 0);
 
   // El riel tiene que ser una fila estática legible, no una marquesina parada:
-  // sin copia del bucle, sin control que no controla nada, y con las seis
+  // sin copia del bucle, sin control que no controla nada, y con las siete
   // marcas visibles a la vez.
   const rail = page.locator('[data-rail]');
   check(
@@ -474,7 +475,7 @@ console.log('\nEnlaces');
 
   check(broken.size === 0, `sin enlaces internos rotos (${[...broken].slice(0, 5).join('; ') || 'ninguno'})`);
   // Los externos sólo pueden ser destinos de navegación (fabricantes, WhatsApp).
-  // Los seis fabricantes aprobados y nada más. Si aparece otro host, o es una
+  // Los siete fabricantes aprobados y nada más. Si aparece otro host, o es una
   // marca que ya no se publica o es un tercero que se coló: las dos cosas hay
   // que verlas. La lista la respalda `src/data/brands.ts`.
   const allowed = new Set([
@@ -482,6 +483,9 @@ console.log('\nEnlaces');
     'ortoalresa.com',
     'www.ika.com',
     'adamequipment.com',
+    // OHAUS: sitio para Latinoamérica y servidor de fichas PDF (sólo enlaces).
+    'mx.ohaus.com',
+    'dmx.ohaus.com',
     // Löser no ofrece HTTPS: su servidor de 2005 rechaza el saludo TLS.
     // Declarado en brands.ts (`websiteInsecure`) y en CONTENT_NEEDED.md.
     'www.loeser-osmometer.de',

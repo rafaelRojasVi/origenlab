@@ -8,7 +8,7 @@ import Icon from '../ui/Icon.astro';
 /**
  * Riel de marcas. Sustituye al muro de dos alturas.
  *
- * El muro anterior partía las seis marcas en dos filas de distinto tamaño,
+ * El muro anterior partía las seis marcas de entonces en dos filas de distinto tamaño,
  * «con catálogo publicado» arriba y «también trabajamos con» abajo. Esa
  * jerarquía describía el estado del repositorio, no el del negocio:
  * Hielscher, Ortoalresa, IKA, Adam Equipment y Löser son cinco familias de
@@ -20,16 +20,18 @@ import Icon from '../ui/Icon.astro';
  *
  * # Por qué el riel entero es gris
  *
- * Cuatro de los seis originales tienen color de fabricante utilizable
- * (Hielscher, Ortoalresa, IKA y SERVA). Los otros dos no:
+ * Cuatro de los siete originales tienen color de fabricante utilizable
+ * (Hielscher, Ortoalresa, IKA y SERVA). Los otros tres no:
  *
  * - **Adam Equipment**: el único original en el repositorio ya es monocromo
  *   (`public/email/brands/adam-equipment-source.png`, 300 x 125, media RGB
  *   90,90,90). No hay versión en color.
  * - **Löser Messtechnik**: su único original es un JPEG de 70 x 70 calado sobre
  *   un azulejo naranja. Tiene color, pero no resolución.
+ * - **OHAUS**: el original es el logotipo recortado de una ficha PDF del
+ *   fabricante, ya pasado a una tinta para la firma de correo.
  *
- * Con cuatro de seis, revelar color al pasar el cursor dejaría a dos marcas en
+ * Con cuatro de siete, revelar color al pasar el cursor dejaría a dos marcas en
  * gris y a cuatro en color: una jerarquía involuntaria, y justo entre las
  * marcas que se acaba de igualar. El riel se queda gris entero, y lo que
  * revela el cursor o el foco es tinta plena y la familia en acento. Los dos
@@ -52,7 +54,7 @@ import Icon from '../ui/Icon.astro';
  * recibir el foco cualquier enlace del riel.
  *
  * La copia duplicada lleva `aria-hidden="true"` y sus elementos son `span`, no
- * enlaces: un lector de pantalla no encuentra doce marcas donde hay seis, y el
+ * enlaces: un lector de pantalla no encuentra catorce marcas donde hay siete, y el
  * tabulador no cae en un enlace invisible.
  */
 const rail = brandRailOrder
@@ -180,16 +182,18 @@ const rail = brandRailOrder
   .rail__link-cell {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    /* Logo y familia comparten un eje: el logotipo centrado sobre su leyenda. */
+    align-items: center;
+    text-align: center;
     justify-content: flex-end;
     gap: 0.625rem;
-    /* Caja común: los seis lockups tienen proporciones distintas y sin una
+    /* Caja común: los siete lockups tienen proporciones distintas y sin una
        altura compartida la fila se lee desalineada. */
     min-height: 4.25rem;
     border-radius: var(--radius-edge);
   }
   /*
-   * Gris por omisión, tinta plena al revelar. Los seis logotipos son la misma
+   * Gris por omisión, tinta plena al revelar. Los siete logotipos son la misma
    * tinta (#2b2e30), así que una sola opacidad los iguala de verdad: no hay una
    * marca que quede más clara que otra por su propio color.
    */

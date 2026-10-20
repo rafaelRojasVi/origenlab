@@ -14,12 +14,12 @@ import { scopeById } from '../data/equipmentScope';
 import { imageForModel, imageForProduct } from '../data/productImages';
 
 /**
- * Índice de marcas. Seis filas, un peso.
+ * Índice de marcas. Siete filas, un peso.
  *
  * La versión anterior partía la página en dos secciones, «con catálogo
  * publicado» y «también trabajamos con», y ponía a cuatro marcas en la segunda
  * a menor escala. Esa jerarquía describía el estado del repositorio, no el del
- * negocio: las cinco familias de maquinaria pesan igual, y ahora las seis
+ * negocio: las familias de maquinaria pesan igual, y ahora las siete marcas
  * tienen página con el mismo estándar.
  *
  * Lo que sí se dice de cada una, porque es cierto y es lo que el visitante
@@ -75,12 +75,12 @@ const rows = brands.map((brand) => ({
 
 <Layout
   title="Marcas"
-  description="Marcas con las que trabaja OrigenLab: Hielscher, Ortoalresa, IKA, Adam Equipment, Löser y SERVA. Catálogo, documentación y cotización."
+  description="Marcas con las que trabaja OrigenLab: Hielscher, Ortoalresa, IKA, Adam Equipment, OHAUS, Löser y SERVA. Catálogo, documentación y cotización."
 >
   <div class="shell">
     <PageIntro
       title="Marcas"
-      lead="Seis fabricantes, cada uno con su página, su familia de equipo y sus modelos documentados desde la fuente oficial. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
+      lead="Siete fabricantes, cada uno con su página, su familia de equipo y sus modelos documentados desde la fuente oficial. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
       crumbs={[{ label: 'Marcas' }]}
     />
   </div>
@@ -89,7 +89,7 @@ const rows = brands.map((brand) => ({
     <SectionIndex index={1} label={brandsWallHeading} />
     <h2 id="marcas-title" class="t-h2">Con quién trabajamos, y qué fabrica cada uno</h2>
     <p class="t-lead mt-5">
-      Es una lista cerrada. Una comprobación automática impide que una séptima marca aparezca en
+      Es una lista cerrada. Una comprobación automática impide que una octava marca aparezca en
       cualquier página, en el buscador, en el mapa del sitio o en el pie sin pasar por la
       confirmación del negocio.
     </p>
@@ -261,7 +261,7 @@ const rows = brands.map((brand) => ({
   }
 
   /* Equipos notables: tres como máximo por marca, misma altura de fila para
-     las seis. La fotografía sólo aparece si el registro la respalda. */
+     las siete. La fotografía sólo aparece si el registro la respalda. */
   .notable {
     list-style: none;
     margin: 0 0 2rem;

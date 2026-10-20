@@ -1,7 +1,7 @@
 ---
 import { ctaLabels } from '../../lib/ctaLabels';
 import { equipmentScope } from '../../data/equipmentScope';
-import { getBrandByFamilyId } from '../../lib/catalog';
+import { brandNamesForFamily } from '../../lib/catalog';
 import { publicClaim } from '../../data/claims';
 import { site } from '../../config/site';
 import Icon from '../ui/Icon.astro';
@@ -39,7 +39,7 @@ const familiesClaim = publicClaim('familias-de-equipo');
 
 const families = equipmentScope.map((entry, index) => ({
   ...entry,
-  brand: getBrandByFamilyId(entry.id),
+  brandNames: brandNamesForFamily(entry.id, { home: true }),
   numeral: String(index + 1).padStart(2, '0'),
 }));
 ---
@@ -88,7 +88,7 @@ const families = equipmentScope.map((entry, index) => ({
               <a href={entry.href} class="scope-index__link" data-family-row={entry.id}>
                 <span class="scope-index__num t-data" aria-hidden="true">{entry.numeral}</span>
                 <span class="scope-index__name">{entry.name}</span>
-                <span class="scope-index__brand t-data">{entry.brand?.name}</span>
+                <span class="scope-index__brand t-data">{entry.brandNames}</span>
                 <span class="scope-index__work t-data">{entry.workType}</span>
                 <Icon name="arrow-right" size={16} class="scope-index__go" />
               </a>

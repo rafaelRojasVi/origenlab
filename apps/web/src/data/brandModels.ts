@@ -30,7 +30,7 @@
  * # Lo que este archivo no puede tener
  *
  * Precio, plazo, stock, garantía, condición comercial ni fotografía. Nada de
- * eso está verificado para estas cinco marcas y `validate:catalog` lo bloquea;
+ * eso está verificado para estas marcas y `validate:catalog` lo bloquea;
  * la fotografía tiene su propio registro con permiso y procedencia por imagen.
  *
  * # El caso de IKA
@@ -83,6 +83,8 @@ export interface BrandModel {
 }
 
 const READ_ON = '2026-09-07';
+/** OHAUS se leyó al incorporarse la marca: páginas mx.ohaus.com/es-mx y fichas PDF de dmx.ohaus.com. */
+const OHAUS_READ_ON = '2026-10-19';
 
 /**
  * Documentación de familia: la página y el PDF que cubren la familia entera.
@@ -91,6 +93,12 @@ const READ_ON = '2026-09-07';
  */
 export interface FamilyDocumentation {
   familyId: string;
+  /**
+   * Marca cuya documentación es. Una familia puede tener más de un fabricante
+   * (pesaje y humedad: Adam Equipment y OHAUS), y la página de una marca no
+   * puede enlazar el catálogo de la otra.
+   */
+  brandId: ApprovedBrandId;
   officialUrl: string;
   officialPdfUrl: string | null;
   officialUrlInsecure?: true;
@@ -101,6 +109,7 @@ export interface FamilyDocumentation {
 export const familyDocumentation: readonly FamilyDocumentation[] = [
   {
     familyId: 'sonicacion',
+    brandId: 'hielscher',
     officialUrl: 'https://www.hielscher.com/products.htm',
     officialPdfUrl:
       'https://www.hielscher.com/wp-content/uploads/Catalogue-Hielscher-Ultrasonics-eng-v.02.2025.pdf',
@@ -108,6 +117,7 @@ export const familyDocumentation: readonly FamilyDocumentation[] = [
   },
   {
     familyId: 'dispersion-homogeneizacion',
+    brandId: 'ika',
     officialUrl: 'https://www.ika.com/en/Products-LabEq/Dispersers-pg177/',
     officialPdfUrl:
       'https://www.ika.com/ika/pdf/flyer-catalog/Disperser_Brochure_IWS_EN_wop_screen.pdf',
@@ -116,6 +126,7 @@ export const familyDocumentation: readonly FamilyDocumentation[] = [
   },
   {
     familyId: 'centrifugacion',
+    brandId: 'ortoalresa',
     officialUrl: 'https://ortoalresa.com/en/products/',
     officialPdfUrl: 'https://ortoalresa.com/catalogo_producto/Catalogo_serie_Digicen_22_ESP.pdf',
     note: 'El PDF por modelo vive en products.ts; aquí figura el de la serie Digicen 22.',
@@ -123,12 +134,22 @@ export const familyDocumentation: readonly FamilyDocumentation[] = [
   },
   {
     familyId: 'pesaje-humedad',
+    brandId: 'adam-equipment',
     officialUrl: 'https://adamequipment.com/products.html',
     officialPdfUrl: 'https://adamequipment.com/media/docs/data_sheets/PMB-DS-A4-EN.pdf',
     verifiedOn: READ_ON,
   },
   {
+    familyId: 'pesaje-humedad',
+    brandId: 'ohaus',
+    officialUrl: 'https://mx.ohaus.com/es-mx/products/balances-scales/analytical-balances',
+    officialPdfUrl: null,
+    note: 'OHAUS publica una ficha PDF por línea y no un catálogo general: cada modelo enlaza la suya.',
+    verifiedOn: OHAUS_READ_ON,
+  },
+  {
     familyId: 'osmometria',
+    brandId: 'loeser',
     officialUrl: 'http://www.loeser-osmometer.de/produkte-eng.html',
     officialPdfUrl: null,
     officialUrlInsecure: true,
@@ -137,6 +158,7 @@ export const familyDocumentation: readonly FamilyDocumentation[] = [
   },
   {
     familyId: 'electroforesis',
+    brandId: 'serva',
     officialUrl:
       'https://www.serva.de/enDE/Catalog/449_Laboratory_Equipment_Electrophoresis_Devices_212_0.html',
     officialPdfUrl: 'https://www.serva.de/www_root/documents/Electrophoresis%20by%20SERVA_web.pdf',
@@ -429,6 +451,122 @@ export const brandModels: readonly BrandModel[] = [
     verifiedOn: READ_ON,
   },
 
+  /* -- OHAUS · pesaje y análisis de humedad ------------------------------ */
+  {
+    id: 'ohaus-pioneer-px',
+    brandId: 'ohaus',
+    familyId: 'pesaje-humedad',
+    name: 'Pioneer PX',
+    scope: 'familia',
+    does: 'Balanzas analíticas con legibilidad de 0,1 mg, protector de vidrio contra corrientes de aire y salida de datos GLP/GMP con reloj de tiempo real.',
+    uses: [
+      'Pesaje analítico de muestras pequeñas',
+      'Formulación y pesaje porcentual',
+      'Determinación de densidad',
+      'Docencia en química analítica',
+    ],
+    criteria: [
+      { label: 'Tipo', value: 'Balanza analítica' },
+      { label: 'Capacidad', value: '82, 120 y 220 g (PX84, PX124 y PX224)' },
+      { label: 'Legibilidad', value: '0,1 mg' },
+      { label: 'Calibración', value: 'Interna InCal semiautomática; externa en las versiones /E' },
+      { label: 'Plato', value: '90 mm, acero inoxidable, con protector contra corrientes de aire' },
+      { label: 'Interfaces', value: 'RS232 y USB, con salida de datos GLP/GMP' },
+    ],
+    officialUrl: 'https://mx.ohaus.com/es-mx/pioneeranalytical-33',
+    officialUrlScope: 'familia',
+    officialPdfUrl:
+      'https://dmx.ohaus.com/assets/0/14/4294980994/4294980995/4294980996/6dfb2947-8547-488c-b0ad-417194196a33.pdf',
+    sourceNote:
+      'Cifras de la página oficial de la Pioneer Analytical en el sitio de OHAUS para Latinoamérica; el PDF es la ficha PX en español del fabricante.',
+    verifiedOn: OHAUS_READ_ON,
+  },
+  {
+    id: 'ohaus-ranger-count-3000',
+    brandId: 'ohaus',
+    familyId: 'pesaje-humedad',
+    name: 'Ranger Count 3000',
+    code: 'RC31P',
+    scope: 'familia',
+    does: 'Balanzas contadoras portátiles que cuentan piezas a partir de su peso, con control de peso por luces de color y batería recargable.',
+    uses: [
+      'Conteo de piezas en la industria',
+      'Control de peso con límites de aceptación',
+      'Acumulación de pesadas',
+      'Pesaje general en planta',
+    ],
+    criteria: [
+      { label: 'Tipo', value: 'Balanza contadora' },
+      { label: 'Capacidad', value: '1,5 a 30 kg (RC31P1502 a RC31P30)' },
+      { label: 'Legibilidad', value: '0,05 a 1 g según modelo' },
+      { label: 'Plataforma', value: '225 × 300 mm, acero inoxidable' },
+      { label: 'Autonomía', value: 'Batería recargable de 210 horas' },
+      { label: 'Interfaces', value: 'RS232 incluido; segundo RS232, USB o Ethernet como accesorio' },
+    ],
+    officialUrl: 'https://mx.ohaus.com/es-mx/ranger3000count-16',
+    officialUrlScope: 'familia',
+    officialPdfUrl:
+      'https://dmx.ohaus.com/privateAssets/0/14/70506/70512/70514/7E4B04BB-4290-4005-91BB-FD24A3A4401D.pdf',
+    sourceNote:
+      'Cifras de la página oficial de la Ranger Count 3000 en el sitio de OHAUS para Latinoamérica; el PDF es la ficha RC31 del fabricante, en inglés.',
+    verifiedOn: OHAUS_READ_ON,
+  },
+  {
+    id: 'ohaus-mb120',
+    brandId: 'ohaus',
+    familyId: 'pesaje-humedad',
+    name: 'MB120',
+    scope: 'modelo',
+    does: 'Analizador de humedad con lámpara halógena que pesa la muestra, la seca y calcula humedad o sólidos por la pérdida de masa; propone el método solo con SmartGuide.',
+    uses: [
+      'Porcentaje de humedad y de sólidos',
+      'Recuperación de humedad',
+      'Métodos de rutina compartidos entre equipos',
+      'Mediciones con exportación de resultados guardados',
+    ],
+    criteria: [
+      { label: 'Tipo', value: 'Analizador de humedad' },
+      { label: 'Capacidad', value: '120 g' },
+      { label: 'Legibilidad', value: '1 mg / 0,01 %' },
+      { label: 'Calentamiento', value: 'Lámpara halógena, 40 a 230 °C en pasos de 1 °C' },
+      { label: 'Memoria', value: '100 métodos y 1.000 resultados' },
+      { label: 'Interfaces', value: 'RS232, USB dispositivo y host USB' },
+    ],
+    officialUrl: 'https://mx.ohaus.com/es-mx/mb120-2',
+    officialUrlScope: 'modelo',
+    officialPdfUrl:
+      'https://dmx.ohaus.com/assets/0/14/4294975066/4294975067/4294975068/5311db95-5042-4aed-b5d9-e985a9989b18.pdf',
+    sourceNote: 'El PDF es la ficha MB120 del fabricante, en inglés.',
+    verifiedOn: OHAUS_READ_ON,
+  },
+  {
+    id: 'ohaus-mb32',
+    brandId: 'ohaus',
+    familyId: 'pesaje-humedad',
+    name: 'MB32',
+    scope: 'modelo',
+    does: 'Analizador de humedad de calentamiento por fibra de carbono para comprobaciones periódicas, con pantalla de segunda línea y dos programas de secado.',
+    uses: [
+      'Comprobaciones periódicas de humedad',
+      'Humedad en entornos de trabajo exigentes',
+      'Rutinas con uno o dos métodos guardados',
+    ],
+    criteria: [
+      { label: 'Tipo', value: 'Analizador de humedad' },
+      { label: 'Capacidad', value: '90 g' },
+      { label: 'Legibilidad', value: '0,001 g / 0,01 %' },
+      { label: 'Calentamiento', value: 'Fibra de carbono, 40 a 180 °C en pasos de 1 °C' },
+      { label: 'Programas', value: 'Estándar y rápido' },
+      { label: 'Interfaces', value: 'RS232 y USB dispositivo' },
+    ],
+    officialUrl: 'https://mx.ohaus.com/es-mx/mb32-6',
+    officialUrlScope: 'modelo',
+    officialPdfUrl:
+      'https://dmx.ohaus.com/assets/0/14/4294999538/4294999539/4294999540/21a91517-84fc-4f2d-afd9-cd38c826eaa5.pdf',
+    sourceNote: 'Cifras de la ficha oficial MB32 en español para Latinoamérica.',
+    verifiedOn: OHAUS_READ_ON,
+  },
+
   /* -- Löser Messtechnik · osmometría ------------------------------------ */
   {
     id: 'loeser-osmometer-basic',
@@ -668,6 +806,9 @@ export function modelsForFamily(familyId: string): BrandModel[] {
   return brandModels.filter((model) => model.familyId === familyId);
 }
 
-export function familyDocsFor(familyId: string): FamilyDocumentation | undefined {
-  return familyDocumentation.find((entry) => entry.familyId === familyId);
+/** Documentación de la familia publicada por una marca concreta. */
+export function familyDocsFor(familyId: string, brandId: string): FamilyDocumentation | undefined {
+  return familyDocumentation.find(
+    (entry) => entry.familyId === familyId && entry.brandId === brandId,
+  );
 }

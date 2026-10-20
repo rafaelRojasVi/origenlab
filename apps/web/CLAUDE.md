@@ -9,7 +9,7 @@
 | Business facts, copy, categories, contact | `src/data/*` (`company`, `contact`, `categories`, `services`, `brands`, `faq`, `documents`) |
 | Cifras públicas: redacción, fuente, aprobación | `src/data/claims.ts` (usar `publicClaim(id)`, nunca el arreglo) |
 | Alcance de equipamiento por familia | `src/data/equipmentScope.ts` |
-| Marcas publicadas (lista cerrada de seis) | `src/data/brands.ts` (`APPROVED_BRAND_IDS`) |
+| Marcas publicadas (lista cerrada de siete) | `src/data/brands.ts` (`APPROVED_BRAND_IDS`) |
 | Modelos del fabricante que el sitio describe y enlaza pero no aloja | `src/data/brandModels.ts` |
 | Las seis tareas de laboratorio de `/aplicaciones/` | `src/data/applications.ts` |
 | Fuente oficial, PDF, procedencia y permiso de imagen | `src/data/sourceRegistry.ts` |
@@ -40,16 +40,19 @@ Two hard constraints beyond the content rules:
   tokens in `src/styles/global.css`; group with hairlines and space, not cards.
   Read `docs/design/DESIGN_SYSTEM.md` before adding a component.
 
-**Las marcas son una lista cerrada de seis.** `APPROVED_BRAND_IDS` en
+**Las marcas son una lista cerrada de siete.** `APPROVED_BRAND_IDS` en
 `src/data/brands.ts` es la única lista que el sitio público puede mostrar, y
 `validate:brands` la comprueba en seis capas: `brands.ts`, `public/brands/`,
 `src/data/sourceRegistry.ts`, `src/data/brandModels.ts`,
 `src/data/applications.ts` y el sitio construido (HTML, sitemap, datos
 estructurados, logotipos y destinos externos). Añadir o quitar una marca exige
-confirmación escrita del negocio.
+confirmación escrita del negocio. OHAUS entró el 2026-10-19 y comparte la
+familia de pesaje y humedad con Adam Equipment: hay siete marcas y seis
+familias, y toda lista que nombre «la marca de una familia» usa
+`getBrandsByFamilyId` (`src/lib/catalog.ts`).
 
 **Página de marca y alcance comercial son dos ejes, no uno.**
-`editorialPublished` habilita `/marcas/{slug}/` y lo tienen las seis;
+`editorialPublished` habilita `/marcas/{slug}/` y lo tienen las siete;
 `commercialScopeConfirmed` habilita `commercialNote` y sólo lo tienen Ortoalresa
 y SERVA. Una marca sin alcance confirmado puede decir qué fabrica el fabricante
 y que OrigenLab cotiza la línea, nunca en qué calidad. `validate:catalog` lo
@@ -69,8 +72,10 @@ equipo llega a una plantilla (`ModelPhoto`, `ProductFigure`, `ModelRow`), y
 remoto, marca y modelo del catálogo, dimensiones y alt, ninguna fila sin
 permiso renderizada, y toda imagen de familia rotulada como representativa. Que
 una imagen sea visible en público no implica permiso de reutilización. La base
-de permiso vigente para las seis marcas es la autorización previa del
-fabricante que el titular del negocio confirmó el 2026-09-07
+de permiso vigente para las seis primeras marcas es la autorización previa del
+fabricante que el titular del negocio confirmó el 2026-09-07; la de OHAUS es el
+permiso que el titular concedió el 2026-10-19 para sus imágenes oficiales y su
+logotipo (`OHAUS_AUTHORIZATION_BASIS`)
 (`MANUFACTURER_AUTHORIZATION_BASIS`): no es una licencia pública y no se
 inventa documento, cláusula, vigencia ni exclusividad. Permiso y procedencia van
 separados: cada fila nombra la página, folleto o activo oficial exacto del que
