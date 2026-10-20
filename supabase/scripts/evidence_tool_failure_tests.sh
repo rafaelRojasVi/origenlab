@@ -55,8 +55,8 @@ check() { # description  condition-already-evaluated-as-rc  detail
 # Fixtures the shims serve.
 # ---------------------------------------------------------------------------------------------
 
-# A dump that satisfies every completeness assertion: 7 CREATE SCHEMA, 59 CREATE TABLE,
-# 209 CREATE POLICY. Its content is irrelevant; only the shape the assertions count is. The
+# A dump that satisfies every completeness assertion: 7 CREATE SCHEMA, 60 CREATE TABLE,
+# 212 CREATE POLICY. Its content is irrelevant; only the shape the assertions count is. The
 # numbers are the ones replay_evidence.sh declares, so a migration that moves the inventory
 # moves this fixture in the same change — otherwise the control case fails and every injected
 # case fails for the wrong reason.

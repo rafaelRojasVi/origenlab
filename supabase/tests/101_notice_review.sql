@@ -22,10 +22,7 @@ $f$;
 
 -- ── procurement.notice.relevance ────────────────────────────────────────────────────────────
 select has_column('procurement', 'notice', 'relevance', 'procurement.notice.relevance exists');
-select col_is_nullable('procurement', 'notice', 'relevance', 'relevance is nullable');
-select is(left(pg_temp.run_as('origenlab_owner', $$ update procurement.notice
-  set relevance = '["not","an","object"]'::jsonb where false $$), 5), '23514',
-  'relevance rejects a JSON array');
+select col_is_null('procurement', 'notice', 'relevance', 'relevance is nullable');
 
 -- ── shape ───────────────────────────────────────────────────────────────────────────────────
 select has_table('crm', 'notice_review', 'crm.notice_review exists (#64)');
@@ -45,6 +42,10 @@ insert into procurement.notice
   values ('99000000-0000-4000-9900-000000000010', '9999-1-LE26', '{}'::jsonb,
           'Adquisición de Equipos de Laboratorio', 'Hospital Ejemplo');
 reset role;
+
+select is(left(pg_temp.run_as('origenlab_owner', $$ update procurement.notice
+  set relevance = '["not","an","object"]'::jsonb where id = '99000000-0000-4000-9900-000000000010' $$), 5), '23514',
+  'relevance rejects a JSON array');
 
 -- ── notice.relevance written by the worker ──────────────────────────────────────────────────
 select is(pg_temp.run_as('origenlab_worker', $$ update procurement.notice
@@ -121,9 +122,10 @@ $f$;
 select ok(pg_temp.valid_as_api('notice', 'notice.reviewed'),
   'aggregate kind notice carries notice.reviewed');
 select is(pg_temp.run_as('origenlab_api', $$ insert into crm.domain_event
-    (id, aggregate_kind, aggregate_id, event_type, payload_version, payload)
-  values ('99000000-0000-4000-9900-000000000030', 'notice',
-          '99000000-0000-4000-9900-000000000010', 'notice.reviewed', 1, '{}'::jsonb) $$), 'ok',
+    (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('notice', '99000000-0000-4000-9900-000000000010', 1, 'notice.reviewed', 1,
+          '{"verdict": "interesa", "previous_verdict": null, "reason": null}'::jsonb, 'operator',
+          '99000000-0000-4000-9900-000000000001') $$), 'ok',
   'a notice.reviewed domain event is accepted');
 
 select * from finish();
