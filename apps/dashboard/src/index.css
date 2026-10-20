@@ -170,3 +170,17 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .crm-row-out { animation: none; opacity: 0; }
 }
+
+/* «Licitaciones»: a match meter and the dates track fill from the left, after the row rises. */
+@keyframes crm-grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.crm-grow-x {
+  transform-origin: left;
+  animation: crm-grow-x 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--i, 0) * 45ms + 120ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .crm-grow-x { animation: none; }
+}

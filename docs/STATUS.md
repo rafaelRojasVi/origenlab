@@ -3331,7 +3331,7 @@ same change (pgTAP `099_tender_bid_preparation.sql`, 69 assertions).
 - **Tests.** API `test_v2_tender*`, worker `test_tender_*`, dashboard `crm/tenders/*.test.*`, pgTAP
   `099_tender_bid_preparation.sql`.
 
-### 2.7.140 Licitaciones «En Mercado Público»: open tenders that fit the catalog, 2026-10-20 — built, deploys on merge
+### 2.7.140 Licitaciones «En Mercado Público»: open tenders that fit the catalog, 2026-10-20 — merged (#803) and deployed 2026-10-20
 
 Phase 1 opened a tender only from a code the operator already had. «Licitaciones» now opens on
 **«En Mercado Público»**: every open Mercado Público tender that fits what OrigenLab sells, with
@@ -3355,8 +3355,29 @@ No schema change: the worker already had `select, insert, update` on `procuremen
 - **Dashboard** (`crm/tenders/DiscoveredTenders.tsx`): «En Mercado Público» | «Mis licitaciones»;
   family chips with counts, search, «nueva» for the last 24 h, items that matched, estimate, closing
   in Santiago time, «Ver en Mercado Público».
-- **Not yet.** Deploys on merge; the owner adds the ticket to `origenlab-mail-triage`
-  ([`OPERATIONS.md`](OPERATIONS.md) §8.14). The first run fills the list; the details take a few runs
-  (60 per run).
+- **Live.** #803 merged (92237742) and released; the ticket is on `origenlab-mail-triage`. First run
+  2026-10-20 14:00 UTC: 4,627 open tenders listed, 90 kept, 60 details read, 0 failed (about four
+  minutes, the details one by one); the rest on the next run.
 - **Tests.** API `test_v2_tender_discovery*.py`, worker `test_tender_discovery_database.py` and
   `test_task_queue.py`, dashboard `LicitacionesPage.test.tsx`, proxy `allowlist.test.ts`.
+
+
+### 2.7.141 Licitaciones: the whole catalog in the match, a notice's own page, the dashboard's look, 2026-10-20 — built, deploys on merge
+
+- **The catalog itself** (`CatalogVocabulary` in `origenlab_api.v2.tenders.discovery`): every live
+  equipment product's type (first word of `name_es`, or `category_es`; an everyday or vague first word
+  takes the next one — «contador de colonias», «procesador ultrasónico»; parts and bundles give none),
+  its maker (four letters or more, or an all-capitals three like «IKA») and its model number. Read
+  fresh on every sweep and every read; a notice that names one and no curated family is «Otros de
+  tu catálogo», and the words that matched come back as `terms` («Calza con»). The worker now also
+  needs `select` on `catalog.product` and `crm.organization` (already granted).
+- **A notice's page** `GET /v2/tenders/discovered/{notice_id}` (proxy: exact UUID path), dashboard
+  `#/crm/licitaciones/mp-<id>`: «Abrir en Mercado Público ↗» first, «Preparar oferta» (sales, admin)
+  or «Abrir la licitación»; a stat line; every date of the head on one track (passed filled, next
+  marked); every item with its category and what it matched; the head's facts (type, buying unit,
+  contract length, delivery address, renewable, subcontracting, the buyer's complaint count).
+- **The list** is the dashboard's table (as «Mis licitaciones»), a stat line (catalog, lab, closing
+  this week, new today, estimate open), family chips, search, sort; «Mercado Público ↗» on every row;
+  rows rise in (`crm-rise`), a pulsing dot within two days, all off under reduced motion.
+- **Not yet.** Documents are linked, not downloaded; history, winners and prices («Mercado») are
+  the next pieces.

@@ -12,13 +12,23 @@ through :func:`discovered_notices`, which classifies each from its stored head:
   equipment) or the text names laboratory equipment.
 * anything else (lab *services* such as «exámenes de laboratorio», reagents only) is not shown.
 
-A notice read before its detail arrived is shown on its title alone, `detail: false`.
+**The catalog itself** (:class:`CatalogVocabulary`, read from `catalog.product` on every run and
+read): the equipment type each live product's name starts with («Balanza …», «Homogeneizador …»), its
+`category_es`, its maker («OHAUS», «IKA», «Hielscher») and its model number («UP200St»). A notice that
+names one and no curated family lands in the catalog tier as «Otros de tu catálogo»; the words that
+matched are returned as `terms` so the page can say why.
+
+A notice read before its detail arrived is shown on its title alone, `detail: false`. One notice's
+page (:func:`discovered_notice`) adds every date, every item with what matched, and the facts of
+the head (type, contract length, delivery address, the buyer's complaint count).
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -46,7 +56,9 @@ FAMILIES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ("osmometria", "Osmómetros", re.compile(r"osmometr")),
     ("electroforesis", "Electroforesis", re.compile(r"electroforesis|\btransiluminador|\bcamaras? de western")),
 )
-FAMILY_LABELS: dict[str, str] = {key: label for key, label, _ in FAMILIES}
+#: A notice that names the catalog (a type, a maker, a model) but no curated family.
+CATALOG_FAMILY: tuple[str, str] = ("catalogo", "Otros de tu catálogo")
+FAMILY_LABELS: dict[str, str] = {key: label for key, label, _ in FAMILIES} | {CATALOG_FAMILY[0]: CATALOG_FAMILY[1]}
 
 #: Laboratory equipment by name, when no family matched: the second tier.
 _LAB_EQUIPMENT = re.compile(
@@ -60,6 +72,122 @@ _TITLE_ONLY = re.compile(r"laboratorio")
 #: Lab services and supplies, not equipment: they never make the second tier on their own.
 _SERVICE = re.compile(r"\bexamen(es)?\b|\banalisis clinicos\b|\bservicios? de laboratorio|\breactivos?\b")
 LAB_UNSPSC_SEGMENT = "41"
+
+#: A product name's first word that says nothing on its own: the next word is taken with it
+#: («Procesador ultrasónico», «Baño termostático»).
+_GENERIC_HEADS = frozenset({
+    "equipo", "equipos", "sistema", "modulo", "unidad", "procesador", "controlador", "fuente", "bano",
+    "instrumento", "aparato", "maquina", "dispositivo", "medidor", "analizador", "camara", "cabina",
+    # Everyday words outside a laboratorio: «contador» is also an accountant, «mesa» a table.
+    "contador", "bomba", "horno", "lampara", "mesa", "campana", "refrigerador", "congelador", "carro",
+    "estante", "mueble", "lector", "agua", "termometro", "reloj", "sensor", "monitor", "impresora",
+})
+#: A first word that names a part or a bundle, not equipment: the name gives no type.
+_NO_TYPE = frozenset({
+    "kit", "juego", "set", "accesorio", "accesorios", "soporte", "adaptador", "cabezal", "repuesto",
+    "tapa", "cable", "frasco", "tubo", "tubos", "vaso", "bandeja", "plato", "pack", "paquete", "servicio",
+    "envio", "flete", "base", "pieza", "porta", "caja", "conjunto", "rotor", "sonda", "sondas", "filtro",
+    "manguera", "electrodo", "pesa", "pesas", "papel", "funda", "cubierta",
+})
+#: Maker words too common to mean the maker.
+_GENERIC_MAKER_WORDS = frozenset({
+    "laboratorio", "laboratorios", "scientific", "instruments", "instrument", "equipment", "group",
+    "gmbh", "company", "industrial", "international", "lab", "labs", "technologies", "technology",
+    "the", "electronics", "medical", "systems", "chile", "sociedad", "comercial",
+})
+_CONNECTORS = frozenset({"de", "del", "para", "con", "y", "e", "a", "en", "la", "el", "los", "las"})
+
+
+@dataclass(frozen=True)
+class CatalogVocabulary:
+    """What the catalog sells, as patterns over folded text. Empty: matches nothing."""
+
+    types: re.Pattern[str] | None = None
+    makers: re.Pattern[str] | None = None
+    models: re.Pattern[str] | None = None
+
+    def hits(self, text: str | None) -> list[str]:
+        folded = fold(text)
+        found: list[str] = []
+        for pattern in (self.models, self.makers, self.types):
+            if pattern is None or not folded:
+                continue
+            for m in pattern.finditer(folded):
+                word = m.group(0).strip()
+                if word not in found:
+                    found.append(word)
+        return found
+
+
+EMPTY_VOCABULARY = CatalogVocabulary()
+
+
+def _alternation(words: Iterable[str], *, stem: bool = False) -> re.Pattern[str] | None:
+    """One `\b(a|b|…)` pattern, longest first; `stem` lets a type match its plural."""
+    unique = sorted({w for w in words if w}, key=lambda w: (-len(w), w))
+    if not unique:
+        return None
+    # A two-word type reads across a connector: «contador colonias» matches «contador de colonias».
+    body = "|".join(re.escape(w).replace(r"\ ", r"(?: (?:de|del|para|con|a))? ") for w in unique)
+    return re.compile(rf"\b(?:{body})" + (r"(?:s|es)?\b" if stem else r"\b"))
+
+
+def _type_of(name: str | None) -> str | None:
+    words = [w for w in re.split(r"[^a-z0-9]+", fold(name)) if w]
+    if not words or words[0].isdigit():
+        return None
+    head = words[0]
+    if head in _NO_TYPE:
+        return None
+    if head in _GENERIC_HEADS:
+        rest = [w for w in words[1:] if w not in _CONNECTORS]
+        if not rest or len(rest[0]) < 5 or any(c.isdigit() for c in rest[0]):
+            return None
+        return f"{head} {rest[0]}"
+    if len(head) < 6 or any(c.isdigit() for c in head):
+        return None
+    return head[:-2] if head.endswith("es") and len(head) > 7 else head[:-1] if head.endswith("s") else head
+
+
+def build_vocabulary(rows: Iterable[tuple[Any, ...]]) -> CatalogVocabulary:
+    """`rows`: (name_es, name, category_es, maker name, model number) per live equipment product."""
+    types: set[str] = set()
+    makers: set[str] = set()
+    models: set[str] = set()
+    for name_es, name, category, maker, model in rows:
+        kind = _type_of(name_es) or _type_of(name)
+        if kind:
+            types.add(kind)
+        category_type = _type_of(category)
+        if category_type:
+            types.add(category_type)
+        raw_first = re.split(r"[\s\-_,.;:()/&+]+", str(maker or "").strip())[0]
+        first = fold(raw_first)
+        # Four letters or more, or a three-letter all-capitals brand («IKA»); never a generic word.
+        if first not in _GENERIC_MAKER_WORDS and (len(first) >= 4 or (len(first) == 3 and raw_first.isupper())):
+            makers.add(first)
+        model_text = fold(model)
+        if (len(model_text) >= 4 and any(c.isdigit() for c in model_text) and any(c.isalpha() for c in model_text)
+                and " " not in model_text):
+            models.add(model_text)
+    return CatalogVocabulary(types=_alternation(types, stem=True), makers=_alternation(makers),
+                             models=_alternation(models))
+
+
+#: Live equipment of the catalog (merged-away products and services, consumables, spare parts and
+#: accessories left out: they name nothing a tender buys as equipment).
+CATALOG_VOCABULARY_SQL = """
+select p.name_es, p.name, p.category_es, o.name as maker, p.model_number
+  from catalog.product p
+  join crm.organization o on o.id = p.manufacturer_organization_id
+ where p.merged_into_product_id is null
+   and (p.product_kind is null or p.product_kind = 'equipment')
+"""
+
+
+def load_vocabulary(cur: Any) -> CatalogVocabulary:
+    cur.execute(CATALOG_VOCABULARY_SQL)
+    return build_vocabulary(cur.fetchall())
 
 
 def chile_time(raw: Any) -> datetime | None:
@@ -91,12 +219,12 @@ def families_in(text: str | None) -> list[str]:
     return [key for key, _, pattern in FAMILIES if pattern.search(folded)]
 
 
-def title_candidate(title: str | None) -> bool:
+def title_candidate(title: str | None, vocabulary: CatalogVocabulary = EMPTY_VOCABULARY) -> bool:
     """The sweep's gate before a detail lookup: broad on purpose (the read narrows it)."""
     folded = fold(title)
     return bool(folded) and (
         any(p.search(folded) for _, _, p in FAMILIES) or bool(_LAB_EQUIPMENT.search(folded))
-        or bool(_TITLE_ONLY.search(folded))
+        or bool(_TITLE_ONLY.search(folded)) or bool(vocabulary.hits(title))
     )
 
 
@@ -115,31 +243,47 @@ def has_detail(head: dict[str, Any] | None) -> bool:
     return isinstance((head or {}).get("Comprador"), dict)
 
 
-def classify(title: str | None, head: dict[str, Any] | None) -> dict[str, Any]:
-    """`tier` (`catalogo` | `laboratorio` | None), the families matched, and the items that matched."""
+def _item_row(item: dict[str, Any], unspsc: str, families: list[str], terms: list[str], *, is_lab: bool) -> dict[str, Any]:
+    return {
+        "name": _str(item.get("NombreProducto")) or _str(item.get("Descripcion")),
+        "description": _str(item.get("Descripcion")),
+        "quantity": item.get("Cantidad"),
+        "unit": _str(item.get("UnidadMedida")),
+        "unspsc": unspsc or None,
+        "category": _str(item.get("Categoria")),
+        "families": [{"key": f, "label": FAMILY_LABELS[f]} for f in families],
+        "terms": terms,
+        "lab_equipment": is_lab,
+    }
+
+
+def classify(title: str | None, head: dict[str, Any] | None,
+             vocabulary: CatalogVocabulary = EMPTY_VOCABULARY, *, all_items: bool = False) -> dict[str, Any]:
+    """`tier` (`catalogo` | `laboratorio` | None), the families matched, the catalog words that
+    matched (`terms`) and the items that matched (every item with `all_items`)."""
     head = head or {}
     texts = [title, head.get("Nombre"), head.get("Descripcion")]
     found: list[str] = []
+    terms: list[str] = []
     for text in texts:
         found += [f for f in families_in(text) if f not in found]
+        terms += [t for t in vocabulary.hits(text) if t not in terms]
     matched_items: list[dict[str, Any]] = []
     lab_item = False
     for item in head_items(head):
         text = " ".join(str(item.get(k) or "") for k in ("NombreProducto", "Descripcion", "Categoria"))
         item_families = families_in(text)
+        item_terms = vocabulary.hits(text)
         unspsc = str(item.get("CodigoProducto") or item.get("CodigoCategoria") or "")
         is_lab = unspsc.startswith(LAB_UNSPSC_SEGMENT) or bool(_LAB_EQUIPMENT.search(fold(text)))
         lab_item = lab_item or is_lab
         found += [f for f in item_families if f not in found]
-        if item_families or is_lab:
-            matched_items.append({
-                "name": _str(item.get("NombreProducto")) or _str(item.get("Descripcion")),
-                "description": _str(item.get("Descripcion")),
-                "quantity": item.get("Cantidad"),
-                "unit": _str(item.get("UnidadMedida")),
-                "unspsc": unspsc or None,
-            })
-    order = {key: n for n, (key, _, _) in enumerate(FAMILIES)}
+        terms += [t for t in item_terms if t not in terms]
+        if all_items or item_families or item_terms or is_lab:
+            matched_items.append(_item_row(item, unspsc, item_families, item_terms, is_lab=is_lab))
+    if not found and terms:
+        found = [CATALOG_FAMILY[0]]
+    order = {key: n for n, key in enumerate([k for k, _, _ in FAMILIES] + [CATALOG_FAMILY[0]])}
     found.sort(key=order.__getitem__)
     if found:
         tier = "catalogo"
@@ -151,7 +295,7 @@ def classify(title: str | None, head: dict[str, Any] | None) -> dict[str, Any]:
         # Before its detail arrives a title-only candidate is shown, unless it reads as a service.
         pending = not has_detail(head) and bool(_TITLE_ONLY.search(folded)) and not _SERVICE.search(folded)
         tier = "laboratorio" if named or pending else None
-    return {"tier": tier, "families": found, "items": matched_items}
+    return {"tier": tier, "families": found, "terms": terms[:6], "items": matched_items}
 
 
 def _str(value: Any) -> str | None:
@@ -208,6 +352,7 @@ def discovered_row(row: dict[str, Any], match: dict[str, Any]) -> dict[str, Any]
         "estimated_amount": {"amount": amount, "currency": _str(head.get("Moneda")) or "CLP"} if amount else None,
         "tier": match["tier"],
         "families": [{"key": f, "label": FAMILY_LABELS[f]} for f in match["families"]],
+        "terms": match["terms"],
         "items": match["items"][:8],
         "item_count": len(head_items(head)),
         "detail": has_detail(head),
@@ -218,12 +363,13 @@ def discovered_row(row: dict[str, Any], match: dict[str, Any]) -> dict[str, Any]
 
 def discovered_notices(cur: Any, now: datetime) -> dict[str, Any]:
     """Every open notice that fits, catalog families first, then by closing time."""
+    vocabulary = load_vocabulary(cur)
     cur.execute(DISCOVERED_SQL, {"now": now})
     columns = [c.name for c in cur.description]
     shown: list[dict[str, Any]] = []
     for values in cur.fetchall():
         row = dict(zip(columns, values, strict=True))
-        match = classify(row.get("title"), row.get("head"))
+        match = classify(row.get("title"), row.get("head"), vocabulary)
         if match["tier"] is not None:
             shown.append(discovered_row(row, match))
     shown.sort(key=lambda r: (r["tier"] != "catalogo", r["closes_at"] is None, r["closes_at"] or ""))
@@ -231,5 +377,87 @@ def discovered_notices(cur: Any, now: datetime) -> dict[str, Any]:
               "laboratorio": sum(r["tier"] == "laboratorio" for r in shown)}
     cur.execute("select max(last_seen_at) from procurement.notice where promoted_opportunity_id is null")
     (last_seen,) = cur.fetchone()
-    return {"notices": shown, "counts": counts, "families": [{"key": k, "label": l} for k, l, _ in FAMILIES],
-            "last_checked_at": _instant(last_seen)}
+    families = [{"key": k, "label": l} for k, l, _ in FAMILIES] + [{"key": CATALOG_FAMILY[0], "label": CATALOG_FAMILY[1]}]
+    return {"notices": shown, "counts": counts, "families": families, "last_checked_at": _instant(last_seen)}
+
+
+#: The head's dates, in the order a tender lives them (`Fechas.*`; `FechaCierre` also at the top).
+DATE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("FechaPublicacion", "Publicación"),
+    ("FechaInicio", "Inicio de preguntas"),
+    ("FechaFinal", "Preguntas hasta"),
+    ("FechaPubRespuestas", "Respuestas"),
+    ("FechaVisitaTerreno", "Visita a terreno"),
+    ("FechaEntregaAntecedentes", "Entrega de antecedentes"),
+    ("FechaSoporteFisico", "Entrega en soporte físico"),
+    ("FechaCierre", "Cierre de ofertas"),
+    ("FechaActoAperturaTecnica", "Apertura técnica"),
+    ("FechaActoAperturaEconomica", "Apertura económica"),
+    ("FechaEstimadaAdjudicacion", "Adjudicación estimada"),
+    ("FechaAdjudicacion", "Adjudicación"),
+    ("FechaEstimadaFirma", "Firma de contrato estimada"),
+)
+
+
+def notice_dates(head: dict[str, Any], closes_at: datetime | None) -> list[dict[str, Any]]:
+    fechas = head.get("Fechas") if isinstance(head.get("Fechas"), dict) else {}
+    out: list[dict[str, Any]] = []
+    for key, label in DATE_FIELDS:
+        at = chile_time(fechas.get(key)) or (closes_at if key == "FechaCierre" else None)
+        if at is not None:
+            out.append({"key": key, "label": label, "at": at.isoformat()})
+    out.sort(key=lambda d: d["at"])
+    return out
+
+
+def _unit(value: Any) -> str | None:
+    """`UnidadTiempo*` codes: 1 horas, 2 días, 3 semanas, 4 meses, 5 años."""
+    return {"1": "horas", "2": "días", "3": "semanas", "4": "meses", "5": "años"}.get(str(value or "").strip())
+
+
+def notice_facts(head: dict[str, Any]) -> list[dict[str, str]]:
+    """The head's plain facts, labelled, the empty ones left out."""
+    buyer = head.get("Comprador") if isinstance(head.get("Comprador"), dict) else {}
+    duration = _str(head.get("TiempoDuracionContrato"))
+    duration_unit = _unit(head.get("UnidadTiempoDuracionContrato"))
+    complaints = _number(head.get("CantidadReclamos"))
+    rows = [
+        ("Tipo", _str(head.get("Tipo"))),
+        ("Estado", _str(head.get("Estado"))),
+        ("Unidad compradora", _str(buyer.get("NombreUnidad"))),
+        ("Comuna", _str(buyer.get("ComunaUnidad"))),
+        ("Moneda", _str(head.get("Moneda"))),
+        ("Duración del contrato", f"{duration} {duration_unit}" if duration and duration_unit else duration),
+        ("Dirección de entrega", _str(head.get("DireccionEntrega"))),
+        ("Etapas de apertura", {"1": "una etapa", "2": "dos etapas"}.get(str(head.get("Etapas") or ""))),
+        ("Contrato renovable", {"1": "sí", "0": "no"}.get(str(head.get("EsRenovable") or ""))),
+        ("Permite subcontratación", {"1": "sí", "0": "no"}.get(str(head.get("SubContratacion") or ""))),
+        ("Reclamos del comprador", f"{complaints} reclamos por pago a proveedores" if complaints is not None else None),
+    ]
+    return [{"label": label, "value": value} for label, value in rows if value]
+
+
+DISCOVERED_ONE_SQL = DISCOVERED_SQL.split(" where ")[0] + " where n.id = %(id)s::uuid"
+
+
+def discovered_notice(cur: Any, notice_id: str, now: datetime) -> dict[str, Any] | None:
+    """One notice's page: the list row plus every date, every item and the head's facts."""
+    vocabulary = load_vocabulary(cur)
+    cur.execute(DISCOVERED_ONE_SQL, {"id": notice_id})
+    values = cur.fetchone()
+    if values is None:
+        return None
+    row = dict(zip([c.name for c in cur.description], values, strict=True))
+    head = row.get("head") or {}
+    match = classify(row.get("title"), head, vocabulary, all_items=True)
+    page = discovered_row(row, {**match, "tier": match["tier"] or "laboratorio"})
+    page.update(
+        tier=match["tier"],
+        items=match["items"],
+        description=_str(head.get("Descripcion")),
+        dates=notice_dates(head, row.get("closes_at")),
+        facts=notice_facts(head),
+        source_status=row.get("source_status"),
+        open=row.get("closes_at") is None or row["closes_at"] > now,
+    )
+    return page

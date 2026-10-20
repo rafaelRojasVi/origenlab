@@ -162,3 +162,18 @@ def test_a_notice_a_case_was_opened_from_or_an_old_one_is_never_withdrawn(dsn) -
     _run(dsn, [_summary(_code(), "Centrífuga")], min_list_rows=1)
     assert _notice(dsn, promoted)["disappeared_at"] is None
     assert _notice(dsn, old)["disappeared_at"] is None
+
+
+def test_a_title_naming_only_a_catalog_product_is_kept(dsn) -> None:
+    maker = owner_rows(dsn, "insert into crm.organization (kind, name, confirmation) values ('manufacturer', "
+                            "'Fabricante Ejemplo Ciclos', 'confirmed') returning id")[0][0]
+    owner_rows(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name_es, product_kind) "
+                    "values (%s, 'ZK400', 'Liofilizador de mesa ZK400', 'equipment')", (maker,))
+    owner_rows(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name_es, product_kind) "
+                    "values (%s, 'QX77', 'Gradillas QX77', 'consumable')", (maker,))
+    known, consumable = _code(), _code()
+    counts = _run(dsn, [_summary(known, "Compra de equipo ZK400"), _summary(consumable, "Compra de gradillas QX77")],
+                  min_list_rows=10)
+    assert _notice(dsn, known) is not None  # the model, read from the catalog this run
+    assert _notice(dsn, consumable) is None  # a consumable teaches nothing
+    assert counts["candidates"] == 1

@@ -79,6 +79,11 @@ export interface DiscoveredItem {
   quantity: number | string | null;
   unit: string | null;
   unspsc: string | null;
+  category?: string | null;
+  /** The curated families and the catalog words (type, maker, model) this item names. */
+  families?: { key: string; label: string }[];
+  terms?: string[];
+  lab_equipment?: boolean;
 }
 
 export interface DiscoveredNotice {
@@ -93,6 +98,8 @@ export interface DiscoveredNotice {
   estimated_amount: { amount: number; currency: string } | null;
   tier: DiscoveryTier;
   families: { key: string; label: string }[];
+  /** The catalog words that matched (a model, a maker, a type), for «calza con». */
+  terms?: string[];
   items: DiscoveredItem[];
   item_count: number;
   /** False until the sweep has read the notice's detail (buyer, items). */
@@ -111,6 +118,19 @@ export interface DiscoveredList {
 
 /** Open Mercado Público tenders that fit the catalog (the worker's sweep, every 15 minutes). */
 export const fetchDiscoveredTenders = () => fetchJsonGet<DiscoveredList>(operatorApiUrl("/v2/tenders/discovered"));
+
+/** One notice's page: the row plus every date, every item and the head's facts. */
+export interface DiscoveredNoticePage extends Omit<DiscoveredNotice, "tier"> {
+  tier: DiscoveryTier | null;
+  description: string | null;
+  dates: { key: string; label: string; at: string }[];
+  facts: { label: string; value: string }[];
+  source_status: string | null;
+  open: boolean;
+}
+
+export const fetchDiscoveredTender = (noticeId: string) =>
+  fetchJsonGet<DiscoveredNoticePage>(operatorApiUrl(`/v2/tenders/discovered/${encodeURIComponent(noticeId)}`));
 
 /* ── the bidder ───────────────────────────────────────────────────────────── */
 

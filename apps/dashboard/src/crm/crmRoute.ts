@@ -58,6 +58,11 @@ export function sectionTitle(section: CrmSection): string {
 
 const SECTIONS = new Set<string>(CRM_NAV.map((n) => n.id));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** «Licitaciones» also opens a Mercado Público notice's page: `#/crm/licitaciones/mp-<notice id>`. */
+const NOTICE_ROUTE_ID = /^mp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const noticeRouteId = (noticeId: string): string => `mp-${noticeId}`;
+export const noticeIdOfRoute = (id: string | null | undefined): string | null =>
+  id && NOTICE_ROUTE_ID.test(id) ? id.slice(3).toLowerCase() : null;
 
 /**
  * Old CRM addresses that keep their record: the one-quote page `#/crm/cotizar/<id>` is now that
@@ -98,7 +103,9 @@ export function parseCrmHash(hash: string): CrmRoute {
   const section = (SECTIONS.has(parts[0] ?? "") ? parts[0] : "resumen") as CrmSection;
   if (section === "datos" && DATOS_TABS.has(parts[1] ?? "")) return { section, id: null, tab: parts[1] as DatosTab };
   if (section === "cotizador" && COTIZADOR_PANES.has(parts[1] ?? "")) return { section, id: null, pane: parts[1] as CotizadorPane };
-  const id = parts[1] && UUID.test(parts[1]) ? parts[1].toLowerCase() : null;
+  const id = parts[1] && (UUID.test(parts[1]) || (section === "licitaciones" && NOTICE_ROUTE_ID.test(parts[1])))
+    ? parts[1].toLowerCase()
+    : null;
   return { section, id };
 }
 
