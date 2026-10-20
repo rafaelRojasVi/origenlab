@@ -353,11 +353,26 @@ def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
     return sweep
 
 
-def run_tender_worker(env: Mapping[str, str], started: float) -> int:
-    """The tender child. A setting it refuses (no key, an unpriced model) is logged and the child
-    idles: a supervised child that exits would take the triage down with it."""
+def _serve_tenders(config: BidConfig) -> None:  # pragma: no cover - needs a database
+    """Run the tender queue until SIGTERM: one preparation at a time."""
     from origenlab_worker import task_queue
 
+    task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
+
+    async def serve() -> None:
+        with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
+            async with app.open_async():
+                # One preparation at a time: the monthly cap relies on a single spender.
+                await app.run_worker_async(queues=[task_queue.TENDER_QUEUE], concurrency=1, name="tenders",
+                                           install_signal_handlers=True, delete_jobs="successful")
+
+    asyncio.run(serve())
+
+
+def run_tender_worker(env: Mapping[str, str], started: float) -> int:
+    """The tender child. A setting it refuses (no key, an unpriced model) or a failure while it runs
+    is logged — the failure by its class only — and the child idles: the supervisor stops every
+    child when one exits, and a tender failure must not take triage and capture down with it."""
     line: dict[str, Any] = {"event": "tender_worker", "mode": "start", "exit": EXIT_OK, "error": None}
     try:
         if not bid_enabled(env):  # the supervisor starts this child only when tenders are on
@@ -368,22 +383,16 @@ def run_tender_worker(env: Mapping[str, str], started: float) -> int:
         _emit(line, started)
         _idle_until_terminated("tender_worker")
         return EXIT_OK
-    try:  # pragma: no cover - needs a database
-        task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
-        line["models"] = {"read": config.models.read, "fill": config.models.fill, "match": config.models.match}
-        _emit(dict(line), started)
-
-        async def serve() -> None:
-            with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
-                async with app.open_async():
-                    # One preparation at a time: the monthly cap relies on a single spender.
-                    await app.run_worker_async(queues=[task_queue.TENDER_QUEUE], concurrency=1, name="tenders",
-                                               install_signal_handlers=True, delete_jobs="successful")
-
-        asyncio.run(serve())
-        line["mode"] = "stopped"
-    except Exception as exc:  # noqa: BLE001 — the class, never the text  # pragma: no cover
-        line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
+    line["models"] = {"read": config.models.read, "fill": config.models.fill, "match": config.models.match}
+    _emit(dict(line), started)
+    try:
+        _serve_tenders(config)
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(mode="failed", error=type(exc).__name__)
+        _emit(line, started)
+        _idle_until_terminated("tender_worker")
+        return EXIT_OK
+    line["mode"] = "stopped"  # pragma: no cover - SIGTERM ends the queue
     return _emit(line, started)  # pragma: no cover
 
 

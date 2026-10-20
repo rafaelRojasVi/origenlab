@@ -145,3 +145,19 @@ def test_the_tender_child_uses_the_case_archive_drive_settings() -> None:
 def test_without_drive_settings_the_tender_child_runs_with_drive_off(missing) -> None:
     config = triage_cli.bid_config_from_env(_env(**{**DRIVE_ENV, missing: None}), reader_factory=lambda key: "reader")
     assert config.drive is None and config.drive_target is None
+
+
+def test_a_tender_child_that_fails_at_runtime_idles_and_logs_only_the_class(monkeypatch, capsys) -> None:
+    """A dead tender child would end the service (the supervisor stops every child when one exits):
+    triage and capture must keep running, so the child logs the failure's class and idles."""
+    idled = []
+    monkeypatch.setattr(triage_cli, "_idle_until_terminated", lambda event="triage_worker": idled.append(event))
+
+    def boom(config):
+        raise RuntimeError("texto-secreto-del-error")
+
+    monkeypatch.setattr(triage_cli, "_serve_tenders", boom)
+    assert triage_cli.run_tender_worker(_env(), 0.0) == 0
+    out = capsys.readouterr().out
+    assert '"failed"' in out and "RuntimeError" in out and "texto-secreto-del-error" not in out
+    assert idled == ["tender_worker"]

@@ -2,7 +2,9 @@
 
 The tender child (`tender-child`, ruling R4) runs only when `ORIGENLAB_WORKER_BID_ENABLED` is
 `true`; unlike the triage child it keeps the Drive settings (the fill phase files the bid in Drive),
-and like it never sees Gmail's.
+and like it never sees Gmail's. It never exits on its own: a refused setting or a failure while it
+runs is logged and the child idles (`triage_cli.run_tender_worker`), so a tender problem does not
+stop triage and capture.
 
 If either child exits unexpectedly, stop both and fail the service so Render can
 restart it. A live triage child must not hide a dead capture scheduler. SIGTERM
