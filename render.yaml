@@ -250,6 +250,10 @@ services:
       # default to claude-opus-5-5 (read, fill) and claude-sonnet-5-5 (match).
       - key: ORIGENLAB_WORKER_BID_ENABLED
         sync: false
+      # «En Mercado Público»: the tender child's discovery sweep reads the open-tender list with the
+      # same ticket as the API (falls back to CHILECOMPRA_API_TICKET; unset, the sweep logs no_ticket).
+      - key: ORIGENLAB_V2_CHILECOMPRA_TICKET
+        sync: false
       - key: ORIGENLAB_WORKER_BID_READ_MODEL
         sync: false
       - key: ORIGENLAB_WORKER_BID_FILL_MODEL

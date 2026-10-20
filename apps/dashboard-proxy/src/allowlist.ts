@@ -129,6 +129,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // the page answers 403 `role_may_not_view_bidder` to a `viewer` upstream. A UUID-shaped segment,
   // no tail: nothing else under `/v2/tenders` is reachable.
   /^\/v2\/tenders$/,
+  // «En Mercado Público»: open tenders that fit the catalog (public notice data only, any signed-in
+  // operator). GET-only, exact path.
+  /^\/v2\/tenders\/discovered$/,
   // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
   // document's signed link. GET-only; a `viewer` is 403 `role_may_not_view_bidder` upstream.
   /^\/v2\/bidder$/,

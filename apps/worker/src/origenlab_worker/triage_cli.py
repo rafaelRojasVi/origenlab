@@ -77,10 +77,16 @@ ENV_TRIAGE_MODEL = "ORIGENLAB_WORKER_TRIAGE_MODEL"
 ENV_BID_READ_MODEL = "ORIGENLAB_WORKER_BID_READ_MODEL"
 ENV_BID_FILL_MODEL = "ORIGENLAB_WORKER_BID_FILL_MODEL"
 ENV_BID_MATCH_MODEL = "ORIGENLAB_WORKER_BID_MATCH_MODEL"
+#: The Mercado Público ticket for «En Mercado Público» (the API's variable, then V1's). Unset: the
+#: discovery sweep logs `no_ticket` and the bid preparations run as before.
+ENV_CHILECOMPRA_TICKET = "ORIGENLAB_V2_CHILECOMPRA_TICKET"
+#: Not an `ENV_` name: V1's variable is read as a fallback, never declared on this service.
+CHILECOMPRA_TICKET_FALLBACK = "CHILECOMPRA_API_TICKET"
 DEFAULT_BID_READ_MODEL = "claude-opus-5-5"
 DEFAULT_BID_FILL_MODEL = "claude-opus-5-5"
 DEFAULT_BID_MATCH_MODEL = "claude-sonnet-5-5"
 APP_NAME_BID = "origenlab-worker-bid-preparation"
+APP_NAME_DISCOVERY = "origenlab-worker-tender-discovery"
 
 EXIT_OK, EXIT_FAILED, EXIT_CONFIG = 0, 1, 3
 WORKER_CONCURRENCY = 2
@@ -265,6 +271,8 @@ class BidConfig:
     #: ruling R4): spec sheets come from Drive and the package is filed there. None: Drive is off.
     drive: Any = field(default=None, repr=False)
     drive_target: Any = None
+    #: The Mercado Público ticket, or None: discovery is skipped.
+    ticket: str | None = field(default=None, repr=False)
 
 
 def _bid_drive(env: Mapping[str, str]) -> tuple[Any, Any]:
@@ -320,8 +328,11 @@ def bid_config_from_env(env: Mapping[str, str], *,
         ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""),
     )
     drive, drive_target = _bid_drive(env)
+    ticket = ((env.get(ENV_CHILECOMPRA_TICKET) or "").strip()
+              or (env.get(CHILECOMPRA_TICKET_FALLBACK) or "").strip() or None)
     return BidConfig(database=database, storage=storage, models=models,
-                     reader=(reader_factory or streaming_reader)(key), drive=drive, drive_target=drive_target)
+                     reader=(reader_factory or streaming_reader)(key), drive=drive, drive_target=drive_target,
+                     ticket=ticket)
 
 
 def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
@@ -353,11 +364,60 @@ def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
     return sweep
 
 
+def discovery_for(config: BidConfig, *, urlopen_fn: Any = None,
+                  sleep: Callable[[float], None] | None = None) -> Callable[[], dict[str, Any]]:
+    """One «En Mercado Público» run on a fresh verified connection: what `tender_discovery` runs.
+    A failure is reported by its class only (an HTTP error's text could carry the ticket)."""
+    import time
+    from datetime import UTC, datetime
+
+    from origenlab_api.v2.tenders.mercado_publico import _fetch_with_backoff
+    from origenlab_email_pipeline.chilecompra_api import _extract_listado, build_licitaciones_url
+
+    from origenlab_worker.tender.discovery import (
+        DISCOVERY_REQUIRED_POLICIES,
+        DISCOVERY_REQUIRED_PRIVILEGES,
+        run_discovery,
+    )
+
+    pause = sleep or time.sleep
+
+    def fetch_list() -> dict[str, Any]:
+        assert config.ticket is not None  # noqa: S101 - checked by run()
+        url = build_licitaciones_url(ticket=config.ticket, estado="activas")
+        return _fetch_with_backoff(url, ticket=config.ticket, timeout=120.0, urlopen_fn=urlopen_fn, sleep=pause)
+
+    def fetch_detail(code: str) -> dict[str, Any] | None:
+        assert config.ticket is not None  # noqa: S101
+        try:
+            payload = _fetch_with_backoff(build_licitaciones_url(ticket=config.ticket, codigo=code),
+                                          ticket=config.ticket, timeout=30.0, urlopen_fn=urlopen_fn, sleep=pause)
+        except Exception:  # noqa: BLE001 — one missing detail waits for the next run
+            return None
+        listado = _extract_listado(payload)
+        return listado[0] if listado else None
+
+    def run() -> dict[str, Any]:
+        if config.ticket is None:
+            return {"outcome": "no_ticket"}
+        try:
+            with open_verified_connection(config.database, application_name=APP_NAME_DISCOVERY,
+                                          privileges=DISCOVERY_REQUIRED_PRIVILEGES,
+                                          policies=DISCOVERY_REQUIRED_POLICIES) as conn:
+                counts = run_discovery(conn, fetch_list, fetch_detail, now=lambda: datetime.now(UTC), sleep=pause)
+        except Exception as exc:  # noqa: BLE001 — the class, never the text
+            return {"outcome": "failed", "error": type(exc).__name__}
+        return {"outcome": "ran", **counts}
+
+    return run
+
+
 def _serve_tenders(config: BidConfig) -> None:  # pragma: no cover - needs a database
-    """Run the tender queue until SIGTERM: one preparation at a time."""
+    """Run the tender queue until SIGTERM: one preparation at a time, and the discovery sweep."""
     from origenlab_worker import task_queue
 
     task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
+    task_queue.CONTEXT.discovery = discovery_for(config)
 
     async def serve() -> None:
         with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:

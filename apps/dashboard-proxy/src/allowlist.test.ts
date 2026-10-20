@@ -515,10 +515,10 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
-  it("allows GET of the tender list and one tender's page, nothing under them, never a POST", async () => {
+  it("allows GET of the tender list, «En Mercado Público» and one tender's page, nothing under them, never a POST", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
-    for (const path of ["/v2/tenders", "/v2/tenders?status=postulada", `/v2/tenders/${uuid}`]) {
+    for (const path of ["/v2/tenders", "/v2/tenders?status=postulada", `/v2/tenders/${uuid}`, "/v2/tenders/discovered"]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
     }
@@ -531,6 +531,9 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/tenders/not-a-uuid",
       "/v2/tenders/../v2/cases",
       "/v2/tendersx",
+      "/v2/tenders/discovered/",
+      "/v2/tenders/discovered/x",
+      "/v2/tenders/discoveredx",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
     }

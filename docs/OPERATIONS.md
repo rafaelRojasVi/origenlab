@@ -2232,8 +2232,10 @@ participant with the sent quote), or it is uploaded by hand with «Adjuntar OC»
 
 ### 8.14 Tender bid preparation (Licitaciones fase 1)
 
-Built, not activated. The «Licitaciones» space opens a tender by code or link and the
-`origenlab-mail-triage` worker prepares the bid (reading, forms, offer, zip). Spec and rules:
+Live since 2026-10-20. The «Licitaciones» space lists the open Mercado Público tenders that fit the
+catalog («En Mercado Público», the worker's discovery sweep every 15 minutes), opens a tender by
+code or link, and the `origenlab-mail-triage` worker prepares the bid (reading, forms, offer, zip).
+Spec and rules:
 [`WORKFLOWS.md`](WORKFLOWS.md) W7a, [`DOMAIN.md`](DOMAIN.md) §7.11.
 
 **Settings**
@@ -2242,6 +2244,7 @@ Built, not activated. The «Licitaciones» space opens a tender by code or link 
 |---|---|---|
 | Render API | `ORIGENLAB_V2_CHILECOMPRA_TICKET` | **Secret.** Mercado Público ticket for the tender detail by code. Falls back to `CHILECOMPRA_API_TICKET`; without either, «Nueva licitación» needs the buyer typed (422 `buyer_required`). Listed in `apps/api/.env.example`. |
 | `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_ENABLED` | `true` starts the tender child (default off). It keeps the `DRIVE_*` settings. |
+| `origenlab-mail-triage` | `ORIGENLAB_V2_CHILECOMPRA_TICKET` | **Secret**, the same ticket as the API's (falls back to `CHILECOMPRA_API_TICKET`). The tender child's «En Mercado Público» sweep reads the open-tender list with it; unset, each run logs `tender_discovery` `no_ticket` and nothing else changes. |
 | `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_READ_MODEL`, `_BID_FILL_MODEL`, `_BID_MATCH_MODEL` | Optional; defaults `claude-opus-5-5`, `claude-opus-5-5`, `claude-sonnet-5-5`. |
 | `origenlab-mail-triage` | the Anthropic API key already set for triage | Required for the three models. |
 
@@ -2259,10 +2262,13 @@ changes nothing for the worker. The only manual steps are the owner's:
 1. Raise the `crm-documents` bucket `file_size_limit` to 50 MiB (52428800) in Supabase Storage
    settings. Hosted has 20 MiB (set outside the migrations); generated outputs and the zip (capped at
    45 MiB by the worker) above that would fail `output_store_failed`. API uploads stay capped at
-   20 MiB per document by the API itself.
+   20 MiB per document by the API itself. In the same «Edit bucket» panel, **Allowed MIME types**
+   must also list Word, Excel and zip — hosted allowed only `application/pdf, image/jpeg, image/png`,
+   which refuses every anexo and output of another type. The full value (done 2026-10-20):
+   `application/pdf, image/jpeg, image/png, application/vnd.openxmlformats-officedocument.wordprocessingml.document, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/msword, application/vnd.ms-excel, application/zip`.
 2. Set the secrets on Render: `ORIGENLAB_V2_CHILECOMPRA_TICKET` on `origenlab-api` (declared in
-   `render.yaml` with `sync: false`), and on `origenlab-mail-triage` the optional BID model
-   variables.
+   `render.yaml` with `sync: false`) and on `origenlab-mail-triage` (for «En Mercado Público»), and on
+   `origenlab-mail-triage` the optional BID model variables.
 3. Last, switch the tender child on: `ORIGENLAB_WORKER_BID_ENABLED=true` on `origenlab-mail-triage`.
    **Pause:** set it back to `false`. A failure inside the tender child is logged by its class and
    the child idles; it never stops triage or capture.

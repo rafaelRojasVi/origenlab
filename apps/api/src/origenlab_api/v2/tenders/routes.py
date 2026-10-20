@@ -197,6 +197,15 @@ def list_tenders(
     return repo.list_tenders(status, offer_prices=operator.role != "viewer")
 
 
+@tender_read_router.get("/discovered")
+def list_discovered_tenders(_: Operator, repo: ReadRepo) -> dict[str, Any]:
+    """«En Mercado Público»: open tenders that fit what OrigenLab sells, catalog families first.
+
+    Public notice data only (no bidder data, no prices of ours), so any signed-in operator reads it.
+    """
+    return repo.discovered(datetime.now(UTC))
+
+
 @tender_read_router.get("/{tender_id}")
 def get_tender(tender_id: str, operator: Operator, repo: ReadRepo) -> dict[str, Any]:
     """One tender's page: anexos, readings, offer, spend and whether the bidder's data is ready.
