@@ -11,6 +11,7 @@ import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
 import { BidderPreferences } from "./BidderPreferences";
+import { addBidderDocument } from "./tenderApi";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const refusal = (status: number, outer: string, code: string, message: string) =>
@@ -151,6 +152,7 @@ describe("BidderPreferences", () => {
     typeInto("Motivo", "Carga inicial");
     fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
     expect(await screen.findByText("Otra persona cambió estos datos. Recarga para ver la versión actual.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar" })).toBeDisabled();
   });
 
   it("shows an invalid RUT next to the RUT field", async () => {
@@ -165,13 +167,10 @@ describe("BidderPreferences", () => {
     expect(screen.getByLabelText("RUT")).toHaveAttribute("aria-invalid", "true");
   });
 
-  it("lists the documents, opens one through its signed link and retires one with a reason", async () => {
+  it("lists the documents and retires one with a reason", async () => {
     const calls = stubApi(SAVED, () => json({ command: "retire-bidder-document", document_id: "d" }));
-    const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderCard();
     expect(await screen.findByText("Cédula de ejemplo")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Abrir Cédula de ejemplo" }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith("https://files.example/doc", "_blank", "noopener,noreferrer"));
     fireEvent.click(screen.getByRole("button", { name: "Retirar Cédula de ejemplo" }));
     fireEvent.change(screen.getByLabelText("Motivo del retiro"), { target: { value: "Venció" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar retiro" }));
@@ -179,7 +178,71 @@ describe("BidderPreferences", () => {
     expect(calls[0].path).toBe("/v2/commands/retire-bidder-document");
     expect(calls[0].headers.get("Idempotency-Key")).toBeTruthy();
     expect(JSON.parse(String(calls[0].body))).toEqual({ document_id: SAVED.documents[0].id, reason: "Venció" });
+  });
+
+  it("«Abrir» fetches the signed link and offers it as a real link (no popup after an await)", async () => {
+    stubApi(SAVED);
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    renderCard();
+    fireEvent.click(await screen.findByRole("button", { name: "Abrir Cédula de ejemplo" }));
+    const link = await screen.findByRole("link", { name: "Abrir Cédula de ejemplo ahora" });
+    expect(link).toHaveAttribute("href", "https://files.example/doc");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(open).not.toHaveBeenCalled();
     open.mockRestore();
+  });
+
+  it("keeps the Idempotency-Key when the same save is retried after a 500", async () => {
+    let n = 0;
+    const calls = stubApi(EMPTY, () => (++n === 1 ? json({ error: { code: "internal_error", message: "x" } }, 500) : json({ command: "save-bidder-profile" })));
+    renderCard();
+    await screen.findByLabelText("RUT");
+    typeInto("Nombre o razón social", "Oferente Ejemplo");
+    typeInto("RUT", "61.111.111-8");
+    typeInto("Motivo", "Carga inicial");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await screen.findByText("No se pudo completar. Intenta de nuevo.");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1].headers.get("Idempotency-Key")).toBe(calls[0].headers.get("Idempotency-Key"));
+  });
+
+  it("a company save sends the legal representative", async () => {
+    const calls = stubApi();
+    renderCard();
+    await screen.findByLabelText("RUT");
+    fireEvent.click(screen.getByRole("radio", { name: "Empresa" }));
+    typeInto("Nombre o razón social", "Oferente Ejemplo SpA");
+    typeInto("RUT", "61.111.111-8");
+    typeInto("Representante legal", "Representante Ejemplo");
+    typeInto("RUT representante", "61.111.111-8");
+    typeInto("Motivo", "Carga inicial");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+    expect(JSON.parse(String(calls[0].body))).toMatchObject({
+      bidder_kind: "company", legal_rep_name: "Representante Ejemplo", legal_rep_rut: "61.111.111-8",
+    });
+  });
+
+  it("refuses an oversize file on the computer, without sending it", async () => {
+    const calls = stubApi();
+    renderCard();
+    await screen.findByLabelText("Archivo");
+    fireEvent.change(screen.getByLabelText("Título del documento"), { target: { value: "Grande" } });
+    const big = new File(["x"], "grande.pdf", { type: "application/pdf" });
+    Object.defineProperty(big, "size", { value: 21 * 1024 * 1024 });
+    fireEvent.change(screen.getByLabelText("Archivo"), { target: { files: [big] } });
+    fireEvent.click(screen.getByRole("button", { name: "Subir" }));
+    expect(await screen.findByText("El archivo pesa más de 20 MB.")).toBeInTheDocument();
+    expect(calls).toEqual([]);
+  });
+
+  it("addBidderDocument rejects (not throws) for an oversize file", async () => {
+    const big = new File(["x"], "grande.pdf");
+    Object.defineProperty(big, "size", { value: 21 * 1024 * 1024 });
+    const p = addBidderDocument(big, "otro", "Grande");
+    await expect(p).rejects.toMatchObject({ status: 413 });
   });
 
   it("uploads a document as multipart with its kind and title", async () => {

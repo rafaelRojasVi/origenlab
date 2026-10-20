@@ -412,12 +412,13 @@ function DocumentRow({ document: d, onChanged }: { document: BidderDocument; onC
   const [reason, setReason] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<string | null>(null);
   const keyRef = useRef<{ sig: string; key: string } | null>(null);
 
+  // A window opened after an await is popup-blocked (Safari): fetch the link, then show it as a real link.
   const open = async () => {
     try {
-      const url = await bidderDocumentUrl(d.id);
-      window.open(url, "_blank", "noopener,noreferrer");
+      setLink(await bidderDocumentUrl(d.id));
     } catch (err) {
       toast(refusalText(err), "bad");
     }
@@ -472,6 +473,20 @@ function DocumentRow({ document: d, onChanged }: { document: BidderDocument; onC
           </Button>
         </div>
       </div>
+      {link ? (
+        <p className="mt-2 text-[13px]">
+          <a
+            href={link}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Abrir ${d.title} ahora`}
+            className="inline-flex min-h-[44px] items-center font-semibold text-brand-600 underline"
+          >
+            Abrir ahora
+          </a>
+          <span className="ml-2 text-[12px] text-ink-muted">El enlace vale 10 minutos.</span>
+        </p>
+      ) : null}
       {retiring ? (
         <form onSubmit={(e) => void retire(e)} noValidate className="mt-2 flex flex-col gap-2">
           <div className="flex max-w-xl flex-col gap-[5px]">

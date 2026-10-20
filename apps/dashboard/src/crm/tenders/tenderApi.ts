@@ -136,7 +136,7 @@ export const saveBidderProfile = (body: BidderProfileBody, idempotencyKey: strin
   post("/v2/commands/save-bidder-profile", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);
 
 /** Add one standard document. A file over 20 MiB never leaves the computer. */
-export function addBidderDocument(
+export async function addBidderDocument(
   file: File,
   kind: BidderDocumentKind,
   title: string,
