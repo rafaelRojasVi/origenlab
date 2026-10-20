@@ -143,3 +143,20 @@ def test_offer_docx_has_the_bidder_the_number_and_the_lines() -> None:
     assert "OrigenLab" in text and "Oferente Ejemplo" in text and "11.111.111-1" in text and "01300-26" in text
     assert "Balanza analítica" in cells and "$60.000" in cells and "$119.000" in cells
     assert "Flete interno" not in cells
+
+
+def test_the_package_bound_fits_the_storage_object_limit() -> None:
+    assert package.MAX_PACKAGE_BYTES == 45 * 1024 * 1024
+
+
+def test_bank_details_reach_only_a_form_that_asks_for_them() -> None:
+    from origenlab_worker.tender.forms import Slot
+    from origenlab_worker.tender.job import bidder_for_form
+
+    bidder = {"legal_name": "Oferente Ejemplo", "rut": "11.111.111-1", "bank_name": "Banco Ejemplo",
+              "bank_account_type": "vista", "bank_account_number": "000123"}
+    plain = bidder_for_form(bidder, "Declaración jurada simple", [Slot("p1", "Nombre", "Nombre: ___")])
+    assert plain == {"legal_name": "Oferente Ejemplo", "rut": "11.111.111-1"}
+    for text, label in (("Datos para transferencia", "Nombre"), ("Anexo", "N° de cuenta"),
+                        ("Depósito del pago", "x"), ("BANCO", "x")):
+        assert bidder_for_form(bidder, text, [Slot("p1", label, "")]) == bidder

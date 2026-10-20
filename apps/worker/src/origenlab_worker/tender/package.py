@@ -21,9 +21,9 @@ from zoneinfo import ZoneInfo
 OUTPUT_KINDS: Final = ("formulario", "formulario_generado", "oferta_economica", "ficha_tecnica",
                        "documento_oferente", "paquete")
 CHECKLIST_STATES: Final = ("listo", "falta", "firmar")
-#: The whole package, summed before it is written: a bigger one fails `package_too_large` (the
-#: worker is a 2 GB instance; the zip is held once, to upload it).
-MAX_PACKAGE_BYTES: int = 100 * 1024 * 1024
+#: The whole package, summed before it is written: a bigger one fails `package_too_large`. Below
+#: hosted Storage's default per-object limit (50 MB), which the zip is stored under.
+MAX_PACKAGE_BYTES: int = 45 * 1024 * 1024
 #: One spec sheet downloaded from Drive.
 MAX_ATTACHMENT_BYTES: int = 20 * 1024 * 1024
 MAX_NAME: Final = 120

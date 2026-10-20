@@ -22,6 +22,8 @@ document's text or the bidder's data.
 from __future__ import annotations
 
 import hashlib
+import logging
+import re
 import tempfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager, suppress
@@ -188,6 +190,10 @@ select distinct on (d.product_id) d.product_id::text as product_id, d.drive_file
 FALTA_CONVERT, FALTA_NOT_FILLED, FALTA_MISSING, FALTA_COMPLETAR = (
     "convertir_a_word", "no_se_pudo_llenar", "sin_documento", "completar")
 _FORM_EXTENSIONS: Final = {"docx": "docx", "xlsx": "xlsx", "pdf_fillable": "pdf"}
+#: The bidder's bank details go to a form only when the form asks about payment.
+BANK_FIELDS: Final = ("bank_name", "bank_account_type", "bank_account_number")
+_BANK_WORDS = re.compile(r"banco|bancari|cuenta|transferencia|dep[oó]sito", re.IGNORECASE)
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -527,7 +533,7 @@ class BidPreparer:
         case = self._one(_CASE, (opportunity_id,)) or {}
         return {"read": read["result"] if isinstance(read["result"], dict) else {}, "bidder": bidder, "case": case}
 
-    def _store_output(self, run: _Fill, *, file_key: str, filename: str, kind: str, data: bytes,
+    def _store_output(self, run: _Fill, *, file_key: str, filename: str, ext: str, kind: str, data: bytes,
                       completar_count: int = 0, **extra: Any) -> dict[str, Any]:
         """Write one output at `opportunities/<case>/bid/<prep>/<file_key>.<ext>` (the only prefix the
         API's file link signs) and record it on the row at once, so a stop keeps it."""
@@ -535,7 +541,6 @@ class BidPreparer:
 
         if not data:
             raise PreparationFailed("internal_error")  # never an empty output
-        ext = filename.rsplit(".", 1)[-1].lower()
         path = f"opportunities/{run.case_id}/bid/{run.prep_id}/{file_key}.{ext}"
         try:
             self._store.put_if_absent(path, data, content_type=package.CONTENT_TYPES.get(ext, "application/octet-stream"))
@@ -564,16 +569,19 @@ class BidPreparer:
                   "cierre": case["closes_at"].isoformat() if case.get("closes_at") else None}
         result: dict[str, Any] = {"read_preparation_id": based_on, "offer": offer}
 
-        self._bidder_documents(run, checklist)
-        result["fichas"] = self._datasheets(run, checklist, revision["lines"])
+        # Only the first offer-like line takes the offer; any other is filled as an ordinary form.
+        offer_index = next((i for i, e in enumerate(checklist) if not e.get("falta") and package.is_offer_entry(e)),
+                           None)
         stopped = False
         try:
+            self._bidder_documents(run, checklist)
+            result["fichas"] = self._datasheets(run, checklist, revision["lines"])
             # A form already written (the offer form) is not filled twice when another line names it.
-            done: dict[str, list[dict[str, Any]]] = self._offer(run, checklist, annexes, offer, bidder, tender,
-                                                                ctx["bidder"], models)
+            done: dict[str, list[dict[str, Any]]] = self._offer(run, checklist, offer_index, annexes, offer, bidder,
+                                                                tender, ctx["bidder"], models)
             for index, entry in enumerate(checklist):
                 form_id = entry.get("archivo_formulario_id")
-                if not form_id or entry.get("falta") or package.is_offer_entry(entry):
+                if not form_id or entry.get("falta") or index == offer_index:
                     continue
                 if form_id in done:
                     for output in done[form_id]:
@@ -632,7 +640,8 @@ class BidPreparer:
         filename = package.safe_filename(doc["original_filename"], doc["title"])
         if not filename.lower().endswith(f".{ext}"):
             filename = package.safe_filename(f"{doc['title']}.{ext}", f"documento.{ext}")
-        return self._store_output(run, file_key=f"oferente_{n:02d}", filename=filename, kind="documento_oferente",
+        return self._store_output(run, file_key=f"oferente_{n:02d}", filename=filename, ext=ext,
+                                  kind="documento_oferente",
                                   data=data, bidder_document_id=doc["id"])
 
     def _datasheets(self, run: _Fill, checklist: list[dict[str, Any]],
@@ -659,7 +668,7 @@ class BidPreparer:
                 continue
             label = sheet.get("model_number") or sheet.get("title") or sheet.get("name") or "producto"
             filename = package.safe_filename(f"Ficha técnica {label}.{ext}", f"Ficha técnica.{ext}")
-            output = self._store_output(run, file_key=f"ficha_{len(fichas) + 1:02d}", filename=filename,
+            output = self._store_output(run, file_key=f"ficha_{len(fichas) + 1:02d}", filename=filename, ext=ext,
                                         kind="ficha_tecnica", data=data, product_id=product_id)
             run.link(target, output)
             fichas.append({"product_id": product_id, "estado": "adjunta", "file_key": output["file_key"]})
@@ -673,7 +682,10 @@ class BidPreparer:
             ext = package.EXTENSIONS.get(meta.get("mimeType") or sheet["mime_type"])
             if ext is None:
                 return "formato_no_soportado", None, ""
-            if int(meta.get("size") or 0) > package.MAX_ATTACHMENT_BYTES:
+            size = meta.get("size")
+            if size is None or not str(size).isdigit():
+                return "no_disponible", None, ""  # never download a body of unknown size
+            if int(size) > package.MAX_ATTACHMENT_BYTES:
                 return "demasiado_grande", None, ""
             data = self._drive.download(sheet["drive_file_id"])
         except DriveError:
@@ -684,13 +696,13 @@ class BidPreparer:
             return "demasiado_grande", None, ""
         return "adjunta", data, ext
 
-    def _offer(self, run: _Fill, checklist: list[dict[str, Any]], annexes: dict[str, tuple[Any, ...]],
+    def _offer(self, run: _Fill, checklist: list[dict[str, Any]], index: int | None,
+               annexes: dict[str, tuple[Any, ...]],
                offer: dict[str, Any], bidder: dict[str, Any], tender: dict[str, Any], profile: dict[str, Any],
                models: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
         """The economic offer: the buyer's own offer form filled from the approved revision, or —
         when the bases bring none, or it cannot be filled — a generated «Oferta económica <code>».
         Returns {offer form id: its output} when the buyer's form was the one written."""
-        index = next((i for i, e in enumerate(checklist) if not e.get("falta") and package.is_offer_entry(e)), None)
         output = None
         written: dict[str, list[dict[str, Any]]] = {}
         if index is not None:
@@ -702,7 +714,7 @@ class BidPreparer:
                     written[row[0]] = [output]
         if output is None:
             data = package.offer_docx(run.code, offer, profile)
-            output = self._store_output(run, file_key="oferta_economica",
+            output = self._store_output(run, file_key="oferta_economica", ext="docx",
                                         filename=package.safe_filename(f"Oferta económica {run.code}.docx",
                                                                        "Oferta económica.docx"),
                                         kind="oferta_economica", data=data)
@@ -730,7 +742,7 @@ class BidPreparer:
             return self._not_fillable(run, index, doc_id, filename)
         model = self._models.fill
         request = build_fill_request(inspection.kind if fillable else "plano", inspection.slots, form_text,
-                                     bidder, tender, offer, model=model)
+                                     bidder_for_form(bidder, form_text, inspection.slots), tender, offer, model=model)
         del annex, form_text
         message = self._call_model(run.prep_id, models, "fill", request, model)
         try:
@@ -742,29 +754,29 @@ class BidPreparer:
         try:
             if fillable:
                 written = apply_values(inspection.kind, data, validate_fill(answer, inspection.slots))
-                out_name, count_kind = f"{stem}.{_FORM_EXTENSIONS[inspection.kind]}", inspection.kind
+                ext, count_kind = _FORM_EXTENSIONS[inspection.kind], inspection.kind
             else:
                 sections = validate_sections(answer)
                 if not sections:
                     run.falta[index] = FALTA_NOT_FILLED
                     return None
                 written = generated_docx(str(entry.get("documento") or stem), sections, filename)
-                out_name, count_kind = f"{stem}.docx", "docx"
+                ext, count_kind = "docx", "docx"
                 kind = kind if kind == "oferta_economica" else "formulario_generado"
         except FormError:
             return self._not_fillable(run, index, doc_id, filename)
         del data
         run.forms += 1
         file_key = "oferta_economica" if kind == "oferta_economica" else f"formulario_{run.forms:02d}"
-        output = self._store_output(run, file_key=file_key, filename=package.safe_filename(out_name, f"{file_key}.docx"),
-                                    kind=kind, data=written, completar_count=count_completar(written, count_kind),
+        output = self._store_output(run, file_key=file_key, filename=package.safe_filename(f"{stem}.{ext}", f"{file_key}.{ext}"),
+                                    ext=ext, kind=kind, data=written, completar_count=count_completar(written, count_kind),
                                     source_document_id=doc_id)
         run.link(index, output)
         return output
 
     def _not_fillable(self, run: _Fill, index: int, doc_id: str, filename: str) -> None:
         run.falta[index] = FALTA_CONVERT
-        if (doc_id, filename) not in run.convert:
+        if all(doc_id != known for known, _ in run.convert):
             run.convert.append((doc_id, filename))
         return None
 
@@ -782,9 +794,10 @@ class BidPreparer:
                 if line["estado"] == "falta":
                     line["falta"] = run.falta.get(index) or (FALTA_COMPLETAR if outputs else FALTA_MISSING)
             out.append(line)
-        flagged = {(e.get("archivo_formulario_id"), e.get("falta")) for e in checklist if e.get("falta")}
+        # One «Falta» line per anexo: the read's own (whatever its reason) is enough.
+        flagged = {e.get("archivo_formulario_id") for e in checklist if e.get("falta")}
         for doc_id, filename in run.convert:
-            if (doc_id, FALTA_CONVERT) in flagged:
+            if doc_id in flagged:
                 continue
             out.append({"documento": f"{CONVERT_TO_WORD}: {package.safe_filename(filename, 'formulario')}",
                         "tipo": "otro", "requiere_firma": False, "archivo_formulario_id": doc_id,
@@ -824,13 +837,15 @@ class BidPreparer:
             spool.seek(0)
             data = spool.read()
         filename = package.package_filename(run.code)
-        paquete = self._store_output(run, file_key="paquete", filename=filename, kind="paquete", data=data,
+        paquete = self._store_output(run, file_key="paquete", filename=filename, ext="zip", kind="paquete", data=data,
                                      completar_count=sum(int(o.get("completar_count") or 0) for o in ordered))
         result["drive"] = self._file_in_drive(run, paquete, filename, data)
 
     def _file_in_drive(self, run: _Fill, paquete: dict[str, Any], filename: str, data: bytes) -> str:
         """`archivado` (its id recorded on the package), `sin_carpeta` (the case has no Drive folder),
-        `apagado` (no Drive settings) or `error`: Drive never fails the preparation."""
+        `apagado` (no Drive settings) or `error`: Drive never fails the preparation. The Drive client's
+        multipart upload takes the body as bytes, so the zip (≤ `package.MAX_PACKAGE_BYTES`) is held
+        once more while it is sent."""
         from psycopg.types.json import Jsonb
 
         if self._drive is None or self._drive_target is None:
@@ -838,7 +853,8 @@ class BidPreparer:
         try:
             file_id = file_tender_package(self._conn, self._drive, self._drive_target, opportunity_id=run.case_id,
                                           preparation_id=str(run.prep_id), name=filename, data=data)
-        except (FilingRefused, DriveError):
+        except Exception as exc:  # noqa: BLE001 — Drive never fails a preparation; the class only, never the text
+            _log.warning("tender_drive_error %s", exc.code if isinstance(exc, FilingRefused) else type(exc).__name__)
             return "error"
         if file_id is None:
             return "sin_carpeta"
@@ -850,6 +866,13 @@ class BidPreparer:
 
 def _first(checklist: list[dict[str, Any]], form_id: str) -> int:
     return next(i for i, e in enumerate(checklist) if e.get("archivo_formulario_id") == form_id)
+
+
+def bidder_for_form(bidder: dict[str, Any], form_text: str, slots: list[Any]) -> dict[str, Any]:
+    """The bidder as one form's call sees it: the bank details only when the form's text or a field
+    label asks about payment (banco, cuenta, transferencia, depósito)."""
+    asks = _BANK_WORDS.search(form_text) or any(_BANK_WORDS.search(getattr(s, "label", "")) for s in slots)
+    return dict(bidder) if asks else {k: v for k, v in bidder.items() if k not in BANK_FIELDS}
 
 
 def _bidder_for_model(profile: dict[str, Any]) -> dict[str, Any]:

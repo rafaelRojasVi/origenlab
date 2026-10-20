@@ -782,3 +782,98 @@ def test_a_case_without_a_drive_folder_files_nothing(dsn, store, operator) -> No
         preparer = BidPreparer(conn, store, Script(), MODELS, now=_now, drive=drive, drive_target=_drive_target())
         assert preparer.run(uuid.UUID(prep)) == "ready"
     assert _row(dsn, prep)[2]["drive"] == "sin_carpeta" and drive.writes == []
+
+
+# ── review round 1 ──────────────────────────────────────────────────────────────────────────
+
+
+def test_a_spec_sheet_without_a_size_in_drive_is_never_downloaded(dsn, store, operator) -> None:
+    drive = TenderDrive()
+    case = _tender_case(dsn, operator)
+    bases = _annex(dsn, store, operator, case, _minimal_pdf(f"Bases {uuid.uuid4().hex[:6]}"))
+    read = _ready_read(dsn, operator, case, [bases], [])
+    pid = _product(dsn, f"PX{uuid.uuid4().int % 10**4:04d}S")
+    sheet = f"sheet{uuid.uuid4().hex[:12]}"
+    from test_v2_quote_case_archive import COT
+
+    drive.add(sheet, "ficha.pdf", COT, mime="application/pdf", data=_minimal_pdf("Ficha"))
+    del drive.items[sheet]["size"]
+    owner_rows(dsn, "insert into catalog.product_document (product_id, kind, title, drive_file_id, mime_type, source) "
+                    "values (%s, 'datasheet', 'Ficha', %s, 'application/pdf', 'operator') returning id", (pid, sheet))
+    _bidder(dsn, operator)
+    prep = _fill_prep(dsn, operator, case, read, [bases], _offer(dsn, operator, case, [("X", 1, 1000, pid)]))
+    downloads = []
+    drive.download = lambda file_id: downloads.append(file_id) or b"%PDF"
+    with _conn(dsn) as conn:
+        BidPreparer(conn, store, Script(), MODELS, now=_now, drive=drive, drive_target=_drive_target()).run(
+            uuid.UUID(prep))
+    assert _row(dsn, prep)[2]["fichas"] == [{"product_id": pid, "estado": "no_disponible"}] and downloads == []
+
+
+def test_any_drive_failure_is_estado_error_and_the_preparation_is_ready(dsn, store, operator) -> None:
+    drive = TenderDrive()
+    case = _tender_case(dsn, operator)
+    _case_folder(drive, case)
+    bases = _annex(dsn, store, operator, case, _minimal_pdf(f"Bases {uuid.uuid4().hex[:6]}"))
+    read = _ready_read(dsn, operator, case, [bases], [])
+    _bidder(dsn, operator)
+    prep = _fill_prep(dsn, operator, case, read, [bases], _offer(dsn, operator, case, [("X", 1, 1000, None)]))
+
+    def broken(**kwargs):
+        raise KeyError("respuesta inesperada")
+
+    drive.upload_file = broken
+    with _conn(dsn) as conn:
+        preparer = BidPreparer(conn, store, Script(), MODELS, now=_now, drive=drive, drive_target=_drive_target())
+        assert preparer.run(uuid.UUID(prep)) == "ready"
+    assert _row(dsn, prep)[2]["drive"] == "error"
+
+
+def test_a_failure_while_adding_documents_keeps_the_checklist(dsn, store, operator, monkeypatch) -> None:
+    from origenlab_worker.tender.job import PreparationFailed
+
+    def fail(self, *args, **kwargs):
+        raise PreparationFailed("output_store_failed")
+
+    monkeypatch.setattr(BidPreparer, "_datasheets", fail)
+    case = _tender_case(dsn, operator)
+    bases = _annex(dsn, store, operator, case, _minimal_pdf(f"Bases {uuid.uuid4().hex[:6]}"))
+    read = _ready_read(dsn, operator, case, [bases], [_entry("Boleta de garantía", "garantia")])
+    _bidder(dsn, operator)
+    prep = _fill_prep(dsn, operator, case, read, [bases], _offer(dsn, operator, case, [("X", 1, 1000, None)]))
+    with _conn(dsn) as conn:
+        assert BidPreparer(conn, store, Script(), MODELS, now=_now).run(uuid.UUID(prep)) == "failed"
+    status, code, result, *_ = _row(dsn, prep)
+    assert code == "output_store_failed" and result["checklist"][0]["estado"] == "falta"
+
+
+def test_only_the_first_offer_line_takes_the_offer_the_others_are_filled_as_forms(dsn, store, operator) -> None:
+    case = _tender_case(dsn, operator)
+    first = _annex(dsn, store, operator, case, _docx(f"Precio total: ________ {uuid.uuid4().hex[:4]}"),
+                   filename="Anexo 5 Oferta Económica.docx", content_type=DOCX, ext="docx")
+    second = _annex(dsn, store, operator, case, _docx(f"Plazo de entrega: ________ {uuid.uuid4().hex[:4]}"),
+                    filename="Anexo 6 Oferta Económica plazos.docx", content_type=DOCX, ext="docx")
+    read = _ready_read(dsn, operator, case, [first, second], [
+        _entry("Anexo 5 Oferta Económica", "formulario", first),
+        _entry("Anexo 6 Oferta Económica: plazos", "formulario", second)])
+    _bidder(dsn, operator)
+    prep = _fill_prep(dsn, operator, case, read, [first, second], _offer(dsn, operator, case, [("X", 1, 1000, None)]))
+    with _conn(dsn) as conn:
+        assert BidPreparer(conn, store, Script(), MODELS, now=_now).run(uuid.UUID(prep)) == "ready"
+    kinds = {o.get("source_document_id"): o["kind"] for o in _outputs(dsn, prep) if o.get("source_document_id")}
+    assert kinds == {first: "oferta_economica", second: "formulario"}
+    assert [c["estado"] for c in _row(dsn, prep)[2]["checklist"]] == ["listo", "listo"]
+
+
+def test_the_convert_line_is_added_once_per_anexo(dsn, store, operator) -> None:
+    case = _tender_case(dsn, operator)
+    legacy = _annex(dsn, store, operator, case, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + uuid.uuid4().bytes * 40,
+                    filename="Anexo 3.doc", content_type="application/msword", ext="doc")
+    read_line = {**_entry("Falta: no se pudo leer el archivo: Anexo 3.doc", "otro", legacy), "falta": "no_se_pudo_leer"}
+    read = _ready_read(dsn, operator, case, [legacy], [_entry("Anexo 3", "formulario", legacy), read_line])
+    _bidder(dsn, operator)
+    prep = _fill_prep(dsn, operator, case, read, [legacy], _offer(dsn, operator, case, [("X", 1, 1000, None)]))
+    with _conn(dsn) as conn:
+        assert BidPreparer(conn, store, Script(), MODELS, now=_now).run(uuid.UUID(prep)) == "ready"
+    lines = [c for c in _row(dsn, prep)[2]["checklist"] if c["documento"].startswith("Falta:")]
+    assert len(lines) == 1
