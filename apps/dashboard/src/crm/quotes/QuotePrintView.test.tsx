@@ -344,4 +344,26 @@ describe("Vista previa PDF — a tender's offer", () => {
     expect(el.querySelector("article")!.innerHTML).toMatchSnapshot();
     expect(el.textContent).not.toMatch(/Oferente|Licitación/);
   });
+
+  it("per-line IVA and total add up to the stored totals when naive rounding is off by one", () => {
+    const ws = tenderQuote(BIDDER);
+    // 3 x 1.003 neto: 190,57 each rounds to 191 (573); the stored IVA of 3.009 is 572.
+    ws.current = {
+      ...ws.current!,
+      subtotal: "3009", tax_total: "572", grand_total: "3581",
+      lines: [1, 2, 3].map((n) => stored(n, "item", `Equipo ${n}`, "1003", "1003")),
+    };
+    const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
+    expect(q.lines.map((l) => l.iva)).toEqual(["191", "191", "190"]);
+    expect(q.lines.reduce((a, l) => a + Number(l.iva), 0)).toBe(572);
+    expect(q.lines.reduce((a, l) => a + Number(l.grossTotal), 0)).toBe(3581);
+  });
+
+  it("keeps the lines as computed when the stored neto is not the sum of the lines", () => {
+    const ws = tenderQuote(BIDDER);
+    const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!; // lines sum 2.000.000, naive IVA 380.000
+    expect(q.lines.map((l) => l.iva)).toEqual(["190001", "189999"]);
+    ws.current = { ...ws.current!, subtotal: "2000100", tax_total: "380019" };
+    expect(printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!.lines.map((l) => l.iva)).toEqual(["190001", "189999"]);
+  });
 });
