@@ -2230,6 +2230,45 @@ captured (before the Gmail capture began) is captured first with `gmail-sync --q
 case's «De un correo del caso» then offers it (an OC PDF in another thread that shares an external
 participant with the sent quote), or it is uploaded by hand with «Adjuntar OC».
 
+### 8.14 Tender bid preparation (Licitaciones fase 1)
+
+Built, not activated. The «Licitaciones» space opens a tender by code or link and the
+`origenlab-mail-triage` worker prepares the bid (reading, forms, offer, zip). Spec and rules:
+[`WORKFLOWS.md`](WORKFLOWS.md) W7a, [`DOMAIN.md`](DOMAIN.md) §7.11.
+
+**Settings**
+
+| Where | Variable | Notes |
+|---|---|---|
+| Render API | `ORIGENLAB_V2_CHILECOMPRA_TICKET` | **Secret.** Mercado Público ticket for the tender detail by code. Falls back to `CHILECOMPRA_API_TICKET`; without either, «Nueva licitación» needs the buyer typed (422 `buyer_required`). Listed in `apps/api/.env.example`. |
+| `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_ENABLED` | `true` starts the tender child (default off). It keeps the `DRIVE_*` settings. |
+| `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_READ_MODEL`, `_BID_FILL_MODEL`, `_BID_MATCH_MODEL` | Optional; defaults `claude-opus-5-5`, `claude-opus-5-5`, `claude-sonnet-5-5`. |
+| `origenlab-mail-triage` | the Anthropic API key already set for triage | Required for the three models. |
+
+**Spend cap.** Model spend is recorded in `platform.model_usage`. The cap is a code constant,
+**US$60 per month** for Licitaciones (`MONTHLY_CAP_USD` in `v2/model_spend.py`), checked with a
+worst-case estimate before each call; at the cap a preparation is refused. «Operaciones» shows the
+month's spend and the cap.
+
+**Release order** (nothing here is applied yet)
+
+1. Apply migration `20261020100000` to hosted first — the tender worker refuses to start without
+   its grants.
+2. Deploy the API (and set `ORIGENLAB_V2_CHILECOMPRA_TICKET`), then the dashboard and proxy.
+3. Owner: raise the `crm-documents` bucket `file_size_limit` to 50 MiB (52428800) in Supabase
+   Storage settings. Hosted has 20 MiB (set outside the migrations); generated outputs and the zip
+   (capped at 45 MiB by the worker) above that would fail `output_store_failed`. API uploads stay
+   capped at 20 MiB per document by the API itself.
+4. Last: set the BID variables on `origenlab-mail-triage` with `ORIGENLAB_WORKER_BID_ENABLED=true`.
+   **Pause:** set it back to `false`.
+
+**Memory risk.** `origenlab-mail-triage` is on plan `starter`; RapidOCR on a large scanned set can
+exceed its memory. If the release smoke shows an out-of-memory restart, move the tender sweep to
+its own Render worker (a `render.yaml` change, not a schema change).
+
+**Drive.** Outputs are filed in Drive only when the case already has a folder; a tender usually
+has none, so the operator downloads the zip from the tender's page.
+
 ## 9. Emergency shutdown
 
 In order, fastest first:

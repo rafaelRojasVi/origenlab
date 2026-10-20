@@ -3296,7 +3296,7 @@ Cotizador's API refuses a viewer; hidden in «Vista cliente»), never in `printa
 view (tested); not shown for an imported quote. Tests: vitest `enteredExpenses.test.ts`,
 `SummaryRail.test.tsx`, `QuotePrintView.test.tsx`.
 
-### 2.7.139 Licitaciones fase 1, schema: tender cases, bidder data, anexos, preparations, model spend, 2026-10-19 — built, migration not applied
+### 2.7.139 Licitaciones fase 1: tender cases, bidder data, anexos, bid preparation, model spend, 2026-10-19 — built on a branch, not merged, not applied, not deployed
 
 Spec «Licitaciones con IA» §6.10 (tenders in their own space). Migration `20261020100000`
 ([`DOMAIN.md`](DOMAIN.md) §7.11): `crm.opportunity.kind` (`sale` | `tender`, existing cases `sale`,
@@ -3310,8 +3310,16 @@ tables **59** (`crm` 24, `evidence` 6, `platform` 7), policies **209**, foreign 
 unconditionally covered), functions **40**, migrations **63**; the Slice 0 evidence set moved in the
 same change (pgTAP `099_tender_bid_preparation.sql`, 69 assertions).
 
-- **Schema only.** No API, worker or dashboard code reads or writes these yet (Licitaciones fase 1,
-  later tasks). Nothing excludes tenders from general reads yet either — there are none until the
-  open-tender command exists.
-- **Not yet.** The migration is not applied on hosted; it must be, before the API and worker that
-  use it deploy.
+- **Built on the branch (all of Tasks 1-18):**
+  - API (`v2/tenders/`, router `/v2/tenders`): `open-tender-case` (code or link; Mercado Público detail by `ORIGENLAB_V2_CHILECOMPRA_TICKET`; buyer created `machine_proposed`), `set-tender-status` (`adjudicada` refused until phase 3), bidder profile and documents, `attach-tender-annexes` (zip unpacked), `prepare-tender-bid` (phases `read`, `fill`), `create-tender-offer-quote` (a Cotizador draft with CN number). Tenders are excluded from every general sale read (`case_kind.SALE_CASES`); tender quotes stay out of the Cotizador list, Rentabilidad and the price history.
+  - Worker (`tender/`, own supervised child of `origenlab-mail-triage`, off unless `ORIGENLAB_WORKER_BID_ENABLED=true`): extraction, streaming read (summary with citations, checklist, items), form filling with `[completar: …]`, offer form (per-line IVA adds up to the quote), spec sheets, one zip. Model spend recorded in `platform.model_usage`, capped at US$60 a month.
+  - Dashboard (`crm/tenders/`, `#/crm/licitaciones`): list, «Nueva licitación», the tender page with annexes, reading, outputs and estado, bidder preferences, Hoy «Licitación cierra mañana», spend in «Operaciones». The proxy allowlists the tender paths.
+  - Docs: [`WORKFLOWS.md`](WORKFLOWS.md) W7a, [`OPERATIONS.md`](OPERATIONS.md) §8.14.
+- **Not yet.** Nothing is merged, applied or deployed. The migration must be applied on hosted first,
+  then the API, then the worker with `ORIGENLAB_WORKER_BID_ENABLED=true` last ([`OPERATIONS.md`](OPERATIONS.md)
+  §8.14). The owner must also raise the hosted `crm-documents` bucket limit from 20 MiB to 50 MiB. No
+  hosted run has happened: memory of RapidOCR on the starter plan and the models'
+  real cost are unmeasured. Out of scope in phase 1: API fetch of the bases, relevance, Compra Ágil,
+  award capture.
+- **Tests.** API `test_v2_tender*`, worker `test_tender_*`, dashboard `crm/tenders/*.test.*`, pgTAP
+  `099_tender_bid_preparation.sql`.

@@ -131,6 +131,7 @@ All routes are **GET-only** except the enumerated `POST /operations/*` CRM comma
 | **Mirror reporting** | `/mirror/*` | Postgres mirror metadata, deals, catalog, suppressions, audits |
 | **Durable CRM commands** | `POST /operations/*` (+ GET work-queue/detail routes) | Sales-opportunity promote/stage, PR3 operator state, activities, tasks, customer quotes + Drive workspace (CRM-Q1) — trusted operator identity + Idempotency-Key + expected_version |
 | **Procurement** | `/operator/procurement/*` | W1 institution/tender read models + explicit annex-bundle preview/import; dashboard actionable-opportunity summary and Licitaciones/equipos |
+| **Licitaciones** (built, not deployed) | `POST /v2/commands/*-tender-*`, `GET /v2/tenders*`, `/v2/bidder*` | Open a tender by code or link (`ORIGENLAB_V2_CHILECOMPRA_TICKET`), bidder data, annexes, `prepare-tender-bid`, offer quote; tenders stay out of the general sale reads. [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.14 |
 
 ### Route reference
 
