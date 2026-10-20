@@ -25,6 +25,9 @@ export interface PrintLine {
   quantity: string | null;
   unitPrice: string | null;
   total: string | null;
+  /** A tender offer only: this line's IVA, and its neto plus IVA. */
+  iva?: string | null;
+  grossTotal?: string | null;
 }
 
 export interface PrintableQuote {
@@ -45,6 +48,8 @@ export interface PrintableQuote {
   terms: { label: string; value: string }[];
   clientNote: string | null;
   approvedBy: string | null;
+  /** A tender offer with a bidder: «Oferente» and «Licitación» in the header, IVA per line. Null otherwise. */
+  tender: { code: string | null; bidder: { legal_name: string; rut: string } } | null;
   /** Why it cannot be printed yet (prices missing); null when it can. */
   notReady: string | null;
 }
@@ -57,6 +62,53 @@ export function isPrintable(workspace: QuoteWorkspace): boolean {
   if (!cur) return false;
   if (ISSUED.has(cur.status)) return true;
   return cur.status === "draft" && cur.origin === "authored" && !!cur.draft;
+}
+
+/** A decimal string as digits and scale, or null. */
+function parseDecimal(v: string | null) {
+  const m = v?.trim().match(/^(-?)(\d+)(?:\.(\d+))?$/);
+  return m ? { neg: m[1] === "-", digits: BigInt(m[2] + (m[3] ?? "")), scale: (m[3] ?? "").length } : null;
+}
+
+/** The whole-peso part of a decimal string, as a BigInt (null when it is not a number). */
+function wholePesos(v: string | null): bigint | null {
+  const d = parseDecimal(v);
+  return d ? (d.neg ? -1n : 1n) * (d.digits / 10n ** BigInt(d.scale)) : null;
+}
+
+/**
+ * Adds the tender's IVA and total to each line: `neto × rate` rounded half up to whole pesos, as the
+ * worker's offer_payload does, in exact decimal arithmetic. When those do not add up to the
+ * revision's stored IVA (and the lines' netos do add up to the stored neto), the difference is
+ * spread one peso at a time over the lines with the largest rounding remainders (ties: the earlier
+ * line), so the printed lines sum to the totals block. Otherwise the lines stay as computed.
+ */
+function withIva(lines: PrintLine[], rate: string | null, storedNet: string | null, storedIva: string | null): PrintLine[] {
+  const r = parseDecimal(rate);
+  const parts = lines.map((l) => {
+    const a = parseDecimal(l.total);
+    if (!a || !r || a.neg) return null;
+    const divisor = 10n ** BigInt(a.scale + r.scale);
+    const product = a.digits * r.digits;
+    return { floor: product / divisor, rem: product % divisor, half: (product + divisor / 2n) / divisor, divisor };
+  });
+  if (parts.some((p) => p == null)) return lines.map((l) => ({ ...l, iva: null, grossTotal: null }));
+  const ps = parts as NonNullable<(typeof parts)[number]>[];
+  let ivas = ps.map((p) => p.half);
+  const netSum = lines.reduce((acc, l) => acc + (wholePesos(l.total) ?? 0n), 0n);
+  const net = wholePesos(storedNet);
+  const target = wholePesos(storedIva);
+  if (net != null && target != null && net === netSum && ivas.reduce((a, b) => a + b, 0n) !== target) {
+    const extra = target - ps.reduce((a, p) => a + p.floor, 0n);
+    if (extra >= 0n && extra <= BigInt(ps.length)) {
+      const order = ps
+        .map((p, i) => ({ i, frac: (p.rem * 1000000n) / p.divisor }))
+        .sort((x, y) => (y.frac === x.frac ? x.i - y.i : y.frac > x.frac ? 1 : -1));
+      const up = new Set(order.slice(0, Number(extra)).map((o) => o.i));
+      ivas = ps.map((p, i) => p.floor + (up.has(i) ? 1n : 0n));
+    }
+  }
+  return lines.map((l, i) => ({ ...l, iva: String(ivas[i]), grossTotal: String((wholePesos(l.total) ?? 0n) + ivas[i]) }));
 }
 
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -121,6 +173,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
   if (!cur || !isPrintable(ws)) return null;
   const label = quoteLabel({ label: cur.label, quote_number: ws.quote.quote_number, revision_no: cur.revision_no });
   const currency = cur.quote_currency ?? "CLP";
+  const tender = ws.tender?.bidder ? { code: ws.tender.code, bidder: ws.tender.bidder } : null;
   const caseInstitution = ws.case.institution ? { name: ws.case.institution.name, rut: ws.case.institution.rut } : null;
 
   if (ISSUED.has(cur.status)) {
@@ -147,7 +200,8 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       institution: snap?.institution ?? caseInstitution,
       recipient: snap?.recipient ?? null,
       client: snap?.client ?? clientLines(null),
-      lines,
+      lines: tender ? withIva(lines, cur.tax_rate ?? "0.19", cur.subtotal, cur.tax_total) : lines,
+      tender,
       totals: { net: cur.subtotal, iva: cur.tax_total, total: cur.grand_total },
       taxRate: cur.tax_rate,
       terms: termsOf(snap?.terms ?? {}, snap?.validityDays ?? cur.validity_days),
@@ -192,7 +246,8 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
     institution,
     recipient: recipient && text(typed.contact_name) ? { ...recipient, name: text(typed.contact_name) } : recipient,
     client: clientLines(typed),
-    lines,
+    lines: tender ? withIva(lines, cur.tax_rate ?? "0.19", computed?.totals.net ?? null, computed?.totals.iva ?? null) : lines,
+    tender,
     totals: computed ? { net: computed.totals.net, iva: computed.totals.iva, total: computed.totals.total } : { net: null, iva: null, total: null },
     taxRate: cur.tax_rate,
     terms: termsOf(terms, validity ?? null),

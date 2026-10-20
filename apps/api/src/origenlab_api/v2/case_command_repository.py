@@ -56,6 +56,7 @@ from origenlab_api.v2.case_documents import (
     remove_case_document,
 )
 from origenlab_api.v2.case_commands import (
+    CASE_COMMAND_NAMES,
     DISCARDED_BY_CORRECTION,
     ADD_CASE_ORGANIZATION,
     COMPLETE_CASE_FROM_SENT_QUOTE,
@@ -76,6 +77,7 @@ from origenlab_api.v2.case_commands import (
     TERMINAL_STAGES,
     stage_transition_allowed,
 )
+from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_quotation import record_case_quotation
 from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
@@ -158,6 +160,15 @@ _NEW_ORGANIZATION_REFUSALS = {"labdelivery_refused": "input of Labdelivery origi
 
 class V2CaseCommandRepository(CommandTransaction):
     """The nine commercial-case commands, each in one transaction."""
+
+    #: The general case commands: each refuses a tender (409 `tender_not_a_sale`, `case_kind.py`),
+    #: which is worked from «Licitaciones». Subclasses with their own commands (the tender
+    #: repository, the email → cases rules) are untouched by it.
+    SALE_ONLY_COMMANDS: frozenset[str] = frozenset(CASE_COMMAND_NAMES) | {ATTACH_CASE_DOCUMENT}
+
+    def _before_handler(self, cur: Any, command_name: str, fields: dict[str, Any]) -> None:
+        if command_name in self.SALE_ONLY_COMMANDS:
+            refuse_tender(cur, fields.get("opportunity_id"))
 
     # ------------------------------------------------------------------ shared reads
 
@@ -584,8 +595,14 @@ class V2CaseCommandRepository(CommandTransaction):
         title: str,
         organization_id: str | None,
         note: str,
+        kind: str = "sale",
+        tender_status: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """A case an operator opens to quote a client, with no document behind it (plan R1).
+
+        `open-tender-case` opens its tender here too (`kind='tender'`, its `tender_status`, and
+        `extra_payload` merged into `opportunity.created`), and links its notice as origin itself.
 
         Internal only — no HTTP command reaches it: `create-quote` calls it when the client it
         was given has no open case (or the operator asked for a new one). The case is what
@@ -597,11 +614,11 @@ class V2CaseCommandRepository(CommandTransaction):
         """
         cur.execute(
             """
-            insert into crm.opportunity (title, stage, owner_operator_id)
-            values (%s, %s, %s)
+            insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status)
+            values (%s, %s, %s, %s, %s)
             returning id::text as id, version
             """,
-            (title, OPENING_STAGE, operator.operator_id),
+            (title, OPENING_STAGE, operator.operator_id, kind, tender_status),
         )
         case = self._row(cur)
         assert case is not None  # noqa: S101 - `returning` on a successful insert
@@ -618,6 +635,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     "origin_source_record_id": None,
                     "source_kind": None,
                     "note": note,
+                    **(extra_payload or {}),
                 },
                 operator=operator,
                 receipt_id=receipt_id,

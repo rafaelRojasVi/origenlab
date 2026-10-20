@@ -1086,7 +1086,7 @@ computer or copied from a case email — with the quote revision it closes when 
 
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
-| 56 | `crm.opportunity_document` | a document attached to a case (its purchase order) | `kind ∈ {purchase_order}`; bytes in the private bucket `crm-documents` under `opportunities/<case>/<sha256>.<pdf\|jpg\|png>`; `source ∈ {upload, email}` and `email` ⇔ the captured message (`source_record_id`); one live copy of the same bytes per case; never deleted or rewritten — removal sets `removed_at`, its reason and who, once |
+| 56 | `crm.opportunity_document` | a document attached to a case (its purchase order, or a tender's anexo since §7.11) | `kind ∈ {purchase_order, tender_annex}`; bytes in the private bucket `crm-documents` under `opportunities/<case>/<sha256>.<pdf\|jpg\|png\|docx\|xlsx\|doc\|xls>`; `source ∈ {upload, email}` and `email` ⇔ the captured message (`source_record_id`); one live copy of the same bytes per case; never deleted or rewritten — removal sets `removed_at`, its reason and who, once |
 
 Domain events added: `opportunity.document_attached` and `opportunity.document_removed` (aggregate
 `opportunity`). Attaching changes no case column and takes no case version; a win is still only
@@ -1218,8 +1218,40 @@ unchanged — the alias is resolved at read time.
 Domain events added: `product.model_alias_added` and `product.model_alias_retired` (aggregate
 `product`).
 
-Counts by schema: `crm` 22, `comms` 4, `outbound` 9, `evidence` 5,
-`catalog` 8, `procurement` 1, `platform` 6 — **55**.
+### 7.11 Licitaciones: preparar la oferta — built 2026-10-19
+
+Owner 2026-10-19 (spec «Licitaciones con IA» §6.10): tenders live in their own space,
+«Licitaciones», never in Oportunidades, the board, Hoy, follow-ups, the Cotizador list or
+Rentabilidad. Underneath, a tender is a `crm.opportunity` with **`kind = 'tender'`** so it reuses the
+institution, the Cotizador, case documents and Drive; every general read keeps to `kind = 'sale'`.
+Migration `20261020100000_slice7_tender_bid_preparation.sql`.
+
+- **`crm.opportunity`** gains `kind` (`sale` | `tender`; every earlier case is `sale`; never
+  changed — trigger `opportunity_kind_fixed`, SECURITY INVOKER) and `tender_status` (`preparando`,
+  `postulada`, `adjudicada`, `perdida`; set exactly when `kind = 'tender'`). The stage machine is
+  unchanged. A partial index lists tenders by status.
+- **`crm.opportunity_document`** (#56) also holds a tender's anexos: `kind = 'tender_annex'`, in Word
+  and Excel (`.docx`, `.xlsx`, legacy `.doc`, `.xls`) as well as PDF and images. A zip is unpacked
+  by the API, never stored.
+- **`procurement.notice`** (#28): the API inserts the notice of a tender opened by hand and records
+  what it read from it (`title`, `buyer_name`, `buyer_code`, `closes_at`, `source_status`,
+  `published_at`, `head`, `head_history`, `last_seen_at`) and the promotion to the case.
+- **`catalog.product_document`** (#57): the worker reads it (the spec sheets that go into a bid).
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 60 | `crm.bidder_profile` | who bids in Mercado Público: a natural person today, a company later | `bidder_kind ∈ {natural_person, company}`; `rut` normalised (`^[0-9]{7,8}-[0-9K]$`, no dots); legal representative only for a company; bank account type `∈ {corriente, vista, ahorro, rut}`, ChileProveedores `∈ {habil, no_habil, no_inscrito}`; every save names who and why; **append-only** — the current profile is the newest row; `origenlab_api` select/insert, `origenlab_worker` select |
+| 61 | `crm.bidder_document` | a standard document of the bidder (cédula, certificado de inscripción, declaración jurada, experiencia, otro) | bytes in `crm-documents` under `bidder/<sha256>.<pdf\|jpg\|png\|docx\|xlsx>`, ≤ 20 MiB; never deleted or rewritten — retired once (`retired_at`, who, reason; trigger `bidder_document_retire_once`); `origenlab_api` select/insert/update (the three retirement columns), `origenlab_worker` select |
+| 62 | `evidence.bid_preparation` | the machine's preparation of a tender bid: `read` (summary, checklist, items) or `fill` (forms, offer, spec sheets, package) | `status ∈ {queued, running, ready, failed, budget_stopped}`; at least one anexo (`annex_document_ids`); a `fill` names the `read` it is based on, and only a `fill` names the offer's quote revision; `failure_code` only when failed or budget-stopped; at most one queued or running row per case and phase; a re-run is a new row, never deleted; `origenlab_api` select/insert, `origenlab_worker` select and update of the run columns (status, times, failure, result, outputs, models) |
+| 63 | `platform.model_usage` | one model call: feature, model, step, tokens, cost | `feature ∈ {licitaciones}`, `step ∈ {read, match, fill}`; token counts and `usd_cost` never negative; **append-only**; the feature's monthly cap is checked against it before each call; `origenlab_worker` select/insert, `origenlab_api` select |
+
+Domain events added: `bidder.profile_saved`, `bidder.document_added`, `bidder.document_retired`
+(new aggregate `bidder`), `opportunity.bid_preparation_requested`, `opportunity.tender_status_set`
+and `notice.promoted` (new aggregate `notice`). A `bidder.*` payload names the fields that changed,
+never their values.
+
+Counts by schema: `crm` 24, `comms` 4, `outbound` 9, `evidence` 6,
+`catalog` 8, `procurement` 1, `platform` 7 — **59**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

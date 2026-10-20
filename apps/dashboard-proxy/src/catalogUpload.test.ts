@@ -260,3 +260,55 @@ describe("case purchase-order upload guard (2026-10-12)", () => {
     expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${CASE}/documents/../url`)).toBe(false);
   });
 });
+
+describe("bidder document upload guard (2026-10-19)", () => {
+  const BIDDER_UPLOAD = `${DASHBOARD}/api/v2/commands/add-bidder-document`;
+
+  it("caps the document at 20 MiB + 64 KiB, like a case's purchase order", async () => {
+    const { CASE_DOCUMENT_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    expect(catalogCommandMaxBytes("/v2/commands/add-bidder-document")).toBe(CASE_DOCUMENT_UPLOAD_MAX_BYTES);
+    expect(catalogCommandMaxBytes("/v2/commands/add-bidder-document")).toBe(20_971_520 + 65_536);
+  });
+
+  it("forwards a multipart upload, refuses JSON, an oversize body and a missing key", async () => {
+    const fetchMock = stubUpstream();
+    const tenMiB = new ArrayBuffer(10 * 1024 * 1024);
+    const ok = await handleRequest(post(BIDDER_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, tenMiB), TEST_ENV);
+    expect(ok.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockClear();
+    expect((await handleRequest(post(BIDDER_UPLOAD, { ...GOOD, "Content-Type": "application/json" }), TEST_ENV)).status).toBe(415);
+    const { CASE_DOCUMENT_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    const big = new ArrayBuffer(CASE_DOCUMENT_UPLOAD_MAX_BYTES + 1);
+    expect((await handleRequest(post(BIDDER_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, big), TEST_ENV)).status).toBe(413);
+    const { "Idempotency-Key": _k, ...noKey } = GOOD;
+    expect((await handleRequest(post(BIDDER_UPLOAD, { ...noKey, "Content-Type": MULTIPART }, "--x"), TEST_ENV)).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("tender annexes upload guard (2026-10-19)", () => {
+  const ANNEXES_UPLOAD = `${DASHBOARD}/api/v2/commands/attach-tender-annexes`;
+
+  it("caps the body at 60 MiB + 64 KiB, three times a single document", async () => {
+    const { TENDER_ANNEXES_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    expect(catalogCommandMaxBytes("/v2/commands/attach-tender-annexes")).toBe(TENDER_ANNEXES_UPLOAD_MAX_BYTES);
+    expect(catalogCommandMaxBytes("/v2/commands/attach-tender-annexes")).toBe(60 * 1024 * 1024 + 65_536);
+  });
+
+  it("forwards a multipart upload, refuses JSON, an oversize body and a missing key", async () => {
+    const fetchMock = stubUpstream();
+    const thirtyMiB = new ArrayBuffer(30 * 1024 * 1024);
+    const ok = await handleRequest(post(ANNEXES_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, thirtyMiB), TEST_ENV);
+    expect(ok.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockClear();
+    expect((await handleRequest(post(ANNEXES_UPLOAD, { ...GOOD, "Content-Type": "application/json" }), TEST_ENV)).status).toBe(415);
+    const { TENDER_ANNEXES_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    const big = new ArrayBuffer(TENDER_ANNEXES_UPLOAD_MAX_BYTES + 1);
+    expect((await handleRequest(post(ANNEXES_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, big), TEST_ENV)).status).toBe(413);
+    const { "Idempotency-Key": _k, ...noKey } = GOOD;
+    expect((await handleRequest(post(ANNEXES_UPLOAD, { ...noKey, "Content-Type": MULTIPART }, "--x"), TEST_ENV)).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

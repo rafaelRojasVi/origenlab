@@ -53,6 +53,10 @@ services:
         value: /var/data/operator_tender_imports
       - key: ORIGENLAB_API_AUTH_TOKEN
         sync: false
+      # Licitaciones: the Mercado Público ticket for a tender's detail by code (falls back to
+      # CHILECOMPRA_API_TICKET; without either, «Nueva licitación» asks for the buyer).
+      - key: ORIGENLAB_V2_CHILECOMPRA_TICKET
+        sync: false
       - key: ORIGENLAB_POSTGRES_URL
         fromDatabase:
           name: origenlab-dashboard-db
@@ -240,4 +244,15 @@ services:
       - key: ORIGENLAB_WORKER_QUOTE_READ_ENABLED
         sync: false
       - key: ORIGENLAB_WORKER_QUOTE_READ_MODEL
+        sync: false
+
+      # Licitaciones (tender bid preparation): its own supervised child, default OFF. The models
+      # default to claude-opus-5-5 (read, fill) and claude-sonnet-5-5 (match).
+      - key: ORIGENLAB_WORKER_BID_ENABLED
+        sync: false
+      - key: ORIGENLAB_WORKER_BID_READ_MODEL
+        sync: false
+      - key: ORIGENLAB_WORKER_BID_FILL_MODEL
+        sync: false
+      - key: ORIGENLAB_WORKER_BID_MATCH_MODEL
         sync: false

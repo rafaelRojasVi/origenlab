@@ -75,6 +75,7 @@ from origenlab_worker.triage_cli import (
     run_forward_backfill,
     run_memory_backfill,
     run_quote_refs_backfill,
+    run_tender_worker,
     run_triage_once,
     run_triage_worker,
 )
@@ -272,6 +273,7 @@ def _parser() -> argparse.ArgumentParser:
     ledger.add_argument("--dry-run", action="store_true", help="count; write nothing")
     commands.add_parser("triage-worker", help="compatible entrypoint for the consolidated mail worker")
     commands.add_parser("triage-child", help=argparse.SUPPRESS)
+    commands.add_parser("tender-child", help=argparse.SUPPRESS)
     commands.add_parser("mail-worker", help="supervise triage and gated periodic capture in one release")
     commands.add_parser("capture-worker", help="internal isolated periodic capture queue")
     quote = commands.add_parser("quote-read", help="read registered quote PDFs into document lines")
@@ -441,6 +443,8 @@ def main(
         return run_memory_backfill(args, env, started)
     if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
+    if args.command == "tender-child":
+        return run_tender_worker(env, started)
     backfill = args.query is not None
     if backfill and args.init:
         return _emit(RunReport("usage", EXIT_CONFIG, RunCounts(), error="usage"), started)

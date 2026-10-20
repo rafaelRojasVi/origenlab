@@ -515,6 +515,136 @@ describe("V2 durable read boundary allowlist", () => {
     }
   });
 
+  it("allows GET of the tender list and one tender's page, nothing under them, never a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    for (const path of ["/v2/tenders", "/v2/tenders?status=postulada", `/v2/tenders/${uuid}`]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/tenders/",
+      `/v2/tenders/${uuid}/`,
+      `/v2/tenders/${uuid}/annexes`,
+      `/v2/tenders/${uuid}/prepare`,
+      `/v2/tenders/${uuid.toUpperCase()}`,
+      "/v2/tenders/not-a-uuid",
+      "/v2/tenders/../v2/cases",
+      "/v2/tendersx",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("lists the tender commands in their own list, exactly, never a neighbour", async () => {
+    const {
+      TENDER_COMMAND_POST_PATHS,
+      isAllowedCaseCommandPostPath,
+      isAllowedPostPath,
+      isAllowedTenderCommandPostPath,
+      isAllowedUpstreamPath,
+      marketingCommandMaxBytes,
+    } = await import("./allowlist");
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(7);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/remove-tender-annex")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/remove-tender-annex/")).toBe(false);
+    expect(isAllowedPostPath("/v2/commands/remove-tender-annex")).toBe(true);
+    expect(isAllowedCaseCommandPostPath("/v2/commands/remove-tender-annex")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/remove-tender-annex")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/remove-tender-annex")).toBe(16_384);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/create-tender-offer-quote")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/create-tender-offer-quote/")).toBe(false);
+    expect(isAllowedPostPath("/v2/commands/create-tender-offer-quote")).toBe(true);
+    expect(isAllowedCaseCommandPostPath("/v2/commands/create-tender-offer-quote")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/create-tender-offer-quote")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/create-tender-offer-quote")).toBe(16_384);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/prepare-tender-bid")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/prepare-tender-bid/")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/prepare-tender-bid")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/prepare-tender-bid")).toBe(16_384);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/set-tender-status")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/set-tender-status")).toBe(true);
+    expect(isAllowedCaseCommandPostPath("/v2/commands/set-tender-status")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/set-tender-status")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/set-tender-status")).toBe(16_384);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/open-tender-case")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/open-tender-case")).toBe(true);
+    expect(isAllowedCaseCommandPostPath("/v2/commands/open-tender-case")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/commands/open-tender-case")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/open-tender-case")).toBe(16_384);
+    for (const path of [
+      "/v2/commands/open-tender-case/",
+      "/v2/commands/open-tender-case-all",
+      "/v2/commands/open-tender",
+      "/v2/tenders/open-tender-case",
+      "/v2/commands/set-tender-status/",
+      "/v2/commands/set-tender-status-now",
+      "/v2/tenders",
+    ]) {
+      expect(isAllowedTenderCommandPostPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows GET of the bidder profile and one document's link, nothing beside them, never a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    for (const path of ["/v2/bidder", `/v2/bidder/documents/${uuid}/url`]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+    for (const path of [
+      "/v2/bidder/",
+      "/v2/bidder/profile",
+      "/v2/bidder/documents",
+      `/v2/bidder/documents/${uuid}`,
+      `/v2/bidder/documents/${uuid}/url/`,
+      `/v2/bidder/documents/${uuid.toUpperCase()}/url`,
+      "/v2/bidder/documents/not-a-uuid/url",
+      `/v2/bidder/documents/${uuid}/../url`,
+      "/v2/bidderx",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+
+  it("lists the bidder commands exactly, with the upload apart", async () => {
+    const {
+      isAllowedCatalogUploadPostPath,
+      isAllowedPostPath,
+      isAllowedTenderCommandPostPath,
+      isAllowedUpstreamPath,
+      marketingCommandMaxBytes,
+    } = await import("./allowlist");
+    for (const path of ["/v2/commands/save-bidder-profile", "/v2/commands/retire-bidder-document"]) {
+      expect(isAllowedTenderCommandPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(marketingCommandMaxBytes(path), path).toBe(16_384);
+    }
+    // The upload is multipart: a catalog-style upload path, not a tender JSON command.
+    expect(isAllowedTenderCommandPostPath("/v2/commands/add-bidder-document")).toBe(false);
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/add-bidder-document")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/add-bidder-document")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/attach-tender-annexes")).toBe(false);
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/attach-tender-annexes")).toBe(true);
+    expect(isAllowedPostPath("/v2/commands/attach-tender-annexes")).toBe(true);
+    for (const path of [
+      "/v2/commands/attach-tender-annexes/",
+      "/v2/commands/attach-tender-annex",
+      "/v2/commands/attach-tender-annexes2",
+      "/v2/commands/save-bidder-profile/",
+      "/v2/commands/save-bidder-profiles",
+      "/v2/commands/retire-bidder-document/",
+      "/v2/commands/add-bidder-document/",
+      "/v2/commands/add-bidder-documents",
+      "/v2/commands/delete-bidder-document",
+      "/v2/bidder",
+    ]) {
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
   it("matches the allowed case command paths exactly, never a neighbour", async () => {
     const { isAllowedPostPath, marketingCommandMaxBytes } = await import("./allowlist");
     expect(marketingCommandMaxBytes("/v2/commands/advance-case-stage")).toBe(16_384);
@@ -1128,6 +1258,29 @@ describe("Cotizador PR A", () => {
       "/v2/commands/delete-quote",
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+});
+
+describe("tender preparation file links", () => {
+  it("allows GET of one output file's url, exactly, never a POST or a neighbour", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    const ok = `/v2/tenders/${uuid}/preparations/${uuid}/files/paquete/url`;
+    expect(isAllowedUpstreamPath(ok)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/tenders/${uuid}/preparations/${uuid}/files/formulario_5-b/url`)).toBe(true);
+    expect(isAllowedPostPath(ok)).toBe(false);
+    for (const path of [
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/Paquete/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/${"a".repeat(65)}/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/a.b/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/paquete`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/paquete/url/`,
+      `/v2/tenders/${uuid}/preparations/${uuid}/files/../url`,
+      `/v2/tenders/${uuid}/preparations/not-a-uuid/files/paquete/url`,
+      `/v2/tenders/${uuid}/preparations/${uuid}`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
     }
   });
 });

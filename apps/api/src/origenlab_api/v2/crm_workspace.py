@@ -28,7 +28,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,6 +45,7 @@ from origenlab_api.v2.campaign_history import (
     read_totals,
     replies_state,
 )
+from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
 from origenlab_api.v2.mail_rules import OWN_DOMAINS, WEB_FORM_REPLY_TO_SQL, mail_direction, web_form_enquirer
 from origenlab_api.v2.marketing_audience import address_ref, addresses_in
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
@@ -57,6 +58,8 @@ from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_c
     quote_contents,
 )
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
+from origenlab_api.v2.tenders.reads import TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
+
 
 def _cross_thread_quote_code(title: str) -> str | None:
     """A single *printed* CN reference, not a fuzzy match or an invented quotation."""
@@ -206,14 +209,17 @@ ENTITY_NOTES: dict[str, dict[str, str]] = {
 }
 
 _COUNT_SQL: dict[str, str] = {
-    "opportunities": "select count(*) from crm.opportunity",
-    "quotes": "select count(*) from crm.quote",
-    "quote_revisions": "select count(*) from crm.quote_revision",
+    # Sales cases only: a tender lives in «Licitaciones» (`case_kind.py`).
+    "opportunities": f"select count(*) from crm.opportunity o where {SALE_CASES}",
+    "quotes": f"select count(*) from crm.quote q join crm.opportunity o on o.id = q.opportunity_id where {SALE_CASES}",
+    "quote_revisions": "select count(*) from crm.quote_revision qr join crm.quote q on q.id = qr.quote_id "
+                       f"join crm.opportunity o on o.id = q.opportunity_id where {SALE_CASES}",
     "organizations": "select count(*) from crm.organization where merged_into_organization_id is null",
     "contact_points": "select count(*) from crm.contact_point",
     "persons": "select count(*) from crm.person",
     "affiliations": "select count(*) from crm.affiliation",
-    "tasks": "select count(*) from crm.task",
+    "tasks": "select count(*) from crm.task t where not exists (select 1 from crm.opportunity o "
+             f"where o.id = t.opportunity_id and {TENDER_CASES})",
     "activities": "select count(*) from crm.activity",
     "messages": "select count(*) from comms.message",
     "products": "select count(*) from catalog.product",
@@ -235,13 +241,16 @@ _OVERVIEW_COUNTS_SQL: str = "select " + ",\n       ".join(
 )
 
 # SQL constants extracted from pipeline() so each is a named, testable unit.
-_SQL_PIPELINE_OPPS = """
+# Sales cases only (`case_kind.py`): every card — Oportunidades, Tablero, Hoy and its follow-ups —
+# is built from this list, so a tender never becomes one.
+_SQL_PIPELINE_OPPS = f"""
     select op.id::text as opportunity_id, op.title, op.stage, op.version,
            op.organization_id::text as organization_id, o.name as organization_name,
            o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
+     where {sale_cases("op")}
      order by op.updated_at desc, op.id
 """
 _SQL_PIPELINE_CASE_ORGS = """
@@ -252,9 +261,12 @@ _SQL_PIPELINE_CASE_ORGS = """
       join crm.organization o on o.id = oo.organization_id
      where oo.valid_to is null
 """
-_SQL_PIPELINE_QUOTES = """
+# A tender's quotes stay out too: a printed number shared with a tender is not a sales conflict.
+_SQL_PIPELINE_QUOTES = f"""
     select q.id::text as quote_id, q.opportunity_id::text, q.quote_number, q.number_origin
       from crm.quote q
+      join crm.opportunity o on o.id = q.opportunity_id
+     where {SALE_CASES}
 """
 # `drive_record`: where the worker's Drive filing (apps/worker `drive_filing.py`) or the imported
 # laptop ledger put this revision's PDF — an `evidence.source_record` of kind `drive_file`, keyed
@@ -1256,7 +1268,7 @@ class CrmWorkspaceRepository:
                 "where merged_into_organization_id is null group by 1"
             )
             org_confirmation = {r[0]: int(r[1]) for r in cur.fetchall()}
-            cur.execute("select stage, count(*) from crm.opportunity group by 1")
+            cur.execute(f"select o.stage, count(*) from crm.opportunity o where {SALE_CASES} group by 1")
             by_stage = {r[0]: int(r[1]) for r in cur.fetchall()}
             cur.execute(
                 "select count(*) filter (where organization_id is not null), "
@@ -1313,6 +1325,7 @@ class CrmWorkspaceRepository:
             cur_tasks = conn.cursor()
             cur_notes = conn.cursor()
             cur_documents = conn.cursor()
+            cur_tenders = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1324,6 +1337,8 @@ class CrmWorkspaceRepository:
                 cur_tasks.execute(_SQL_PIPELINE_TASKS)
                 cur_notes.execute(_SQL_PIPELINE_NOTES)
                 cur_documents.execute(_SQL_PIPELINE_DOCUMENTS)
+                # Hoy's one tender signal (spec §6.10): the tenders that close tomorrow.
+                cur_tenders.execute(TENDERS_CLOSING_SQL, {"tomorrow": tomorrow_in_santiago(datetime.now(UTC))})
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1344,6 +1359,7 @@ class CrmWorkspaceRepository:
             tasks = self._rows(cur_tasks)
             notes = self._rows(cur_notes)
             documents = self._rows(cur_documents)
+            tenders_closing = closing_rows(self._rows(cur_tenders))
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
@@ -1354,6 +1370,7 @@ class CrmWorkspaceRepository:
             "items": cards,
             "total": len(cards),
             "drive_configured": self.drive_configured or bool(drive),
+            "tenders_closing": tenders_closing,
         }
 
     # -- providers
@@ -2461,7 +2478,7 @@ class CrmWorkspaceRepository:
                           join crm.quote_revision r on r.id::text = a.value ->> 'revision_id'
                           join crm.quote q on q.id = r.quote_id
                           join crm.opportunity o on o.id = q.opportunity_id
-                         where a.kind = 'quote_read'
+                         where a.kind = 'quote_read' and o.kind = 'sale'  -- case_kind.SALE_CASES
                            and not exists (select 1 from evidence.source_record d where d.kind = 'quote_document'
                                             and d.dedupe_key = 'quote_document:' || lower(r.pdf_sha256))
                          order by lower(r.pdf_sha256), a.created_at desc, a.id desc) newest

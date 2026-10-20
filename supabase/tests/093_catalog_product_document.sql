@@ -78,8 +78,8 @@ select is(left(pg_temp.run_as('origenlab_api', $$ update catalog.product_documen
 select is(left(pg_temp.run_as('origenlab_api', $$ delete from catalog.product_document
                      where id = '93000000-0000-4000-8000-000000000030' $$), 5), '42501',
   'the API cannot delete a document');
-select is(left(pg_temp.run_as('origenlab_worker', $$ select 1 from catalog.product_document $$), 5), '42501',
-  'the worker has no access');
+select is(pg_temp.run_as('origenlab_worker', $$ select 1 from catalog.product_document $$), 'ok',
+  'the worker reads data sheets (the spec sheets of a tender bid, 20261020100000)');
 select is(left(pg_temp.run_as('anon', $$ select 1 from catalog.product_document $$), 5), '42501',
   'anon has no access');
 select ok((select relrowsecurity and not relforcerowsecurity from pg_class

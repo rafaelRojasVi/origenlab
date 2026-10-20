@@ -599,10 +599,14 @@ role and no Data-API-facing role is ever inside these predefined roles.
 - **The worker writes Storage with a Storage S3 access key, not a secret key**
   (owner decision 2026-10-04, Phase 4a). It uploads each captured `.eml` to the
   private bucket `mail` at `contacto@origenlab.cl/<yyyy>/<mm>/<gmail id>.eml`,
-  never replaces an object, and holds no other Storage credential. Supabase
-  does not scope an S3 key to one bucket and the key bypasses Storage RLS, so —
-  as for the secret key — the restriction is a rule of use: the key lives only
-  in the Gmail capture's Render environment and rotates by
+  never replaces an object, and holds no other Storage credential. The same
+  key is used by the worker's tender child (Licitaciones, 2026-10-19): it reads a
+  tender's anexos and the bidder's documents from `crm-documents` and writes the
+  files of a bid preparation there, only under
+  `opportunities/<case>/bid/<preparation>/` and never replacing an object.
+  Supabase does not scope an S3 key to one bucket and the key bypasses Storage
+  RLS, so — as for the secret key — the restriction is a rule of use: the key
+  lives only in the worker's Render environments and rotates by
   [`OPERATIONS.md`](OPERATIONS.md) §13.
 - **The `catalog` bucket (catalog 1a) is private, like every bucket.** FastAPI
   is the only writer: `POST /v2/commands/add-product-image` stores the bytes
@@ -617,7 +621,9 @@ role and no Data-API-facing role is ever inside these predefined roles.
   separately ([`OPERATIONS.md`](OPERATIONS.md) §14).
 - **The `crm-documents` bucket (2026-10-12) holds a case's documents** — its
   purchase order — under `opportunities/<case>/<sha256>.<ext>`
-  (`crm.opportunity_document.storage_path`). FastAPI is the only writer, with the
+  (`crm.opportunity_document.storage_path`), and a tender's bid preparation
+  files, written by the worker under `opportunities/<case>/bid/<preparation>/`
+  (above). FastAPI is the only other writer, with the
   same `sb_secret_...` key and settings as `catalog`: `POST
   /v2/commands/attach-case-document` stores an uploaded PDF/JPEG/PNG (≤ 20 MiB);
   `attach-case-document-from-email` **reads** the message's `.eml` from `mail`
@@ -626,6 +632,12 @@ role and no Data-API-facing role is ever inside these predefined roles.
   /v2/workspace/opportunities/{id}/documents/{doc}/url`. Without Storage
   configured those routes answer 503 and the session says
   `case_documents_enabled: false`.
+  Since 2026-10-19 ([`DOMAIN.md`](DOMAIN.md) §7.11) the same bucket holds a tender's anexos under the
+  same case path (`kind = 'tender_annex'`, PDF/images/Word/Excel), the files a bid preparation
+  generates under `opportunities/<case>/bid/<preparation>/` (listed in
+  `evidence.bid_preparation.outputs`, not rows of their own), and the bidder's standard documents
+  under `bidder/<sha256>.<ext>` (`crm.bidder_document.storage_path`). The API writes anexos and
+  bidder documents; the worker reads them and writes a preparation's outputs.
 - **Catalog documents stay in Google Drive (2026-10-13).** Data sheets and supplier
   price lists are not copied into Storage: `catalog.product_document` holds the
   Drive file id and the dashboard opens `drive.google.com/file/d/<id>/view` in a
@@ -634,7 +646,7 @@ role and no Data-API-facing role is ever inside these predefined roles.
 - A browser receives a **signed URL valid for at most 10 minutes**, minted
   only after FastAPI has authorized that specific operator for that specific
   object. Uploads go through FastAPI.
-- **Exactly one S3 access key is issued**, to the worker's Gmail capture (above). No browser, dashboard or API process holds one.
+- **Exactly one S3 access key is issued**, to the worker (its Gmail capture and its tender child, above). No browser, dashboard or API process holds one.
 - **Database backups do not include Storage objects.** Buckets are therefore
   backed up **independently**, to separate storage, with their own manifest
   and hashes, and the restore drill covers a bucket restore

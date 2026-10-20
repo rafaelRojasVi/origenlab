@@ -39,6 +39,7 @@ from datetime import datetime
 from typing import Any
 
 from origenlab_api.v2.case_commands import RECORD_CASE_QUOTATION
+from origenlab_api.v2.case_kind import tender_not_a_sale
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.quote_import_commands import (
@@ -68,7 +69,7 @@ def record_quotation(
     # ── the case: it exists, it is quoting, someone decided who is asking ─────────────
     cur.execute(
         """
-        select id::text as id, stage, organization_id::text as organization_id, version
+        select id::text as id, stage, organization_id::text as organization_id, version, kind
           from crm.opportunity where id = %s for share
         """,
         (fields["opportunity_id"],),
@@ -76,6 +77,9 @@ def record_quotation(
     case = repo._row(cur)
     if case is None:
         raise CommandRefused(404, "opportunity_not_found", "no such case")
+    if case["kind"] == "tender":
+        # A tender's offer is a Cotizador quote on it, never a recorded sent PDF (`case_kind.py`).
+        raise tender_not_a_sale()
     if case["stage"] not in STAGES_THAT_MAY_CARRY_A_QUOTE:
         raise CommandRefused(
             409,

@@ -22,6 +22,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from origenlab_api.v2.case_kind import tender_not_a_sale
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 
@@ -183,10 +184,13 @@ def attach_forward_to_case(repo: Any, cur: Any, operator: OperatorIdentity, fiel
     that case — our own copies linked, the customer's details as a note, every copy `promoted`."""
     lead, members = _group_for(cur, fields["forwarded_request_id"])
     case_id = str(fields["opportunity_id"])
-    cur.execute("select version, closed_at is not null from crm.opportunity where id = %s for update", (case_id,))
+    cur.execute("select version, closed_at is not null, kind from crm.opportunity where id = %s for update",
+                (case_id,))
     row = cur.fetchone()
     if row is None:
         raise CommandRefused(404, "case_not_found", "no such commercial case")
+    if row[2] == "tender":
+        raise tender_not_a_sale()  # R11 joins a sales case only (`case_kind.py`)
     if row[1]:
         raise CommandRefused(409, "case_is_closed", "a forwarded request joins an open case only")
     links = _link_our_copies(repo, cur, operator, case_id, int(row[0]), members, fields["note"], receipt_id)

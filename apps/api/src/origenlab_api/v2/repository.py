@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
 
+from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
 from origenlab_api.v2.identity import OperatorIdentity, OperatorLookup
 
 #: Every listing is bounded. An unbounded operator list is a way to turn one careless request
@@ -182,6 +183,7 @@ class V2Repository(OperatorLookup):
                    cp.created_at          as created_at,
                    (select count(distinct opp.opportunity_id)
                       from crm.opportunity_participant opp
+                      join crm.opportunity k on k.id = opp.opportunity_id and k.kind = 'sale'
                      where opp.valid_to is null
                        and (opp.contact_point_id = cp.id
                             or (cp.person_id is not null and opp.person_id = cp.person_id)))
@@ -203,6 +205,7 @@ class V2Repository(OperatorLookup):
     #: A current participant row for the channel `cp`, directly or through its person.
     _CONTACT_PARTICIPATION = """
         select 1 from crm.opportunity_participant opp
+          join crm.opportunity k on k.id = opp.opportunity_id and k.kind = 'sale'
          where opp.valid_to is null
            and (opp.contact_point_id = cp.id
                 or (cp.person_id is not null and opp.person_id = cp.person_id))
@@ -306,12 +309,14 @@ class V2Repository(OperatorLookup):
             where += " and " + self.ORGANIZATION_SEGMENTS[segment]
         metrics = """
             with org_case as (
+                -- Sales cases only: a tender lives in «Licitaciones» (case_kind.py).
                 select op.organization_id, op.id as opportunity_id
                   from crm.opportunity op
-                 where op.organization_id is not null
+                 where op.organization_id is not null and op.kind = 'sale'
                 union
                 select oo.organization_id, oo.opportunity_id
                   from crm.opportunity_organization oo
+                  join crm.opportunity k on k.id = oo.opportunity_id and k.kind = 'sale'
                  where oo.valid_to is null
             ),
             case_metrics as (
@@ -355,10 +360,11 @@ class V2Repository(OperatorLookup):
                 select op.organization_id, op.id as opportunity_id,
                        'requesting_institution'::text as role
                   from crm.opportunity op
-                 where op.organization_id is not null
+                 where op.organization_id is not null and op.kind = 'sale'
                 union
                 select oo.organization_id, oo.opportunity_id, oo.role
                   from crm.opportunity_organization oo
+                  join crm.opportunity k on k.id = oo.opportunity_id and k.kind = 'sale'
                  where oo.valid_to is null
             ),
             role_metrics as (
@@ -480,7 +486,7 @@ class V2Repository(OperatorLookup):
         operator = "=" if include else "<>"
         joiner = " or " if include else " and "
         predicate = joiner.join(f"op.stage {operator} %s" for _ in stages)
-        where = f"where ({predicate})"
+        where = f"where ({predicate}) and {sale_cases('op')}"
         params: tuple[Any, ...] = tuple(stages)
         sql = f"""
             select op.id::text     as opportunity_id,
@@ -512,7 +518,9 @@ class V2Repository(OperatorLookup):
         where = (
             "where t.status = 'open' "
             "and t.due_at is not null "
-            "and t.due_at < (now() + make_interval(days => %s))"
+            "and t.due_at < (now() + make_interval(days => %s)) "
+            # A tender's follow-ups belong to «Licitaciones» (`case_kind.py`).
+            f"and not exists (select 1 from crm.opportunity o where o.id = t.opportunity_id and {TENDER_CASES})"
         )
         params: tuple[Any, ...] = (int(horizon_days),)
         sql = f"""
@@ -575,12 +583,13 @@ class V2Repository(OperatorLookup):
         is found by `revision_no`, not by `superseded_by_revision_no`: a revision can be the
         latest without anything having superseded it, which is precisely the case here.
         """
-        where = """
+        where = f"""
             where r.status = 'sent'
               and not exists (
                 select 1 from crm.quote_revision later
                  where later.quote_id = q.id and later.revision_no > r.revision_no
               )
+              and exists (select 1 from crm.opportunity o where o.id = q.opportunity_id and {SALE_CASES})
         """
         params: tuple[Any, ...] = ()
         sql = f"""
@@ -839,14 +848,16 @@ class V2Repository(OperatorLookup):
     #: `crm.opportunity.organization_id`, or any **current** part row in
     #: `crm.opportunity_organization`, whatever its role. Closed part rows are history and
     #: stay on the case card; they do not make an institution "connected" today.
+    #: Sales cases only: a tender lives in «Licitaciones» (`case_kind.py`).
     _ORGANIZATION_CASES = """
         with connected_cases as (
             select op.id
               from crm.opportunity op
-             where op.organization_id = %(subject)s::uuid
+             where op.organization_id = %(subject)s::uuid and op.kind = 'sale'
             union
             select oo.opportunity_id
               from crm.opportunity_organization oo
+              join crm.opportunity k on k.id = oo.opportunity_id and k.kind = 'sale'
              where oo.organization_id = %(subject)s::uuid
                and oo.valid_to is null
         )
@@ -870,6 +881,7 @@ class V2Repository(OperatorLookup):
         with connected_cases as (
             select opp.opportunity_id as id
               from crm.opportunity_participant opp
+              join crm.opportunity k on k.id = opp.opportunity_id and k.kind = 'sale'
              where opp.valid_to is null
                and (opp.contact_point_id = %(subject)s::uuid
                     or opp.person_id = %(person)s::uuid)
@@ -1703,7 +1715,7 @@ class V2Repository(OperatorLookup):
         `quote_state` (`QUOTE_STATES`), and `active_within_days` (latest activity inside the
         window).
         """
-        clauses = ["true"]
+        clauses = [sale_cases("op")]  # a tender lives in «Licitaciones» (`case_kind.py`)
         params: list[Any] = []
         stages = (stage,) if isinstance(stage, str) else tuple(stage or ())
         if stages:
@@ -1920,7 +1932,8 @@ class V2Repository(OperatorLookup):
                         and req.role = 'requesting_institution'
                         and req.valid_to is null
                   left join crm.organization req_org on req_org.id = req.organization_id
-                 where exists (
+                 where op.kind = 'sale'
+                   and exists (
                          select 1 from crm.opportunity_organization part
                           where part.opportunity_id = op.id
                             and part.organization_id = %s::uuid)
@@ -1930,7 +1943,8 @@ class V2Repository(OperatorLookup):
             count_sql = """
                 select count(*)
                   from crm.opportunity op
-                 where exists (
+                 where op.kind = 'sale'
+                   and exists (
                          select 1 from crm.opportunity_organization part
                           where part.opportunity_id = op.id
                             and part.organization_id = %s::uuid)
@@ -1992,7 +2006,7 @@ class V2Repository(OperatorLookup):
                   left join evidence.source_record sr on sr.id = op.origin_source_record_id
                   left join crm.opportunity reopened
                          on reopened.id = op.reopened_from_opportunity_id
-                 where op.id = %s::uuid
+                 where op.id = %s::uuid and op.kind = 'sale'  -- a tender is 404 here (case_kind.py)
                 """,
                 (opportunity_id,),
             )

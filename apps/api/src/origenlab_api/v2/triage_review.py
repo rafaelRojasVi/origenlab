@@ -138,7 +138,7 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                            from crm.opportunity_evidence oe
                            join evidence.source_record s2 on s2.id = oe.source_record_id
                            join crm.opportunity o on o.id = oe.opportunity_id
-                          where oe.unlinked_at is null
+                          where oe.unlinked_at is null and o.kind = 'sale'  -- case_kind.SALE_CASES
                             and s2.payload ->> 'gmail_thread_id' = m.provider_thread_id) o), '[]') as cases,
        cm.id::text as case_match_id, cm.value as case_match_value, cm.verdict as case_match_verdict,
        -- When contacto@ first wrote on the same thread after this email (item 2a, 2026-10-19).
@@ -178,6 +178,14 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
  where coalesce((r.value ->> 'needs_model')::boolean, false)
    and (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
+   -- An email a tender holds — itself, or any email of its thread — is the tender's: «Licitaciones»
+   -- has it, Hoy leaves it alone (`case_kind.py`).
+   and not exists (select 1 from crm.opportunity_evidence te
+                     join crm.opportunity t on t.id = te.opportunity_id and t.kind = 'tender'
+                     join evidence.source_record ts on ts.id = te.source_record_id
+                    where te.unlinked_at is null
+                      and (te.source_record_id = r.source_record_id
+                           or ts.payload ->> 'gmail_thread_id' = m.provider_thread_id))
  order by m.internal_date desc, r.id
  limit %(limit)s
 """
@@ -187,6 +195,7 @@ _SUGGESTED_CASES_SQL = """
 select o.id::text, o.title, o.stage, o.version, o.closed_at is not null as closed
   from crm.opportunity o
  where o.id = any(%s::uuid[]) and o.close_reason is distinct from 'discarded_by_correction'
+   and o.kind = 'sale'  -- a tender is never suggested (case_kind.py)
 """
 MAX_SUGGESTIONS = 3
 

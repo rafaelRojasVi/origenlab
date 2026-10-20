@@ -155,14 +155,26 @@ select sr.id::text, m.id::text, m.direction, m.labels, m.eml_storage_path, m.pro
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
  where sr.id = %s and sr.kind = 'gmail_message'
 """
+# Every query below that reads cases keeps to sales cases, `o.kind = 'sale'`: a tender (kind
+# 'tender') lives in «Licitaciones» — never a triage case, a matcher candidate or a case memory.
+# The API's predicate is `origenlab_api.v2.case_kind.SALE_CASES`; the worker writes it inline.
 _LINKED_CASES = """
 select distinct o.id::text, o.title, o.stage
   from crm.opportunity_evidence oe
   join evidence.source_record sr on sr.id = oe.source_record_id
   join crm.opportunity o on o.id = oe.opportunity_id
  where oe.unlinked_at is null and sr.payload ->> 'gmail_thread_id' = %s
+   and o.kind = 'sale'  -- case_kind.py
  order by 1
  limit 5
+"""
+#: Whether a tender holds this Gmail thread (any email of it linked to a `kind = 'tender'` case): then
+#: the thread is the tender's, and the matcher suggests no sales case for it (`case_kind.py`).
+_TENDER_THREAD = """
+select exists (select 1 from crm.opportunity_evidence oe
+                 join evidence.source_record sr on sr.id = oe.source_record_id
+                 join crm.opportunity o on o.id = oe.opportunity_id and o.kind = 'tender'
+                where oe.unlinked_at is null and sr.payload ->> 'gmail_thread_id' = %s)
 """
 #: The cases an email could belong to: open, or closed in the last 120 days, never one an undo or a
 #: person discarded. What a person would look at to place an email: who is asking (institution and
@@ -201,6 +213,7 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
               group by t.opportunity_id) a on a.opportunity_id = o.id
  where (o.closed_at is null or o.closed_at >= now() - interval '120 days')
    and o.close_reason is distinct from 'discarded_by_correction'
+   and o.kind = 'sale'  -- case_kind.py: a tender is never a matcher candidate
  order by o.created_at desc
 """
 _KNOWN_QUOTE_NUMBERS = "select quote_number from crm.quote"
@@ -231,13 +244,13 @@ select * from (
   select s.sender, s.subject, o.id::text, o.title, 'linked' as verdict, oe.linked_at as at
     from sent s
     join crm.opportunity_evidence oe on oe.source_record_id = s.source_record_id and oe.unlinked_at is null
-    join crm.opportunity o on o.id = oe.opportunity_id
+    join crm.opportunity o on o.id = oe.opportunity_id and o.kind = 'sale'  -- case_kind.py
   union all
   -- An email a person took off a case («Quitar» on Hoy, or unlinked by hand): not that case.
   select s.sender, s.subject, o.id::text, o.title, 'rejected', oe.unlinked_at
     from sent s
     join crm.opportunity_evidence oe on oe.source_record_id = s.source_record_id and oe.unlinked_at is not null
-    join crm.opportunity o on o.id = oe.opportunity_id
+    join crm.opportunity o on o.id = oe.opportunity_id and o.kind = 'sale'  -- case_kind.py
    where not exists (select 1 from crm.opportunity_evidence again
                       where again.source_record_id = oe.source_record_id
                         and again.opportunity_id = oe.opportunity_id and again.unlinked_at is null)
@@ -253,6 +266,7 @@ select * from (
         substring(r.note from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'),
         case when a.value -> 'pick' ->> 'choice' ~ '^[0-9a-f]{8}-' then a.value -> 'pick' ->> 'choice' end,
         a.value -> 'candidates' -> 0 ->> 'opportunity_id')
+   where o.id is null or o.kind = 'sale'  -- case_kind.py
 ) d
 order by at desc
 limit %(limit)s
@@ -321,6 +335,14 @@ class TriageDb:
         with self._tx() as cur:
             cur.execute(CASE_CARDS_SQL)
             return [CaseCard.from_row(case_row(r)) for r in cur.fetchall()]
+
+    def tender_thread(self, thread_id: str | None) -> bool:
+        """Whether a tender holds this Gmail thread (`_TENDER_THREAD`), read-only."""
+        if not thread_id:
+            return False
+        with self._tx() as cur:
+            cur.execute(_TENDER_THREAD, (thread_id,))
+            return bool(cur.fetchone()[0])
 
     def known_quote_numbers(self) -> list[str]:
         """Every quote number the CRM holds, on any case."""
@@ -541,11 +563,17 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
     own reads failed. Neither that nor a failed or unusable pick ever blocks the triage: a pick is
     recorded as `pick_state` and layer 1 stands; a failed read leaves the case match to the backfill."""
     try:
-        recipients, thread_names = db.case_context(message)
-        cards = db.case_cards()
-        known = db.known_quote_numbers()
+        held_by_tender = db.tender_thread(message.thread_id)
+        if not held_by_tender:
+            recipients, thread_names = db.case_context(message)
+            cards = db.case_cards()
+            known = db.known_quote_numbers()
     except Exception:  # noqa: BLE001 - a suggestion never takes the triage down with it
         return None
+    if held_by_tender:
+        # The thread is a tender's («Licitaciones»): no sales case and no new case is suggested.
+        none = MatchResult("none", (), (), None)
+        return none, {**none.as_json(), "pick_state": "not_needed", "held_by": "tender"}
     inp = MatchInput(mail.sender, recipients, message.thread_id, message.direction, mail.subject, mail.body,
                      mail.attachment_names, message.sent_at, thread_names)
     result = match_case(inp, cards, known)
@@ -865,6 +893,7 @@ select sr.id::text
                   and ao.value_norm ~ '^triage:v[0-9]+$' and ao.value->>'class' = any(%(human_classes)s))
    and exists (select 1 from crm.opportunity_evidence oe
                  join crm.opportunity o on o.id = oe.opportunity_id and o.closed_at is null
+                                        and o.kind = 'sale'  -- case_kind.py: tenders are not summarised
                 where oe.source_record_id = sr.id and oe.unlinked_at is null
                   and not exists (select 1 from evidence.subject_memory sm
                                    where sm.subject_kind = 'opportunity' and sm.subject_id = o.id))

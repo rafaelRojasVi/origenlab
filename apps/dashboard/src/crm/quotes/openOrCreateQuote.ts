@@ -94,7 +94,8 @@ export function createRefusalText(e: unknown): string {
   return quoteRefusalText(e, FALLBACK);
 }
 
-const toCotizador = (quoteId: string) => {
+/** Open a quote in the Cotizador (its tab in the module), at the top of the page. */
+export const toCotizador = (quoteId: string) => {
   window.location.hash = crmHash("cotizador", quoteId);
   window.scrollTo?.({ top: 0 });
 };

@@ -66,6 +66,11 @@ EXPECTED_EXTRA_TABLES = {
     "subject_memory",
     # 20261016200000_slice7_catalog_product_model_alias.sql — DOMAIN.md §7 #59.
     "product_model_alias",
+    # 20261020100000_slice7_tender_bid_preparation.sql — DOMAIN.md §7 #60–#63.
+    "bidder_profile",
+    "bidder_document",
+    "bid_preparation",
+    "model_usage",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -79,8 +84,9 @@ EXPECTED_EXTRA_TABLES = {
 SLICE0_FUNCTION_COUNT = 3
 
 # Tables that exist in the baseline but gained a policy afterwards: a09 may name them among the extra
-# policies without them being new tables (a08). crm.quote_line: the API delete policy, 20261016100000.
-EXPECTED_EXTRA_POLICY_ONLY_TABLES = {"quote_line"}
+# policies without them being new tables (a08). crm.quote_line: the API delete policy, 20261016100000;
+# procurement.notice: the API insert policy, 20261020100000.
+EXPECTED_EXTRA_POLICY_ONLY_TABLES = {"quote_line", "notice"}
 
 POST_SLICE0_FUNCTIONS = {
     # 20260922170000_slice3_crm_commercial_case.sql
@@ -158,6 +164,11 @@ POST_SLICE0_FUNCTIONS = {
     # one active alias per maker and key, never a model of the same maker, and lets an alias change
     # only by being retired once (pgTAP: 098_catalog_product_model_alias.sql).
     "catalog.product_model_alias_guard",
+    # 20261020100000_slice7_tender_bid_preparation.sql — the INVOKER trigger guard that keeps a
+    # case's kind (sale or tender) fixed, and the one that lets a bidder document change only by
+    # being retired once (pgTAP: 099_tender_bid_preparation.sql).
+    "crm.opportunity_kind_fixed",
+    "crm.bidder_document_retire_once",
 }
 
 # The closed SECURITY DEFINER list of ARCHITECTURE.md §6.2, as built so far: its
@@ -303,6 +314,18 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "catalog.product_model_alias.product_model_alias_origin_source_record_id_fkey",
     "catalog.product_model_alias.product_model_alias_created_by_operator_id_fkey",
     "catalog.product_model_alias.product_model_alias_retired_by_operator_id_fkey",
+    # 20261020100000_slice7_tender_bid_preparation.sql — all eight covered by plain unconditional
+    # indexes: bidder_profile_set_by_idx, bidder_document_{added_by,retired_by}_idx,
+    # bid_preparation_{opportunity,based_on,quote_revision,requested_by}_idx and
+    # model_usage_bid_preparation_idx.
+    "crm.bidder_profile.bidder_profile_set_by_operator_id_fkey",
+    "crm.bidder_document.bidder_document_added_by_operator_id_fkey",
+    "crm.bidder_document.bidder_document_retired_by_operator_id_fkey",
+    "evidence.bid_preparation.bid_preparation_opportunity_id_fkey",
+    "evidence.bid_preparation.bid_preparation_based_on_preparation_id_fkey",
+    "evidence.bid_preparation.bid_preparation_quote_revision_id_fkey",
+    "evidence.bid_preparation.bid_preparation_requested_by_operator_id_fkey",
+    "platform.model_usage.model_usage_bid_preparation_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -312,9 +335,10 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # Foreign keys covered by a non-partial index. The historical-origin key is
 # covered only by a partial index; the slice-5 freeze key, the three
 # campaign-block keys, the eight sign-in keys, the sixteen slice-6 keys and the
-# ten slice-7 catalog and document-line keys by plain ones.
+# ten slice-7 catalog and document-line keys and the later slice-7 keys (case documents, product
+# documents, merge, memory, quote authoring, model aliases, tender bid preparation) by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 57
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 65
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -322,18 +346,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 56,
+        "relation_count": 60,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 55,
+        "table_count": 59,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 193,
+        "policy_count": 209,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -425,7 +449,7 @@ def main() -> int:
         refuse("a08 reports a table missing from current head")
 
     # Like a09 below, the audit lists at most twelve entries and then "...", and the
-    # twenty-two extra tables do not fit. What it names must all be reviewed
+    # twenty-six extra tables do not fit. What it names must all be reviewed
     # tables; only an untruncated list must name each of them, and a truncated
     # one must name exactly the twelve the audit prints — so a name the pattern
     # cannot read is refused rather than skipped. The exact count bounds what the
@@ -447,11 +471,11 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "22 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly twenty-two extra tables")
+    if "26 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly twenty-six extra tables")
 
-    # The 68 policy additions must belong to those same twenty-two reviewed tables, plus one on an
-    # existing table (crm.quote_line, below):
+    # The 84 policy additions must belong to those same twenty-six reviewed tables, plus one each on
+    # two existing tables (crm.quote_line and procurement.notice, below):
     # four each for the three commercial-case tables and campaign_block (api
     # select/insert/update, worker select), one each for auth_principal and
     # operator_profile (api select: their throttle is written by
@@ -467,8 +491,12 @@ def main() -> int:
     # (api select/insert/update, worker select; 20261012120000), three for product_document
     # (api select/insert/update; 20261013120000), three for subject_memory (api select; worker
     # select/insert; 20261015120000), one delete on quote_line (api; 20261016100000 — an existing
-    # Slice 0 table, so it is the one entry not on a reviewed new table) and four for
-    # product_model_alias (api select/insert/update, worker select; 20261016200000).
+    # Slice 0 table, so not on a reviewed new table), four for product_model_alias (api
+    # select/insert/update, worker select; 20261016200000) and, from 20261020100000, three for
+    # bidder_profile (api select/insert, worker select), four for bidder_document (api
+    # select/insert/update, worker select), four for bid_preparation (api select/insert, worker
+    # select/update), three for model_usage (worker select/insert, api select), one worker select
+    # on product_document and one api insert on notice (an existing Slice 0 table).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -490,8 +518,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "68 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly sixty-eight extra policies")
+    if "84 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly eighty-four extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -515,7 +543,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 56, expected 34"],
+        "a04": ["relations in scope: observed 60, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "

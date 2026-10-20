@@ -19,6 +19,15 @@ Settings (environment; the database and Storage values are the capture's own):
 * `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` — required when the model is enabled;
 * `ORIGENLAB_WORKER_TRIAGE_MODEL` — optional, default `claude-opus-5-5`.
 
+`tender-child` — the tender bid preparations (`tender/job.py`), in its own supervised process that
+keeps the Drive settings (ruling R4); started only when `ORIGENLAB_WORKER_BID_ENABLED` is `true`.
+It serves queue `tenders` and needs the database, Storage (`crm-documents`, same key) and Anthropic
+values above, plus `ORIGENLAB_WORKER_BID_READ_MODEL` (default `claude-opus-5-5`), `_BID_FILL_MODEL`
+(default `claude-opus-5-5`) and `_BID_MATCH_MODEL` (default `claude-sonnet-5-5`). A model the
+spend ledger has no price for is refused (`model_unpriced`): the monthly cap could not hold. With
+`drive-file`'s Drive settings on and complete, the fill phase takes the spec sheets from Drive and
+files the package in the case folder; without them it runs with Drive off.
+
 Stdout: JSON lines with counts, classes and codes — never a subject, a body, an address or an
 exception's text.
 """
@@ -44,6 +53,7 @@ from origenlab_worker.database import (
     write_ca_file,
 )
 from origenlab_worker.errors import ConfigRefused
+from origenlab_worker.flags import ENV_BID_ENABLED, bid_enabled
 from origenlab_worker.storage import S3EmlStore, StorageConfig
 from origenlab_worker.triage import (
     DEFAULT_SINCE_DAYS,
@@ -64,6 +74,13 @@ ENV_TRIAGE_ENABLED = "ORIGENLAB_WORKER_TRIAGE_ENABLED"
 ENV_TRIAGE_MODEL_ENABLED = "ORIGENLAB_WORKER_TRIAGE_MODEL_ENABLED"
 ENV_ANTHROPIC_API_KEY = "ORIGENLAB_WORKER_ANTHROPIC_API_KEY"
 ENV_TRIAGE_MODEL = "ORIGENLAB_WORKER_TRIAGE_MODEL"
+ENV_BID_READ_MODEL = "ORIGENLAB_WORKER_BID_READ_MODEL"
+ENV_BID_FILL_MODEL = "ORIGENLAB_WORKER_BID_FILL_MODEL"
+ENV_BID_MATCH_MODEL = "ORIGENLAB_WORKER_BID_MATCH_MODEL"
+DEFAULT_BID_READ_MODEL = "claude-opus-5-5"
+DEFAULT_BID_FILL_MODEL = "claude-opus-5-5"
+DEFAULT_BID_MATCH_MODEL = "claude-sonnet-5-5"
+APP_NAME_BID = "origenlab-worker-bid-preparation"
 
 EXIT_OK, EXIT_FAILED, EXIT_CONFIG = 0, 1, 3
 WORKER_CONCURRENCY = 2
@@ -235,7 +252,151 @@ def run_memory_backfill(args: Any, env: Mapping[str, str], started: float, *,
     return _emit(line, started)
 
 
-def _idle_until_terminated() -> None:
+# ── the tender child ────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BidConfig:
+    database: WorkerTarget = field(repr=False)
+    storage: StorageConfig = field(repr=False)
+    models: Any
+    reader: Any = field(repr=False)
+    #: The case archive's Drive consent and folders (`drive-file`'s settings, kept by this child —
+    #: ruling R4): spec sheets come from Drive and the package is filed there. None: Drive is off.
+    drive: Any = field(default=None, repr=False)
+    drive_target: Any = None
+
+
+def _bid_drive(env: Mapping[str, str]) -> tuple[Any, Any]:
+    """(Drive credentials, target) when `drive-file` is switched on and fully set, else (None, None):
+    a tender is prepared without Drive rather than refused."""
+    from origenlab_worker import cli
+    from origenlab_worker.drive_client import DriveCredentials
+    from origenlab_worker.drive_filing import DriveTarget
+
+    if (env.get(cli.ENV_DRIVE_ENABLED) or "").strip().lower() != "true":
+        return None, None
+    credentials = DriveCredentials(client_id=(env.get(cli.ENV_DRIVE_CLIENT_ID) or "").strip(),
+                                   client_secret=(env.get(cli.ENV_DRIVE_CLIENT_SECRET) or "").strip(),
+                                   refresh_token=(env.get(cli.ENV_DRIVE_REFRESH_TOKEN) or "").strip())
+    casos = (env.get(cli.ENV_DRIVE_CASOS) or "").strip()
+    protected = frozenset(p.strip() for p in (env.get(cli.ENV_DRIVE_PROTECTED) or "").split(",") if p.strip())
+    if not (credentials.client_id and credentials.client_secret and credentials.refresh_token) or not casos \
+            or casos in protected:
+        return None, None
+    principal = (env.get(cli.ENV_DRIVE_PRINCIPAL) or cli.DEFAULT_DRIVE_PRINCIPAL).strip().lower()
+    return credentials, DriveTarget(principal=principal, casos_folder_id=casos, protected_folder_ids=protected)
+
+
+def _bid_model(env: Mapping[str, str], key: str, default: str) -> str:
+    from origenlab_api.v2.model_spend import UnpricedModel, worst_case_usd
+
+    try:
+        model = check_model_id((env.get(key) or default).strip())
+    except ValueError:
+        raise ConfigRefused("model_invalid") from None
+    try:
+        worst_case_usd(model, input_tokens_estimate=0, max_tokens=0)
+    except UnpricedModel:
+        raise ConfigRefused("model_unpriced") from None
+    return model
+
+
+def bid_config_from_env(env: Mapping[str, str], *,
+                        reader_factory: Callable[[str], Any] | None = None) -> BidConfig:
+    from origenlab_worker.tender.job import BidModels
+    from origenlab_worker.tender.read_model import streaming_reader
+
+    models = BidModels(read=_bid_model(env, ENV_BID_READ_MODEL, DEFAULT_BID_READ_MODEL),
+                       fill=_bid_model(env, ENV_BID_FILL_MODEL, DEFAULT_BID_FILL_MODEL),
+                       match=_bid_model(env, ENV_BID_MATCH_MODEL, DEFAULT_BID_MATCH_MODEL))
+    key = (env.get(ENV_ANTHROPIC_API_KEY) or "").strip()
+    if not key:
+        raise ConfigRefused("anthropic_api_key_missing")
+    storage = StorageConfig.from_env(env)
+    database = remote_worker_target(
+        env.get(ENV_DATABASE_URL) or "",
+        expected_host=env.get(ENV_EXPECTED_HOST),
+        ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""),
+    )
+    drive, drive_target = _bid_drive(env)
+    return BidConfig(database=database, storage=storage, models=models,
+                     reader=(reader_factory or streaming_reader)(key), drive=drive, drive_target=drive_target)
+
+
+def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
+    """One sweep on a fresh verified connection: what the `bid_preparation_sweep` task runs."""
+    from datetime import UTC, datetime
+
+    from origenlab_worker.tender.job import (
+        BID_REQUIRED_POLICIES,
+        BID_REQUIRED_PRIVILEGES,
+        DOCUMENTS_BUCKET,
+        run_bid_sweep,
+    )
+
+    def connect() -> Any:
+        # A remote target carries TCP keepalives (`database.KEEPALIVES`): the session stays up
+        # through a model call of several minutes.
+        return open_verified_connection(config.database, application_name=APP_NAME_BID,
+                                        privileges=BID_REQUIRED_PRIVILEGES, policies=BID_REQUIRED_POLICIES)
+
+    def sweep() -> dict[str, Any]:
+        from origenlab_worker.drive_client import DriveRest
+
+        with connect() as conn:
+            store = S3EmlStore(config.storage.client(), bucket=DOCUMENTS_BUCKET)
+            drive = DriveRest(config.drive) if config.drive is not None else None
+            return run_bid_sweep(conn, store, config.reader, config.models, now=lambda: datetime.now(UTC),
+                                 reconnect=connect, drive=drive, drive_target=config.drive_target)
+
+    return sweep
+
+
+def _serve_tenders(config: BidConfig) -> None:  # pragma: no cover - needs a database
+    """Run the tender queue until SIGTERM: one preparation at a time."""
+    from origenlab_worker import task_queue
+
+    task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
+
+    async def serve() -> None:
+        with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
+            async with app.open_async():
+                # One preparation at a time: the monthly cap relies on a single spender.
+                await app.run_worker_async(queues=[task_queue.TENDER_QUEUE], concurrency=1, name="tenders",
+                                           install_signal_handlers=True, delete_jobs="successful")
+
+    asyncio.run(serve())
+
+
+def run_tender_worker(env: Mapping[str, str], started: float) -> int:
+    """The tender child. A setting it refuses (no key, an unpriced model) or a failure while it runs
+    is logged — the failure by its class only — and the child idles: the supervisor stops every
+    child when one exits, and a tender failure must not take triage and capture down with it."""
+    line: dict[str, Any] = {"event": "tender_worker", "mode": "start", "exit": EXIT_OK, "error": None}
+    try:
+        if not bid_enabled(env):  # the supervisor starts this child only when tenders are on
+            raise ConfigRefused("bid_disabled")
+        config = bid_config_from_env(env)
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", error=exc.code)
+        _emit(line, started)
+        _idle_until_terminated("tender_worker")
+        return EXIT_OK
+    line["models"] = {"read": config.models.read, "fill": config.models.fill, "match": config.models.match}
+    _emit(dict(line), started)
+    try:
+        _serve_tenders(config)
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(mode="failed", error=type(exc).__name__)
+        _emit(line, started)
+        _idle_until_terminated("tender_worker")
+        return EXIT_OK
+    line["mode"] = "stopped"  # pragma: no cover - SIGTERM ends the queue
+    return _emit(line, started)  # pragma: no cover
+
+
+def _idle_until_terminated(event: str = "triage_worker") -> None:
     """Paused on Render: a Background Worker that exits is restarted in a loop, so it idles."""
     stop = threading.Event()
     try:
@@ -243,7 +404,7 @@ def _idle_until_terminated() -> None:
     except ValueError:  # pragma: no cover - not the main thread
         pass
     while not stop.wait(PAUSED_HEARTBEAT_S):
-        print(json.dumps({"event": "triage_worker", "mode": "paused"}), flush=True)
+        print(json.dumps({"event": event, "mode": "paused"}), flush=True)
 
 
 def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma: no cover - needs a database
@@ -282,6 +443,7 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
     return _emit(line, started)
 
 
-__all__ = ["DEFAULT_SINCE_DAYS", "ENV_ANTHROPIC_API_KEY", "ENV_TRIAGE_ENABLED", "ENV_TRIAGE_MODEL",
-           "ENV_TRIAGE_MODEL_ENABLED", "TriageConfig", "run_triage_once", "run_triage_worker", "triage_config_from_env",
-           "triage_enabled"]
+__all__ = ["DEFAULT_SINCE_DAYS", "ENV_ANTHROPIC_API_KEY", "ENV_BID_ENABLED", "ENV_BID_FILL_MODEL", "ENV_BID_MATCH_MODEL",
+           "ENV_BID_READ_MODEL", "ENV_TRIAGE_ENABLED", "ENV_TRIAGE_MODEL", "ENV_TRIAGE_MODEL_ENABLED", "BidConfig",
+           "TriageConfig", "bid_config_from_env", "bid_enabled", "bid_sweep_for", "run_tender_worker", "run_triage_once",
+           "run_triage_worker", "triage_config_from_env", "triage_enabled"]

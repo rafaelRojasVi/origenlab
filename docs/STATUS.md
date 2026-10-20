@@ -3295,3 +3295,37 @@ equals «Gastos de importación» (the card says so if it ever does not). No API
 Cotizador's API refuses a viewer; hidden in «Vista cliente»), never in `printableQuote` or the print
 view (tested); not shown for an imported quote. Tests: vitest `enteredExpenses.test.ts`,
 `SummaryRail.test.tsx`, `QuotePrintView.test.tsx`.
+
+### 2.7.139 Licitaciones fase 1: tender cases, bidder data, anexos, bid preparation, model spend, 2026-10-19 — built on a branch, not merged, not applied, not deployed
+
+Spec «Licitaciones con IA» §6.10 (tenders in their own space). Migration `20261020100000`
+([`DOMAIN.md`](DOMAIN.md) §7.11): `crm.opportunity.kind` (`sale` | `tender`, existing cases `sale`,
+never changed — guard `crm.opportunity_kind_fixed`) and `tender_status`; `crm.opportunity_document`
+also holds `tender_annex` (Word/Excel too); tables #60 `crm.bidder_profile` (append-only), #61
+`crm.bidder_document` (retired once — guard `crm.bidder_document_retire_once`), #62
+`evidence.bid_preparation` (one queued/running row per case and phase), #63
+`platform.model_usage` (append-only); the API inserts `procurement.notice`; the worker reads
+`catalog.product_document`; six events and the aggregate kinds `bidder` and `notice`. Inventory:
+tables **59** (`crm` 24, `evidence` 6, `platform` 7), policies **209**, foreign keys **184** (151
+unconditionally covered), functions **40**, migrations **63**; the Slice 0 evidence set moved in the
+same change (pgTAP `099_tender_bid_preparation.sql`, 69 assertions).
+
+- **Built on the branch (all of Tasks 1-18):**
+  - API (`v2/tenders/`, router `/v2/tenders`): `open-tender-case` (code or link; Mercado Público detail by `ORIGENLAB_V2_CHILECOMPRA_TICKET`; buyer created `machine_proposed`), `set-tender-status` (`adjudicada` refused until phase 3), bidder profile and documents, `attach-tender-annexes` (zip unpacked), `remove-tender-annex` («Quitar anexo», with a reason), `prepare-tender-bid` (phases `read`, `fill`), `create-tender-offer-quote` (a Cotizador draft with CN number). Tenders are excluded from every general sale read (`case_kind.SALE_CASES`); tender quotes stay out of the Cotizador list, Rentabilidad and the price history.
+  - Worker (`tender/`, own supervised child of `origenlab-mail-triage`, off unless `ORIGENLAB_WORKER_BID_ENABLED=true`): extraction, streaming read (summary with citations, checklist, items), form filling with `[completar: …]`, offer form (per-line IVA adds up to the quote), spec sheets, one zip. Model spend recorded in `platform.model_usage`, capped at US$60 a month.
+  - Dashboard (`crm/tenders/`, `#/crm/licitaciones`): list, «Nueva licitación», the tender page with annexes, reading, outputs and estado, bidder preferences, Hoy «Licitación cierra mañana», spend in «Operaciones». The proxy allowlists the tender paths.
+  - Docs: [`WORKFLOWS.md`](WORKFLOWS.md) W7a, [`OPERATIONS.md`](OPERATIONS.md) §8.14.
+- **Phase-1 limits.** A tender never sets `closed_at`: `perdida` (like `postulada`) is an estado, not
+  a closing, so the case stays open and its Mercado Público code stays reserved to it
+  (`open-tender-case` answers `tender_case_exists` for the same code). Closing a tender arrives with
+  award capture (phase 3). A tender offer is approved without a recipient («Atención»): its print
+  names the bidder and the buying institution.
+- **Not yet.** Nothing is merged, applied or deployed. The merge applies the migration and deploys
+  through `production-db-migrations`; the manual steps are the owner's bucket raise to 50 MiB, the
+  secrets (`ORIGENLAB_V2_CHILECOMPRA_TICKET` on the API), and `ORIGENLAB_WORKER_BID_ENABLED=true`
+  last ([`OPERATIONS.md`](OPERATIONS.md) §8.14). No
+  hosted run has happened: memory of RapidOCR on the starter plan and the models'
+  real cost are unmeasured. Out of scope in phase 1: API fetch of the bases, relevance, Compra Ágil,
+  award capture.
+- **Tests.** API `test_v2_tender*`, worker `test_tender_*`, dashboard `crm/tenders/*.test.*`, pgTAP
+  `099_tender_bid_preparation.sql`.

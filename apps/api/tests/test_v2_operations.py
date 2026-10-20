@@ -141,3 +141,40 @@ def test_quotes_sent_on_a_case_thread_but_never_recorded_name_their_case() -> No
     assert items == [{"source_record_id": "s-1", "quote_number": "09251-26", "sent_at": "2026-09-30T16:57:00+00:00",
                       "thread_id": "t-1", "case_id": "c-1", "case_title": "Cotización 09176-26 — Empresa",
                       "case_version": 4, "organization_name": "Empresa Ficticia"}]
+
+
+def _licitaciones(spent: str, month: str = "2026-10") -> dict:
+    return {"spent_usd": spent, "cap_usd": "60", "month": month, "reached": float(spent) >= 60,
+            "preparaciones": {"ready": 3, "failed": 1}, "por_paso": {"read": "8.10", "match": "1.30", "fill": "3.00"}}
+
+
+@pytest.mark.parametrize("spent,status", [("12.400000", "ok"), ("47.990000", "ok"), ("48.000000", "warn"),
+                                          ("50.000000", "warn"), ("60.000000", "bad")])
+def test_licitaciones_ia_status_by_spend(spent, status) -> None:
+    c = op.licitaciones_ia_card(_licitaciones(spent))
+    assert (c["key"], c["title"], c["status"]) == ("licitaciones_ia", "Licitaciones IA", status)
+
+
+def test_licitaciones_ia_summary_uses_comma_decimals() -> None:
+    assert op.licitaciones_ia_card(_licitaciones("12.400000"))["summary"] == "US$ 12,40 de US$ 60 este mes"
+    assert op.licitaciones_ia_card(_licitaciones("50"))["summary"] == "US$ 50,00 de US$ 60 este mes"
+
+
+@pytest.mark.parametrize("month,name", [("2026-10", "noviembre"), ("2026-12", "enero"), ("2027-01", "febrero")])
+def test_licitaciones_ia_at_the_cap_names_the_next_month(month, name) -> None:
+    c = op.licitaciones_ia_card(_licitaciones("60", month))
+    assert c["summary"] == (f"Tope mensual alcanzado: la preparación de ofertas se detuvo hasta el 1 de {name}.")
+
+
+def test_licitaciones_ia_facts_carry_preparations_and_cost_per_step() -> None:
+    labels = {f["label"]: f["value"] for f in op.licitaciones_ia_card(_licitaciones("12.4"))["facts"]}
+    assert labels["Preparaciones listas"] == 3 and labels["Preparaciones fallidas"] == 1
+    assert "Preparaciones en curso" not in labels
+    assert labels["Lectura"] == "US$ 8,10" and labels["Cruce"] == "US$ 1,30" and labels["Relleno"] == "US$ 3,00"
+
+
+def test_build_operations_includes_the_licitaciones_card_when_facts_have_it() -> None:
+    base = {k: {} for k in ("correo", "clasificacion", "cotizaciones", "drive")}
+    facts = {**base, "actions": [], "counts": {}, "licitaciones": _licitaciones("12.4")}
+    keys = [c["key"] for c in op.build_operations(facts, "2026-10-19T00:00:00+00:00")["cards"]]
+    assert keys[-1] == "licitaciones_ia"

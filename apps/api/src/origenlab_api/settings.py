@@ -258,6 +258,8 @@ class Settings(BaseSettings):
     v2_bde_token: SecretStr | None = None
     """BDE API key token (Mi Cuenta → Apikey Token at si3.bcentral.cl; valid one year). Preferred over
     user and password, which the bank still accepts."""
+    v2_chilecompra_ticket: SecretStr | None = None
+    """Mercado Público API ticket (`ORIGENLAB_V2_CHILECOMPRA_TICKET`); secret. Tender detail by code is off without it (falls back to `CHILECOMPRA_API_TICKET`)."""
     v2_bde_series_usd: str = "F073.TCO.PRE.Z.D"
     """BDE series for the observed dollar (Tipo de cambio nominal, dólar observado)."""
     v2_bde_series_eur: str = "F072.CLP.EUR.N.O.D"

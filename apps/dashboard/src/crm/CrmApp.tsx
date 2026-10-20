@@ -16,6 +16,7 @@ import { PeoplePage } from "./pages/PeoplePage";
 import { PipelinePage } from "./pages/PipelinePage";
 import { CatalogPage } from "./pages/CatalogPage";
 import { CotizadorModulePage } from "./pages/CotizadorModulePage";
+import { LicitacionesPage } from "./tenders/LicitacionesPage";
 import { useMayOpenCotizador } from "./quotes/openOrCreateQuote";
 
 /**
@@ -113,6 +114,8 @@ function Section({
     case "cotizador":
       // Not keyed by the quote: the module stays mounted while its tabs change.
       return <CotizadorModulePage quoteId={id} pane={pane} navigate={navigate} />;
+    case "licitaciones":
+      return <LicitacionesPage key={id ?? "all"} id={id} navigate={navigate} />;
     case "marketing":
       return <MarketingPage />;
     case "historial":
@@ -362,6 +365,7 @@ const ICON_PATHS: Record<CrmSection, string> = {
   marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
   historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
   datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
+  licitaciones: "M3.5 2.5h6l3 3v8h-9zM9.5 2.5v3h3M5.5 8h5M5.5 10.5h3",
   cotizador: "M4 2.5h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1ZM5.5 5h5M5.5 8h1M9.5 8h1M5.5 10.5h1M9.5 10.5h1",
 };
 

@@ -239,11 +239,17 @@ class DriveRest:
 
     def upload_pdf(self, *, name: str, parent_id: str, app_properties: Mapping[str, str],
                    data: bytes) -> dict[str, Any]:
-        meta = {"name": name, "parents": [parent_id], "mimeType": PDF_MIME, "appProperties": dict(app_properties)}
+        return self.upload_file(name=name, parent_id=parent_id, app_properties=app_properties, data=data,
+                                mime_type=PDF_MIME)
+
+    def upload_file(self, *, name: str, parent_id: str, app_properties: Mapping[str, str], data: bytes,
+                    mime_type: str) -> dict[str, Any]:
+        """One multipart upload of `data` as `mime_type` (a tender's package is a zip)."""
+        meta = {"name": name, "parents": [parent_id], "mimeType": mime_type, "appProperties": dict(app_properties)}
         boundary = "origenlab-" + hashlib.sha256(data).hexdigest()[:16]
         body = (f"--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n".encode()
                 + json.dumps(meta, ensure_ascii=False).encode() + b"\r\n"
-                + f"--{boundary}\r\nContent-Type: application/pdf\r\n\r\n".encode() + data
+                + f"--{boundary}\r\nContent-Type: {mime_type}\r\n\r\n".encode() + data
                 + f"\r\n--{boundary}--\r\n".encode())
         out = self._json_request("POST", self._upload,
                                  params={"uploadType": "multipart", "fields": "id", "supportsAllDrives": "true"},

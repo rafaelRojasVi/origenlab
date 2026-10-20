@@ -72,6 +72,10 @@ select r.id::text as receipt_id, r.command_name, r.completed_at::text as complet
  where r.status = 'completed'
    and r.command_name = any(%s)
    and r.completed_at > now() - interval '60 days'
+   -- A decision on a tender belongs to «Licitaciones» (`case_kind.py`), not to this history.
+   and not exists (select 1 from crm.opportunity t
+                    where t.kind = 'tender'
+                      and t.id::text in (r.response_body ->> 'opportunity_id', r.response_body ->> 'case_id'))
  order by r.completed_at desc
  limit %s
 """
@@ -124,6 +128,11 @@ def compose_history(
     return items
 
 
+def _case_ids(row: Mapping[str, Any]) -> set[str]:
+    body = row["response_body"] if isinstance(row["response_body"], Mapping) else {}
+    return {v for v in (_text(body.get("opportunity_id")), _text(body.get("case_id"))) if v}
+
+
 def read_history(cur: Any, limit: int) -> dict[str, Any]:
     """The decisions of the last 60 days, newest first, in one read transaction's cursor."""
     cur.execute(HISTORY_SQL, (list(COMMAND_LABELS), limit))
@@ -133,9 +142,7 @@ def read_history(cur: Any, limit: int) -> dict[str, Any]:
     org_ids: set[str] = set()
     for row in rows:
         body = row["response_body"] if isinstance(row["response_body"], Mapping) else {}
-        for key in ("opportunity_id", "case_id"):
-            if _text(body.get(key)):
-                case_ids.add(body[key])
+        case_ids |= _case_ids(row)
         if _text(body.get("organization_id")):
             org_ids.add(body["organization_id"])
     case_titles: dict[str, str] = {}

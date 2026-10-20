@@ -79,13 +79,13 @@ select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.opportunity_do
   values ('92000000-0000-4000-8000-000000000050', 'invoice',
           'opportunities/92000000-0000-4000-8000-000000000050/' || repeat('e', 64) || '.pdf', repeat('e', 64),
           'application/pdf', 1024, 'x.pdf', 'upload', '92000000-0000-4000-8000-000000000001') $$), 5), '23514',
-  'only purchase orders for now');
+  'a purchase order or a tender anexo, nothing else');
 select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.opportunity_document
     (opportunity_id, kind, storage_path, sha256, content_type, byte_size, original_filename, source, attached_by_operator_id)
   values ('92000000-0000-4000-8000-000000000050', 'purchase_order',
           'opportunities/92000000-0000-4000-8000-000000000050/' || repeat('f', 64) || '.pdf', repeat('f', 64),
           'application/zip', 1024, 'x.zip', 'upload', '92000000-0000-4000-8000-000000000001') $$), 5), '23514',
-  'a PDF, a JPEG or a PNG');
+  'a PDF, an image or a Word/Excel file, never a zip');
 select is(left(pg_temp.run_as('origenlab_api', $$ update crm.opportunity_document set document_number = '9999'
                      where id = '92000000-0000-4000-8000-000000000070' $$), 5), '42501',
   'the API cannot rewrite a document''s number (no column grant)');

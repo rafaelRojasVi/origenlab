@@ -568,3 +568,65 @@ def test_the_memory_backfill_writes_case_institution_and_person_memories_on_a_re
     kinds = dict(owner_rows(dsn, "select subject_kind, subject_id::text from evidence.subject_memory "
                                  "where subject_id = any(%s::uuid[])", ([oid, org, person],)))
     assert kinds == {"opportunity": oid, "organization": org, "person": person}
+
+
+def test_a_tender_is_never_a_triage_case_a_matcher_candidate_or_a_memory(dsn, target, mailbox_id) -> None:
+    """Spec 2026-10-19 §6.10 (`origenlab_api.v2.case_kind`): a tender (kind 'tender') lives in
+    «Licitaciones». The same email filed on a sale case and on a tender: the sale is a candidate, a
+    linked case, a past decision and a memory to write; the tender is none of them."""
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-t-{tag}@example.test",))[0][0]
+    store = Store()
+    cases, threads, emails = {}, {}, {}
+    for kind, number in (("sale", "09881-26"), ("tender", "09882-26")):
+        oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status) "
+                              "values (%s, 'lead', %s, %s, %s) returning id::text",
+                         (f"Caso {kind} {tag}", operator, kind, "preparando" if kind == "tender" else None))[0][0]
+        owner_rows(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) "
+                        "values (%s, %s, 'printed_historical') returning id::text", (oid, number))
+        gid = capture(target, mailbox_id, store, f"tk-{kind}-{tag}",
+                      make_raw(frm=f"Compras <compras@hospital-{tag}.invalid>", subject=f"Solicitud de cotización {kind}",
+                               message_id=f"<{uuid.uuid4().hex}@hospital.invalid>"))
+        sid = source_record(dsn, gid)
+        with triage_conn(target) as conn:
+            triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+        owner_rows(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                        "linked_by_operator_id) values (%s, %s, 'mentions', %s) returning id", (oid, sid, operator))
+        cases[kind], threads[kind], emails[kind] = oid, f"t-{gid}", sid
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        candidates = {card.opportunity_id for card in db.case_cards()}
+        linked = {kind: [c.opportunity_id for c in db.linked_cases(threads[kind])] for kind in cases}
+        past = {p.opportunity_id for p in db.past_decisions(f"otra@hospital-{tag}.invalid")}
+        pending = set(db.pending_memory_backfill(since_days=36500, limit=500))
+        held = {kind: db.tender_thread(threads[kind]) for kind in cases}
+    assert held == {"sale": False, "tender": True}
+    # A reply on each thread, triaged now: the sale's is matched to the sale; the tender's thread is the
+    # tender's, so its reply gets no sales case, no new case and no pick.
+    replies = {}
+    for kind in cases:
+        gid = f"tk-{kind}-{tag}-r"
+        c = build_capture(make_raw(frm=f"Compras <compras@hospital-{tag}.invalid>", subject="Re: Solicitud de cotización",
+                                   message_id=f"<{uuid.uuid4().hex}@hospital.invalid>"),
+                          gmail_message_id=gid, gmail_thread_id=threads[kind], label_ids=("INBOX",), label_names={},
+                          internal_date_ms=NOW_MS, mailbox_address=MAILBOX)
+        key = f"{MAILBOX}/2026/10/{gid}.eml"
+        store.objects[key] = make_raw(subject="Re: Solicitud de cotización", message_id=f"<{gid}@hospital.invalid>")
+        with open_worker_db(target) as wdb:
+            wdb.record(c, mailbox_id=mailbox_id, eml_path=f"mail/{key}", eml_sha256=c.payload["raw_sha256"],
+                       size_bytes=1)
+        replies[kind] = source_record(dsn, gid)
+        with triage_conn(target) as conn:
+            triage_one(TriageDb(conn), store, replies[kind], ModelSettings(None, DEFAULT_MODEL))
+    value = {kind: owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s "
+                                   "and value_norm = %s", (replies[kind], CASE_MATCH_VALUE_NORM))[0][0]
+             for kind in cases}
+    assert value["sale"]["candidates"][0]["opportunity_id"] == cases["sale"]
+    assert (value["tender"]["decision"], value["tender"]["candidates"], value["tender"]["new_case_quote"],
+            value["tender"]["held_by"]) == ("none", [], None, "tender")
+    assert cases["sale"] in candidates and cases["tender"] not in candidates
+    assert linked == {"sale": [cases["sale"]], "tender": []}
+    assert past == {cases["sale"]}
+    assert emails["sale"] in pending and emails["tender"] not in pending

@@ -80,7 +80,7 @@ SOURCES_SQL = """
            op.organization_id::text as organization_id
       from crm.quote_revision qr
       join crm.quote q on q.id = qr.quote_id
-      join crm.opportunity op on op.id = q.opportunity_id
+      join crm.opportunity op on op.id = q.opportunity_id and op.kind = 'sale'  -- case_kind.py
       join evidence.source_record sr on sr.id = qr.origin_source_record_id
 """
 

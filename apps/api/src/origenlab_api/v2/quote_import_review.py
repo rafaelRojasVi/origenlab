@@ -174,7 +174,8 @@ class QuoteImportReviewRepository:
                 """
                 select op.id::text, op.title, op.stage, op.version, op.organization_id::text,
                        op.created_at::text
-                  from crm.opportunity op order by op.created_at, op.id
+                  from crm.opportunity op where op.kind = 'sale'  -- case_kind.py: every list below, too
+                 order by op.created_at, op.id
                 """
             )
             opportunities = [
@@ -186,6 +187,7 @@ class QuoteImportReviewRepository:
                 select oo.opportunity_id::text, oo.organization_id::text, o.name, oo.role,
                        oo.confirmation, oo.valid_to is null
                   from crm.opportunity_organization oo
+                  join crm.opportunity k on k.id = oo.opportunity_id and k.kind = 'sale'
                   join crm.organization o on o.id = oo.organization_id
                  order by oo.opportunity_id, oo.role, o.name
                 """
@@ -198,6 +200,7 @@ class QuoteImportReviewRepository:
                 """
                 select oe.opportunity_id::text, sr.dedupe_key, oe.relation, oe.unlinked_at is null
                   from crm.opportunity_evidence oe
+                  join crm.opportunity k on k.id = oe.opportunity_id and k.kind = 'sale'
                   join evidence.source_record sr on sr.id = oe.source_record_id
                  order by oe.opportunity_id, sr.dedupe_key
                 """
@@ -213,6 +216,7 @@ class QuoteImportReviewRepository:
                        qr.sent_at::text, sr.dedupe_key, qr.superseded_by_revision_no
                   from crm.quote q
                   join crm.quote_revision qr on qr.quote_id = q.id
+                  join crm.opportunity k on k.id = q.opportunity_id and k.kind = 'sale'  -- case_kind.py
                   left join evidence.source_record sr on sr.id = qr.origin_source_record_id
                  order by q.opportunity_id, q.quote_number, qr.revision_no
                 """

@@ -91,6 +91,7 @@ from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, WEB_FORM_REPLY_TO_SQL
 from origenlab_api.v2.quote_documents import QUOTE_DOCUMENT_COLUMNS, quote_contents, quote_document_join
 from origenlab_api.v2.quotes.numbering import SANTIAGO, numbering_status, revision_label
 from origenlab_api.v2.quotes.recipients import PERSON_ADDRESS_ORDER, not_a_recipient
+from origenlab_api.v2.tenders.bidder import current_bidder_profile, format_rut
 
 #: R-A5: a model is suggested beside the principal when it is on at least this share of the past
 #: quote documents that carry the principal, and the principal was quoted at least `KIT_MIN_DOCUMENTS` times.
@@ -145,7 +146,11 @@ select k.model_key, k.n, total.n as total, k.description, p.id::text as product_
 # The quote, its case, and the case's institution (through a merge) with its first RUT.
 _QUOTE_SQL = """
 select q.id::text as id, q.quote_number, q.opportunity_id::text as opportunity_id,
-       o.title, o.stage, o.closed_at, o.version as case_version,
+       o.title, o.stage, o.closed_at, o.version as case_version, o.kind as case_kind,
+       (select n.codigo_externo from crm.opportunity_evidence e
+          join procurement.notice n on n.id = e.notice_id
+         where e.opportunity_id = o.id and e.relation = 'origin' and e.unlinked_at is null
+         order by e.linked_at desc limit 1) as tender_code,
        inst.id::text as institution_id, inst.name as institution_name,
        (select e.value_norm from crm.external_identifier e
          where e.organization_id = inst.id and e.scheme = 'rut' order by e.created_at, e.id limit 1) as rut
@@ -314,13 +319,15 @@ with cur as (
     join crm.opportunity o on o.id = q.opportunity_id
     left join crm.organization m on m.id = o.organization_id
     left join crm.organization inst on inst.id = coalesce(m.merged_into_organization_id, m.id)
-   where %(pattern)s::text is null
+   -- Sales cases only: a tender's offer opens by id, never in this list (`case_kind.py`).
+   where o.kind = 'sale'
+     and (%(pattern)s::text is null
       or q.quote_number ilike %(pattern)s or inst.name ilike %(pattern)s or o.title ilike %(pattern)s
       or exists (select 1 from crm.quote_line l
                   where l.quote_revision_id = c.revision_id and l.description ilike %(pattern)s)
       or exists (select 1 from evidence.source_record d join evidence.document_line l on l.source_record_id = d.id
                   where d.dedupe_key = 'quote_document:' || lower(c.pdf_sha256) and d.kind = 'quote_document'
-                    and l.description ilike %(pattern)s)
+                    and l.description ilike %(pattern)s))
 )
 """
 
@@ -371,6 +378,9 @@ with cur as (
               else coalesce(c.approved_at, c.sent_at, c.updated_at) end as at
     from cur c
    where c.origin = 'authored' and c.status <> 'void'
+     -- Sales cases only: a tender's offer is not in «Rentabilidad» (`case_kind.py`).
+     and exists (select 1 from crm.quote q join crm.opportunity o on o.id = q.opportunity_id
+                  where q.id = c.quote_id and o.kind = 'sale')
 ), dated as (
   select p.*, (p.at at time zone 'America/Santiago') as local_at
     from picked p
@@ -422,7 +432,7 @@ select o.id::text as id, o.name, o.kind,
  order by (o.name ilike %(prefix)s) desc,
           exists (select 1 from crm.opportunity op
                     left join crm.organization t on t.id = op.organization_id
-                   where op.closed_at is null and coalesce(t.merged_into_organization_id, t.id) = o.id) desc,
+                   where op.closed_at is null and op.kind = 'sale' and coalesce(t.merged_into_organization_id, t.id) = o.id) desc,
           lower(o.name), o.id
  limit %(limit)s
 """
@@ -507,7 +517,7 @@ with open_case as (
   select o.id, o.title, o.stage, o.organization_id, coalesce(sr.acquired_at, o.created_at) as requested_at
     from crm.opportunity o
     left join evidence.source_record sr on sr.id = o.origin_source_record_id
-   where o.closed_at is null
+   where o.closed_at is null and o.kind = 'sale'  -- a tender is never a client's open case (case_kind.py)
 )
 select 'organization' as via, coalesce(m.merged_into_organization_id, m.id)::text as key,
        c.id::text as id, c.title, c.stage, c.requested_at
@@ -1061,7 +1071,7 @@ class V2QuoteReads:
 
     # -- workspace
 
-    def workspace(self, quote_id: uuid.UUID | str) -> dict[str, Any] | None:
+    def workspace(self, quote_id: uuid.UUID | str, role: str | None = None) -> dict[str, Any] | None:
         """Everything the Cotizador page opens with, or None when the quote does not exist.
 
         Round trips after the set-up, all on this one connection: the quote with its case; one
@@ -1070,9 +1080,10 @@ class V2QuoteReads:
         for a draft, `resolve_draft`'s four statements; then one pipeline for the principal's
         history and kits. Addresses are shown in full: only sales and admin reach this read.
         """
-        return self._fx_bounded(lambda fx: self._workspace_once(quote_id, fx))
+        return self._fx_bounded(lambda fx: self._workspace_once(quote_id, fx, role))
 
-    def _workspace_once(self, quote_id: uuid.UUID | str, fx: FxResolver) -> dict[str, Any] | None:
+    def _workspace_once(self, quote_id: uuid.UUID | str, fx: FxResolver,
+                        role: str | None = None) -> dict[str, Any] | None:
         qid = str(quote_id)
         with self._read() as cur:
             cur.execute(_QUOTE_SQL, (qid,))
@@ -1113,6 +1124,14 @@ class V2QuoteReads:
                 history = self._catalog._price_history_from(principal_key, extra, PRICE_HISTORY_LIMIT)
                 kits = self._kits_from(extra["kits"])
 
+            # A tender's offer: the tender's code, and who bids (sales and admin only).
+            tender = None
+            if quote["case_kind"] == "tender":
+                profile = current_bidder_profile(cur) if role in ("sales", "admin") else None
+                tender = {"code": quote["tender_code"],
+                          "bidder": ({"legal_name": profile["legal_name"], "rut": format_rut(profile["rut"])}
+                                     if profile else None)}
+
         memory = rows["memory"][0]["summary"] if rows["memory"] else None
         return _plain({
             "quote": {"id": quote["id"], "quote_number": quote["quote_number"], "opportunity_id": case_id},
@@ -1136,6 +1155,7 @@ class V2QuoteReads:
             "suggestions": {"mentioned": self._mentions_from(rows["mentions"]), "kits": kits},
             "price_history": history,
             "params": quote_preferences(params),
+            "tender": tender,
         })
 
     @staticmethod

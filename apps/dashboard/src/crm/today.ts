@@ -24,6 +24,11 @@ import { conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
 
+/** Hoy's only tender signal: one line per tender (open, not yet awarded) that closes tomorrow. */
+export function tenderClosingLines<T extends { id: string; title: string }>(closing: readonly T[] | undefined): { id: string; text: string }[] {
+  return (closing ?? []).map((t) => ({ id: t.id, text: `Licitación cierra mañana: ${t.title}` }));
+}
+
 /** Stages where no quote has been sent yet — the operator must still quote. */
 const PRE_QUOTE_STAGES = new Set(["lead", "qualifying", "qualified"]);
 

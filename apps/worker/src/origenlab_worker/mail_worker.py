@@ -1,4 +1,10 @@
-"""One Render deployment, independently supervised triage and capture processes.
+"""One Render deployment, independently supervised triage, capture and tender processes.
+
+The tender child (`tender-child`, ruling R4) runs only when `ORIGENLAB_WORKER_BID_ENABLED` is
+`true`; unlike the triage child it keeps the Drive settings (the fill phase files the bid in Drive),
+and like it never sees Gmail's. It never exits on its own: a refused setting or a failure while it
+runs is logged and the child idles (`triage_cli.run_tender_worker`), so a tender problem does not
+stop triage and capture.
 
 If either child exits unexpectedly, stop both and fail the service so Render can
 restart it. A live triage child must not hide a dead capture scheduler. SIGTERM
@@ -15,6 +21,7 @@ import time
 from collections.abc import Mapping, Sequence
 
 from origenlab_worker.capture_queue import enabled
+from origenlab_worker.flags import bid_enabled
 
 SHUTDOWN_SECONDS = 20
 
@@ -28,6 +35,10 @@ def supervise(commands: Sequence[Sequence[str]], env: Mapping[str, str], *,
             if command[-1] in {"triage-worker", "triage-child"}:
                 child_env = {k: v for k, v in child_env.items()
                              if not k.startswith(("ORIGENLAB_WORKER_GMAIL_", "ORIGENLAB_WORKER_DRIVE_"))
+                             and k != "ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED"}
+            elif command[-1] == "tender-child":
+                child_env = {k: v for k, v in child_env.items()
+                             if not k.startswith("ORIGENLAB_WORKER_GMAIL_")
                              and k != "ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED"}
             children.append(popen(list(command), env=child_env, start_new_session=True))
         while not stop.wait(0.2):
@@ -61,6 +72,8 @@ def run_mail_worker(env: Mapping[str, str]) -> int:
     commands = [[sys.executable, "-m", "origenlab_worker.cli", "triage-child"]]
     if enabled(env):
         commands.append([sys.executable, "-m", "origenlab_worker.cli", "capture-worker"])
+    if bid_enabled(env):
+        commands.append([sys.executable, "-m", "origenlab_worker.cli", "tender-child"])
     stop = threading.Event()
     old_handlers = {}
     for signum in (signal.SIGTERM, signal.SIGINT):

@@ -28,11 +28,16 @@ from __future__ import annotations
 
 import email
 import hashlib
+import io
 import re
+import zipfile
 from dataclasses import dataclass
 from email import policy
 from typing import Any
 from uuid import UUID
+
+from origenlab_email_pipeline.chilecompra_anexo_evidence.archive import ArchiveLimits
+from origenlab_email_pipeline.chilecompra_anexo_evidence.extract import ooxml_container_guard
 
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
@@ -46,8 +51,20 @@ MAIL_BUCKET = "mail"
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 #: The largest `.eml` read to find an attachment (Gmail's own message limit is 25 MB, base64 inflates).
 MAX_EML_BYTES = 40 * 1024 * 1024
-EXTENSIONS = {"application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png"}
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+DOC = "application/msword"
+XLS = "application/vnd.ms-excel"
+EXTENSIONS = {
+    "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
+    DOCX: "docx", XLSX: "xlsx", DOC: "doc", XLS: "xls",
+}
+#: Word and Excel are a tender's anexos only; a purchase order stays PDF, JPEG or PNG.
+ANNEX_TYPES = frozenset({DOCX, XLSX, DOC, XLS})
 KINDS = ("purchase_order",)
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_OLE_WORD_STREAM = "WordDocument".encode("utf-16-le")
+_OLE_EXCEL_STREAM = "Workbook".encode("utf-16-le")
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _PO_NUMBER = re.compile(
@@ -78,18 +95,55 @@ def sniff_document_type(data: bytes) -> str | None:
     return None
 
 
-def check_document(data: bytes) -> str:
-    """The content type of an acceptable document, decided by its bytes, or `DocumentRefused`."""
+def sniff_annex_type(data: bytes) -> str | None:
+    """PDF, JPEG, PNG, DOCX, XLSX (an OOXML zip told apart by its main part, no macros) or a legacy
+    DOC/XLS (an OLE container told apart by its stream name). The bytes decide, never the filename."""
+    plain = sniff_document_type(data)
+    if plain is not None:
+        return plain
+    if data.startswith(_OLE_SIGNATURE):
+        if _OLE_WORD_STREAM in data:
+            return DOC
+        if _OLE_EXCEL_STREAM in data:
+            return XLS
+        return None
+    if not data.startswith(b"PK\x03\x04"):
+        return None
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = set(archive.namelist())
+    except (zipfile.BadZipFile, ValueError, NotImplementedError):
+        return None
+    if any(name.lower().endswith("vbaproject.bin") for name in names) or "[Content_Types].xml" not in names:
+        return None
+    if "word/document.xml" in names:
+        return DOCX
+    if "xl/workbook.xml" in names:
+        return XLSX
+    return None
+
+
+def check_document(data: bytes, *, annex: bool = False) -> str:
+    """The content type of an acceptable document, decided by its bytes, or `DocumentRefused`.
+
+    `annex=True` also accepts a tender anexo's Word and Excel files (OOXML and legacy OLE); an OOXML
+    container is first run through V1's `ooxml_container_guard` (bounded expansion, no encryption).
+    """
     if len(data) > MAX_DOCUMENT_BYTES:
         raise DocumentRefused(413, "document_too_large", "the document is larger than 20 MiB")
-    kind = sniff_document_type(data)
+    kind = sniff_annex_type(data) if annex else sniff_document_type(data)
     if kind is None:
-        raise DocumentRefused(415, "unsupported_document", "only a PDF, JPEG or PNG document")
+        raise DocumentRefused(
+            415, "unsupported_document",
+            "only a PDF, JPEG, PNG, Word or Excel document" if annex else "only a PDF, JPEG or PNG document")
+    if kind in (DOCX, XLSX) and ooxml_container_guard(
+            data, archive_limits=ArchiveLimits(), extractor="tender_annex") is not None:
+        raise DocumentRefused(415, "unsafe_document", "the Office file is encrypted or expands unsafely")
     return kind
 
 
 def document_path(opportunity_id: str, sha256: str, content_type: str) -> str:
-    """`opportunities/<case>/<sha256>.<pdf|jpg|png>` — the bytes name their own object."""
+    """`opportunities/<case>/<sha256>.<pdf|jpg|png|docx|xlsx|doc|xls>` — the bytes name their own object."""
     if not _SHA256.match(sha256):
         raise ValueError("sha256 must be 64 lowercase hex characters")
     if content_type not in EXTENSIONS:

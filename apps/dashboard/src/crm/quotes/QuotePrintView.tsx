@@ -143,6 +143,12 @@ export function QuotePrintView({
             <div>
               <div className="qp-brand-name">OrigenLab</div>
               <div className="qp-muted">Equipamiento científico para laboratorios</div>
+              {quote.tender ? (
+                <>
+                  <div className="qp-muted">Oferente: {quote.tender.bidder.legal_name} · RUT {quote.tender.bidder.rut}</div>
+                  {quote.tender.code ? <div className="qp-muted">Licitación {quote.tender.code}</div> : null}
+                </>
+              ) : null}
             </div>
           </div>
           <div className="qp-number">
@@ -187,6 +193,12 @@ export function QuotePrintView({
               <th scope="col">Descripción</th>
               <th scope="col" className="qp-num">Cant.</th>
               <th scope="col" className="qp-num">Precio unit.</th>
+              {quote.tender ? (
+                <>
+                  <th scope="col" className="qp-num">Neto</th>
+                  <th scope="col" className="qp-num">{taxLabel(quote.taxRate)}</th>
+                </>
+              ) : null}
               <th scope="col" className="qp-num">Total</th>
             </tr>
           </thead>
@@ -206,7 +218,15 @@ export function QuotePrintView({
                   </td>
                   <td className="qp-num qp-mono">{qty(l.quantity)}</td>
                   <td className="qp-num qp-mono">{money(l.unitPrice)}</td>
-                  <td className="qp-num qp-mono">{money(l.total)}</td>
+                  {quote.tender ? (
+                    <>
+                      <td className="qp-num qp-mono">{money(l.total)}</td>
+                      <td className="qp-num qp-mono">{money(l.iva ?? null)}</td>
+                      <td className="qp-num qp-mono">{money(l.grossTotal ?? null)}</td>
+                    </>
+                  ) : (
+                    <td className="qp-num qp-mono">{money(l.total)}</td>
+                  )}
                 </tr>
               );
             })}

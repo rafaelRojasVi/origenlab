@@ -842,6 +842,28 @@ grammar and never trusts a classifier's proposal.
 A promoted opportunity does **not** track later notice changes automatically;
 the notice history is evidence an operator reads.
 
+### W7a — Licitación abierta a mano → preparación de la oferta
+
+Licitaciones fase 1 (built, not deployed — [`STATUS.md`](STATUS.md) §2.7.139). A tender the operator
+opens by code or link is **not** a W7 notice: it is a `crm.opportunity` with `kind = 'tender'`
+and its own `tender_status`, kept out of every general sales read. Machine proposes; the operator
+reviews and uploads the package to Mercado Público by hand — nothing is submitted for them.
+
+| Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
+|---|---|---|---|---|---|
+| 1 | operator · `open-tender-case` | a code or portal link; ticket on the API, or a typed buyer | tender case at `preparando`; `procurement.notice` inserted; buyer organization created `machine_proposed` (§6.6) when unknown | events; no organization is confirmed | no ticket and no buyer → 422 `buyer_required` |
+| 2 | operator · `save-bidder-profile`, `add-bidder-document` | admin/sales | bidder data, versioned, append-only; standard documents (one retire, never edited) | `bidder.*` events | — |
+| 3 | operator · `attach-tender-annexes`; «Quitar anexo» `remove-tender-annex` | bases uploaded (PDF, Word, Excel, or a zip unpacked into one `tender_annex` each); a removal needs a reason | annexes attached; a wrong one removed once (the row stays, `removed_at`) and no new preparation takes it | `opportunity.document_attached` / `opportunity.document_removed` | oversize / unreadable → refused; already removed → `document_already_removed` |
+| 4 | operator · `prepare-tender-bid` (phase `read`) | annexes attached; month's model spend under the cap | `evidence.bid_preparation` queued; the worker reads the annexes: summary with citations, checklist, items | the preparation row | cap reached → refused; extraction gaps → «Falta» lines |
+| 5 | operator · `create-tender-offer-quote` | a finished `read` | a Cotizador draft from the read's items (CN number, bidder header); the operator prices and **approves** it | quote events | `offer_quote_exists`, `no_items`, `too_many_items` |
+| 6 | operator · `prepare-tender-bid` (phase `fill`) | the offer's revision is approved | the worker fills the forms (`[completar: …]` where the data is missing), writes the offer form, adds spec sheets and bidder documents, and builds one zip | outputs under `opportunities/<case>/bid/<prep>/` | unapproved offer → `offer_not_approved`; no fillable text → «Falta: convertir a Word (.docx)» |
+| 7 | operator · `set-tender-status` | — | `preparando` / `postulada` / `perdida` (a reason is required); `adjudicada` is refused until phase 3 | `opportunity.tender_status_set` | `award_is_phase_3` |
+
+No price leaves unseen: the `fill` phase runs only after the offer quote is approved. The printed
+offer's per-line IVA is allocated so the lines add up to the quote's stored IVA. The worker never
+writes a quote; the API builds the draft. Not in phase 1: fetching the bases through the API,
+relevance ranking, Compra Ágil, and award capture.
+
 ### W8 — Supplier and product review
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |

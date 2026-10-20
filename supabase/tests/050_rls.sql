@@ -243,9 +243,27 @@ insert into expected_policies values
     ('catalog', 'product_model_alias', 'origenlab_api', 'SELECT'),
     ('catalog', 'product_model_alias', 'origenlab_api', 'INSERT'),
     ('catalog', 'product_model_alias', 'origenlab_api', 'UPDATE'),
-    ('catalog', 'product_model_alias', 'origenlab_worker', 'SELECT');
+    ('catalog', 'product_model_alias', 'origenlab_worker', 'SELECT'),
+    -- 20261020100000: tender bid preparation, the API's notice insert and the worker's read of
+    -- product data sheets.
+    ('crm', 'bidder_profile', 'origenlab_api', 'SELECT'),
+    ('crm', 'bidder_profile', 'origenlab_api', 'INSERT'),
+    ('crm', 'bidder_profile', 'origenlab_worker', 'SELECT'),
+    ('crm', 'bidder_document', 'origenlab_api', 'SELECT'),
+    ('crm', 'bidder_document', 'origenlab_api', 'INSERT'),
+    ('crm', 'bidder_document', 'origenlab_api', 'UPDATE'),
+    ('crm', 'bidder_document', 'origenlab_worker', 'SELECT'),
+    ('evidence', 'bid_preparation', 'origenlab_api', 'SELECT'),
+    ('evidence', 'bid_preparation', 'origenlab_api', 'INSERT'),
+    ('evidence', 'bid_preparation', 'origenlab_worker', 'SELECT'),
+    ('evidence', 'bid_preparation', 'origenlab_worker', 'UPDATE'),
+    ('platform', 'model_usage', 'origenlab_api', 'SELECT'),
+    ('platform', 'model_usage', 'origenlab_worker', 'SELECT'),
+    ('platform', 'model_usage', 'origenlab_worker', 'INSERT'),
+    ('procurement', 'notice', 'origenlab_api', 'INSERT'),
+    ('catalog', 'product_document', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 193, 'the matrix implies 193 policies');
+select is((select count(*)::int from expected_policies), 209, 'the matrix implies 209 policies');
 
 -- Posture.
 select is(

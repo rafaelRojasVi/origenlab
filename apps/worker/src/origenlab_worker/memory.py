@@ -14,6 +14,10 @@ It updates:
 2. the institution (organization) memory — summary + facts only, from the linked org;
 3. the person (contact) memory — summary + facts only, from the primary contact.
 
+Only sales cases get a memory: the linked cases come from `triage._LINKED_CASES` and the backfill
+from `_MEMORY_BACKFILL_PENDING`, both `o.kind = 'sale'` (the API's `case_kind.SALE_CASES`) — a tender
+is not summarised.
+
 If a linked case has a previous institution or person memory, it is seeded into the next memory
 request for that subject — so the model always sees prior context.
 

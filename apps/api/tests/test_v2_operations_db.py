@@ -60,3 +60,24 @@ def test_a_quote_sent_on_a_case_email_but_never_recorded_is_listed_with_its_case
         (linked, "09251-", case, None)]
     assert [i["source_record_id"] for i in facts["sent_quotes_without_case"]] == [unlinked]
     assert facts["counts"]["sent_quotes_unrecorded_on_case"] == 1
+
+
+@needs_db
+def test_licitaciones_facts_sum_this_months_model_usage_and_preparations(disposable_database) -> None:
+    dsn = disposable_database
+    [(op,)] = _owner(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) values "
+                          "(gen_random_uuid(), 'ops-lic@example.test', 'Ops', 'sales', 'active') returning id::text")
+    [(case,)] = _owner(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) values "
+                            "('Licitación ficticia', 'lead', %s) returning id::text", (op,))
+    [(prep,)] = _owner(dsn, "insert into evidence.bid_preparation (opportunity_id, phase, status, annex_document_ids, "
+                            "requested_by_operator_id) values (%s, 'read', 'ready', array[gen_random_uuid()], %s) "
+                            "returning id::text", (case, op))
+    for step, cost in (("read", "8.10"), ("match", "1.30"), ("read", "2.00")):
+        _owner(dsn, "insert into platform.model_usage (feature, model, step, bid_preparation_id, input_tokens, "
+                    "output_tokens, cache_read_tokens, cache_write_tokens, usd_cost) "
+                    "values ('licitaciones', 'claude-sonnet-5-5', %s, %s, 1, 1, 0, 0, %s)", (step, prep, cost))
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        lic = read_operation_facts(cur)["licitaciones"]
+    assert lic["spent_usd"] == "11.400000" and lic["cap_usd"] == "60" and lic["reached"] is False
+    assert lic["preparaciones"] == {"ready": 1}
+    assert lic["por_paso"] == {"read": "10.100000", "match": "1.300000", "fill": "0.000000"}

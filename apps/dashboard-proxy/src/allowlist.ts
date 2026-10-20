@@ -124,6 +124,18 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // `/v2/cockpit/.+` -- so the other cockpit reads, the quotation PDF route and the
   // case-archive/import-review consoles stay refused until they are reviewed on their own.
   /^\/v2\/workspace\/overview$/,
+  // «Licitaciones» (spec 2026-10-19 §6.10): the list (`?status=` filters it) and one tender's page.
+  // GET-only, operator session required. The list carries no bidder data (any signed-in operator);
+  // the page answers 403 `role_may_not_view_bidder` to a `viewer` upstream. A UUID-shaped segment,
+  // no tail: nothing else under `/v2/tenders` is reachable.
+  /^\/v2\/tenders$/,
+  // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
+  // document's signed link. GET-only; a `viewer` is 403 `role_may_not_view_bidder` upstream.
+  /^\/v2\/bidder$/,
+  /^\/v2\/bidder\/documents\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/url$/,
+  /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // One output file of a preparation: a signed link (GET-only; a `viewer` is 403 upstream).
+  /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/preparations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/files\/[a-z0-9_-]{1,64}\/url$/,
   /^\/v2\/workspace\/pipeline$/,
   /^\/v2\/workspace\/drive$/,
   /^\/v2\/workspace\/review$/,
@@ -332,11 +344,45 @@ export function isAllowedCaseCommandPostPath(pathname: string): boolean {
   return CASE_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
 }
 
-/** The body limit for one marketing (or email-rules, or case) command path. */
+/**
+ * «Licitaciones» commands (spec 2026-10-19 §6.10), one list for the whole family: `open-tender-case`
+ * (a tender case from a Mercado Público code or link), `set-tender-status` and the bidder's profile and
+ * document retirement now; the bid preparation joins it as it is built. Upstream each needs an active `sales` or `admin`
+ * operator from the verified session (a `viewer` is 403), an `Idempotency-Key`, and mounts only
+ * behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the case commands
+ * (`marketingCommandRefusal` in index.ts).
+ */
+export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
+  /^\/v2\/commands\/open-tender-case$/,
+  // The estado of a tender (preparando, postulada, perdida; «adjudicada» is refused upstream until phase 3).
+  /^\/v2\/commands\/set-tender-status$/,
+  // The bidder's profile (a new row) and the retirement of a standard document. The upload of one
+  // (`add-bidder-document`) is multipart and listed with the other uploads.
+  /^\/v2\/commands\/save-bidder-profile$/,
+  /^\/v2\/commands\/retire-bidder-document$/,
+  // «Quitar anexo»: one wrong anexo of a tender removed, with its reason (the upload is multipart,
+  // listed with the other uploads).
+  /^\/v2\/commands\/remove-tender-annex$/,
+  // Ask for a bid preparation (`read` or `fill`); the worker runs it.
+  /^\/v2\/commands\/prepare-tender-bid$/,
+  // The economic offer as a Cotizador draft on the case, from a ready read.
+  /^\/v2\/commands\/create-tender-offer-quote$/,
+];
+
+/** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */
+export const TENDER_COMMAND_MAX_BYTES = 16_384;
+
+export function isAllowedTenderCommandPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return TENDER_COMMAND_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/** The body limit for one marketing (or email-rules, case or tender) command path. */
 export function marketingCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (isAllowedMailRulesCommandPostPath(pathOnly)) return MAIL_RULES_MAX_BYTES;
   if (isAllowedCaseCommandPostPath(pathOnly)) return CASE_COMMAND_MAX_BYTES;
+  if (isAllowedTenderCommandPostPath(pathOnly)) return TENDER_COMMAND_MAX_BYTES;
   if (CAMPAIGN_PLANNING_PATH_RE.test(pathOnly)) return CAMPAIGN_PLANNING_MAX_BYTES;
   if (UNSUBSCRIBE_REVIEW_PATH_RE.test(pathOnly)) return UNSUBSCRIBE_REVIEW_MAX_BYTES;
   if (CAMPAIGN_BLOCK_PATH_RE.test(pathOnly)) return CAMPAIGN_BLOCK_MAX_BYTES;
@@ -465,18 +511,30 @@ export const CATALOG_COMMAND_MAX_BYTES = 65_536;
  */
 export const CASE_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-case-document$/;
 
+/** A standard document of the bidder (`add-bidder-document`), the same 20 MiB cap. */
+export const BIDDER_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/add-bidder-document$/;
+
+/** A tender's anexos (`attach-tender-annexes`): up to 20 files or a zip, 60 MiB in all. */
+export const TENDER_ANNEXES_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-tender-annexes$/;
+
 export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-product-image$/,
   CASE_DOCUMENT_UPLOAD_PATH_RE,
+  BIDDER_DOCUMENT_UPLOAD_PATH_RE,
+  TENDER_ANNEXES_UPLOAD_PATH_RE,
 ];
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
 export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
+export const TENDER_ANNEXES_UPLOAD_MAX_BYTES = 62_914_560 + 65_536;
 
 /** The body limit for one catalog command path: the upload's, a quote draft's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
-  if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
+  if (TENDER_ANNEXES_UPLOAD_PATH_RE.test(pathOnly)) return TENDER_ANNEXES_UPLOAD_MAX_BYTES;
+  if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly) || BIDDER_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) {
+    return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
+  }
   if (QUOTE_DRAFT_BODY_PATHS.some((pattern) => pattern.test(pathOnly))) return QUOTE_COMMAND_MAX_BYTES;
   return CATALOG_UPLOAD_POST_PATHS.some((pattern) => pattern.test(pathOnly))
     ? CATALOG_UPLOAD_MAX_BYTES
@@ -529,6 +587,7 @@ export function isAllowedPostPath(pathname: string): boolean {
     isAllowedCrmAuthoringCommandPostPath(pathname) ||
     isAllowedMailRulesCommandPostPath(pathname) ||
     isAllowedCaseCommandPostPath(pathname) ||
+    isAllowedTenderCommandPostPath(pathname) ||
     isAllowedCatalogCommandPostPath(pathname) ||
     isAllowedCatalogUploadPostPath(pathname) ||
     isAllowedQuotePreviewPostPath(pathname) ||

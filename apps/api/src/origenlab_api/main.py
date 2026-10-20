@@ -669,6 +669,30 @@ def _mount_v2_command_boundary(
     app.include_router(command_router)
     app.include_router(case_command_router)
     app.include_router(task_command_router)
+    # «Licitaciones» (spec 2026-10-19 §6.10): tender cases, same database, role and switch. The
+    # Mercado Público ticket reads a tender's detail by code; without one the operator types the buyer.
+    from origenlab_api.v2.tenders.mercado_publico import resolve_ticket
+    from origenlab_api.v2.tenders.open_case import V2TenderCommandRepository
+    from origenlab_api.v2.tenders.routes import (
+        bidder_read_router,
+        tender_command_router,
+        tender_read_router,
+    )
+
+    app.state.v2_tender_command_repository = V2TenderCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    from origenlab_api.v2.tenders.reads import TenderReadRepository
+
+    app.state.v2_tender_read_repository = TenderReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.chilecompra_ticket = resolve_ticket(
+        settings.v2_chilecompra_ticket.get_secret_value() if settings.v2_chilecompra_ticket else None
+    )
+    app.include_router(tender_command_router)
+    app.include_router(tender_read_router)
+    app.include_router(bidder_read_router)
     # A case's documents (its purchase order): the private `crm-documents` bucket, and the
     # worker's `mail` bucket read to copy an email attachment. Without Storage configured the
     # routes answer 503 `storage_unavailable`; everything else here still works.

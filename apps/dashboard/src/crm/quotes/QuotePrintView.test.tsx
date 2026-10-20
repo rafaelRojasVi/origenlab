@@ -9,6 +9,7 @@ import type { CatalogIndex } from "../catalog/catalogIndex";
 import { isPrintable, printableQuote } from "./printableQuote";
 import { computedFixture, economicsFixture, lineEconomics, workspaceFixture } from "./quoteFixtures";
 import type { ComputedLine, QuoteStoredLine, QuoteWorkspace } from "./quoteApi";
+import { IssuedView } from "./IssuedView";
 import { QuotePrintView } from "./QuotePrintView";
 
 const SECRET_COST = "987654";
@@ -288,5 +289,94 @@ describe("Vista previa PDF — «Economía de la cotización» stays internal", 
     const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
     expect(q.institution).toEqual({ name: "Universidad de Prueba S.A.", rut: "76.111.111-1" });
     if (q.recipient) expect(q.recipient.name).toBe("Ana María Prueba");
+  });
+});
+
+describe("Vista previa PDF — a tender's offer", () => {
+  const tenderOf = (bidder: { legal_name: string; rut: string } | null) => ({ code: "1234-56-LE26", bidder });
+  const BIDDER = { legal_name: "Oferente Ejemplo", rut: "11.111.111-1" };
+
+  /** The approved fixture with two item lines (neto 1.000.005 and 999.995: IVA 190.000,95 and 189.999,05 round half up). */
+  function tenderQuote(bidder: typeof BIDDER | null): QuoteWorkspace {
+    const ws = approved();
+    return {
+      ...ws,
+      tender: tenderOf(bidder),
+      current: {
+        ...ws.current!,
+        subtotal: "2000000", tax_total: "380000", grand_total: "2380000",
+        lines: [stored(1, "item", "Centrífuga de prueba", "1000005", "1000005"), stored(2, "item", "Balanza de prueba", "999995", "999995")],
+      },
+    };
+  }
+
+  it("prints the bidder, the tender code and the IVA and total of every line", () => {
+    const dialog = show(tenderQuote(BIDDER));
+    const sheet = within(dialog);
+    expect(sheet.getByText("OrigenLab")).toBeInTheDocument();
+    expect(sheet.getByText("Oferente: Oferente Ejemplo · RUT 11.111.111-1")).toBeInTheDocument();
+    expect(sheet.getByText("Licitación 1234-56-LE26")).toBeInTheDocument();
+    const table = within(sheet.getByRole("table"));
+    for (const h of ["Neto", "IVA 19 %", "Total"]) expect(table.getByRole("columnheader", { name: h })).toBeInTheDocument();
+    const rows = table.getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("$ 1.000.005");
+    expect(rows[1]).toHaveTextContent("$ 190.001"); // 190.000,95 half up
+    expect(rows[1]).toHaveTextContent("$ 1.190.006");
+    expect(rows[2]).toHaveTextContent("$ 189.999"); // 189.999,05
+    expect(rows[2]).toHaveTextContent("$ 1.189.994");
+    // The totals are the revision's own.
+    const totals = within(sheet.getByLabelText("Totales"));
+    expect(totals.getByText("Neto").nextSibling).toHaveTextContent("$ 2.000.000");
+    expect(totals.getByText("IVA 19 %").nextSibling).toHaveTextContent("$ 380.000");
+    expect(totals.getByText("Total CLP").nextSibling).toHaveTextContent("$ 2.380.000");
+    expectClientSafe(dialog);
+  });
+
+  it("a tender without a bidder, or a quote without a tender, prints as any quote", () => {
+    const plain = show(approved()).innerHTML;
+    cleanup();
+    expect(show(tenderQuote(null)).textContent).not.toMatch(/Oferente|Licitación/);
+    cleanup();
+    expect(show({ ...approved(), tender: null }).innerHTML).toBe(plain);
+  });
+
+  it("an offer approved with no recipient prints and shows no «Atención» or «Para» line", () => {
+    const ws = tenderQuote(BIDDER);
+    ws.current = { ...ws.current!, party_snapshot: { ...ws.current!.party_snapshot!, recipient: null } };
+    const sheet = show(ws);
+    expect(within(sheet).getByText("Universidad de Prueba")).toBeInTheDocument();
+    expect(sheet.textContent).not.toMatch(/Atención/);
+    cleanup();
+    render(<IssuedView workspace={ws} />);
+    expect(screen.getByText("Universidad de Prueba")).toBeInTheDocument();
+    expect(screen.queryByText("Para")).toBeNull();
+  });
+
+  it("a non-tender quote prints exactly as before (snapshot)", () => {
+    const el = show(approved());
+    expect(el.querySelector("article")!.innerHTML).toMatchSnapshot();
+    expect(el.textContent).not.toMatch(/Oferente|Licitación/);
+  });
+
+  it("per-line IVA and total add up to the stored totals when naive rounding is off by one", () => {
+    const ws = tenderQuote(BIDDER);
+    // 3 x 1.003 neto: 190,57 each rounds to 191 (573); the stored IVA of 3.009 is 572.
+    ws.current = {
+      ...ws.current!,
+      subtotal: "3009", tax_total: "572", grand_total: "3581",
+      lines: [1, 2, 3].map((n) => stored(n, "item", `Equipo ${n}`, "1003", "1003")),
+    };
+    const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
+    expect(q.lines.map((l) => l.iva)).toEqual(["191", "191", "190"]);
+    expect(q.lines.reduce((a, l) => a + Number(l.iva), 0)).toBe(572);
+    expect(q.lines.reduce((a, l) => a + Number(l.grossTotal), 0)).toBe(3581);
+  });
+
+  it("keeps the lines as computed when the stored neto is not the sum of the lines", () => {
+    const ws = tenderQuote(BIDDER);
+    const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!; // lines sum 2.000.000, naive IVA 380.000
+    expect(q.lines.map((l) => l.iva)).toEqual(["190001", "189999"]);
+    ws.current = { ...ws.current!, subtotal: "2000100", tax_total: "380019" };
+    expect(printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!.lines.map((l) => l.iva)).toEqual(["190001", "189999"]);
   });
 });

@@ -80,3 +80,5 @@ runs the existing Gmail then Drive commands every ten minutes. Existing business
 locks and idempotency remain. See the [approved cutover](../../docs/runbooks/MAIL_WORKER_CUTOVER.md)
 for credentials, bounded retries, shutdown, rollback and resource limits. Production
 still uses the old cron until that approved handoff is complete.
+
+**Tender bid preparation** (Licitaciones fase 1, built, not deployed): with `ORIGENLAB_WORKER_BID_ENABLED=true` the mail worker supervises one more child (`origenlab_worker/tender/`) that reads a tender's annexes, fills the forms and builds the offer package, within a US$60 monthly model-spend cap. Setup and release order: [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8.14.
