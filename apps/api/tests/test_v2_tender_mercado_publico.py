@@ -93,3 +93,15 @@ def test_resolve_ticket_env_fallback(monkeypatch):
     assert resolve_ticket("cfg") == "cfg"
     monkeypatch.delenv("CHILECOMPRA_API_TICKET")
     assert resolve_ticket("  ") is None
+
+
+def test_the_api_service_declares_the_ticket_as_a_render_secret() -> None:
+    """The ticket is set on Render (`sync: false`), declared under the API service, never a value in the file."""
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[3] / "render.yaml").read_text(encoding="utf-8")
+    start = text.index("  - type: web\n    name: origenlab-api\n")
+    end = text.find("\n  - type:", start + 1)
+    service = text[start:end]
+    assert "      - key: ORIGENLAB_V2_CHILECOMPRA_TICKET\n        sync: false\n" in service
+    assert text.count("ORIGENLAB_V2_CHILECOMPRA_TICKET") == 1

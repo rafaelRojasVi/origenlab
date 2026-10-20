@@ -2250,17 +2250,22 @@ Built, not activated. The «Licitaciones» space opens a tender by code or link 
 worst-case estimate before each call; at the cap a preparation is refused. «Operaciones» shows the
 month's spend and the cap.
 
-**Release order** (nothing here is applied yet)
+**Release** (nothing here is applied yet). Merging to `main` releases it like any change:
+`production-db-migrations` takes an encrypted backup, applies migration `20261020100000` to hosted
+and then deploys the worker, the API and the dashboard (§15; the proxy deploys from its own
+workflow). With `ORIGENLAB_WORKER_BID_ENABLED` unset the tender child does not start, so the merge
+changes nothing for the worker. The only manual steps are the owner's:
 
-1. Apply migration `20261020100000` to hosted first — the tender worker refuses to start without
-   its grants.
-2. Deploy the API (and set `ORIGENLAB_V2_CHILECOMPRA_TICKET`), then the dashboard and proxy.
-3. Owner: raise the `crm-documents` bucket `file_size_limit` to 50 MiB (52428800) in Supabase
-   Storage settings. Hosted has 20 MiB (set outside the migrations); generated outputs and the zip
-   (capped at 45 MiB by the worker) above that would fail `output_store_failed`. API uploads stay
-   capped at 20 MiB per document by the API itself.
-4. Last: set the BID variables on `origenlab-mail-triage` with `ORIGENLAB_WORKER_BID_ENABLED=true`.
-   **Pause:** set it back to `false`.
+1. Raise the `crm-documents` bucket `file_size_limit` to 50 MiB (52428800) in Supabase Storage
+   settings. Hosted has 20 MiB (set outside the migrations); generated outputs and the zip (capped at
+   45 MiB by the worker) above that would fail `output_store_failed`. API uploads stay capped at
+   20 MiB per document by the API itself.
+2. Set the secrets on Render: `ORIGENLAB_V2_CHILECOMPRA_TICKET` on `origenlab-api` (declared in
+   `render.yaml` with `sync: false`), and on `origenlab-mail-triage` the optional BID model
+   variables.
+3. Last, switch the tender child on: `ORIGENLAB_WORKER_BID_ENABLED=true` on `origenlab-mail-triage`.
+   **Pause:** set it back to `false`. A failure inside the tender child is logged by its class and
+   the child idles; it never stops triage or capture.
 
 **Memory risk.** `origenlab-mail-triage` is on plan `starter`; RapidOCR on a large scanned set can
 exceed its memory. If the release smoke shows an out-of-memory restart, move the tender sweep to

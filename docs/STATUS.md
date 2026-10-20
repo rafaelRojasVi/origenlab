@@ -3315,9 +3315,15 @@ same change (pgTAP `099_tender_bid_preparation.sql`, 69 assertions).
   - Worker (`tender/`, own supervised child of `origenlab-mail-triage`, off unless `ORIGENLAB_WORKER_BID_ENABLED=true`): extraction, streaming read (summary with citations, checklist, items), form filling with `[completar: …]`, offer form (per-line IVA adds up to the quote), spec sheets, one zip. Model spend recorded in `platform.model_usage`, capped at US$60 a month.
   - Dashboard (`crm/tenders/`, `#/crm/licitaciones`): list, «Nueva licitación», the tender page with annexes, reading, outputs and estado, bidder preferences, Hoy «Licitación cierra mañana», spend in «Operaciones». The proxy allowlists the tender paths.
   - Docs: [`WORKFLOWS.md`](WORKFLOWS.md) W7a, [`OPERATIONS.md`](OPERATIONS.md) §8.14.
-- **Not yet.** Nothing is merged, applied or deployed. The migration must be applied on hosted first,
-  then the API, then the worker with `ORIGENLAB_WORKER_BID_ENABLED=true` last ([`OPERATIONS.md`](OPERATIONS.md)
-  §8.14). The owner must also raise the hosted `crm-documents` bucket limit from 20 MiB to 50 MiB. No
+- **Phase-1 limits.** A tender never sets `closed_at`: `perdida` (like `postulada`) is an estado, not
+  a closing, so the case stays open and its Mercado Público code stays reserved to it
+  (`open-tender-case` answers `tender_case_exists` for the same code). Closing a tender arrives with
+  award capture (phase 3). A tender offer is approved without a recipient («Atención»): its print
+  names the bidder and the buying institution.
+- **Not yet.** Nothing is merged, applied or deployed. The merge applies the migration and deploys
+  through `production-db-migrations`; the manual steps are the owner's bucket raise to 50 MiB, the
+  secrets (`ORIGENLAB_V2_CHILECOMPRA_TICKET` on the API), and `ORIGENLAB_WORKER_BID_ENABLED=true`
+  last ([`OPERATIONS.md`](OPERATIONS.md) §8.14). No
   hosted run has happened: memory of RapidOCR on the starter plan and the models'
   real cost are unmeasured. Out of scope in phase 1: API fetch of the bases, relevance, Compra Ágil,
   award capture.
