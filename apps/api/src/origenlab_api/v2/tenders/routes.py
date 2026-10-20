@@ -206,6 +206,22 @@ def list_discovered_tenders(_: Operator, repo: ReadRepo) -> dict[str, Any]:
     return repo.discovered(datetime.now(UTC))
 
 
+@tender_read_router.get("/discovered/{notice_id}")
+def get_discovered_tender(notice_id: str, _: Operator, repo: ReadRepo) -> dict[str, Any]:
+    """One notice of «En Mercado Público»: every date, every item with what matched the catalog, and
+    the head's facts. Public notice data only, so any signed-in operator reads it."""
+    try:
+        notice_uuid = str(uuid.UUID(notice_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail={"code": "notice_not_found",
+                                                     "message": "No existe esa licitación."}) from None
+    page = repo.discovered_one(notice_uuid, datetime.now(UTC))
+    if page is None:
+        raise HTTPException(status_code=404, detail={"code": "notice_not_found",
+                                                     "message": "No existe esa licitación."})
+    return page
+
+
 @tender_read_router.get("/{tender_id}")
 def get_tender(tender_id: str, operator: Operator, repo: ReadRepo) -> dict[str, Any]:
     """One tender's page: anexos, readings, offer, spend and whether the bidder's data is ready.

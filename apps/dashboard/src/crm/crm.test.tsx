@@ -123,6 +123,10 @@ describe("crm routing", () => {
     expect(parseCrmHash(`#/crm/oportunidades/${id}`)).toEqual({ section: "oportunidades", id });
     // A non-uuid id is dropped, never interpolated into a request.
     expect(parseCrmHash("#/crm/oportunidades/../../v2/commands")).toEqual({ section: "oportunidades", id: null });
+    // «Licitaciones» also opens a Mercado Público notice: `mp-<uuid>`, there and nowhere else.
+    expect(parseCrmHash(`#/crm/licitaciones/mp-${id}`)).toEqual({ section: "licitaciones", id: `mp-${id}` });
+    expect(parseCrmHash(`#/crm/oportunidades/mp-${id}`)).toEqual({ section: "oportunidades", id: null });
+    expect(parseCrmHash("#/crm/licitaciones/mp-1234567-12-LE26")).toEqual({ section: "licitaciones", id: null });
     expect(crmHash("drive")).toBe("#/crm/drive");
   });
 });

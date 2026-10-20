@@ -3,7 +3,8 @@
 Every run, on the tender child's queue:
 
 1. **The list.** One call for every open tender (`licitaciones.json?estado=activas`, ~4,600 rows:
-   code, title, estado, closing). A title that passes `title_candidate` is upserted into
+   code, title, estado, closing). A title that passes `title_candidate` — the curated families, or
+   anything the catalog sells (its types, makers and models, read fresh every run) — is upserted into
    `procurement.notice`: a new one with the list's row as its head, a known one with its title,
    estado, closing and `last_seen_at` refreshed — its head is kept (it may be a detail).
 2. **The details.** Up to `detail_limit` candidates whose head is still the list's are read one by one
@@ -26,7 +27,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Final
 
-from origenlab_api.v2.tenders.discovery import chile_time, has_detail, title_candidate
+from origenlab_api.v2.tenders.discovery import chile_time, has_detail, load_vocabulary, title_candidate
 from origenlab_email_pipeline.chilecompra_api import _codigo_externo, _extract_close_date, _extract_listado
 
 #: Details read per run (each is one API call, spaced by `DETAIL_SPACING_S`).
@@ -37,8 +38,11 @@ MIN_LIST_ROWS: Final = 500
 
 DISCOVERY_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     ("procurement.notice", "SELECT"), ("procurement.notice", "INSERT"), ("procurement.notice", "UPDATE"),
+    ("catalog.product", "SELECT"), ("crm.organization", "SELECT"),
 )
 DISCOVERY_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset({
+    ("catalog", "product", "origenlab_worker_select"),
+    ("crm", "organization", "origenlab_worker_select"),
     ("procurement", "notice", "origenlab_worker_select"),
     ("procurement", "notice", "origenlab_worker_insert"),
     ("procurement", "notice", "origenlab_worker_update"),
@@ -109,11 +113,13 @@ def run_discovery(conn: Any, fetch_list: FetchList, fetch_detail: FetchDetail, *
                   min_list_rows: int = MIN_LIST_ROWS, sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
     """One discovery run. Returns the counts the task logs."""
     started = now()
+    with conn.cursor() as cur:
+        vocabulary = load_vocabulary(cur)
     listado = _extract_listado(fetch_list())
     candidates: dict[str, dict[str, Any]] = {}
     for row in listado:
         code = _codigo_externo(row)
-        if code and title_candidate(_str(row.get("Nombre"))):
+        if code and title_candidate(_str(row.get("Nombre")), vocabulary):
             candidates[code] = row
     with conn.transaction(), conn.cursor() as cur:
         for code, row in candidates.items():

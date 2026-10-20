@@ -156,3 +156,43 @@ def test_a_viewer_reads_the_list(db, client) -> None:
 def test_the_route_does_not_shadow_a_tender_page(db, client) -> None:
     response = client.get(f"/v2/tenders/{uuid.uuid4()}", headers={OPERATOR_EMAIL_HEADER: "sales-buscar@example.test"})
     assert response.status_code == 404
+
+
+def test_one_notice_page_has_every_date_item_and_fact_and_a_catalog_match(db, client) -> None:
+    with _owner(db) as conn:
+        maker = conn.execute("insert into crm.organization (kind, name, confirmation) values ('manufacturer', 'Fabricante Ejemplo Termo', "
+                             "'confirmed') returning id").fetchone()[0]
+        conn.execute("insert into catalog.product (manufacturer_organization_id, model_number, name_es, product_kind) "
+                     "values (%s, 'TX900', 'Termociclador de gradiente TX900', 'equipment')", (maker,))
+    head = {"Comprador": {"NombreOrganismo": "Hospital Ejemplo Sur", "NombreUnidad": "Laboratorio central",
+                          "RegionUnidad": "Región Ejemplo"},
+            "Tipo": "LE", "Estado": "Publicada", "Descripcion": "Compra de termociclador para biología molecular",
+            "TiempoDuracionContrato": "12", "UnidadTiempoDuracionContrato": 4, "CantidadReclamos": 3,
+            "Fechas": {"FechaPublicacion": "2026-10-10T09:00:00", "FechaFinal": "2026-10-14T18:00:00",
+                       "FechaEstimadaAdjudicacion": "2026-11-20T00:00:00"},
+            "Items": {"Listado": [{"NombreProducto": "Termocicladores", "Descripcion": "TX900 o similar", "Cantidad": 1},
+                                  {"NombreProducto": "Mesa antivibración", "Cantidad": 2}]}}
+    code = notice(db, "Adquisición de termociclador", head=head)
+    listing = discovered(client)
+    row = by_code(listing)[code]
+    assert row["tier"] == "catalogo" and row["families"] == [{"key": "catalogo", "label": "Otros de tu catálogo"}]
+    assert "termociclador" in row["terms"]
+
+    page = client.get(f"/v2/tenders/discovered/{row['id']}", headers={OPERATOR_EMAIL_HEADER: "viewer-buscar@example.test"})
+    assert page.status_code == 200, page.text
+    body = page.json()
+    assert [d["label"] for d in body["dates"]][:2] == ["Publicación", "Preguntas hasta"]
+    assert "Cierre de ofertas" in [d["label"] for d in body["dates"]]
+    assert [i["name"] for i in body["items"]] == ["Termocicladores", "Mesa antivibración"]
+    assert body["items"][0]["terms"] == ["tx900", "termocicladores"]
+    facts = {f["label"]: f["value"] for f in body["facts"]}
+    assert facts["Duración del contrato"] == "12 meses" and facts["Unidad compradora"] == "Laboratorio central"
+    assert facts["Reclamos del comprador"].startswith("3 ")
+    assert body["description"].startswith("Compra de termociclador") and body["open"] is True
+
+
+def test_an_unknown_or_malformed_notice_is_404(db, client) -> None:
+    for path in (f"/v2/tenders/discovered/{uuid.uuid4()}", "/v2/tenders/discovered/no-es-un-id"):
+        response = client.get(path, headers={OPERATOR_EMAIL_HEADER: "sales-buscar@example.test"})
+        assert response.status_code == 404
+

@@ -166,7 +166,7 @@ describe("LicitacionesPage — En Mercado Público", () => {
     expect(screen.getByRole("button", { name: "En Mercado Público" })).toHaveAttribute("aria-pressed", "true");
     const row = await screen.findByTestId("notice-row-1111111-11-LE26");
     expect(row).toHaveTextContent("Adquisición de balanzas analíticas");
-    expect(row).toHaveTextContent("Hospital Ejemplo Norte · Región Ejemplo");
+    expect(row).toHaveTextContent("Hospital Ejemplo NorteRegión Ejemplo");
     expect(row).toHaveTextContent("Balanzas y humedad");
     expect(row).toHaveTextContent("2 unidad × Balanzas — Balanza analítica 0,1 mg");
     expect(row).toHaveTextContent("y 3 ítems más");
@@ -206,6 +206,15 @@ describe("LicitacionesPage — En Mercado Público", () => {
     expect(within(opened).queryByRole("button", { name: "Preparar" })).toBeNull();
     fireEvent.click(within(opened).getByRole("link", { name: "Abrir" }));
     expect(navigate).toHaveBeenCalledWith("licitaciones", ID1);
+  });
+
+  it("the title opens the notice's page; «Mercado Público» opens the notice in a new tab", async () => {
+    stubApi();
+    const navigate = renderPage("sales", "mercado");
+    const row = await screen.findByTestId("notice-row-1111111-11-LE26");
+    fireEvent.click(within(row).getByRole("link", { name: "Adquisición de balanzas analíticas" }));
+    expect(navigate).toHaveBeenCalledWith("licitaciones", "mp-n1");
+    expect(within(row).getByRole("link", { name: "Ver 1111111-11-LE26 en Mercado Público" })).toHaveAttribute("target", "_blank");
   });
 
   it("a viewer sees the notices but not «Preparar»", async () => {

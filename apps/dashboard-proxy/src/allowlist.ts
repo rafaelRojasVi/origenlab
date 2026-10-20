@@ -132,6 +132,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // «En Mercado Público»: open tenders that fit the catalog (public notice data only, any signed-in
   // operator). GET-only, exact path.
   /^\/v2\/tenders\/discovered$/,
+  // One notice of it: every date, every item, the head's facts (a UUID-shaped segment, no tail).
+  /^\/v2\/tenders\/discovered\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
   // document's signed link. GET-only; a `viewer` is 403 `role_may_not_view_bidder` upstream.
   /^\/v2\/bidder$/,

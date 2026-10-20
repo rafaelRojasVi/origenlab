@@ -47,8 +47,10 @@ def test_a_family_in_an_item_puts_the_notice_in_the_catalog_tier_with_that_item(
                     "Cantidad": 2, "UnidadMedida": "Unidad"})
     match = classify("Equipamiento para laboratorio de química", head)
     assert match["tier"] == "catalogo" and match["families"] == ["pesaje"]
-    assert match["items"] == [{"name": "Balanzas", "description": "Balanza 0,1 mg", "quantity": 2, "unit": "Unidad",
-                               "unspsc": "41111500"}]
+    (item,) = match["items"]
+    assert {k: item[k] for k in ("name", "description", "quantity", "unit", "unspsc")} == {
+        "name": "Balanzas", "description": "Balanza 0,1 mg", "quantity": 2, "unit": "Unidad", "unspsc": "41111500"}
+    assert item["families"] == [{"key": "pesaje", "label": "Balanzas y humedad"}] and item["lab_equipment"] is True
 
 
 def test_families_come_in_the_page_order_without_repeats() -> None:
@@ -77,3 +79,50 @@ def test_chile_time_reads_both_api_shapes_as_santiago_time() -> None:
     assert chile_time("2026-07-15T10:00:00") == datetime(2026, 7, 15, 14, 0, tzinfo=UTC)
     assert chile_time("2026-07-15T10:00:00+00:00") == datetime(2026, 7, 15, 10, 0, tzinfo=UTC)
     assert chile_time("") is None and chile_time(None) is None and chile_time("mañana") is None
+
+
+def _vocabulary():
+    from origenlab_api.v2.tenders.discovery import build_vocabulary
+
+    return build_vocabulary([
+        ("Homogeneizador manual D1000, incluye sondas", "Homogenizer", "Homogeneizadores", "Benchmark Scientific", "D1000"),
+        ("Procesador ultrasónico UP200St", None, None, "Hielscher Ultrasonics", "UP200St"),
+        ("Termociclador de gradiente", None, "Termocicladores", "Bio-Rad", "T100"),
+        ("Kit de sondas", None, None, "IKA", "S25N"),
+        ("Baño termostático 20 L", None, None, "Löser Messtechnik", "OM 807"),
+    ])
+
+
+def test_the_catalog_vocabulary_takes_types_makers_and_models_and_skips_parts_and_vague_words() -> None:
+    v = _vocabulary()
+    assert v.hits("Compra de termocicladores") == ["termocicladores"]
+    assert v.hits("Procesador ultrasónico Hielscher modelo UP200St") == ["up200st", "hielscher", "procesador ultrasonico"]
+    assert v.hits("Baño termostático para laboratorio") == ["bano termostatico"]
+    assert v.hits("Equipos IKA y Löser") == ["ika", "loser"]
+    # A part is not a type, «Bio» is too vague for a maker, a spaced model is not a model.
+    assert v.hits("kit de sondas") == [] and v.hits("bio") == [] and v.hits("om 807") == []
+
+
+def test_a_catalog_word_without_a_curated_family_is_the_catalog_tier_with_its_terms() -> None:
+    match = classify("Compra equipo Hielscher UP200St", {}, _vocabulary())
+    assert match["tier"] == "catalogo" and match["families"] == ["catalogo"] and match["terms"] == ["up200st", "hielscher"]
+    assert title_candidate("Compra equipo Hielscher UP200St", _vocabulary())
+    assert not title_candidate("Compra equipo Hielscher UP200St")  # the curated families alone miss it
+
+
+def test_an_everyday_first_word_needs_the_next_one() -> None:
+    from origenlab_api.v2.tenders.discovery import build_vocabulary
+
+    v = build_vocabulary([("Contador de colonias digital", None, None, "Fabricante", "CC100"),
+                          ("Mesa antivibratoria", None, None, "Fabricante", "MA1")])
+    assert v.hits("Servicio de contador auditor") == []
+    assert v.hits("Contador de colonias") == ["contador de colonias"]
+    assert v.hits("Mesa de reuniones") == []
+
+
+def test_all_items_keeps_every_item_and_says_what_each_matched() -> None:
+    head = _detail({"NombreProducto": "Termocicladores", "Descripcion": "T100 o equivalente"},
+                   {"NombreProducto": "Mesa de trabajo"})
+    match = classify("Equipamiento", head, _vocabulary(), all_items=True)
+    assert [i["name"] for i in match["items"]] == ["Termocicladores", "Mesa de trabajo"]
+    assert match["items"][0]["terms"] == ["t100", "termocicladores"] and match["items"][1]["terms"] == []

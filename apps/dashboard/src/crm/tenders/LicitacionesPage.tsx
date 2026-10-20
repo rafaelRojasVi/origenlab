@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
-import { crmHash, type CrmSection } from "../crmRoute";
+import { crmHash, noticeIdOfRoute, type CrmSection } from "../crmRoute";
 import { formatMoney } from "../money";
 import { Badge, Button, EmptyState, PageHeader, ResourceGate, Segmented, Skeleton, type Tone } from "../ui";
 import { useResource } from "../useResource";
+import { DiscoveredTenderPage } from "./DiscoveredTenderPage";
 import { DiscoveredTenders } from "./DiscoveredTenders";
 import { NewTenderDialog } from "./NewTenderDialog";
 import { TenderPage } from "./TenderPage";
@@ -47,6 +48,8 @@ export function LicitacionesPage({
   now?: Date;
 }) {
   // Keyed by the tender: nothing of A (its state, a read in flight) can render or act under B.
+  const noticeId = noticeIdOfRoute(id);
+  if (noticeId) return <DiscoveredTenderPage key={noticeId} noticeId={noticeId} navigate={navigate} now={now} />;
   if (id) return <TenderPage key={id} id={id} navigate={navigate} now={now} />;
   return <TenderList navigate={navigate} now={now} />;
 }
