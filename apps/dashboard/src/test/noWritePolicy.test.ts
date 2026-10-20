@@ -112,15 +112,21 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/set-cost-parameter",
   ];
   const QUOTE_PREVIEW_PATH = "/v2/quotes/preview";
-  // «Licitaciones» (2026-10-19): tenderApi.ts POSTs the bidder commands from «Preferencias»
-  // (save the profile, add or retire a standard document; sales or admin upstream, each with an
-  // Idempotency-Key). Nothing is sent to Mercado Público or anyone else from here.
+  // «Licitaciones» (2026-10-19): tenderApi.ts POSTs «Nueva licitación», the bidder commands from
+  // «Preferencias» (save the profile, add or retire a standard document) and a tender page's commands
+  // (its estado, «Subir anexos», «Preparar oferta» / «Llenar formularios», «Crear oferta económica»);
+  // sales or admin upstream, each with an Idempotency-Key. Nothing is sent to Mercado Público or
+  // anyone else from here.
   const TENDER_API_FILE = "../crm/tenders/tenderApi.ts";
   const TENDER_API_PATHS = [
     "/v2/commands/open-tender-case",
     "/v2/commands/save-bidder-profile",
     "/v2/commands/add-bidder-document",
     "/v2/commands/retire-bidder-document",
+    "/v2/commands/set-tender-status",
+    "/v2/commands/attach-tender-annexes",
+    "/v2/commands/prepare-tender-bid",
+    "/v2/commands/create-tender-offer-quote",
   ];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";

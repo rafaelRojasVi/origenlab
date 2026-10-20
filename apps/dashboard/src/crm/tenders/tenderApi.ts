@@ -1,8 +1,10 @@
 /**
  * The one client for «Licitaciones»: every call the dashboard makes about tenders lives here (later
- * tasks add to it). Today: the list of tenders and «Nueva licitación» (`open-tender-case`), and the bidder's data and
- * standard documents («Datos para licitaciones» in Preferencias) — `GET /v2/bidder`, `save-bidder-profile`, `add-bidder-document` (multipart),
- * `retire-bidder-document` and a document's signed link.
+ * tasks add to it). The list of tenders and «Nueva licitación» (`open-tender-case`); one tender's page
+ * (`GET /v2/tenders/{id}`, `set-tender-status`, `attach-tender-annexes` (multipart), `prepare-tender-bid`,
+ * `create-tender-offer-quote` and an output file's signed link); and the bidder's data and standard
+ * documents («Datos para licitaciones» in Preferencias) — `GET /v2/bidder`, `save-bidder-profile`,
+ * `add-bidder-document` (multipart), `retire-bidder-document` and a document's signed link.
  *
  * Upstream everything about the bidder is sales/admin only (a viewer gets 403
  * `role_may_not_view_bidder`) and the commands need `ORIGENLAB_V2_COMMANDS_ENABLED`. Every command
@@ -206,6 +208,171 @@ export const retireBidderDocument = (documentId: string, reason: string, idempot
 /** A link valid ten minutes; asked for on each «Abrir», never stored. */
 export async function bidderDocumentUrl(documentId: string): Promise<string> {
   const body = await fetchJsonGet<{ url?: unknown }>(operatorApiUrl(`/v2/bidder/documents/${encodeURIComponent(documentId)}/url`));
+  if (typeof body.url !== "string" || !/^https:\/\//.test(body.url)) throw new OperatorApiError("no url", 502);
+  return body.url;
+}
+
+/* ── one tender's page ────────────────────────────────────────────────────── */
+
+export type PreparationPhase = "read" | "fill";
+export type PreparationStatus = "queued" | "running" | "ready" | "failed" | "budget_stopped";
+
+/** A citation: the anexo (`archivo_id` is its `document_id`) and where in it (`p.3`, `Hoja1!A1:F40`). */
+export interface Cita {
+  archivo_id: string;
+  ubicacion: string;
+}
+
+export interface ResumenField {
+  texto: string;
+  citas: Cita[];
+  sin_cita: boolean;
+}
+
+export type ChecklistEstado = "listo" | "falta" | "firmar";
+
+export interface ChecklistLine {
+  documento: string;
+  tipo?: string;
+  requiere_firma?: boolean;
+  archivo_formulario_id?: string | null;
+  fuente: Cita | null;
+  sin_cita: boolean;
+  /** Set by the fill (and on the read's own «convertir a Word» lines). */
+  estado?: ChecklistEstado;
+  falta?: string;
+  archivos?: string[];
+}
+
+export interface ReadItem {
+  linea: number;
+  descripcion: string;
+  cantidad: string;
+  unidad: string;
+  requisitos: string[];
+  product_id?: string | null;
+  candidatos?: { product_id: string; modelo: string | null; nombre: string | null }[];
+}
+
+/** What the worker stores in `result`; every key may be missing on a failed or stopped row. */
+export interface PreparationResult {
+  resumen?: Record<string, ResumenField>;
+  checklist?: ChecklistLine[];
+  items?: ReadItem[];
+  annexes?: { document_id: string; filename: string; outcome: string }[];
+  match?: { estado: string; codigo?: string };
+  fichas?: { product_id: string; estado: string; file_key?: string }[];
+  drive?: string;
+  read_preparation_id?: string;
+}
+
+export interface PreparationOutput {
+  file_key: string;
+  filename: string | null;
+  kind: string;
+  completar_count: number | null;
+}
+
+export interface Preparation {
+  id: string;
+  phase: PreparationPhase;
+  status: PreparationStatus;
+  requested_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  failure_code: string | null;
+  annex_document_ids: string[];
+  based_on_preparation_id: string | null;
+  quote_revision_id: string | null;
+  result: PreparationResult | null;
+  outputs: PreparationOutput[];
+}
+
+export interface TenderAnnex {
+  document_id: string;
+  filename: string;
+  content_type: string;
+  byte_size: number;
+  sha256: string;
+  source: string;
+  attached_at: string | null;
+}
+
+export interface TenderPageData {
+  tender: TenderRow & {
+    portal_url: string | null;
+    notice_head_summary: { description: string | null; estimated_amount: number | null; currency: string; source_status: string | null };
+  };
+  annexes: TenderAnnex[];
+  preparations: Record<PreparationPhase, Preparation | null>;
+  offer_quote: {
+    quote_id: string;
+    revision_id: string;
+    number: string;
+    status: string;
+    neto: number | null;
+    iva: number | null;
+    total: number | null;
+  } | null;
+  spend: { spent_usd: string; cap_usd: string; month: string; reached: boolean };
+  bidder_ready: boolean;
+}
+
+export interface AnnexUploadResult {
+  attached: { document_id: string; filename: string }[];
+  skipped: { filename: string; reason: string }[];
+}
+
+/** The API takes at most 20 files (or a zip) and 60 MiB in one request. */
+export const MAX_ANNEX_FILES = 20;
+export const MAX_ANNEX_TOTAL_BYTES = 60 * 1024 * 1024;
+
+export const fetchTenderPage = (id: string) => fetchJsonGet<TenderPageData>(operatorApiUrl(`/v2/tenders/${encodeURIComponent(id)}`));
+
+export interface SetTenderStatusBody {
+  opportunity_id: string;
+  status: Exclude<TenderStatus, "adjudicada">;
+  expected_version: number;
+  reason?: string;
+}
+
+export const setTenderStatus = (body: SetTenderStatusBody, idempotencyKey: string = newTenderCommandKey()) =>
+  post("/v2/commands/set-tender-status", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);
+
+/** «Subir anexos»: every chosen file under `files`, one request. */
+export async function attachTenderAnnexes(
+  opportunityId: string,
+  files: readonly File[],
+  idempotencyKey: string = newTenderCommandKey(),
+): Promise<AnnexUploadResult> {
+  const form = new FormData();
+  form.append("opportunity_id", opportunityId);
+  for (const file of files) form.append("files", file, file.name);
+  const receipt = await post("/v2/commands/attach-tender-annexes", { body: form }, idempotencyKey);
+  return {
+    attached: Array.isArray(receipt.attached) ? (receipt.attached as AnnexUploadResult["attached"]) : [],
+    skipped: Array.isArray(receipt.skipped) ? (receipt.skipped as AnnexUploadResult["skipped"]) : [],
+  };
+}
+
+export const prepareTenderBid = (opportunityId: string, phase: PreparationPhase, idempotencyKey: string = newTenderCommandKey()) =>
+  post(
+    "/v2/commands/prepare-tender-bid",
+    { headers: JSON_HEADERS, body: JSON.stringify({ opportunity_id: opportunityId, phase }) },
+    idempotencyKey,
+  );
+
+export const createTenderOfferQuote = (opportunityId: string, preparationId: string, idempotencyKey: string = newTenderCommandKey()) =>
+  post(
+    "/v2/commands/create-tender-offer-quote",
+    { headers: JSON_HEADERS, body: JSON.stringify({ opportunity_id: opportunityId, preparation_id: preparationId }) },
+    idempotencyKey,
+  );
+
+/** A link to one output file, valid ten minutes; asked for on each click, never stored. */
+export async function preparationFileUrl(tenderId: string, preparationId: string, fileKey: string): Promise<string> {
+  const path = `/v2/tenders/${encodeURIComponent(tenderId)}/preparations/${encodeURIComponent(preparationId)}/files/${encodeURIComponent(fileKey)}/url`;
+  const body = await fetchJsonGet<{ url?: unknown }>(operatorApiUrl(path));
   if (typeof body.url !== "string" || !/^https:\/\//.test(body.url)) throw new OperatorApiError("no url", 502);
   return body.url;
 }

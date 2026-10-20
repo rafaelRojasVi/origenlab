@@ -6,6 +6,7 @@
 
 import {
   useEffect,
+  useId,
   useRef,
   useState,
   useSyncExternalStore,
@@ -680,11 +681,13 @@ export function ChoiceChips({
   );
 }
 
-export function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
+/** A titled block. `named` makes it a region named by its title (a page of several sections). */
+export function Section({ title, children, aside, named = false }: { title: string; children: ReactNode; aside?: ReactNode; named?: boolean }) {
+  const titleId = useId();
   return (
-    <section>
+    <section aria-labelledby={named ? titleId : undefined}>
       <div className="mb-1.5 flex items-center gap-2">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">{title}</h3>
+        <h3 id={named ? titleId : undefined} className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">{title}</h3>
         {aside ? <div className="ml-auto">{aside}</div> : null}
       </div>
       {children}

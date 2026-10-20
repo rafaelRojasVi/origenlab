@@ -6,6 +6,7 @@ import { formatMoney } from "../money";
 import { Badge, Button, EmptyState, PageHeader, ResourceGate, Skeleton, type Tone } from "../ui";
 import { useResource } from "../useResource";
 import { NewTenderDialog } from "./NewTenderDialog";
+import { TenderPage } from "./TenderPage";
 import { TENDER_STATUSES, fetchTenders, type TenderList, type TenderRow, type TenderStatus } from "./tenderApi";
 import { closingLabel, closingWhen } from "./tenderTime";
 
@@ -13,7 +14,7 @@ import { closingLabel, closingWhen } from "./tenderTime";
  * «Licitaciones»: the tenders being prepared, as a list a salesperson reads at a glance — code and
  * title, the institution (marked «por confirmar» when the machine proposed it), when it closes and how
  * long is left (Santiago time), the amount (neto; «estimado» when it comes from the notice) and the
- * estado. Filter chips carry the count per estado; a row opens the tender's page. «Nueva licitación»
+ * estado. Filter chips carry the count per estado; a row opens the tender's page (`TenderPage`). «Nueva licitación»
  * (sales and admin) opens one from a Mercado Público code or link. Every figure is the API's.
  *
  * At phone width a row stacks its cells; nothing scrolls sideways.
@@ -43,27 +44,8 @@ export function LicitacionesPage({
   /** A fixed clock, for tests. */
   now?: Date;
 }) {
-  if (id) return <TenderPagePlaceholder navigate={navigate} />;
+  if (id) return <TenderPage id={id} navigate={navigate} now={now} />;
   return <TenderList navigate={navigate} now={now} />;
-}
-
-/** The tender's own page is a later piece; this keeps a link to it from dead-ending. */
-function TenderPagePlaceholder({ navigate }: { navigate: Navigate }) {
-  return (
-    <div role="status" className="rounded-lg border border-line bg-canvas-sunken/70 px-4 py-4">
-      <p className="text-[13px] font-semibold text-ink">La página de la licitación llega pronto.</p>
-      <a
-        href={crmHash("licitaciones")}
-        onClick={(e) => {
-          e.preventDefault();
-          navigate("licitaciones");
-        }}
-        className="mt-3 inline-flex min-h-[44px] items-center rounded-md border border-line bg-canvas-raised px-3 text-[13px] font-medium text-brand-700 hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        Volver a Licitaciones
-      </a>
-    </div>
-  );
 }
 
 function TenderList({ navigate, now }: { navigate: Navigate; now?: Date }) {
