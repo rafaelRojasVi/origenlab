@@ -18,7 +18,8 @@ def test_parse_accepts(raw):
     assert parse_tender_reference(raw) == "1234567-12-LE26"
 
 
-@pytest.mark.parametrize("code", ["1057500-25-L126", "1057049-388-CO26", "1234567-12-LE26"])
+# Invented codes of each real shape (public repository); L1 is ruling R1.
+@pytest.mark.parametrize("code", ["1234500-25-L126", "7654321-388-CO26", "1234567-12-LE26"])
 def test_code_shapes_including_l1(code):
     assert TENDER_CODE_RE.match(code)
     assert parse_tender_reference(code.lower()) == code

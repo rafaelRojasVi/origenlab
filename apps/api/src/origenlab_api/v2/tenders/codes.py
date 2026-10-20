@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, urlparse
 
 from origenlab_email_pipeline.chilecompra_api import build_licitacion_detail_url_for_codigo
 
-# `1234567-12-LE26`, L1 codes like `1057500-25-L126`, `1057049-388-CO26`.
+# `1234567-12-LE26`, L1 codes like `1234500-25-L126`, `7654321-388-CO26`.
 TENDER_CODE_RE = re.compile(r"^\d{1,8}-\d{1,4}-[A-Z][A-Z0-9]\d{2}$")
 _PORTAL_HOSTS = ("mercadopublico.cl",)
 
