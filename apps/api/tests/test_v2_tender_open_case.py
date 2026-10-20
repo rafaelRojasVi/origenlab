@@ -172,5 +172,6 @@ def test_read_router_exposes_only_get() -> None:
     from origenlab_api.v2.tenders.routes import tender_read_router
 
     assert [(r.path, r.methods) for r in tender_read_router.routes] == [
-        ("/v2/tenders", {"GET"}), ("/v2/tenders/{tender_id}", {"GET"}),
+        # «En Mercado Público» before the page, so `discovered` is never read as a tender id.
+        ("/v2/tenders", {"GET"}), ("/v2/tenders/discovered", {"GET"}), ("/v2/tenders/{tender_id}", {"GET"}),
         ("/v2/tenders/{tender_id}/preparations/{preparation_id}/files/{file_key}/url", {"GET"})]

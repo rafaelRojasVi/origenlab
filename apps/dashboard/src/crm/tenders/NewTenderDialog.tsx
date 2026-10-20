@@ -40,11 +40,20 @@ function definitive(err: unknown): boolean {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function NewTenderDialog({ navigate, onClose }: { navigate: Navigate; onClose: () => void }) {
+export function NewTenderDialog({
+  navigate,
+  onClose,
+  initialReference = "",
+}: {
+  navigate: Navigate;
+  onClose: () => void;
+  /** «Preparar» on a Mercado Público notice: its code, already in the field. */
+  initialReference?: string;
+}) {
   const refId = useId();
   const nameId = useId();
   const rutId = useId();
-  const [reference, setReference] = useState("");
+  const [reference, setReference] = useState(initialReference);
   const [needsBuyer, setNeedsBuyer] = useState(false);
   const [buyerName, setBuyerName] = useState("");
   const [buyerRut, setBuyerRut] = useState("");

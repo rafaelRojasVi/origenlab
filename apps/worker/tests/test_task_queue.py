@@ -25,7 +25,8 @@ def test_both_tasks_are_on_the_triage_queue_and_the_sweep_runs_every_minute(app)
     assert built.tasks["bid_preparation_sweep"].queue == "tenders"
     periodic = sorted(built.periodic_registry.periodic_tasks.values(), key=lambda p: p.periodic_id)
     assert [(p.task.name, p.cron, p.periodic_id) for p in periodic] == [
-        ("bid_preparation_sweep", "* * * * *", "bids"), ("sweep_untriaged", "* * * * *", "sweep")]
+        ("bid_preparation_sweep", "* * * * *", "bids"), ("tender_discovery", "*/15 * * * *", "discovery"),
+        ("sweep_untriaged", "* * * * *", "sweep")]
 
 
 def test_each_child_app_carries_only_its_own_queue_so_no_periodic_job_waits_unserved() -> None:
@@ -36,11 +37,14 @@ def test_each_child_app_carries_only_its_own_queue_so_no_periodic_job_waits_unse
         return {name for name in app.tasks if "builtin" not in name}
 
     assert own(task_queue.app) == {"triage_message", "sweep_untriaged"}
-    assert own(task_queue.tender_app) == {"bid_preparation_sweep"}
-    (bids,) = task_queue.tender_app.periodic_registry.periodic_tasks.values()
+    assert own(task_queue.tender_app) == {"bid_preparation_sweep", "tender_discovery"}
+    bids, discovery = sorted(task_queue.tender_app.periodic_registry.periodic_tasks.values(),
+                             key=lambda p: p.periodic_id)
     assert (bids.periodic_id, bids.task.queue) == ("bids", "tenders")
+    assert (discovery.periodic_id, discovery.task.queue) == ("discovery", "tenders")
     # One waiting sweep at most, even if nobody serves the queue for a while.
     assert bids.task.queueing_lock == task_queue.BID_SWEEP_LOCK
+    assert discovery.task.queueing_lock == task_queue.DISCOVERY_LOCK
 
 
 def test_the_bid_sweep_refuses_to_run_before_the_cli_configured_it(monkeypatch) -> None:
@@ -57,6 +61,18 @@ def test_the_bid_sweep_runs_the_configured_sweep_and_logs_its_counts(monkeypatch
     built = task_queue.build_app(testing.InMemoryConnector(), queues=(task_queue.TENDER_QUEUE,))
     built.tasks["bid_preparation_sweep"](timestamp=0)
     assert logged == [{"event": "bid_preparation_sweep", "outcome": "ran", "claimed": 1}]
+
+
+def test_the_discovery_refuses_to_run_unconfigured_and_logs_its_counts_once_configured(monkeypatch) -> None:
+    monkeypatch.setattr(task_queue, "CONTEXT", task_queue.QueueContext())
+    built = task_queue.build_app(testing.InMemoryConnector(), queues=(task_queue.TENDER_QUEUE,))
+    with pytest.raises(RuntimeError, match="queue_context_not_configured"):
+        built.tasks["tender_discovery"](timestamp=0)
+    logged = []
+    monkeypatch.setattr(task_queue, "CONTEXT", task_queue.QueueContext(
+        discovery=lambda: {"outcome": "ran", "candidates": 3}, log=logged.append))
+    built.tasks["tender_discovery"](timestamp=0)
+    assert logged == [{"event": "tender_discovery", "outcome": "ran", "candidates": 3}]
 
 
 def test_one_waiting_job_per_message(app) -> None:

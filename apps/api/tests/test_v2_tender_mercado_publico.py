@@ -104,4 +104,6 @@ def test_the_api_service_declares_the_ticket_as_a_render_secret() -> None:
     end = text.find("\n  - type:", start + 1)
     service = text[start:end]
     assert "      - key: ORIGENLAB_V2_CHILECOMPRA_TICKET\n        sync: false\n" in service
-    assert text.count("ORIGENLAB_V2_CHILECOMPRA_TICKET") == 1
+    # Declared twice — the API and the worker's «En Mercado Público» sweep — each as a Render secret.
+    declared = "      - key: ORIGENLAB_V2_CHILECOMPRA_TICKET\n        sync: false\n"
+    assert text.count("ORIGENLAB_V2_CHILECOMPRA_TICKET") == text.count(declared) == 2

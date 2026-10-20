@@ -48,3 +48,7 @@ def test_the_four_tender_settings_are_declared_on_the_worker() -> None:
     for key in ("ORIGENLAB_WORKER_BID_ENABLED", "ORIGENLAB_WORKER_BID_READ_MODEL",
                 "ORIGENLAB_WORKER_BID_FILL_MODEL", "ORIGENLAB_WORKER_BID_MATCH_MODEL"):
         assert re.search(rf"- key: {key}\n\s+sync: false\n", service + "\n"), key
+
+
+def test_the_mercado_publico_ticket_is_declared_on_the_worker_as_a_secret() -> None:
+    assert re.search(r"- key: ORIGENLAB_V2_CHILECOMPRA_TICKET\n\s+sync: false\n", _service() + "\n")

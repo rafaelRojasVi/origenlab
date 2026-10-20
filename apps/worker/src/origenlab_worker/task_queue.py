@@ -11,11 +11,14 @@ Two tasks on the `triage` queue, served by the triage child (`app`):
   lock per source record keeps one job per message waiting at a time; a transient model failure
   is retried with backoff; a permanent one is recorded and not retried.
 
-One task on the `tenders` queue, served by the tender child (`tender_app`, ruling R4):
+Two tasks on the `tenders` queue, served by the tender child (`tender_app`, ruling R4):
 
 * `bid_preparation_sweep` — periodic, every minute: claims queued tender bid preparations and runs
   them one at a time (`tender.job.run_bid_sweep`, through `QueueContext.bid_sweep`). A queueing lock
   keeps at most one sweep waiting.
+* `tender_discovery` — periodic, every 15 minutes: reads Mercado Público's open tenders into
+  `procurement.notice` for «En Mercado Público» (`tender.discovery.run_discovery`, through
+  `QueueContext.discovery`). No model is called; a queueing lock keeps at most one waiting.
 
 Each child's app carries only its own queue's tasks: a worker defers every periodic task of its app,
 so a shared app would fill a queue no process serves while the other feature is off.
@@ -62,6 +65,7 @@ from origenlab_worker.triage import (
 QUEUE = "triage"
 TENDER_QUEUE = "tenders"
 BID_SWEEP_LOCK = "bid-preparation-sweep"
+DISCOVERY_LOCK = "tender-discovery"
 APP_NAME_QUEUE = "origenlab-worker-queue"
 APP_NAME_TRIAGE = "origenlab-worker-triage"
 SEARCH_PATH = "procrastinate, pg_catalog"
@@ -83,6 +87,8 @@ class QueueContext:
     revision: str | None = None
     #: The tender child's sweep (`triage_cli.run_tender_worker` sets it): runs, returns counts.
     bid_sweep: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
+    #: The tender child's «En Mercado Público» run (`triage_cli.discovery_for`): returns counts.
+    discovery: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
     log: Callable[[dict[str, Any]], None] = lambda event: print(json.dumps(event, sort_keys=True), file=sys.stdout,
                                                                   flush=True)
 
@@ -191,6 +197,15 @@ def _register_tender_tasks(app: procrastinate.App) -> None:
         if ctx.bid_sweep is None:
             raise RuntimeError("queue_context_not_configured")
         ctx.log({"event": "bid_preparation_sweep", **ctx.bid_sweep()})
+
+    @app.periodic(cron="*/15 * * * *", periodic_id="discovery")
+    @app.task(name="tender_discovery", queue=TENDER_QUEUE, queueing_lock=DISCOVERY_LOCK, retry=False,
+              pass_context=False)
+    def tender_discovery(timestamp: int) -> None:
+        ctx = CONTEXT
+        if ctx.discovery is None:
+            raise RuntimeError("queue_context_not_configured")
+        ctx.log({"event": "tender_discovery", **ctx.discovery()})
 
 
 def defer_triage(app: procrastinate.App, source_record_ids: list[str]) -> int:

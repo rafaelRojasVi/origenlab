@@ -844,8 +844,10 @@ the notice history is evidence an operator reads.
 
 ### W7a — Licitación abierta a mano → preparación de la oferta
 
-Licitaciones fase 1 (built, not deployed — [`STATUS.md`](STATUS.md) §2.7.139). A tender the operator
-opens by code or link is **not** a W7 notice: it is a `crm.opportunity` with `kind = 'tender'`
+Licitaciones fase 1 (live — [`STATUS.md`](STATUS.md) §2.7.139, §2.7.140). The operator finds the
+tender in «En Mercado Público» — the worker's sweep keeps every open Mercado Público tender that
+fits the catalog in `procurement.notice` (machine evidence, no case) — and «Preparar» opens it, or
+opens one by code or link. A tender opened this way is **not** a W7 notice: it is a `crm.opportunity` with `kind = 'tender'`
 and its own `tender_status`, kept out of every general sales read. Machine proposes; the operator
 reviews and uploads the package to Mercado Público by hand — nothing is submitted for them.
 
@@ -862,7 +864,8 @@ reviews and uploads the package to Mercado Público by hand — nothing is submi
 No price leaves unseen: the `fill` phase runs only after the offer quote is approved. The printed
 offer's per-line IVA is allocated so the lines add up to the quote's stored IVA. The worker never
 writes a quote; the API builds the draft. Not in phase 1: fetching the bases through the API,
-relevance ranking, Compra Ágil, and award capture.
+Compra Ágil, and award capture. Relevance is the catalog-family match of «En Mercado Público»
+(§2.7.140), not a learned ranking.
 
 ### W8 — Supplier and product review
 

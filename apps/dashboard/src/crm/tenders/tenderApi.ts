@@ -1,6 +1,7 @@
 /**
  * The one client for «Licitaciones»: every call the dashboard makes about tenders lives here (later
- * tasks add to it). The list of tenders and «Nueva licitación» (`open-tender-case`); one tender's page
+ * tasks add to it). The list of tenders, «En Mercado Público» (`GET /v2/tenders/discovered`) and
+ * «Nueva licitación» (`open-tender-case`); one tender's page
  * (`GET /v2/tenders/{id}`, `set-tender-status`, `attach-tender-annexes` (multipart), «Quitar anexo»
  * (`remove-tender-annex`), `prepare-tender-bid`,
  * `create-tender-offer-quote` and an output file's signed link); and the bidder's data and standard
@@ -66,6 +67,50 @@ export interface OpenTenderCaseBody {
 
 export const fetchTenders = (status?: TenderStatus) =>
   fetchJsonGet<TenderList>(operatorApiUrl("/v2/tenders", status ? { status } : undefined));
+
+/* ── «En Mercado Público» ─────────────────────────────────────────────────── */
+
+/** `catalogo`: names a family of the catalog; `laboratorio`: other laboratory equipment. */
+export type DiscoveryTier = "catalogo" | "laboratorio";
+
+export interface DiscoveredItem {
+  name: string | null;
+  description: string | null;
+  quantity: number | string | null;
+  unit: string | null;
+  unspsc: string | null;
+}
+
+export interface DiscoveredNotice {
+  id: string;
+  code: string;
+  title: string;
+  buyer: string | null;
+  region: string | null;
+  closes_at: string | null;
+  published_at: string | null;
+  first_seen_at: string | null;
+  estimated_amount: { amount: number; currency: string } | null;
+  tier: DiscoveryTier;
+  families: { key: string; label: string }[];
+  items: DiscoveredItem[];
+  item_count: number;
+  /** False until the sweep has read the notice's detail (buyer, items). */
+  detail: boolean;
+  portal_url: string;
+  /** The open tender case already made from it, if any. */
+  opportunity_id: string | null;
+}
+
+export interface DiscoveredList {
+  notices: DiscoveredNotice[];
+  counts: Record<DiscoveryTier, number>;
+  families: { key: string; label: string }[];
+  last_checked_at: string | null;
+}
+
+/** Open Mercado Público tenders that fit the catalog (the worker's sweep, every 15 minutes). */
+export const fetchDiscoveredTenders = () => fetchJsonGet<DiscoveredList>(operatorApiUrl("/v2/tenders/discovered"));
 
 /* ── the bidder ───────────────────────────────────────────────────────────── */
 

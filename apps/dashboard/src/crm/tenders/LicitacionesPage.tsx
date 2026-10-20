@@ -3,15 +3,17 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { formatMoney } from "../money";
-import { Badge, Button, EmptyState, PageHeader, ResourceGate, Skeleton, type Tone } from "../ui";
+import { Badge, Button, EmptyState, PageHeader, ResourceGate, Segmented, Skeleton, type Tone } from "../ui";
 import { useResource } from "../useResource";
+import { DiscoveredTenders } from "./DiscoveredTenders";
 import { NewTenderDialog } from "./NewTenderDialog";
 import { TenderPage } from "./TenderPage";
 import { TENDER_STATUSES, fetchTenders, type TenderList, type TenderRow, type TenderStatus } from "./tenderApi";
 import { closingLabel, closingWhen } from "./tenderTime";
 
 /**
- * «Licitaciones»: the tenders being prepared, as a list a salesperson reads at a glance — code and
+ * «Licitaciones» opens on «En Mercado Público» (`DiscoveredTenders`): the open tenders that fit the
+ * catalog, each with «Preparar». «Mis licitaciones» is the tenders being prepared, as a list a salesperson reads at a glance — code and
  * title, the institution (marked «por confirmar» when the machine proposed it), when it closes and how
  * long is left (Santiago time), the amount (neto; «estimado» when it comes from the notice) and the
  * estado. Filter chips carry the count per estado; a row opens the tender's page (`TenderPage`). «Nueva licitación»
@@ -49,25 +51,54 @@ export function LicitacionesPage({
   return <TenderList navigate={navigate} now={now} />;
 }
 
+type View = "mercado" | "mias";
+
 function TenderList({ navigate, now }: { navigate: Navigate; now?: Date }) {
   const { session } = useAuthSession();
   const mayOpen = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
-  const [status, setStatus] = useState<TenderStatus | null>(null);
-  const [asking, setAsking] = useState(false);
-  const load = useCallback(() => fetchTenders(status ?? undefined), [status]);
-  const [state, reload] = useResource(load, [status]);
-  // The counts stay on the chips while another estado loads.
-  const counts = useRef<TenderList["counts"]>(ZERO);
-  if (state.kind === "ready") counts.current = state.data.counts;
-  const total = TENDER_STATUSES.reduce((n, s) => n + counts.current[s], 0);
+  const [view, setView] = useState<View>("mercado");
+  // The code «Preparar» passed, or "" for an empty «Nueva licitación»; null: the dialog is closed.
+  const [asking, setAsking] = useState<string | null>(null);
   const at = now ?? new Date();
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Licitaciones"
-        actions={mayOpen ? <Button variant="primary" onClick={() => setAsking(true)}>Nueva licitación</Button> : undefined}
+        actions={mayOpen ? <Button variant="primary" onClick={() => setAsking("")}>Nueva licitación</Button> : undefined}
       />
+      <Segmented<View>
+        label="Vista"
+        value={view}
+        onChange={setView}
+        options={[
+          { value: "mercado", label: "En Mercado Público" },
+          { value: "mias", label: "Mis licitaciones" },
+        ]}
+      />
+      {view === "mercado" ? (
+        <DiscoveredTenders navigate={navigate} now={at} mayOpen={mayOpen} onPrepare={setAsking} />
+      ) : (
+        <MyTenders navigate={navigate} now={at} />
+      )}
+      {asking !== null ? (
+        <NewTenderDialog navigate={navigate} initialReference={asking} onClose={() => setAsking(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+function MyTenders({ navigate, now: at }: { navigate: Navigate; now: Date }) {
+  const [status, setStatus] = useState<TenderStatus | null>(null);
+  const load = useCallback(() => fetchTenders(status ?? undefined), [status]);
+  const [state, reload] = useResource(load, [status]);
+  // The counts stay on the chips while another estado loads.
+  const counts = useRef<TenderList["counts"]>(ZERO);
+  if (state.kind === "ready") counts.current = state.data.counts;
+  const total = TENDER_STATUSES.reduce((n, s) => n + counts.current[s], 0);
+
+  return (
+    <div className="space-y-4">
       <div role="group" aria-label="Filtrar por estado" className="flex flex-wrap gap-1.5">
         {TENDER_STATUSES.map((s) => (
           <Chip key={s} label={STATUS_LABEL[s]} count={counts.current[s]} pressed={status === s} onClick={() => setStatus(s)} />
@@ -96,7 +127,6 @@ function TenderList({ navigate, now }: { navigate: Navigate; now?: Date }) {
           )
         }
       </ResourceGate>
-      {asking ? <NewTenderDialog navigate={navigate} onClose={() => setAsking(false)} /> : null}
     </div>
   );
 }

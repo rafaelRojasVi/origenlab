@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from origenlab_api.v2.model_spend import spend_summary
 from origenlab_api.v2.tenders.bidder import current_bidder_profile
 from origenlab_api.v2.tenders.codes import portal_url
+from origenlab_api.v2.tenders.discovery import discovered_notices
 from origenlab_api.v2.tenders.preparation import offer_revision_sql, public_outputs
 
 SANTIAGO = ZoneInfo("America/Santiago")
@@ -230,6 +231,11 @@ class TenderReadRepository:
                        offer_price=offer_prices) for r in shown
         ]
         return {"tenders": tenders, "counts": counts}
+
+    def discovered(self, now: datetime) -> dict[str, Any]:
+        """«En Mercado Público»: the open notices the discovery sweep kept that fit the catalog."""
+        with self._read() as cur:
+            return discovered_notices(cur, now)
 
     def page(self, tender_id: str, now: datetime) -> dict[str, Any] | None:
         """One tender's page, or None when the id is not a tender."""

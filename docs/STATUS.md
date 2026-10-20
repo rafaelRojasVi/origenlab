@@ -3296,7 +3296,7 @@ Cotizador's API refuses a viewer; hidden in «Vista cliente»), never in `printa
 view (tested); not shown for an imported quote. Tests: vitest `enteredExpenses.test.ts`,
 `SummaryRail.test.tsx`, `QuotePrintView.test.tsx`.
 
-### 2.7.139 Licitaciones fase 1: tender cases, bidder data, anexos, bid preparation, model spend, 2026-10-19 — built on a branch, not merged, not applied, not deployed
+### 2.7.139 Licitaciones fase 1: tender cases, bidder data, anexos, bid preparation, model spend, 2026-10-19 — merged (#802), applied and deployed 2026-10-20, switched on
 
 Spec «Licitaciones con IA» §6.10 (tenders in their own space). Migration `20261020100000`
 ([`DOMAIN.md`](DOMAIN.md) §7.11): `crm.opportunity.kind` (`sale` | `tender`, existing cases `sale`,
@@ -3320,12 +3320,43 @@ same change (pgTAP `099_tender_bid_preparation.sql`, 69 assertions).
   (`open-tender-case` answers `tender_case_exists` for the same code). Closing a tender arrives with
   award capture (phase 3). A tender offer is approved without a recipient («Atención»): its print
   names the bidder and the buying institution.
-- **Not yet.** Nothing is merged, applied or deployed. The merge applies the migration and deploys
-  through `production-db-migrations`; the manual steps are the owner's bucket raise to 50 MiB, the
-  secrets (`ORIGENLAB_V2_CHILECOMPRA_TICKET` on the API), and `ORIGENLAB_WORKER_BID_ENABLED=true`
-  last ([`OPERATIONS.md`](OPERATIONS.md) §8.14). No
-  hosted run has happened: memory of RapidOCR on the starter plan and the models'
-  real cost are unmeasured. Out of scope in phase 1: API fetch of the bases, relevance, Compra Ágil,
+- **Live, 2026-10-20.** #802 merged (8c02824e); `production-db-migrations` backed up, applied
+  `20261020100000` and deployed (release run green). The owner's steps are done: the `crm-documents`
+  bucket is at 50 MB **and its allowed types now include Word, Excel and zip** (it allowed only PDF,
+  JPEG and PNG); `ORIGENLAB_V2_CHILECOMPRA_TICKET` is on the API; `ORIGENLAB_WORKER_BID_ENABLED=true`
+  on `origenlab-mail-triage` (the tender child started, its first sweep ran clean). No tender has
+  been prepared yet: memory of RapidOCR on the starter plan and the models' real cost are
+  unmeasured. Out of scope in phase 1: API fetch of the bases, relevance, Compra Ágil,
   award capture.
 - **Tests.** API `test_v2_tender*`, worker `test_tender_*`, dashboard `crm/tenders/*.test.*`, pgTAP
   `099_tender_bid_preparation.sql`.
+
+### 2.7.140 Licitaciones «En Mercado Público»: open tenders that fit the catalog, 2026-10-20 — built, deploys on merge
+
+Phase 1 opened a tender only from a code the operator already had. «Licitaciones» now opens on
+**«En Mercado Público»**: every open Mercado Público tender that fits what OrigenLab sells, with
+«Preparar» (opens it through `open-tender-case`, code filled in) or «Abrir» when a case exists.
+No schema change: the worker already had `select, insert, update` on `procurement.notice`.
+
+- **Worker** (`tender/discovery.py`, task `tender_discovery` on the tender child, every 15 minutes,
+  queueing lock `tender-discovery`): one list call (`licitaciones.json?estado=activas`), a broad title
+  gate, upsert into `procurement.notice`, then up to 60 details per run (buyer, items, estimate; the
+  list's head goes to `head_history`). A notice seen in the last two days that left a whole list
+  (≥ 500 rows) gets `disappeared_at`, never one a case was opened from. Needs the ticket on
+  `origenlab-mail-triage` (`ORIGENLAB_V2_CHILECOMPRA_TICKET`, else `CHILECOMPRA_API_TICKET`);
+  without it the run logs `no_ticket`. No model is called.
+- **Matching** (`origenlab_api.v2.tenders.discovery`, shared by worker and API): tier `catalogo` when
+  the title, description or an item names a catalog family (balanzas y humedad, centrífugas,
+  homogeneizadores, ultrasonido, agitación y calefacción, osmómetros, electroforesis); tier
+  `laboratorio` for other laboratory equipment (UNSPSC segment 41 or named); laboratory services
+  («exámenes», reagents) are not shown once the detail says so.
+- **API** `GET /v2/tenders/discovered` (any signed-in operator; public notice data only): open notices
+  seen in the last two days, catalog first, then by closing. Proxy allowlists the exact path.
+- **Dashboard** (`crm/tenders/DiscoveredTenders.tsx`): «En Mercado Público» | «Mis licitaciones»;
+  family chips with counts, search, «nueva» for the last 24 h, items that matched, estimate, closing
+  in Santiago time, «Ver en Mercado Público».
+- **Not yet.** Deploys on merge; the owner adds the ticket to `origenlab-mail-triage`
+  ([`OPERATIONS.md`](OPERATIONS.md) §8.14). The first run fills the list; the details take a few runs
+  (60 per run).
+- **Tests.** API `test_v2_tender_discovery*.py`, worker `test_tender_discovery_database.py` and
+  `test_task_queue.py`, dashboard `LicitacionesPage.test.tsx`, proxy `allowlist.test.ts`.
