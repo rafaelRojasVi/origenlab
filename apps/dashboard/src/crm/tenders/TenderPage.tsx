@@ -1,11 +1,11 @@
-import { useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { commandMissing } from "../../api/refusalEnvelope";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { formatMoney } from "../money";
 import { toCotizador } from "../quotes/openOrCreateQuote";
-import { Badge, Button, ExternalLink, Section, Skeleton, fmtDateTime, toast } from "../ui";
+import { Badge, Button, ExternalLink, Section, Skeleton, buttonClass, fmtDateTime, toast } from "../ui";
 import { AnnexUpload } from "./AnnexUpload";
 import { ChecklistList, ResumenList } from "./TenderReading";
 import { FilledForms, PackageBlock, SpecSheets } from "./TenderOutputs";
@@ -21,7 +21,7 @@ import {
 } from "./tenderApi";
 import { MATCH_ES, QUOTE_STATUS_ES, capText, definitive, failureText, labelOf, refusalText } from "./tenderLabels";
 import { closingLabel, closingWhen } from "./tenderTime";
-import { useTenderPage } from "./useTenderPage";
+import { POLL_MS, useTenderPage, type PollTrouble } from "./useTenderPage";
 
 /**
  * One tender's page, in the order the work is done: upload the anexos, let the machine read them
@@ -39,6 +39,9 @@ const READING = "Leyendo los anexos… (unos minutos)";
 const FILLING = "Llenando los formularios… (unos minutos)";
 const BIDDER_MISSING = "Completa los Datos para licitaciones en Preferencias.";
 const NEEDS_READ = "Primero lee los anexos con «Preparar oferta».";
+const READ_RUNNING = "Espera a que termine la lectura.";
+const RETRYING = "No se pudo actualizar; reintentando…";
+const STOPPED = "No se pudo actualizar la licitación. Recarga la página.";
 
 const running = (p: Preparation | null) => p?.status === "queued" || p?.status === "running";
 
@@ -57,7 +60,7 @@ export function TenderPage({
 }) {
   const { session } = useAuthSession();
   const allowed = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
-  const [state, reload] = useTenderPage(id, allowed, pollMs);
+  const [state, reload, trouble] = useTenderPage(id, allowed, pollMs);
 
   if (!allowed) {
     return (
@@ -74,7 +77,7 @@ export function TenderPage({
       <BackLink navigate={navigate} />
       {state.kind === "loading" ? <Skeleton rows={6} /> : null}
       {state.kind === "error" ? <LoadProblem error={state.error} reload={reload} /> : null}
-      {state.kind === "ready" ? <TenderBody data={state.data} reload={reload} now={now ?? new Date()} /> : null}
+      {state.kind === "ready" ? <TenderBody data={state.data} reload={reload} trouble={trouble} announceMs={pollMs ?? POLL_MS} now={now ?? new Date()} /> : null}
     </div>
   );
 }
@@ -201,12 +204,49 @@ function Failure({ prep, cap }: { prep: Preparation; cap: string }) {
 
 /* ── the page ── */
 
-function TenderBody({ data, reload, now }: { data: TenderPageData; reload: () => void; now: Date }) {
+/** Once a phase the page saw working is done, the line to announce: done, or why it failed. */
+function useCompletion(read: Preparation | null, fill: Preparation | null, cap: string, ms: number): string | null {
+  const seen = useRef<Partial<Record<PreparationPhase, { id: string; busy: boolean }>>>({});
+  const [line, setLine] = useState<string | null>(null);
+  useEffect(() => {
+    let said: string | null = null;
+    for (const prep of [read, fill]) {
+      if (!prep) continue;
+      const before = seen.current[prep.phase];
+      const busy = running(prep);
+      if (before?.id === prep.id && before.busy && !busy) {
+        said = prep.status === "ready" ? (prep.phase === "read" ? "Lectura lista." : "Formularios listos.") : failureText(prep.failure_code, prep.status, cap);
+      }
+      seen.current[prep.phase] = { id: prep.id, busy };
+    }
+    if (said === null) return undefined;
+    setLine(said);
+    const timer = setTimeout(() => setLine(null), ms);
+    return () => clearTimeout(timer);
+  }, [read, fill, cap, ms]);
+  return line;
+}
+
+function TenderBody({
+  data,
+  reload,
+  trouble,
+  announceMs,
+  now,
+}: {
+  data: TenderPageData;
+  reload: () => void;
+  trouble: PollTrouble;
+  /** How long a «lista» line stays in the live region: one polling cycle. */
+  announceMs: number;
+  now: Date;
+}) {
   const { tender, annexes, offer_quote: offer, spend, bidder_ready: bidderReady } = data;
   const read = data.preparations.read;
   const fill = data.preparations.fill;
   const cap = spend.cap_usd;
   const prepare = usePrepare(tender.id, cap, reload);
+  const completion = useCompletion(read, fill, cap, announceMs);
   const offerKey = useRef<{ sig: string; key: string } | null>(null);
   const [offerBusy, setOfferBusy] = useState(false);
   const [offerProblem, setOfferProblem] = useState<string | null>(null);
@@ -236,15 +276,17 @@ function TenderBody({ data, reload, now }: { data: TenderPageData; reload: () =>
   const offerApproved = offer?.status === "approved" || offer?.status === "sent";
   const fillReason = !bidderReady
     ? BIDDER_MISSING
-    : !readReady
-      ? NEEDS_READ
-      : !offer
-        ? "Crea la oferta económica primero."
-        : !offerApproved
-          ? "Aprueba la oferta económica en el Cotizador."
-          : capReached
-            ? capText(cap)
-            : null;
+    : readRunning
+      ? READ_RUNNING
+      : !readReady
+        ? NEEDS_READ
+        : !offer
+          ? "Crea la oferta económica primero."
+          : !offerApproved
+            ? "Aprueba la oferta económica en el Cotizador."
+            : capReached
+              ? capText(cap)
+              : null;
   const checklist = fill?.result?.checklist?.length ? fill.result.checklist : read?.result?.checklist ?? [];
   const items = read?.result?.items ?? [];
 
@@ -294,6 +336,8 @@ function TenderBody({ data, reload, now }: { data: TenderPageData; reload: () =>
       <div role="status" aria-live="polite" className="empty:hidden">
         {readRunning ? <WorkingLine text={READING} /> : null}
         {fillRunning ? <WorkingLine text={FILLING} /> : null}
+        {completion ? <p className="px-1 py-1 text-[13px] font-medium text-ink">{completion}</p> : null}
+        {trouble ? <p className="px-1 py-1 text-[13px] font-medium text-warn">{trouble === "stopped" ? STOPPED : RETRYING}</p> : null}
       </div>
 
       <Section title="Anexos" named>
@@ -377,9 +421,16 @@ function TenderBody({ data, reload, now }: { data: TenderPageData; reload: () =>
               {!offerApproved ? (
                 <p className="text-[12.5px] text-ink-muted">Pon los precios y aprueba la cotización en el Cotizador para poder llenar los formularios.</p>
               ) : null}
-              <Button variant="primary" className="min-h-[44px] px-4 text-[13px]" onClick={() => toCotizador(offer.quote_id)}>
+              <a
+                href={crmHash("cotizador", offer.quote_id)}
+                onClick={(e) => {
+                  e.preventDefault();
+                  toCotizador(offer.quote_id);
+                }}
+                className={`${buttonClass("primary")} min-h-[44px] px-4 text-[13px]`}
+              >
                 Abrir en Cotizador
-              </Button>
+              </a>
             </div>
           ) : (
             <StepButton

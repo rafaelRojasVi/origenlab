@@ -4,12 +4,13 @@
  * Spanish lines for refusals and failure codes. Invented data only.
  */
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
+import { LicitacionesPage } from "./LicitacionesPage";
 import { TenderPage } from "./TenderPage";
 import { POLL_MS } from "./useTenderPage";
 
@@ -89,8 +90,14 @@ interface Call {
   body: unknown;
 }
 
-/** `pages` are served in order to each page read (the last one repeats); `posts` answer by path. */
+/** Page reads in flight right now, and the most ever at once. */
+const reading = { now: 0, max: 0 };
+
+/** `pages` are served in order to each page read (the last one repeats; a function answers itself);
+ *  `posts` answer by path. */
 function stubApi(pages: unknown[], posts: Record<string, () => Response> = {}) {
+  reading.now = 0;
+  reading.max = 0;
   const calls: Call[] = [];
   let reads = 0;
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -103,7 +110,12 @@ function stubApi(pages: unknown[], posts: Record<string, () => Response> = {}) {
     if (method === "GET" && u.pathname === `/v2/tenders/${TENDER}`) {
       const p = pages[Math.min(reads, pages.length - 1)];
       reads += 1;
-      return Promise.resolve(json(p));
+      reading.now += 1;
+      reading.max = Math.max(reading.max, reading.now);
+      const answer = typeof p === "function" ? Promise.resolve((p as () => Response | Promise<Response>)()) : Promise.resolve(json(p));
+      return answer.finally(() => {
+        reading.now -= 1;
+      });
     }
     const answer = posts[u.pathname];
     return Promise.resolve(answer ? answer() : json({}, 404));
@@ -135,6 +147,7 @@ const posted = (calls: Call[], path: string) => calls.filter((c) => c.method ===
 
 beforeEach(() => clearResourceCache());
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   window.location.hash = "";
 });
@@ -296,7 +309,7 @@ describe("TenderPage — preparing", () => {
     expect(screen.queryByText("texto del servidor que no se muestra")).not.toBeInTheDocument();
   });
 
-  it("says a failure code in Spanish, and an unknown one with one generic line", async () => {
+  it("says a failure code in Spanish", async () => {
     stubApi([page({ preparations: { read: prep("read", { status: "failed", failure_code: "model_refused" }), fill: null } })]);
     renderPage();
     expect(await screen.findByText("El modelo no pudo leer estos anexos.")).toBeInTheDocument();
@@ -354,7 +367,9 @@ describe("TenderPage — offer, forms and package", () => {
     await waitFor(() => expect(posted(calls, "/v2/commands/create-tender-offer-quote")).toHaveLength(1));
     expect(posted(calls, "/v2/commands/create-tender-offer-quote")[0].body).toEqual({ opportunity_id: TENDER, preparation_id: READ });
     const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
-    fireEvent.click(await screen.findByRole("button", { name: "Abrir en Cotizador" }));
+    const cotizador = await screen.findByRole("link", { name: "Abrir en Cotizador" });
+    expect(cotizador).toHaveAttribute("href", `#/crm/cotizador/${QUOTE}`);
+    fireEvent.click(cotizador);
     scroll.mockRestore();
     expect(window.location.hash).toBe(`#/crm/cotizador/${QUOTE}`);
   });
@@ -424,5 +439,223 @@ describe("TenderPage — offer, forms and package", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Descargar paquete" }));
     await screen.findByText("No se pudo completar. Intenta de nuevo.");
     expect(screen.queryByRole("link", { name: /Descargar ahora/ })).not.toBeInTheDocument();
+  });
+});
+
+/* ── fix round 1 ─────────────────────────────────────────────────────────── */
+
+const queuedRead = () => page({ preparations: { read: prep("read", { status: "queued" }), fill: null } });
+/** Moves the fake clock inside `act`, so React renders what the timers caused. */
+const tick = async (ms: number) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
+const flush = async () => {
+  for (let i = 0; i < 5; i += 1) await tick(0);
+};
+
+describe("TenderPage — polling when reads fail", () => {
+  it("backs off 5 → 10 → 20 → 60 s and says it is retrying after two failures", async () => {
+    vi.useFakeTimers();
+    const down = () => new Response("bad gateway", { status: 502 });
+    const calls = stubApi([queuedRead(), down]);
+    renderPage();
+    await flush();
+    expect(pageReads(calls)).toBe(1);
+    await tick(5000);
+    expect(pageReads(calls)).toBe(2);
+    expect(screen.queryByText("No se pudo actualizar; reintentando…")).not.toBeInTheDocument();
+    await tick(9000);
+    expect(pageReads(calls)).toBe(2);
+    await tick(1000);
+    expect(pageReads(calls)).toBe(3);
+    expect(screen.getByText("No se pudo actualizar; reintentando…")).toBeInTheDocument();
+    expect(screen.getByText("Leyendo los anexos… (unos minutos)")).toBeInTheDocument();
+    await tick(19000);
+    expect(pageReads(calls)).toBe(3);
+    await tick(1000);
+    expect(pageReads(calls)).toBe(4);
+    await tick(59000);
+    expect(pageReads(calls)).toBe(4);
+    await tick(1000);
+    expect(pageReads(calls)).toBe(5);
+  });
+
+  it("stops polling on an API refusal and asks for a reload", async () => {
+    vi.useFakeTimers();
+    const calls = stubApi([queuedRead(), () => refusal(404, "tender_not_found")]);
+    renderPage();
+    await flush();
+    await tick(5000);
+    expect(pageReads(calls)).toBe(2);
+    expect(screen.getByText("No se pudo actualizar la licitación. Recarga la página.")).toBeInTheDocument();
+    await tick(120_000);
+    expect(pageReads(calls)).toBe(2);
+  });
+
+  it("a reload asked for during a poll waits for it: reads never overlap", async () => {
+    vi.useFakeTimers();
+    let release: (r: Response) => void = () => {};
+    const slow = () => new Promise<Response>((resolve) => { release = resolve; });
+    const calls = stubApi([queuedRead(), slow, queuedRead()], {
+      "/v2/commands/set-tender-status": () => json({ command: "set-tender-status" }),
+    });
+    renderPage();
+    await flush();
+    await tick(5000);
+    expect(pageReads(calls)).toBe(2);
+    fireEvent.click(within(screen.getByRole("group", { name: "Estado de la licitación" })).getByRole("button", { name: "Postulada" }));
+    await flush();
+    expect(posted(calls, "/v2/commands/set-tender-status")).toHaveLength(1);
+    expect(pageReads(calls)).toBe(2);
+    release(json(queuedRead()));
+    await flush();
+    expect(pageReads(calls)).toBe(3);
+    expect(reading.max).toBe(1);
+  });
+});
+
+describe("TenderPage — moving between tenders", () => {
+  it("tender A's late read never shows under tender B, and A is not read again", async () => {
+    const B = "99999999-9999-4999-8999-999999999999";
+    let releaseA: (r: Response) => void = () => {};
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const u = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
+      seen.push(u.pathname);
+      if (u.pathname === `/v2/tenders/${TENDER}`) return new Promise<Response>((resolve) => { releaseA = resolve; });
+      if (u.pathname === `/v2/tenders/${B}`) {
+        const b = page();
+        return Promise.resolve(json({ ...b, tender: { ...b.tender, id: B, title: "Reactivos de ejemplo B", code: "7654321-1-L126" } }));
+      }
+      return Promise.resolve(json({}, 404));
+    }));
+    const navigate = vi.fn();
+    const tree = (id: string) => (
+      <AuthSessionContext.Provider value={{ session: sessionAs("sales"), signOut: async () => true }}>
+        <LicitacionesPage id={id} navigate={navigate} now={NOW} />
+      </AuthSessionContext.Provider>
+    );
+    const { rerender } = render(tree(TENDER));
+    await waitFor(() => expect(seen).toContain(`/v2/tenders/${TENDER}`));
+    rerender(tree(B));
+    expect(await screen.findByRole("heading", { name: "Reactivos de ejemplo B" })).toBeInTheDocument();
+    releaseA(json(queuedRead()));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText("Compra de balanzas de ejemplo")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Reactivos de ejemplo B" })).toBeInTheDocument();
+    expect(seen.filter((p) => p === `/v2/tenders/${TENDER}`)).toHaveLength(1);
+  });
+});
+
+describe("TenderPage — announcing and small steps", () => {
+  it("announces «Lectura lista.» when the read finishes", async () => {
+    const ready = page({ preparations: { read: prep("read", { result: READ_RESULT }), fill: null } });
+    stubApi([queuedRead(), ready]);
+    renderPage("sales", 20);
+    await screen.findByText("Leyendo los anexos… (unos minutos)");
+    const live = await screen.findByText("Lectura lista.");
+    expect(live.closest("[aria-live]")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("announces the failure line when a fill fails", async () => {
+    const base = { read: prep("read", { result: READ_RESULT }) };
+    const running = page({ preparations: { ...base, fill: prep("fill", { status: "running" }) } });
+    const failed = page({ preparations: { ...base, fill: prep("fill", { status: "failed", failure_code: "package_too_large" }) } });
+    stubApi([running, failed]);
+    renderPage("sales", 20);
+    await screen.findByText("Llenando los formularios… (unos minutos)");
+    const status = screen.getByText("Llenando los formularios… (unos minutos)").closest("[aria-live]") as HTMLElement;
+    await waitFor(() => expect(within(status).getByText("El paquete es demasiado grande (más de 45 MB).")).toBeInTheDocument());
+  });
+
+  it("«Llenar formularios» waits for a running read", async () => {
+    stubApi([page({
+      preparations: { read: prep("read", { status: "running" }), fill: null },
+      offer_quote: { quote_id: QUOTE, revision_id: REV, number: "01300-26", status: "approved", neto: 1, iva: 0, total: 1 },
+    })]);
+    renderPage("sales", 60_000);
+    const button = await screen.findByRole("button", { name: "Llenar formularios" });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription("Espera a que termine la lectura.");
+  });
+
+  it("drops a signed link after nine minutes so it is asked for again", async () => {
+    vi.useFakeTimers();
+    stubApi([page({
+      preparations: { read: prep("read", { result: READ_RESULT }), fill: prep("fill", { result: FILL_RESULT, outputs: FILL_OUTPUTS }) },
+    })], {
+      [`/v2/tenders/${TENDER}/preparations/${FILL}/files/paquete/url`]: () => json({ url: "https://storage.example.cl/signed/p.zip" }),
+    });
+    renderPage();
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Descargar paquete" }));
+    await flush();
+    expect(screen.getByRole("link", { name: /Descargar ahora/ })).toBeInTheDocument();
+    await tick(8 * 60_000);
+    expect(screen.getByRole("link", { name: /Descargar ahora/ })).toBeInTheDocument();
+    await tick(60_000);
+    expect(screen.queryByRole("link", { name: /Descargar ahora/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("TenderPage — idempotency keys", () => {
+  it("«Preparar oferta» keeps its key for a retry and takes a fresh one after a definitive refusal", async () => {
+    let answer: () => Response = () => new Response("bad gateway", { status: 502 });
+    const calls = stubApi([page()], { "/v2/commands/prepare-tender-bid": () => answer() });
+    renderPage();
+    const button = await screen.findByRole("button", { name: "Preparar oferta" });
+    fireEvent.click(button);
+    await screen.findByText("No se pudo completar. Intenta de nuevo.");
+    fireEvent.click(button);
+    await waitFor(() => expect(posted(calls, "/v2/commands/prepare-tender-bid")).toHaveLength(2));
+    answer = () => refusal(422, "no_annexes");
+    await waitFor(() => expect(button).not.toBeDisabled());
+    fireEvent.click(button);
+    await screen.findByText("Sube los anexos antes de preparar la oferta.");
+    fireEvent.click(button);
+    await waitFor(() => expect(posted(calls, "/v2/commands/prepare-tender-bid")).toHaveLength(4));
+    const keys = posted(calls, "/v2/commands/prepare-tender-bid").map((c) => c.key);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+    expect(keys[3]).not.toBe(keys[0]);
+  });
+
+  it("the estado keeps its key for a retry and takes a fresh one after a definitive refusal", async () => {
+    let answer: () => Response = () => new Response("bad gateway", { status: 502 });
+    const calls = stubApi([page()], { "/v2/commands/set-tender-status": () => answer() });
+    renderPage();
+    const group = await screen.findByRole("group", { name: "Estado de la licitación" });
+    const postulada = within(group).getByRole("button", { name: "Postulada" });
+    fireEvent.click(postulada);
+    await screen.findByText("No se pudo completar. Intenta de nuevo.");
+    answer = () => refusal(409, "tender_already_at_status");
+    fireEvent.click(postulada);
+    await screen.findByText("La licitación ya estaba en ese estado.");
+    fireEvent.click(postulada);
+    await waitFor(() => expect(posted(calls, "/v2/commands/set-tender-status")).toHaveLength(3));
+    const keys = posted(calls, "/v2/commands/set-tender-status").map((c) => c.key);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it("«Crear oferta económica» keeps its key for a retry and takes a fresh one after a definitive refusal", async () => {
+    let answer: () => Response = () => new Response("bad gateway", { status: 502 });
+    const calls = stubApi([page({ preparations: { read: prep("read", { result: READ_RESULT }), fill: null } })], {
+      "/v2/commands/create-tender-offer-quote": () => answer(),
+    });
+    renderPage();
+    const button = await screen.findByRole("button", { name: "Crear oferta económica" });
+    fireEvent.click(button);
+    await screen.findByText("No se pudo completar. Intenta de nuevo.");
+    answer = () => refusal(422, "no_items");
+    fireEvent.click(button);
+    await screen.findByText("La lectura no encontró ítems para cotizar.");
+    fireEvent.click(button);
+    await waitFor(() => expect(posted(calls, "/v2/commands/create-tender-offer-quote")).toHaveLength(3));
+    const keys = posted(calls, "/v2/commands/create-tender-offer-quote").map((c) => c.key);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
   });
 });

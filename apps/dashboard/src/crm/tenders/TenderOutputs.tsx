@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Button } from "../ui";
 import { preparationFileUrl, type Preparation, type PreparationOutput } from "./tenderApi";
 import { DRIVE_ES, FICHA_ESTADO_ES, OUTPUT_KIND_ES, labelOf, refusalText } from "./tenderLabels";
@@ -8,6 +8,9 @@ import { DRIVE_ES, FICHA_ESTADO_ES, OUTPUT_KIND_ES, labelOf, refusalText } from 
  * sheets, and the package. Every file opens through a signed link asked for on the click and shown
  * as a real link (a window opened after an await is popup-blocked in Safari); only `https://` links.
  */
+
+/** Signed links last 10 minutes; the shown one is dropped a minute early, so a click never meets a dead link. */
+export const LINK_SHOWN_MS = 9 * 60_000;
 
 /** A button that asks for the file's link, then shows it as a link valid ten minutes. */
 export function FileLink({
@@ -31,6 +34,12 @@ export function FileLink({
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!link) return undefined;
+    const timer = setTimeout(() => setLink(null), LINK_SHOWN_MS);
+    return () => clearTimeout(timer);
+  }, [link]);
 
   const ask = async () => {
     if (busy) return;

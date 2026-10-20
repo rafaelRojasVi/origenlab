@@ -44,7 +44,8 @@ export function LicitacionesPage({
   /** A fixed clock, for tests. */
   now?: Date;
 }) {
-  if (id) return <TenderPage id={id} navigate={navigate} now={now} />;
+  // Keyed by the tender: nothing of A (its state, a read in flight) can render or act under B.
+  if (id) return <TenderPage key={id} id={id} navigate={navigate} now={now} />;
   return <TenderList navigate={navigate} now={now} />;
 }
 
