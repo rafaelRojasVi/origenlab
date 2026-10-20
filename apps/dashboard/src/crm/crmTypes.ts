@@ -294,6 +294,8 @@ export interface PipelineResponse {
   drive_configured: boolean;
   /** The Drive «Casos» folder, for «Hoy»'s header; null when the API has no folder configured. */
   drive_casos_url?: string | null;
+  /** Tenders that close tomorrow (Hoy's only tender signal); absent from an older API. */
+  tenders_closing?: { id: string; code: string | null; title: string; closes_at: string | null }[];
 }
 
 export interface SupplierDirectoryEntry {

@@ -71,7 +71,9 @@ describe("the Cotizador section", () => {
     const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
     const names = menu.getAllByRole("link").map((a) => a.textContent);
     expect(names.indexOf("Cotizador")).toBe(names.indexOf("Oportunidades") + 1);
-    expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Cotizador") + 1);
+    expect(names.indexOf("Licitaciones")).toBe(names.indexOf("Cotizador") + 1);
+    expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Licitaciones") + 1);
+    expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/crm/licitaciones");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("aria-current", "page");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/crm/cotizador");
     expect(screen.getByRole("tablist", { name: "Cotizaciones abiertas" })).toBeInTheDocument();
@@ -88,6 +90,7 @@ describe("the Cotizador section", () => {
     const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
     expect(menu.queryByRole("link", { name: "Cotizador" })).not.toBeInTheDocument();
     expect(menu.getByRole("link", { name: "Oportunidades" })).toBeInTheDocument();
+    expect(menu.getByRole("link", { name: "Licitaciones" })).toBeInTheDocument();
     expect(screen.getByText("Sólo ventas y administración pueden cotizar.")).toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(paths.some((p) => p.startsWith("/v2/quotes"))).toBe(false);

@@ -117,6 +117,7 @@ describe("dashboard read-only policy", () => {
   // Idempotency-Key). Nothing is sent to Mercado Público or anyone else from here.
   const TENDER_API_FILE = "../crm/tenders/tenderApi.ts";
   const TENDER_API_PATHS = [
+    "/v2/commands/open-tender-case",
     "/v2/commands/save-bidder-profile",
     "/v2/commands/add-bidder-document",
     "/v2/commands/retire-bidder-document",

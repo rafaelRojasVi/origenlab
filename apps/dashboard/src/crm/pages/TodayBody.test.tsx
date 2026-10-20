@@ -672,3 +672,41 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     expect(navigate).not.toHaveBeenCalledWith("cotizador", expect.anything());
   });
 });
+
+describe("«Licitación cierra mañana»", () => {
+  const TENDER = "55555555-5555-4555-8555-555555555555";
+  const closing = [{ id: TENDER, code: "1234567-12-LE26", title: "Compra de balanzas de ejemplo", closes_at: "2026-10-07T18:00:00Z" }];
+
+  function renderTenders(tendersClosing: typeof closing | undefined, items: OpportunityCardData[] = []) {
+    const navigate = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <TodayBody items={items} navigate={navigate} onChanged={() => undefined} now={NOW} tendersClosing={tendersClosing} />
+      </AuthSessionContext.Provider>,
+    );
+    return navigate;
+  }
+
+  it("shows one line per tender that closes tomorrow, linking to its page", async () => {
+    stub();
+    const navigate = renderTenders(closing);
+    const link = await screen.findByRole("link", { name: "Licitación cierra mañana: Compra de balanzas de ejemplo" });
+    expect(link).toHaveAttribute("href", `#/crm/licitaciones/${TENDER}`);
+    fireEvent.click(link);
+    expect(navigate).toHaveBeenCalledWith("licitaciones", TENDER);
+  });
+
+  it("shows nothing when no tender closes tomorrow or the API sends none", async () => {
+    stub();
+    renderTenders([]);
+    await screen.findByText("No hay nada que hacer ahora mismo.");
+    expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
+  });
+
+  it("a case never turns into a tender line: only tenders_closing does", async () => {
+    stub();
+    renderTenders(undefined, [card({ title: "Licitación 1234567-12-LE26 — Compra" })]);
+    await screen.findByText("No hay nada que hacer ahora mismo.");
+    expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
+  });
+});

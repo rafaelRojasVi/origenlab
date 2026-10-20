@@ -89,9 +89,21 @@ describe("Cotizador route", () => {
   it("is in the navigation between Oportunidades and Organizaciones, titled «Cotizador», for sales and admin", () => {
     const ids = CRM_NAV.map((n) => n.id);
     expect(ids.indexOf("cotizador")).toBe(ids.indexOf("oportunidades") + 1);
-    expect(ids.indexOf("organizaciones")).toBe(ids.indexOf("cotizador") + 1);
+    expect(ids.indexOf("licitaciones")).toBe(ids.indexOf("cotizador") + 1);
+    expect(ids.indexOf("organizaciones")).toBe(ids.indexOf("licitaciones") + 1);
     expect(sectionTitle("cotizador")).toBe("Cotizador");
     expect(CRM_NAV.find((n) => n.id === "cotizador")?.quoting).toBe(true);
+  });
+
+  it("«Licitaciones» is for every role and has a list and a page per tender", () => {
+    expect(sectionTitle("licitaciones")).toBe("Licitaciones");
+    const nav = CRM_NAV.find((n) => n.id === "licitaciones");
+    expect(nav?.quoting).toBeUndefined();
+    expect(nav?.adminOnly).toBeUndefined();
+    expect(parseShellHash("#/crm/licitaciones")).toEqual({ section: "licitaciones", id: null });
+    expect(parseShellHash(`#/crm/licitaciones/${id}`)).toEqual({ section: "licitaciones", id });
+    expect(crmHash("licitaciones", id)).toBe(`#/crm/licitaciones/${id}`);
+    expect(redirectHash("#/crm/licitaciones")).toBeNull();
   });
 
   it("redirects the old one-quote address to the module's tab", () => {

@@ -42,6 +42,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
         {(p) => (
           <TodayBody
             items={p.items}
+            tendersClosing={p.tenders_closing}
             navigate={navigate}
             onChanged={reloadPipeline}
             onCleared={onCleared}

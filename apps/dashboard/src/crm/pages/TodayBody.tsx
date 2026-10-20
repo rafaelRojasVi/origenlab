@@ -41,7 +41,7 @@ import { contactLine, displayName, quoteProduct } from "../caseDisplay";
 import { composeInSharedMailbox, inSharedMailbox } from "../gmailLinks";
 import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
-import type { CrmSection, DatosTab } from "../crmRoute";
+import { crmHash, type CrmSection, type DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
@@ -49,6 +49,7 @@ import {
   followUpsDue,
   historicalCount,
   organizationsToConfirm,
+  tenderClosingLines,
   wroteAfterWinning,
   type CotizarQueueItem,
   type DueTask,
@@ -98,6 +99,7 @@ export function TodayBody({
   refreshing = false,
   now,
   people,
+  tendersClosing,
   aside,
 }: {
   items: OpportunityCardData[];
@@ -111,6 +113,8 @@ export function TodayBody({
   now?: Date;
   /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
   people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
+  /** `tenders_closing` from the pipeline: the tenders that close tomorrow (a tender is in no other list). */
+  tendersClosing?: { id: string; title: string }[];
   /** The main column's last panel: the quote number and the rates. */
   aside?: ReactNode;
 }) {
@@ -148,7 +152,8 @@ export function TodayBody({
     onCleared?.();
   }, [onCleared]);
 
-  const totalQueue = queue.length + forwards.length;
+  const tenderLines = useMemo(() => tenderClosingLines(tendersClosing), [tendersClosing]);
+  const totalQueue = queue.length + forwards.length + tenderLines.length;
   const nextFollowUps = useMemo(() => followUpsDue(items, at).slice(0, 3), [items, at]);
 
   return (
@@ -171,6 +176,9 @@ export function TodayBody({
             now={at}
             me={me}
           />
+
+          {/* ─── «Licitación cierra mañana» — Hoy's one tender signal ─── */}
+          {tenderLines.length > 0 ? <TenderClosingSection lines={tenderLines} navigate={navigate} /> : null}
 
           {/* ─── Empty state ─── */}
           {totalQueue === 0 && (
@@ -212,6 +220,31 @@ export function TodayBody({
         </Modal>
       ) : null}
     </div>
+  );
+}
+
+/* ─────────────────────────────────────── «Licitación cierra mañana» ── */
+
+function TenderClosingSection({ lines, navigate }: { lines: { id: string; text: string }[]; navigate: Navigate }) {
+  return (
+    <section aria-label="Licitaciones que cierran mañana" className="overflow-hidden rounded-xl border border-warn/30 bg-warn-bg">
+      <ul className="divide-y divide-warn/20">
+        {lines.map((l) => (
+          <li key={l.id}>
+            <a
+              href={crmHash("licitaciones", l.id)}
+              onClick={(e) => {
+                e.preventDefault();
+                navigate("licitaciones", l.id);
+              }}
+              className="flex min-h-[44px] items-center px-4 py-2 text-[13px] font-medium text-warn hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            >
+              {l.text}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

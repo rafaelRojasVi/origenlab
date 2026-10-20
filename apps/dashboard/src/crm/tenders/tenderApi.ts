@@ -1,7 +1,7 @@
 /**
  * The one client for «Licitaciones»: every call the dashboard makes about tenders lives here (later
- * tasks add to it). Today: the bidder's data and standard documents («Datos para licitaciones» in
- * Preferencias) — `GET /v2/bidder`, `save-bidder-profile`, `add-bidder-document` (multipart),
+ * tasks add to it). Today: the list of tenders and «Nueva licitación» (`open-tender-case`), and the bidder's data and
+ * standard documents («Datos para licitaciones» in Preferencias) — `GET /v2/bidder`, `save-bidder-profile`, `add-bidder-document` (multipart),
  * `retire-bidder-document` and a document's signed link.
  *
  * Upstream everything about the bidder is sales/admin only (a viewer gets 403
@@ -23,6 +23,46 @@ export function newTenderCommandKey(): string {
 
 /** The API's refusal (code, message, status) behind an error; null for an error that is not the API's. */
 export const tenderRefusal = refusalOfError;
+
+/* ── the list and «Nueva licitación» ───────────────────────────────────────── */
+
+export type TenderStatus = "preparando" | "postulada" | "adjudicada" | "perdida";
+export const TENDER_STATUSES: readonly TenderStatus[] = ["preparando", "postulada", "adjudicada", "perdida"];
+
+export interface TenderRow {
+  id: string;
+  version: number;
+  code: string | null;
+  title: string;
+  institution: { id: string | null; name: string | null; confirmation: string | null };
+  closes_at: string | null;
+  status: TenderStatus;
+  /** The offer's neto, else the notice's estimate (`source: "estimado"`). */
+  amount: { neto: number; currency: string; source: "oferta" | "estimado" } | null;
+  offer_quote_number: string | null;
+  preparation: { read: string | null; fill: string | null };
+}
+
+export interface TenderList {
+  tenders: TenderRow[];
+  counts: Record<TenderStatus, number>;
+}
+
+/** What Hoy shows for a tender that closes tomorrow (`tenders_closing` in the pipeline). */
+export interface TenderClosing {
+  id: string;
+  code: string | null;
+  title: string;
+  closes_at: string | null;
+}
+
+export interface OpenTenderCaseBody {
+  reference: string;
+  buyer?: { name: string; rut?: string | null };
+}
+
+export const fetchTenders = (status?: TenderStatus) =>
+  fetchJsonGet<TenderList>(operatorApiUrl("/v2/tenders", status ? { status } : undefined));
 
 /* ── the bidder ───────────────────────────────────────────────────────────── */
 
@@ -131,6 +171,10 @@ async function post(path: string, init: RequestInit, idempotencyKey: string): Pr
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 export const fetchBidder = () => fetchJsonGet<BidderView>(operatorApiUrl("/v2/bidder"));
+
+/** Open a tender case from a Mercado Público code or link; the receipt names the new case. */
+export const openTenderCase = (body: OpenTenderCaseBody, idempotencyKey: string = newTenderCommandKey()) =>
+  post("/v2/commands/open-tender-case", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);
 
 export const saveBidderProfile = (body: BidderProfileBody, idempotencyKey: string = newTenderCommandKey()) =>
   post("/v2/commands/save-bidder-profile", { headers: JSON_HEADERS, body: JSON.stringify(body) }, idempotencyKey);
