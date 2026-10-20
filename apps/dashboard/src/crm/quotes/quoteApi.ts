@@ -331,6 +331,8 @@ export interface QuoteWorkspace {
   price_history: PriceHistory | null;
   /** The company's preferences as the rail applies them (`inputs.quote_preferences`); absent from an older API. */
   params?: QuotePreferences;
+  /** A tender's offer: its code and who bids (null without a bidder profile, or for staff without access); null for a sales quote. */
+  tender?: { code: string | null; bidder: { legal_name: string; rut: string } | null } | null;
 }
 
 /**

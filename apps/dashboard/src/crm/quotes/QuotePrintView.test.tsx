@@ -290,3 +290,58 @@ describe("Vista previa PDF — «Economía de la cotización» stays internal", 
     if (q.recipient) expect(q.recipient.name).toBe("Ana María Prueba");
   });
 });
+
+describe("Vista previa PDF — a tender's offer", () => {
+  const tenderOf = (bidder: { legal_name: string; rut: string } | null) => ({ code: "1234-56-LE26", bidder });
+  const BIDDER = { legal_name: "Oferente Ejemplo", rut: "11.111.111-1" };
+
+  /** The approved fixture with two item lines (neto 1.000.005 and 999.995: IVA 190.000,95 and 189.999,05 round half up). */
+  function tenderQuote(bidder: typeof BIDDER | null): QuoteWorkspace {
+    const ws = approved();
+    return {
+      ...ws,
+      tender: tenderOf(bidder),
+      current: {
+        ...ws.current!,
+        subtotal: "2000000", tax_total: "380000", grand_total: "2380000",
+        lines: [stored(1, "item", "Centrífuga de prueba", "1000005", "1000005"), stored(2, "item", "Balanza de prueba", "999995", "999995")],
+      },
+    };
+  }
+
+  it("prints the bidder, the tender code and the IVA and total of every line", () => {
+    const dialog = show(tenderQuote(BIDDER));
+    const sheet = within(dialog);
+    expect(sheet.getByText("OrigenLab")).toBeInTheDocument();
+    expect(sheet.getByText("Oferente: Oferente Ejemplo · RUT 11.111.111-1")).toBeInTheDocument();
+    expect(sheet.getByText("Licitación 1234-56-LE26")).toBeInTheDocument();
+    const table = within(sheet.getByRole("table"));
+    for (const h of ["Neto", "IVA 19 %", "Total"]) expect(table.getByRole("columnheader", { name: h })).toBeInTheDocument();
+    const rows = table.getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("$ 1.000.005");
+    expect(rows[1]).toHaveTextContent("$ 190.001"); // 190.000,95 half up
+    expect(rows[1]).toHaveTextContent("$ 1.190.006");
+    expect(rows[2]).toHaveTextContent("$ 189.999"); // 189.999,05
+    expect(rows[2]).toHaveTextContent("$ 1.189.994");
+    // The totals are the revision's own.
+    const totals = within(sheet.getByLabelText("Totales"));
+    expect(totals.getByText("Neto").nextSibling).toHaveTextContent("$ 2.000.000");
+    expect(totals.getByText("IVA 19 %").nextSibling).toHaveTextContent("$ 380.000");
+    expect(totals.getByText("Total CLP").nextSibling).toHaveTextContent("$ 2.380.000");
+    expectClientSafe(dialog);
+  });
+
+  it("a tender without a bidder, or a quote without a tender, prints as any quote", () => {
+    const plain = show(approved()).innerHTML;
+    cleanup();
+    expect(show(tenderQuote(null)).textContent).not.toMatch(/Oferente|Licitación/);
+    cleanup();
+    expect(show({ ...approved(), tender: null }).innerHTML).toBe(plain);
+  });
+
+  it("a non-tender quote prints exactly as before (snapshot)", () => {
+    const el = show(approved());
+    expect(el.querySelector("article")!.innerHTML).toMatchSnapshot();
+    expect(el.textContent).not.toMatch(/Oferente|Licitación/);
+  });
+});

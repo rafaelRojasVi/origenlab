@@ -25,6 +25,9 @@ export interface PrintLine {
   quantity: string | null;
   unitPrice: string | null;
   total: string | null;
+  /** A tender offer only: this line's IVA, and its neto plus IVA. */
+  iva?: string | null;
+  grossTotal?: string | null;
 }
 
 export interface PrintableQuote {
@@ -45,6 +48,8 @@ export interface PrintableQuote {
   terms: { label: string; value: string }[];
   clientNote: string | null;
   approvedBy: string | null;
+  /** A tender offer with a bidder: «Oferente» and «Licitación» in the header, IVA per line. Null otherwise. */
+  tender: { code: string | null; bidder: { legal_name: string; rut: string } } | null;
   /** Why it cannot be printed yet (prices missing); null when it can. */
   notReady: string | null;
 }
@@ -57,6 +62,30 @@ export function isPrintable(workspace: QuoteWorkspace): boolean {
   if (!cur) return false;
   if (ISSUED.has(cur.status)) return true;
   return cur.status === "draft" && cur.origin === "authored" && !!cur.draft;
+}
+
+/** `amount × rate`, rounded half up to whole pesos, as the worker's offer_payload does; exact decimal arithmetic. */
+function lineIva(amount: string | null, rate: string | null): string | null {
+  if (amount == null || rate == null) return null;
+  const parse = (v: string) => {
+    const m = v.trim().match(/^(-?)(\d+)(?:\.(\d+))?$/);
+    return m ? { neg: m[1] === "-", digits: BigInt(m[2] + (m[3] ?? "")), scale: (m[3] ?? "").length } : null;
+  };
+  const a = parse(amount);
+  const r = parse(rate);
+  if (!a || !r) return null;
+  const divisor = 10n ** BigInt(a.scale + r.scale);
+  const product = a.digits * r.digits;
+  const rounded = (product + divisor / 2n) / divisor; // half up on the magnitude
+  return `${a.neg && rounded !== 0n ? "-" : ""}${rounded}`;
+}
+
+/** Adds the tender's per-line IVA and total to the lines. */
+function withIva(lines: PrintLine[], rate: string | null): PrintLine[] {
+  return lines.map((l) => {
+    const iva = lineIva(l.total, rate);
+    return { ...l, iva, grossTotal: iva != null && l.total != null ? String(BigInt(l.total.split(".")[0]) + BigInt(iva)) : null };
+  });
 }
 
 const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
@@ -121,6 +150,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
   if (!cur || !isPrintable(ws)) return null;
   const label = quoteLabel({ label: cur.label, quote_number: ws.quote.quote_number, revision_no: cur.revision_no });
   const currency = cur.quote_currency ?? "CLP";
+  const tender = ws.tender?.bidder ? { code: ws.tender.code, bidder: ws.tender.bidder } : null;
   const caseInstitution = ws.case.institution ? { name: ws.case.institution.name, rut: ws.case.institution.rut } : null;
 
   if (ISSUED.has(cur.status)) {
@@ -147,7 +177,8 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       institution: snap?.institution ?? caseInstitution,
       recipient: snap?.recipient ?? null,
       client: snap?.client ?? clientLines(null),
-      lines,
+      lines: tender ? withIva(lines, cur.tax_rate ?? "0.19") : lines,
+      tender,
       totals: { net: cur.subtotal, iva: cur.tax_total, total: cur.grand_total },
       taxRate: cur.tax_rate,
       terms: termsOf(snap?.terms ?? {}, snap?.validityDays ?? cur.validity_days),
@@ -192,7 +223,8 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
     institution,
     recipient: recipient && text(typed.contact_name) ? { ...recipient, name: text(typed.contact_name) } : recipient,
     client: clientLines(typed),
-    lines,
+    lines: tender ? withIva(lines, cur.tax_rate ?? "0.19") : lines,
+    tender,
     totals: computed ? { net: computed.totals.net, iva: computed.totals.iva, total: computed.totals.total } : { net: null, iva: null, total: null },
     taxRate: cur.tax_rate,
     terms: termsOf(terms, validity ?? null),
