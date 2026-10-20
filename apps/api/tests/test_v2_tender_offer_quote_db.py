@@ -435,3 +435,56 @@ def test_a_matched_line_whose_cost_needs_a_missing_rate_is_a_free_line_with_a_no
     assert got[0]["description"] == "Balanza con costo en dólares"
     assert got[0]["line_note_es"] == "Precio por completar: falta tipo de cambio"
     assert got[1]["product_id"] == other
+
+
+def test_an_offer_is_priced_approved_without_a_recipient_and_filled(db, operators, client) -> None:
+    """The real path, end to end: open → ready read → offer draft → priced save with no «Atención» →
+    the Cotizador's own approval → the fill is queued. The bases' quantity text keeps its words but
+    not its brackets, so it never reads as a placeholder left to complete."""
+    case, _ = open_tender(db, operators)
+    prep = add_read(db, case, operators, [item(1, "Balanza analítica", "10 [unidades]"),
+                                          item(2, "Pesas patrón", "2")])
+    made = ask(client, case, prep)
+    assert made.status_code == 200, made.text
+    offer = made.json()
+    got = lines(db, offer["revision_id"])
+    assert got[0]["line_note_es"] == "Cantidad según bases: 10 (unidades)"
+
+    workspace = client.get(f"/v2/quotes/{offer['quote_id']}", headers=headers())
+    assert workspace.status_code == 200, workspace.text
+    current = workspace.json()["current"]
+    draft = current["draft"]
+    assert draft.get("recipient") is None
+    for n, line in enumerate(draft["items"], start=1):
+        line.update(margin_mode="none", typed_unit_price=str(100000 * n))
+    saved = client.post("/v2/commands/save-quote-draft", headers=headers(),
+                        json={"revision_id": offer["revision_id"], "expected_version": current["version"],
+                              "draft": draft})
+    assert saved.status_code == 200, saved.text
+
+    approved = client.post("/v2/commands/approve-quote-revision", headers=headers(),
+                           json={"revision_id": offer["revision_id"], "expected_version": saved.json()["version"]})
+    assert approved.status_code == 200, approved.text
+    with _owner_conn(db) as conn:
+        status, snapshot = conn.execute("select status, party_snapshot from crm.quote_revision where id = %s",
+                                        (offer["revision_id"],)).fetchone()
+    assert status == "approved"
+    assert snapshot["recipient"] is None
+    assert snapshot["institution"]["name"].startswith("Hospital Ejemplo")
+
+    filled = client.post("/v2/commands/prepare-tender-bid", headers=headers(),
+                         json={"opportunity_id": case, "phase": "fill"})
+    assert filled.status_code == 200, filled.text
+    with _owner_conn(db) as conn:
+        row = conn.execute("select status, quote_revision_id::text from evidence.bid_preparation where id = %s",
+                           (filled.json()["preparation_id"],)).fetchone()
+    assert row == ("queued", offer["revision_id"])
+
+
+def test_a_sale_quote_still_needs_a_recipient() -> None:
+    from origenlab_api.v2.quotes.commands import ApprovalFacts, check_approvable
+
+    facts = dict(item_line_nos=(1,), unpriced_line_nos=(), expense_count=0, principal_line_no=None, missing_fx=(),
+                 has_institution=True, has_recipient=False, printed=())
+    assert [c for c, _ in check_approvable(ApprovalFacts(**facts))] == ["no_recipient"]
+    assert check_approvable(ApprovalFacts(**facts, recipient_required=False)) == []

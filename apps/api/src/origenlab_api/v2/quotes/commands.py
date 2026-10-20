@@ -62,6 +62,7 @@ from origenlab_api.quoting.engine import EngineError, EngineResult, compute
 from origenlab_api.v2.catalog.commands import _live_party, _submitted_text
 from origenlab_api.v2.catalog.keys import LabdeliveryRefused, is_labdelivery, refuse_labdelivery
 from origenlab_api.v2.case_commands import REQUESTING_INSTITUTION
+from origenlab_api.v2.case_kind import is_tender
 from origenlab_api.v2.case_command_repository import (
     V2CaseCommandRepository,
     lock_new_organization_name,
@@ -908,7 +909,7 @@ def _lock_case_and_quote(cur: Any, revision_id: str, *, quote_lock: str) -> dict
     owner = _one(cur)
     if owner is None:
         raise CommandRefused(404, "revision_not_found", "no such quote revision")
-    cur.execute("select closed_at, organization_id::text as organization_id from crm.opportunity "
+    cur.execute("select closed_at, organization_id::text as organization_id, kind from crm.opportunity "
                 "where id = %s::uuid for share", (owner["case_id"],))
     case = _one(cur)
     assert case is not None  # noqa: S101 - crm.quote.opportunity_id is a foreign key
@@ -1016,6 +1017,9 @@ class ApprovalFacts:
     has_institution: bool
     has_recipient: bool
     printed: tuple[tuple[str, str | None], ...]  # (the condition's name, its printed text)
+    #: A tender's offer goes to no one in particular: its print names the bidder and the buying
+    #: institution, and it is uploaded to the portal, never mailed (spec 2026-10-19).
+    recipient_required: bool = True
 
 
 def check_approvable(facts: ApprovalFacts) -> list[tuple[str, str]]:
@@ -1033,7 +1037,7 @@ def check_approvable(facts: ApprovalFacts) -> list[tuple[str, str]]:
     out += [("fx_missing", APPROVAL_REFUSALS["fx_missing"].format(currency=c)) for c in facts.missing_fx]
     if not facts.has_institution:
         out.append(("no_institution", APPROVAL_REFUSALS["no_institution"]))
-    if not facts.has_recipient:
+    if facts.recipient_required and not facts.has_recipient:
         out.append(("no_recipient", APPROVAL_REFUSALS["no_recipient"]))
     out += [("placeholder_left", APPROVAL_REFUSALS["placeholder_left"].format(field=name))
             for name, text in facts.printed if text and _PLACEHOLDER.search(text)]
@@ -1098,7 +1102,7 @@ def _label(quote_number: str, revision_no: int) -> str:
 
 
 def _approval_facts(lines: list[dict[str, Any]], result: EngineResult, institution: Any, recipient: Any,
-                    terms: DraftTerms) -> ApprovalFacts:
+                    terms: DraftTerms, *, recipient_required: bool = True) -> ApprovalFacts:
     # Every rate a stored cost needs travels with its line (the five snapshot columns are all or
     # none), so a missing rate cannot reach approval: save refuses it first (fx_unavailable).
     missing = {r["cost_currency"] for r in lines
@@ -1109,21 +1113,23 @@ def _approval_facts(lines: list[dict[str, Any]], result: EngineResult, instituti
         expense_count=sum(1 for r in lines if r["line_kind"] == "logistics" and (r["unit_cost"] or 0) > 0),
         principal_line_no=result.principal_line_no, missing_fx=tuple(sorted(missing)),
         has_institution=institution is not None, has_recipient=recipient is not None,
-        printed=printed_texts(terms, lines))
+        printed=printed_texts(terms, lines), recipient_required=recipient_required)
 
 
-def party_snapshot(*, institution: dict[str, Any], recipient: dict[str, Any], terms: DraftTerms, validity_days: int,
+def party_snapshot(*, institution: dict[str, Any], recipient: dict[str, Any] | None, terms: DraftTerms, validity_days: int,
                    quote_number: str, label: str, approved_by: str, approved_on: date,
                    valid_until: date, client_details: dict[str, Any] | None = None) -> dict[str, Any]:
     """What the client's document says, frozen at approval. No cost, price or margin: the PDF reads it.
 
-    What the operator typed in «Datos del cliente» (`client_details`) wins over what the CRM knows."""
+    What the operator typed in «Datos del cliente» (`client_details`) wins over what the CRM knows.
+    A tender's offer has no recipient: `recipient` is null and nothing prints an «Atención» line."""
     typed = {k: v for k, v in (client_details or {}).items() if isinstance(v, str) and v.strip()}
     return {
         "institution": {"id": institution["id"], "name": typed.get("institution_name") or institution["name"],
                         "rut": typed.get("rut") or institution["rut"]},
-        "recipient": {"participant_id": recipient["participant_id"],
-                      "name": typed.get("contact_name") or recipient["name"], "email": recipient["email"]},
+        "recipient": None if recipient is None else {
+            "participant_id": recipient["participant_id"],
+            "name": typed.get("contact_name") or recipient["name"], "email": recipient["email"]},
         "client": {k: typed.get(k) for k in ("contact_role", "department", "phone", "address", "city")},
         "terms": {**{column: getattr(terms, column) or None for column, _ in PRINTED_TERMS},
                   "validity_days": validity_days, "terms_extra": [t.model_dump() for t in terms.terms_extra]},
@@ -1267,10 +1273,12 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
     if revision["recipient_participant_id"] is not None:
         cur.execute(_RECIPIENT_SQL, (revision["recipient_participant_id"], revision["case_id"]))
         recipient = _one(cur)
-    refusals = check_approvable(_approval_facts(lines, result, institution, recipient, terms))
+    tender = is_tender(case["kind"])
+    refusals = check_approvable(_approval_facts(lines, result, institution, recipient, terms,
+                                                recipient_required=not tender))
     if refusals:
         raise CommandRefused(409, refusals[0][0], " · ".join(message for _, message in refusals))
-    assert institution is not None and recipient is not None  # noqa: S101 - refused above otherwise
+    assert institution is not None and (tender or recipient is not None)  # noqa: S101 - refused above otherwise
 
     # The stored prices are what was priced, from the same inputs; a difference means the engine
     # changed since the save, and freezing would make the lines disagree with the totals.

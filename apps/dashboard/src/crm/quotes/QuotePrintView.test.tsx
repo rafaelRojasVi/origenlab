@@ -9,6 +9,7 @@ import type { CatalogIndex } from "../catalog/catalogIndex";
 import { isPrintable, printableQuote } from "./printableQuote";
 import { computedFixture, economicsFixture, lineEconomics, workspaceFixture } from "./quoteFixtures";
 import type { ComputedLine, QuoteStoredLine, QuoteWorkspace } from "./quoteApi";
+import { IssuedView } from "./IssuedView";
 import { QuotePrintView } from "./QuotePrintView";
 
 const SECRET_COST = "987654";
@@ -337,6 +338,18 @@ describe("Vista previa PDF — a tender's offer", () => {
     expect(show(tenderQuote(null)).textContent).not.toMatch(/Oferente|Licitación/);
     cleanup();
     expect(show({ ...approved(), tender: null }).innerHTML).toBe(plain);
+  });
+
+  it("an offer approved with no recipient prints and shows no «Atención» or «Para» line", () => {
+    const ws = tenderQuote(BIDDER);
+    ws.current = { ...ws.current!, party_snapshot: { ...ws.current!.party_snapshot!, recipient: null } };
+    const sheet = show(ws);
+    expect(within(sheet).getByText("Universidad de Prueba")).toBeInTheDocument();
+    expect(sheet.textContent).not.toMatch(/Atención/);
+    cleanup();
+    render(<IssuedView workspace={ws} />);
+    expect(screen.getByText("Universidad de Prueba")).toBeInTheDocument();
+    expect(screen.queryByText("Para")).toBeNull();
   });
 
   it("a non-tender quote prints exactly as before (snapshot)", () => {

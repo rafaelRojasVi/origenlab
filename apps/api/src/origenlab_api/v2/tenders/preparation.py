@@ -207,7 +207,10 @@ def _quantity(raw: Any) -> tuple[Decimal, str | None]:
     followed by words ("10 unidades") is that number and keeps the text in a note; anything else, or
     a quantity that is not above 0, is 1 with the text kept in the note."""
     text = "" if raw is None else str(raw).strip()
-    note = f"Cantidad según bases: {text}"[:_NOTE_MAX] if text else None
+    # The note is printed, and approval refuses a printed «[...]» as a placeholder left to complete:
+    # the bases' own brackets become parentheses.
+    shown = text.replace("[", "(").replace("]", ")")
+    note = f"Cantidad según bases: {shown}"[:_NOTE_MAX] if text else None
     value = _number(text)
     if value is not None and 0 < value <= _QUANTITY_MAX:
         return value, None

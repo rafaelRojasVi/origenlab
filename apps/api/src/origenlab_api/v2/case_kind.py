@@ -16,6 +16,7 @@ from typing import Any
 
 from origenlab_api.v2.commands import CommandRefused
 
+TENDER_KIND = "tender"
 SALE_CASES = "o.kind = 'sale'"
 TENDER_CASES = "o.kind = 'tender'"
 
@@ -30,6 +31,11 @@ def sale_cases(alias: str = "o") -> str:
     return f"{alias}.kind = 'sale'"
 
 
+def is_tender(kind: str | None) -> bool:
+    """Whether a case's `kind` is a tender (a rule that differs for a tender's offer asks this)."""
+    return kind == TENDER_KIND
+
+
 def tender_not_a_sale() -> CommandRefused:
     return CommandRefused(409, TENDER_NOT_A_SALE,
                           "Esta es una licitación: se trabaja desde «Licitaciones», no como caso de venta.")
@@ -42,5 +48,5 @@ def refuse_tender(cur: Any, opportunity_id: Any) -> None:
         return
     cur.execute("select kind from crm.opportunity where id = %s::uuid", (str(opportunity_id),))
     row = cur.fetchone()
-    if row is not None and row[0] == "tender":
+    if row is not None and is_tender(row[0]):
         raise tender_not_a_sale()
