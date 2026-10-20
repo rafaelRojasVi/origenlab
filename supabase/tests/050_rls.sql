@@ -261,9 +261,13 @@ insert into expected_policies values
     ('platform', 'model_usage', 'origenlab_worker', 'SELECT'),
     ('platform', 'model_usage', 'origenlab_worker', 'INSERT'),
     ('procurement', 'notice', 'origenlab_api', 'INSERT'),
-    ('catalog', 'product_document', 'origenlab_worker', 'SELECT');
+    ('catalog', 'product_document', 'origenlab_worker', 'SELECT'),
+    -- 20261020180000: crm.notice_review — append-only human verdict; api select/insert, worker select.
+    ('crm', 'notice_review', 'origenlab_api', 'SELECT'),
+    ('crm', 'notice_review', 'origenlab_api', 'INSERT'),
+    ('crm', 'notice_review', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 209, 'the matrix implies 209 policies');
+select is((select count(*)::int from expected_policies), 212, 'the matrix implies 212 policies');
 
 -- Posture.
 select is(

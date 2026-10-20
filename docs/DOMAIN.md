@@ -1235,7 +1235,9 @@ Migration `20261020100000_slice7_tender_bid_preparation.sql`.
   by the API, never stored.
 - **`procurement.notice`** (#28): the API inserts the notice of a tender opened by hand and records
   what it read from it (`title`, `buyer_name`, `buyer_code`, `closes_at`, `source_status`,
-  `published_at`, `head`, `head_history`, `last_seen_at`) and the promotion to the case.
+  `published_at`, `head`, `head_history`, `last_seen_at`) and the promotion to the case. It also
+  holds `relevance` (nullable jsonb, must be an object when non-null) — the worker's scoring of the
+  notice against the catalog; written only by the worker (§7.12).
 - **`catalog.product_document`** (#57): the worker reads it (the spec sheets that go into a bid).
 
 | # | Schema.table | Unique responsibility | Key invariant |
@@ -1252,6 +1254,23 @@ never their values.
 
 Counts by schema: `crm` 24, `comms` 4, `outbound` 9, `evidence` 6,
 `catalog` 8, `procurement` 1, `platform` 7 — **59**.
+
+### 7.12 Licitaciones: relevancia y revisión — built 2026-10-20
+
+Migration `20261020180000_slice7_notice_relevance_review.sql`.
+
+- **`procurement.notice`** (#28) gains `relevance` (nullable jsonb, must be an object when
+  non-null): the worker's scoring of the notice against the catalog. Written only by the worker
+  (table-level update grant); the API's update grant is column-scoped and does not include it.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 64 | `crm.notice_review` | an operator's verdict on a notice: `interesa` or `no_es_nuestro` | `verdict ∈ {interesa, no_es_nuestro}`; `reason` 1–500 characters (blank rejected, btrim'd before check); **append-only** via `platform.reject_mutation`; `origenlab_api` select/insert, `origenlab_worker` select |
+
+Domain event added: `notice.reviewed` (aggregate `notice`, already present since §7.11).
+
+Counts by schema: `crm` 25, `comms` 4, `outbound` 9, `evidence` 6,
+`catalog` 8, `procurement` 1, `platform` 7 — **60**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

@@ -230,3 +230,64 @@ describe("LicitacionesPage — En Mercado Público", () => {
     expect(await screen.findByText("La búsqueda en Mercado Público aún no ha corrido. La primera revisión llega en unos minutos.")).toBeInTheDocument();
   });
 });
+
+describe("LicitacionesPage — Nos interesa / No es nuestro", () => {
+  function stubWithReviews(discovered: unknown) {
+    const posts: { path: string; body: unknown; key: string | null }[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const u = new URL(raw, "http://localhost");
+      if (init?.method === "POST") {
+        const headers = new Headers(init.headers);
+        posts.push({ path: u.pathname, body: JSON.parse(String(init.body)), key: headers.get("Idempotency-Key") });
+        return Promise.resolve(json({ command: "review-notice", notice_id: "n1", verdict: "no_es_nuestro" }));
+      }
+      if (u.pathname === "/v2/tenders/discovered") return Promise.resolve(json(discovered));
+      return Promise.resolve(u.pathname === "/v2/tenders" ? json(LIST) : json({}, 404));
+    }));
+    return posts;
+  }
+
+  it("«No es nuestro» sends the verdict with a key and reloads the list", async () => {
+    const posts = stubWithReviews(DISCOVERED);
+    renderPage("sales", "mercado");
+    const row = await screen.findByTestId("notice-row-1111111-11-LE26");
+    fireEvent.click(within(row).getByRole("button", { name: "No es nuestro" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].path).toBe("/v2/commands/review-notice");
+    expect(posts[0].body).toEqual({ notice_id: "n1", verdict: "no_es_nuestro" });
+    expect(posts[0].key).toBeTruthy();
+    expect(await screen.findByText("Descartada: ya no aparece en la lista.")).toBeInTheDocument();
+  });
+
+  it("a notice marked «te interesa» says so and has its own chip; dismissed ones live under «Descartadas»", async () => {
+    const review = { verdict: "interesa", reason: null, at: "2026-10-19T14:00:00Z", by: "Operador ventas" };
+    stubWithReviews({
+      ...DISCOVERED,
+      notices: [notice({ review }), ...DISCOVERED.notices.slice(1)],
+      dismissed: [notice({ id: "n9", code: "9999999-99-LE26", title: "Licitación descartada de ejemplo",
+        review: { verdict: "no_es_nuestro", reason: null, at: null, by: null } })],
+      counts: { ...DISCOVERED.counts, interesa: 1, descartadas: 1 },
+    });
+    renderPage("sales", "mercado");
+    const row = await screen.findByTestId("notice-row-1111111-11-LE26");
+    expect(within(row).getByText("te interesa")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Nos interesa" })).toBeNull();
+    expect(screen.queryByTestId("notice-row-9999999-99-LE26")).toBeNull();
+    const chips = within(screen.getByRole("group", { name: "Filtrar por familia" }));
+    fireEvent.click(chips.getByRole("button", { name: "Te interesan 1" }));
+    expect(screen.getByTestId("notice-row-1111111-11-LE26")).toBeInTheDocument();
+    expect(screen.queryByTestId("notice-row-2222222-22-LE26")).toBeNull();
+    fireEvent.click(chips.getByRole("button", { name: "Descartadas 1" }));
+    const gone = screen.getByTestId("notice-row-9999999-99-LE26");
+    expect(within(gone).getByRole("button", { name: "Sí, nos interesa" })).toBeInTheDocument();
+  });
+
+  it("a viewer cannot give a verdict", async () => {
+    stubWithReviews(DISCOVERED);
+    renderPage("viewer", "mercado");
+    const row = await screen.findByTestId("notice-row-1111111-11-LE26");
+    expect(within(row).queryByRole("button", { name: "No es nuestro" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Nos interesa" })).toBeNull();
+  });
+});

@@ -1,9 +1,17 @@
 import { useCallback, useState, type CSSProperties } from "react";
 import { crmHash, noticeRouteId, type CrmSection } from "../crmRoute";
 import { formatMoney } from "../money";
-import { Badge, Button, EmptyState, ExternalLink, ResourceGate, SearchInput, Skeleton, fmtDateTime } from "../ui";
+import { Badge, Button, EmptyState, ExternalLink, ResourceGate, SearchInput, Skeleton, fmtDateTime, toast } from "../ui";
 import { useResource } from "../useResource";
-import { fetchDiscoveredTenders, type DiscoveredList, type DiscoveredNotice } from "./tenderApi";
+import {
+  fetchDiscoveredTenders,
+  newTenderCommandKey,
+  reviewNotice,
+  tenderRefusal,
+  type DiscoveredList,
+  type DiscoveredNotice,
+  type NoticeVerdict,
+} from "./tenderApi";
 import { closingLabel, closingWhen } from "./tenderTime";
 
 /**
@@ -18,6 +26,10 @@ import { closingLabel, closingWhen } from "./tenderTime";
  * estimate; and the actions — «Mercado Público ↗» always in sight, «Preparar» (sales and admin) or
  * «Abrir» when a case already exists.
  *
+ * «Nos interesa» (sales and admin) pins a notice to the top, marked; «No es nuestro» takes it off the
+ * list into «Descartadas», where «Sí, nos interesa» brings it back (`review-notice`, one click; the
+ * verdicts are what the matching learns from next).
+ *
  * Rows rise in one after another (`crm-rise`); it stops under reduced motion. At phone width a row
  * stacks its cells; nothing scrolls sideways.
  */
@@ -25,6 +37,8 @@ type Navigate = (section: CrmSection, id?: string | null) => void;
 type Sort = "cierre" | "nuevas" | "monto";
 
 const OTHER = "laboratorio";
+const INTERESA = "interesa";
+const DESCARTADAS = "descartadas";
 const NEW_MS = 24 * 3_600_000;
 const WEEK_MS = 7 * 24 * 3_600_000;
 const URGENT_MS = 2 * 24 * 3_600_000;
@@ -77,16 +91,40 @@ export function DiscoveredTenders({
   const [family, setFamily] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("cierre");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function review(n: DiscoveredNotice, verdict: NoticeVerdict) {
+    if (busy) return;
+    setBusy(n.id);
+    try {
+      await reviewNotice({ notice_id: n.id, verdict }, newTenderCommandKey());
+      toast(verdict === "interesa" ? "Marcada: te interesa." : "Descartada: ya no aparece en la lista.");
+      reload();
+    } catch (err) {
+      toast(tenderRefusal(err)?.message ?? "No se pudo guardar. Intenta de nuevo.", "bad");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
     <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
       {(data) => {
+        const dismissed = data.dismissed ?? [];
+        const interested = (n: DiscoveredNotice) => n.review?.verdict === "interesa";
         const familyCount = (key: string) =>
-          key === OTHER ? data.counts.laboratorio : data.notices.filter((n) => n.families.some((f) => f.key === key)).length;
+          key === OTHER
+            ? data.counts.laboratorio
+            : key === INTERESA
+              ? data.notices.filter(interested).length
+              : data.notices.filter((n) => n.families.some((f) => f.key === key)).length;
+        const pool = family === DESCARTADAS ? dismissed : data.notices;
         const shown = sorted(
-          data.notices.filter(
+          pool.filter(
             (n) =>
-              (family === null || (family === OTHER ? n.tier === "laboratorio" : n.families.some((f) => f.key === family))) &&
+              (family === null ||
+                family === DESCARTADAS ||
+                (family === INTERESA ? interested(n) : family === OTHER ? n.tier === "laboratorio" : n.families.some((f) => f.key === family))) &&
               matches(n, query.trim()),
           ),
           sort,
@@ -122,9 +160,15 @@ export function DiscoveredTenders({
             <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
               <div role="group" aria-label="Filtrar por familia" className="flex flex-wrap gap-1.5">
                 <FamilyChip label="Todas" count={data.notices.length} pressed={family === null} onClick={() => setFamily(null)} />
+                {familyCount(INTERESA) > 0 ? (
+                  <FamilyChip label="Te interesan" count={familyCount(INTERESA)} pressed={family === INTERESA} onClick={() => setFamily(INTERESA)} />
+                ) : null}
                 {chips.map((f) => (
                   <FamilyChip key={f.key} label={f.label} count={familyCount(f.key)} pressed={family === f.key} onClick={() => setFamily(f.key)} />
                 ))}
+                {dismissed.length > 0 ? (
+                  <FamilyChip label="Descartadas" count={dismissed.length} pressed={family === DESCARTADAS} onClick={() => setFamily(DESCARTADAS)} />
+                ) : null}
               </div>
               <div className="flex gap-2">
                 <SearchInput value={query} onChange={setQuery} placeholder="Buscar código, equipo o institución" label="Buscar licitación" />
@@ -175,6 +219,8 @@ export function DiscoveredTenders({
                       navigate={navigate}
                       mayOpen={mayOpen}
                       onPrepare={onPrepare}
+                      busy={busy === n.id}
+                      onReview={(verdict) => void review(n, verdict)}
                     />
                   ))}
                 </ul>
@@ -231,6 +277,8 @@ function NoticeItem({
   navigate,
   mayOpen,
   onPrepare,
+  busy,
+  onReview,
 }: {
   notice: DiscoveredNotice;
   index: number;
@@ -238,7 +286,10 @@ function NoticeItem({
   navigate: Navigate;
   mayOpen: boolean;
   onPrepare: (code: string) => void;
+  busy: boolean;
+  onReview: (verdict: NoticeVerdict) => void;
 }) {
+  const verdict = n.review?.verdict ?? null;
   const amount = n.estimated_amount ? formatMoney(String(n.estimated_amount.amount), n.estimated_amount.currency) : null;
   const leftMs = time(n.closes_at) - now.getTime();
   const urgent = leftMs > 0 && leftMs <= URGENT_MS;
@@ -249,12 +300,17 @@ function NoticeItem({
   return (
     <li
       data-testid={`notice-row-${n.code}`}
-      className={`crm-rise flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-canvas-sunken/40 ${GRID}`}
+      className={`crm-rise flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-canvas-sunken/40 ${verdict === "interesa" ? "bg-good-bg/40" : ""} ${GRID}`}
       style={{ "--i": index } as CSSProperties}
     >
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-ink-muted">
           <span className="tabular-nums">{n.code}</span>
+          {verdict === "interesa" ? (
+            <Badge tone="good" title={n.review?.by ? `Marcada por ${n.review.by}` : undefined}>
+              te interesa
+            </Badge>
+          ) : null}
           {isNew(n, now) ? (
             <Badge tone="info" glyph={false}>
               nueva
@@ -331,6 +387,30 @@ function NoticeItem({
           <Button variant="primary" onClick={() => onPrepare(n.code)}>
             Preparar
           </Button>
+        ) : null}
+        {mayOpen ? (
+          <span className="flex basis-full flex-wrap gap-x-3 gap-y-1 md:justify-end">
+            {verdict !== "interesa" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onReview("interesa")}
+                className="min-h-[28px] text-xs font-medium text-good hover:underline disabled:opacity-50"
+              >
+                {verdict === "no_es_nuestro" ? "Sí, nos interesa" : "Nos interesa"}
+              </button>
+            ) : null}
+            {verdict !== "no_es_nuestro" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onReview("no_es_nuestro")}
+                className="min-h-[28px] text-xs font-medium text-ink-muted hover:text-bad hover:underline disabled:opacity-50"
+              >
+                No es nuestro
+              </button>
+            ) : null}
+          </span>
         ) : null}
       </div>
     </li>

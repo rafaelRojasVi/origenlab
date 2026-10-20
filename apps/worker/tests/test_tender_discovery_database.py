@@ -1,7 +1,9 @@
 """«En Mercado Público»'s discovery sweep on a disposable `origenlab_test_<hex>` database, as the real
-`origenlab_worker` login: candidate titles are kept and the rest never written; details replace the
-list's head (the old one goes to the history) up to the run's limit; a known notice keeps its detail;
-a notice that left a whole list is withdrawn, never one a case was opened from, never on a short list.
+`origenlab_worker` login: every new tender is kept and read — matching titles first — and its match
+stored in `relevance`; details replace the list's head (the old one goes to the history) up to the
+run's limit; a known notice keeps its detail; one read and found not ours is left alone unless a person
+reviewed it; an old match is re-made; a notice that left a whole list is withdrawn, never one a case
+was opened from, never on a short list.
 
 The tests share one database, so each names its own codes. Every value is invented."""
 
@@ -55,11 +57,11 @@ def _detail(code: str, title: str) -> dict:
 
 def _notice(dsn, code: str) -> dict | None:
     rows = owner_rows(dsn, "select title, buyer_name, closes_at, published_at, disappeared_at, head, "
-                           "jsonb_array_length(head_history) from procurement.notice where codigo_externo = %s",
+                           "jsonb_array_length(head_history), relevance from procurement.notice where codigo_externo = %s",
                       (code,))
     if not rows:
         return None
-    keys = ("title", "buyer_name", "closes_at", "published_at", "disappeared_at", "head", "history")
+    keys = ("title", "buyer_name", "closes_at", "published_at", "disappeared_at", "head", "history", "relevance")
     return dict(zip(keys, rows[0], strict=True))
 
 
@@ -77,14 +79,17 @@ def _run(dsn, listado: list[dict], details: dict[str, dict] | None = None, **kwa
     return counts
 
 
-def test_only_candidate_titles_are_kept_and_their_detail_becomes_the_head(dsn) -> None:
-    balanza, pintura = _code(), _code()
-    listado = [_summary(balanza, "Adquisición de balanza analítica"), _summary(pintura, "Pintura de fachada")]
+def test_every_new_tender_is_kept_and_read_matching_titles_first_with_its_match_stored(dsn) -> None:
+    pintura, balanza = _code(), _code()
+    listado = [_summary(pintura, "Pintura de fachada"), _summary(balanza, "Adquisición de balanza analítica")]
     counts = _run(dsn, listado, {balanza: _detail(balanza, "Adquisición de balanza analítica")}, min_list_rows=10)
 
-    assert counts["candidates"] == 1 and counts["detailed"] == 1 and counts["asked"] == [balanza]
-    assert _notice(dsn, pintura) is None
+    assert counts["new"] == 2 and counts["asked"] == [balanza, pintura]  # the matching title first
+    assert (counts["detailed"], counts["relevant"], counts["detail_failed"]) == (1, 1, 1)
+    assert _notice(dsn, pintura)["relevance"] is None  # its detail failed: read again next run
     kept = _notice(dsn, balanza)
+    assert kept["relevance"]["tier"] == "catalogo" and kept["relevance"]["families"] == ["pesaje"]
+    assert kept["relevance"]["version"] >= 2 and kept["relevance"]["item_count"] == 1
     assert kept["buyer_name"] == "Hospital Ejemplo Norte"
     assert kept["head"]["Comprador"]["NombreOrganismo"] == "Hospital Ejemplo Norte"
     assert kept["history"] == 1  # the list's row
@@ -172,8 +177,44 @@ def test_a_title_naming_only_a_catalog_product_is_kept(dsn) -> None:
     owner_rows(dsn, "insert into catalog.product (manufacturer_organization_id, model_number, name_es, product_kind) "
                     "values (%s, 'QX77', 'Gradillas QX77', 'consumable')", (maker,))
     known, consumable = _code(), _code()
-    counts = _run(dsn, [_summary(known, "Compra de equipo ZK400"), _summary(consumable, "Compra de gradillas QX77")],
+    counts = _run(dsn, [_summary(consumable, "Compra de gradillas QX77"), _summary(known, "Compra de equipo ZK400")],
                   min_list_rows=10)
-    assert _notice(dsn, known) is not None  # the model, read from the catalog this run
-    assert _notice(dsn, consumable) is None  # a consumable teaches nothing
-    assert counts["candidates"] == 1
+    # The model, read from the catalog this run, makes its title a candidate: read first. A
+    # consumable teaches nothing: that title waits behind it.
+    assert counts["asked"][:2] == [known, consumable]
+
+
+def _not_ours(code: str, title: str) -> dict:
+    return {"CodigoExterno": code, "Nombre": title, "Estado": "Publicada",
+            "Comprador": {"NombreOrganismo": "Municipalidad Ejemplo"},
+            "Items": {"Listado": [{"CodigoProducto": 72101500, "NombreProducto": "Pintura de muros", "Cantidad": 1}]}}
+
+
+def test_a_notice_read_and_found_not_ours_is_left_alone_unless_a_person_reviewed_it(dsn) -> None:
+    alone, reviewed = _code(), _code()
+    _run(dsn, [_summary(alone, "Pintura de fachada"), _summary(reviewed, "Pintura de bodega")],
+         {alone: _not_ours(alone, "Pintura de fachada"), reviewed: _not_ours(reviewed, "Pintura de bodega")},
+         min_list_rows=10)
+    assert _notice(dsn, alone)["relevance"]["tier"] is None
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-{uuid.uuid4().hex[:6]}@example.test",))[0][0]
+    owner_rows(dsn, "insert into crm.notice_review (notice_id, verdict, reviewed_by_operator_id) "
+                    "select id, 'interesa', %s from procurement.notice where codigo_externo = %s", (operator, reviewed))
+
+    again = _run(dsn, [_summary(alone, "Pintura de fachada (2)"), _summary(reviewed, "Pintura de bodega (2)")],
+                 min_list_rows=10)
+    assert again["asked"] == [] and again["refreshed"] == 1
+    assert _notice(dsn, alone)["title"] == "Pintura de fachada"  # not refreshed
+    assert _notice(dsn, reviewed)["title"] == "Pintura de bodega (2)"  # a person cares: refreshed
+
+
+def test_an_old_match_is_made_again_without_calling_the_api(dsn) -> None:
+    code = _code()
+    _run(dsn, [_summary(code, "Centrífuga clínica")], {code: _detail(code, "Centrífuga clínica")}, min_list_rows=10)
+    owner_rows(dsn, "update procurement.notice set relevance = jsonb_build_object('version', 1, 'tier', null) "
+                    "where codigo_externo = %s", (code,))
+    counts = _run(dsn, [_summary(code, "Centrífuga clínica")], min_list_rows=10)
+    assert counts["asked"] == [] and counts["rematched"] >= 1
+    relevance = _notice(dsn, code)["relevance"]
+    assert relevance["version"] >= 2 and relevance["tier"] == "catalogo"

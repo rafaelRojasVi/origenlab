@@ -551,7 +551,12 @@ describe("V2 durable read boundary allowlist", () => {
       isAllowedUpstreamPath,
       marketingCommandMaxBytes,
     } = await import("./allowlist");
-    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(7);
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(8);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/review-notice")).toBe(true);
+    expect(isAllowedTenderCommandPostPath("/v2/commands/review-notice/")).toBe(false);
+    expect(isAllowedPostPath("/v2/commands/review-notice")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/commands/review-notice")).toBe(false);
+    expect(marketingCommandMaxBytes("/v2/commands/review-notice")).toBe(16_384);
     expect(isAllowedTenderCommandPostPath("/v2/commands/remove-tender-annex")).toBe(true);
     expect(isAllowedTenderCommandPostPath("/v2/commands/remove-tender-annex/")).toBe(false);
     expect(isAllowedPostPath("/v2/commands/remove-tender-annex")).toBe(true);

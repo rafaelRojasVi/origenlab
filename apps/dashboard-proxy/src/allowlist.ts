@@ -372,6 +372,8 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/prepare-tender-bid$/,
   // The economic offer as a Cotizador draft on the case, from a ready read.
   /^\/v2\/commands\/create-tender-offer-quote$/,
+  // «Nos interesa» / «No es nuestro» on a notice of «En Mercado Público».
+  /^\/v2\/commands\/review-notice$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */

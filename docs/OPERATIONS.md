@@ -2253,6 +2253,15 @@ Spec and rules:
 worst-case estimate before each call; at the cap a preparation is refused. «Operaciones» shows the
 month's spend and the cap.
 
+**Discovery's API traffic.** Each run (every 15 minutes) makes one list call and reads up to 150
+details, 0.3 s apart, of tenders it has not read yet — every new open tender, matching titles first.
+After the switch to reading every tender (2026-10-20, §2.7.142 of STATUS) the ~4,600 backlog takes
+about eight hours (≈ 150 calls a run, ≈ 4,600 in all); then a normal day is the 96 list calls plus
+the new tenders of the day (a few hundred). A 429 is retried with backoff; a failed detail waits for
+the next run. The log line `tender_discovery` carries `listed`, `new`, `detailed`, `relevant`,
+`detail_failed`, `detail_waiting` and `rematched`. **Pause** discovery alone: unset
+`ORIGENLAB_V2_CHILECOMPRA_TICKET` on the worker (it then logs `no_ticket`; bid preparations go on).
+
 **Release** (nothing here is applied yet). Merging to `main` releases it like any change:
 `production-db-migrations` takes an encrypted backup, applies migration `20261020100000` to hosted
 and then deploys the worker, the API and the dashboard (§15; the proxy deploys from its own
