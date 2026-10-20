@@ -311,9 +311,9 @@ select is(pg_temp.run_as('origenlab_api', $$ update procurement.notice
                          buyer_code = '12345', updated_at = now()
                    where id = '99000000-0000-4000-8000-000000000090' $$), 'ok',
   'and promotes it to the tender case with what it read');
-select is(left(pg_temp.run_as('origenlab_api', $$ update procurement.notice set source_status = 'x'
+select is(left(pg_temp.run_as('origenlab_api', $$ update procurement.notice set disappeared_at = now()
                      where id = '99000000-0000-4000-8000-000000000090' $$), 5), '42501',
-  'the API never writes the notice''s source status');
+  'the API never marks a notice as gone from the source (the worker''s column)');
 select ok(has_table_privilege('origenlab_worker', 'catalog.product_document', 'SELECT'),
   'the worker reads product data sheets (the spec sheets of a bid)');
 
