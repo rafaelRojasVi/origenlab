@@ -10,6 +10,7 @@
 | `POST /v2/commands/add-bidder-document` | multipart: one standard document, stored then recorded |
 | `POST /v2/commands/retire-bidder-document` | one document retired, with its reason |
 | `POST /v2/commands/attach-tender-annexes` | multipart: 1–20 files or a zip of anexos onto a tender (`annexes.py`) |
+| `POST /v2/commands/remove-tender-annex` | «Quitar anexo»: one anexo removed, with its reason (`annexes.py`) |
 | `POST /v2/commands/prepare-tender-bid` | queue a bid preparation, phase `read` or `fill` (`preparation.py`) |
 | `POST /v2/commands/create-tender-offer-quote` | the economic offer as a Cotizador draft from a ready `read` (`preparation.py`) |
 | `GET /v2/tenders/{id}/preparations/{prep}/files/{key}/url` | a signed URL for one output file, 10 minutes |
@@ -58,6 +59,8 @@ from origenlab_api.v2.tenders.annexes import (
     ATTACH_TENDER_ANNEXES,
     MAX_FILES,
     MAX_TOTAL_BYTES,
+    REMOVE_TENDER_ANNEX,
+    RemoveTenderAnnexBody,
     expand_uploads,
     prepare_objects,
 )
@@ -249,6 +252,24 @@ def retire_bidder_document_route(
         fields = {"document_id": as_uuid(body.document_id, "document_id"), "reason": body.reason}
         return repo.execute(command_name=RETIRE_BIDDER_DOCUMENT, operator=operator, fields=fields,
                             idempotency_key=key, digest=request_digest(RETIRE_BIDDER_DOCUMENT, body))
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+@tender_command_router.post("/remove-tender-annex")
+def remove_tender_annex_route(
+    body: RemoveTenderAnnexBody,
+    operator: Deciding,
+    repo: V2TenderCommandRepository = Depends(get_tender_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Quitar anexo»: one anexo of the tender removed, once, with its reason (3 characters or more)."""
+    try:
+        key = require_idempotency_key(idempotency_key)
+        fields = {"opportunity_id": as_uuid(body.opportunity_id, "opportunity_id"),
+                  "document_id": as_uuid(body.document_id, "document_id"), "reason": body.reason}
+        return repo.execute(command_name=REMOVE_TENDER_ANNEX, operator=operator, fields=fields,
+                            idempotency_key=key, digest=request_digest(REMOVE_TENDER_ANNEX, body))
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
 

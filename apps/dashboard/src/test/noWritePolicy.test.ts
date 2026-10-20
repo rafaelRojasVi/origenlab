@@ -125,6 +125,7 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/retire-bidder-document",
     "/v2/commands/set-tender-status",
     "/v2/commands/attach-tender-annexes",
+    "/v2/commands/remove-tender-annex",
     "/v2/commands/prepare-tender-bid",
     "/v2/commands/create-tender-offer-quote",
   ];

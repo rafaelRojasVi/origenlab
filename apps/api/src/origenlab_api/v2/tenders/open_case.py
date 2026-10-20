@@ -46,7 +46,12 @@ from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.org_web_suggestions import valid_rut
 from origenlab_api.v2.quote_document_identity import normalize_rut
 from origenlab_api.v2.quotes.inputs import no_provider
-from origenlab_api.v2.tenders.annexes import ATTACH_TENDER_ANNEXES, attach_tender_annexes
+from origenlab_api.v2.tenders.annexes import (
+    ATTACH_TENDER_ANNEXES,
+    REMOVE_TENDER_ANNEX,
+    attach_tender_annexes,
+    remove_tender_annex,
+)
 from origenlab_api.v2.tenders.bidder import (
     ADD_BIDDER_DOCUMENT,
     RETIRE_BIDDER_DOCUMENT,
@@ -366,6 +371,7 @@ class V2TenderCommandRepository(V2CaseCommandRepository):
         SAVE_BIDDER_PROFILE: save_bidder_profile,
         ADD_BIDDER_DOCUMENT: add_bidder_document,
         ATTACH_TENDER_ANNEXES: attach_tender_annexes,
+        REMOVE_TENDER_ANNEX: remove_tender_annex,
         RETIRE_BIDDER_DOCUMENT: retire_bidder_document,
         PREPARE_TENDER_BID: request_bid_preparation,
         CREATE_TENDER_OFFER_QUOTE: create_tender_offer_quote,

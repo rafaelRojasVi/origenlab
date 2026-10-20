@@ -262,6 +262,47 @@ describe("TenderPage — anexos", () => {
   });
 });
 
+describe("TenderPage — «Quitar anexo»", () => {
+  it("asks for the motivo, posts remove-tender-annex and reads the page again", async () => {
+    const calls = stubApi([page(), page({ annexes: [] })], {
+      "/v2/commands/remove-tender-annex": () => json({ command: "remove-tender-annex", document_id: DOC1 }),
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Quitar bases_ejemplo.pdf" }));
+    fireEvent.click(screen.getByRole("button", { name: "Quitar anexo" }));
+    expect(await screen.findByText("Escribe un motivo de al menos 3 caracteres.")).toBeInTheDocument();
+    expect(posted(calls, "/v2/commands/remove-tender-annex")).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("Motivo para quitar el anexo"), { target: { value: "Es de otra licitación" } });
+    fireEvent.click(screen.getByRole("button", { name: "Quitar anexo" }));
+    await waitFor(() => expect(posted(calls, "/v2/commands/remove-tender-annex")).toHaveLength(1));
+    const [call] = posted(calls, "/v2/commands/remove-tender-annex");
+    expect(call.body).toEqual({ opportunity_id: TENDER, document_id: DOC1, reason: "Es de otra licitación" });
+    expect(call.key).toBeTruthy();
+    expect(await screen.findByText(/Aún no hay anexos/)).toBeInTheDocument();
+  });
+
+  it("says a refusal in Spanish and keeps the key only while the removal may have run", async () => {
+    let answer: () => Response = () => new Response("bad gateway", { status: 502 });
+    const calls = stubApi([page()], { "/v2/commands/remove-tender-annex": () => answer() });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Quitar bases_ejemplo.pdf" }));
+    fireEvent.change(screen.getByLabelText("Motivo para quitar el anexo"), { target: { value: "Duplicado" } });
+    fireEvent.click(screen.getByRole("button", { name: "Quitar anexo" }));
+    await screen.findByText("No se pudo completar. Intenta de nuevo.");
+    answer = () => refusal(409, "document_already_removed");
+    fireEvent.click(screen.getByRole("button", { name: "Quitar anexo" }));
+    await screen.findByText("Ese anexo ya se quitó; recarga la página.");
+    const [first, second] = posted(calls, "/v2/commands/remove-tender-annex");
+    expect(second.key).toBe(first.key);
+  });
+
+  it("a viewer never sees the page, so never a «Quitar»", () => {
+    stubApi([page()]);
+    renderPage("viewer");
+    expect(screen.queryByRole("button", { name: /Quitar/ })).toBeNull();
+  });
+});
+
 describe("TenderPage — preparing", () => {
   it("«Preparar oferta» posts the read phase", async () => {
     const calls = stubApi([page()], { "/v2/commands/prepare-tender-bid": () => json({ command: "prepare-tender-bid", preparation_id: READ }) });

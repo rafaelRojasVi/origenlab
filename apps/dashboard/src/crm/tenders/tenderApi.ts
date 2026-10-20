@@ -1,7 +1,8 @@
 /**
  * The one client for «Licitaciones»: every call the dashboard makes about tenders lives here (later
  * tasks add to it). The list of tenders and «Nueva licitación» (`open-tender-case`); one tender's page
- * (`GET /v2/tenders/{id}`, `set-tender-status`, `attach-tender-annexes` (multipart), `prepare-tender-bid`,
+ * (`GET /v2/tenders/{id}`, `set-tender-status`, `attach-tender-annexes` (multipart), «Quitar anexo»
+ * (`remove-tender-annex`), `prepare-tender-bid`,
  * `create-tender-offer-quote` and an output file's signed link); and the bidder's data and standard
  * documents («Datos para licitaciones» in Preferencias) — `GET /v2/bidder`, `save-bidder-profile`,
  * `add-bidder-document` (multipart), `retire-bidder-document` and a document's signed link.
@@ -354,6 +355,19 @@ export async function attachTenderAnnexes(
     skipped: Array.isArray(receipt.skipped) ? (receipt.skipped as AnnexUploadResult["skipped"]) : [],
   };
 }
+
+/** «Quitar anexo»: one anexo removed, with its motivo (at least 3 characters); no new preparation takes it. */
+export const removeTenderAnnex = (
+  opportunityId: string,
+  documentId: string,
+  reason: string,
+  idempotencyKey: string = newTenderCommandKey(),
+) =>
+  post(
+    "/v2/commands/remove-tender-annex",
+    { headers: JSON_HEADERS, body: JSON.stringify({ opportunity_id: opportunityId, document_id: documentId, reason }) },
+    idempotencyKey,
+  );
 
 export const prepareTenderBid = (opportunityId: string, phase: PreparationPhase, idempotencyKey: string = newTenderCommandKey()) =>
   post(

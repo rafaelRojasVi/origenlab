@@ -22,6 +22,13 @@ named by its original or zip-member file name, with one `opportunity.document_at
 A case that is not a tender is 422 `not_a_tender_case`. The route stores the objects first
 (content-addressed, `opportunities/<case>/<sha256>.<ext>`) and then runs this command in one
 transaction, as every document upload here does.
+
+«Quitar anexo» — `POST /v2/commands/remove-tender-annex {opportunity_id, document_id, reason}` — removes
+one wrong anexo once, as a case document is removed: the row stays with `removed_at`, who and the
+reason (3 characters or more), and one `opportunity.document_removed` event. A removed anexo is no
+longer on the page and no new preparation takes it. Refusals: 404 `case_not_found`, 422
+`not_a_tender_case`, 404 `annex_not_found` (not a `tender_annex` of this case), 409
+`document_already_removed`.
 """
 
 from __future__ import annotations
@@ -30,7 +37,9 @@ import hashlib
 import io
 import re
 import zipfile
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from origenlab_email_pipeline.chilecompra_anexo_evidence.archive import (
     ArchiveLimits,
@@ -51,6 +60,7 @@ from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 
 ATTACH_TENDER_ANNEXES = "attach-tender-annexes"
+REMOVE_TENDER_ANNEX = "remove-tender-annex"
 MAX_FILES = 20
 MAX_TOTAL_BYTES = 60 * 1024 * 1024
 #: Largest list of member names one rejected archive adds to the answer.
@@ -234,3 +244,45 @@ def attach_tender_annexes(
         attached.append({"document_id": document_id, "filename": file["filename"]})
     return {"command": ATTACH_TENDER_ANNEXES, "opportunity_id": opportunity_id, "attached": attached,
             "skipped": cap_skipped(skipped), "event_ids": event_ids}
+
+
+# ------------------------------------------------------------------ «Quitar anexo»
+
+class RemoveTenderAnnexBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    opportunity_id: str
+    document_id: str
+    reason: Annotated[str, Field(min_length=3, max_length=2000)]
+
+
+def remove_tender_annex(
+    repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+) -> dict[str, Any]:
+    """Remove one anexo of a tender, once, with its reason (the case-document way: nothing deleted)."""
+    opportunity_id, document_id = fields["opportunity_id"], fields["document_id"]
+    cur.execute("select kind from crm.opportunity where id = %s::uuid for update", (opportunity_id,))
+    case = cur.fetchone()
+    if case is None:
+        raise CommandRefused(404, "case_not_found", "no such case")
+    if case[0] != "tender":
+        raise CommandRefused(422, "not_a_tender_case", "Los anexos son de una licitación.")
+    cur.execute(
+        "select removed_at from crm.opportunity_document where id = %s::uuid and opportunity_id = %s::uuid "
+        "and kind = 'tender_annex' for update", (document_id, opportunity_id))
+    row = cur.fetchone()
+    if row is None:
+        raise CommandRefused(404, "annex_not_found", "No existe ese anexo en esta licitación.")
+    if row[0] is not None:
+        raise CommandRefused(409, "document_already_removed", "Ese anexo ya se quitó.")
+    cur.execute(
+        "update crm.opportunity_document set removed_at = now(), removed_by_operator_id = %s::uuid, "
+        "remove_reason = %s where id = %s::uuid",
+        (operator.operator_id, fields["reason"], document_id))
+    event_id = repo._append_event(
+        cur, aggregate_kind="opportunity", aggregate_id=opportunity_id,
+        event_type="opportunity.document_removed",
+        payload={"document_id": document_id, "kind": "tender_annex", "reason": fields["reason"]},
+        operator=operator, receipt_id=receipt_id)
+    return {"command": REMOVE_TENDER_ANNEX, "opportunity_id": opportunity_id, "document_id": document_id,
+            "event_ids": [event_id]}

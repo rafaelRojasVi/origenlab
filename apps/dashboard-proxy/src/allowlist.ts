@@ -360,6 +360,9 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   // (`add-bidder-document`) is multipart and listed with the other uploads.
   /^\/v2\/commands\/save-bidder-profile$/,
   /^\/v2\/commands\/retire-bidder-document$/,
+  // «Quitar anexo»: one wrong anexo of a tender removed, with its reason (the upload is multipart,
+  // listed with the other uploads).
+  /^\/v2\/commands\/remove-tender-annex$/,
   // Ask for a bid preparation (`read` or `fill`); the worker runs it.
   /^\/v2\/commands\/prepare-tender-bid$/,
   // The economic offer as a Cotizador draft on the case, from a ready read.

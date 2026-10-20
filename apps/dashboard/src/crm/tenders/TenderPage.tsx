@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { commandMissing } from "../../api/refusalEnvelope";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
@@ -14,8 +14,10 @@ import {
   createTenderOfferQuote,
   newTenderCommandKey,
   prepareTenderBid,
+  removeTenderAnnex,
   tenderRefusal,
   type Preparation,
+  type TenderAnnex,
   type PreparationPhase,
   type TenderPageData,
 } from "./tenderApi";
@@ -347,10 +349,7 @@ function TenderBody({
           ) : (
             <ul className="divide-y divide-line rounded-lg border border-line bg-canvas-raised">
               {annexes.map((a) => (
-                <li key={a.document_id} className="flex min-w-0 flex-wrap justify-between gap-x-3 px-3 py-2 text-[13px]">
-                  <span className="min-w-0 break-all text-ink">{a.filename}</span>
-                  <span className="text-[12px] text-ink-muted">{fmtDateTime(a.attached_at)}</span>
-                </li>
+                <AnnexRow key={a.document_id} tenderId={tender.id} annex={a} onRemoved={reload} />
               ))}
             </ul>
           )}
@@ -546,5 +545,98 @@ function ItemsList({
         ))}
       </ol>
     </div>
+  );
+}
+
+/* ── «Quitar anexo» ── */
+
+const REASON_MIN = 3;
+
+/** One anexo, with «Quitar»: a motivo (at least 3 characters) is asked for before anything is posted. */
+function AnnexRow({ tenderId, annex: a, onRemoved }: { tenderId: string; annex: TenderAnnex; onRemoved: () => void }) {
+  const reasonId = useId();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const keyRef = useRef<{ sig: string; key: string } | null>(null);
+
+  const remove = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    const why = reason.trim();
+    if (why.length < REASON_MIN) {
+      setProblem(`Escribe un motivo de al menos ${REASON_MIN} caracteres.`);
+      return;
+    }
+    const sig = JSON.stringify([tenderId, a.document_id, why]);
+    if (keyRef.current?.sig !== sig) keyRef.current = { sig, key: newTenderCommandKey() };
+    setBusy(true);
+    setProblem(null);
+    try {
+      await removeTenderAnnex(tenderId, a.document_id, why, keyRef.current.key);
+      keyRef.current = null;
+      toast("Anexo quitado");
+      onRemoved();
+    } catch (err) {
+      if (definitive(err)) keyRef.current = null;
+      setProblem(refusalText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <li className="px-3 py-2 text-[13px]">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <span className="min-w-0 break-all text-ink">{a.filename}</span>
+        <span className="flex items-center gap-2">
+          <span className="text-[12px] text-ink-muted">{fmtDateTime(a.attached_at)}</span>
+          <Button
+            variant="quiet"
+            className="min-h-[44px] px-3 text-[13px]"
+            aria-label={`Quitar ${a.filename}`}
+            aria-expanded={open}
+            onClick={() => setOpen((x) => !x)}
+          >
+            Quitar
+          </Button>
+        </span>
+      </div>
+      {open ? (
+        <form onSubmit={(e) => void remove(e)} noValidate className="mt-2 flex flex-col gap-2">
+          <div className="flex max-w-xl flex-col gap-[5px]">
+            <label htmlFor={reasonId} className="text-[12.5px] font-medium text-ink-muted">
+              Motivo para quitar el anexo
+            </label>
+            <input
+              id={reasonId}
+              value={reason}
+              maxLength={2000}
+              aria-invalid={problem ? true : undefined}
+              aria-describedby={problem ? `${reasonId}-problem` : undefined}
+              onChange={(e) => {
+                setReason(e.target.value);
+                setProblem(null);
+              }}
+              className="h-11 w-full min-w-0 rounded-lg border border-line-strong bg-canvas-raised px-3 text-[14px] text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 aria-[invalid=true]:border-bad"
+            />
+            {problem ? (
+              <span id={`${reasonId}-problem`} role="alert" className="text-[12px] text-bad">
+                {problem}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" variant="primary" className="min-h-[44px] px-4 text-[13px]" busy={busy} busyLabel="Quitando…">
+              Quitar anexo
+            </Button>
+            <Button className="min-h-[44px] px-4 text-[13px]" disabled={busy} onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+          </div>
+        </form>
+      ) : null}
+    </li>
   );
 }

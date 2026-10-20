@@ -75,6 +75,9 @@ const REFUSAL_ES: Record<string, string> = {
   document_too_large: "Los archivos pesan más de 60 MB en total; súbelos en partes.",
   http_413: "Los archivos pesan más de 60 MB en total; súbelos en partes.",
   too_many_files: "Sube hasta 20 archivos a la vez (o un .zip).",
+  // remove-tender-annex
+  annex_not_found: "Ese anexo ya no está en esta licitación; recarga la página.",
+  document_already_removed: "Ese anexo ya se quitó; recarga la página.",
   // shared
   role_may_not_view_bidder: "Solo ventas y administración pueden ver esta licitación.",
   forbidden: "Solo ventas y administración pueden hacer esto.",
