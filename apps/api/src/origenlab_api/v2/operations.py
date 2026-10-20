@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any
 
 from origenlab_api.v2.case_kind import SALE_CASES
@@ -127,6 +128,40 @@ def reglas_card(state: Mapping[str, Any] | None, actions_today: int) -> dict[str
     if refused:
         summary += f" · {refused} rechazada{'s' if refused != 1 else ''} en la última pasada"
     return card("reglas", "Reglas automáticas", status, summary, run.get("at"), facts)
+
+
+LICITACIONES_WARN_FRACTION = Decimal("0.8")
+_MONTHS_ES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre",
+              "noviembre", "diciembre"]
+_PREPARATION_STATUS_LABEL = [("queued", "en cola"), ("running", "en curso"), ("ready", "listas"),
+                             ("failed", "fallidas"), ("budget_stopped", "detenidas por el tope")]
+_STEP_LABEL = [("read", "Lectura"), ("match", "Cruce"), ("fill", "Relleno")]
+
+
+def _usd(value: Any) -> str:
+    return "US$ " + f"{Decimal(str(value)):.2f}".replace(".", ",")
+
+
+def _next_month_name(month: str) -> str:
+    return _MONTHS_ES[int(month[5:7]) % 12]
+
+
+def licitaciones_ia_card(f: Mapping[str, Any]) -> dict[str, Any]:
+    """Model spend of the tender preparations against the monthly cap (server-driven, no UI change)."""
+    spent, cap = Decimal(str(f.get("spent_usd") or 0)), Decimal(str(f.get("cap_usd") or 0))
+    cap_text = f"US$ {int(cap)}" if cap == cap.to_integral() else _usd(cap)
+    if cap <= spent:
+        status = "bad"
+        summary = ("Tope mensual alcanzado: la preparación de ofertas se detuvo hasta el 1 de "
+                   f"{_next_month_name(f['month'])}.")
+    else:
+        status = "warn" if spent >= cap * LICITACIONES_WARN_FRACTION else "ok"
+        summary = f"{_usd(spent)} de {cap_text} este mes"
+    counts = f.get("preparaciones") or {}
+    facts = [_fact(f"Preparaciones {label}", counts[key]) for key, label in _PREPARATION_STATUS_LABEL if counts.get(key)]
+    per_step = f.get("por_paso") or {}
+    facts += [_fact(label, _usd(per_step.get(key) or 0)) for key, label in _STEP_LABEL]
+    return card("licitaciones_ia", "Licitaciones IA", status, summary, facts=facts)
 
 
 def version_card(commit: str | None) -> dict[str, Any]:
@@ -337,6 +372,24 @@ def _json(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else (value or {})
 
 
+def _read_licitaciones(cur: Any) -> dict[str, Any]:
+    from origenlab_api.v2.model_spend import FEATURE_LICITACIONES, month_window, spend_summary
+
+    cur.execute("select now()")
+    now = cur.fetchone()[0]
+    summary = spend_summary(cur, FEATURE_LICITACIONES, now)
+    start, end = month_window(now)
+    cur.execute("select step, coalesce(sum(usd_cost), 0) from platform.model_usage "
+                "where feature = %s and created_at >= %s and created_at < %s group by step",
+                (FEATURE_LICITACIONES, start, end))
+    spent_by_step = {step: Decimal(total) for step, total in cur.fetchall()}
+    cur.execute("select status, count(*) from evidence.bid_preparation where requested_at >= %s and requested_at < %s "
+                "group by status", (start, end))
+    return {**summary, "preparaciones": {status: int(n) for status, n in cur.fetchall()},
+            "por_paso": {step: str(spent_by_step.get(step, Decimal(0)).quantize(Decimal("0.000001")))
+                         for step, _ in _STEP_LABEL}}
+
+
 def read_operation_facts(cur: Any) -> dict[str, Any]:
     """Every fact the cards classify, from one read-only transaction."""
     cur.execute(_MAILBOX_SQL)
@@ -390,6 +443,7 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
     unrecorded_on_case = unrecorded_on_case_items(on_case_rows, existing)
     cur.execute(_COUNTS_SQL)
     no_institution, por_confirmar = cur.fetchone()
+    licitaciones = _read_licitaciones(cur)
     return {
         "correo": {"authorization_state": mailbox[0] if mailbox else None,
                    "last_synced_at": _iso(mailbox[1]) if mailbox else None,
@@ -401,6 +455,7 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
                          "today": int(q_today or 0), "newest_at": _iso(q_newest), "events": []},
         "drive": {"pending": int(d_pending or 0), "pending_over_a_day": int(d_late or 0),
                   "today": int(d_today or 0), "newest_at": _iso(d_newest), "events": []},
+        "licitaciones": licitaciones,
         "actions": actions,
         "sent_quotes_without_case": sent_quotes,
         "sent_quotes_unrecorded_on_case": unrecorded_on_case,
@@ -413,10 +468,13 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
 def build_operations(facts: Mapping[str, Any], generated_at: str) -> dict[str, Any]:
     """The repository's part: the four database cards, the actions and the counts. The route adds
     the cards only the running process knows (rules timer, deployed commit)."""
+    cards = [correo_card(facts["correo"]), clasificacion_card(facts["clasificacion"]),
+             cotizaciones_card(facts["cotizaciones"]), drive_card(facts["drive"])]
+    if facts.get("licitaciones"):
+        cards.append(licitaciones_ia_card(facts["licitaciones"]))
     return {
         "generated_at": generated_at,
-        "cards": [correo_card(facts["correo"]), clasificacion_card(facts["clasificacion"]),
-                  cotizaciones_card(facts["cotizaciones"]), drive_card(facts["drive"])],
+        "cards": cards,
         "actions": list(facts["actions"]),
         "actions_today": sum(1 for a in facts["actions"] if a.get("today")),
         "sent_quotes_without_case": list(facts.get("sent_quotes_without_case") or []),
