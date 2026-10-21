@@ -20,8 +20,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 
-from origenlab_worker.capture_queue import enabled
-from origenlab_worker.flags import bid_enabled
+from origenlab_worker.flags import bid_enabled, capture_enabled
 
 SHUTDOWN_SECONDS = 20
 
@@ -69,11 +68,11 @@ def supervise(commands: Sequence[Sequence[str]], env: Mapping[str, str], *,
 
 
 def run_mail_worker(env: Mapping[str, str]) -> int:
-    commands = [[sys.executable, "-m", "origenlab_worker.cli", "triage-child"]]
-    if enabled(env):
-        commands.append([sys.executable, "-m", "origenlab_worker.cli", "capture-worker"])
+    commands = [[sys.executable, "-m", "origenlab_worker.entry", "triage-child"]]
+    if capture_enabled(env):
+        commands.append([sys.executable, "-m", "origenlab_worker.entry", "capture-worker"])
     if bid_enabled(env):
-        commands.append([sys.executable, "-m", "origenlab_worker.cli", "tender-child"])
+        commands.append([sys.executable, "-m", "origenlab_worker.entry", "tender-child"])
     stop = threading.Event()
     old_handlers = {}
     for signum in (signal.SIGTERM, signal.SIGINT):

@@ -40,18 +40,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import procrastinate
-import psycopg
 from procrastinate import testing as procrastinate_testing
-from procrastinate.manager import QUEUEING_LOCK_CONSTRAINT
 
 from origenlab_worker.database import (
-    QUEUE_REQUIRED_POLICIES,
-    QUEUE_REQUIRED_PRIVILEGES,
     TRIAGE_REQUIRED_POLICIES,
     TRIAGE_REQUIRED_PRIVILEGES,
     WorkerTarget,
-    averify_worker_connection,
     open_verified_connection,
+)
+from origenlab_worker.queue_connector import (
+    APP_NAME_QUEUE,
+    SEARCH_PATH,
+    RlsQueueConnector,
+    connector_for,
+    pool_configure,
 )
 from origenlab_worker.triage import (
     DEFAULT_SINCE_DAYS,
@@ -66,9 +68,7 @@ QUEUE = "triage"
 TENDER_QUEUE = "tenders"
 BID_SWEEP_LOCK = "bid-preparation-sweep"
 DISCOVERY_LOCK = "tender-discovery"
-APP_NAME_QUEUE = "origenlab-worker-queue"
 APP_NAME_TRIAGE = "origenlab-worker-triage"
-SEARCH_PATH = "procrastinate, pg_catalog"
 SWEEP_LIMIT = 200
 #: A transient model failure (network, 429, 5xx) is retried 5 times, 30 s + 90 s per attempt
 #: before it: 30, 120, 210, 300, 390 s — about 17 minutes in all. (Procrastinate's
@@ -94,58 +94,6 @@ class QueueContext:
 
 
 CONTEXT = QueueContext()
-
-
-def pool_configure(target: WorkerTarget) -> Callable[[Any], Any]:
-    async def configure(conn: Any) -> None:
-        await averify_worker_connection(conn, target, privileges=QUEUE_REQUIRED_PRIVILEGES,
-                                        policies=QUEUE_REQUIRED_POLICIES)
-        await conn.execute(f"set search_path to {SEARCH_PATH}")
-        if not conn.autocommit:
-            await conn.commit()  # the pool wants the connection back idle
-
-    return configure
-
-
-class RlsQueueConnector(procrastinate.PsycopgConnector):
-    """3.10 assumes UniqueViolation DETAIL is visible, but PostgreSQL RLS masks it.
-
-    Recover only the known queueing-lock violation identified by PostgreSQL's
-    constraint name. Never expose a value or broaden grants to obtain DETAIL.
-    Other AssertionErrors/constraints retain their failure behavior.
-    """
-    @staticmethod
-    def _masked_violation(exc):
-        original = exc.__context__
-        if (isinstance(original, psycopg.errors.UniqueViolation)
-                and original.diag.constraint_name == QUEUEING_LOCK_CONSTRAINT
-                and not original.diag.message_detail):
-            raise procrastinate.exceptions.UniqueViolation(
-                constraint_name=QUEUEING_LOCK_CONSTRAINT, queueing_lock=None,
-            ) from None
-        raise exc
-
-    async def execute_query_one_async(self, query, **arguments):
-        try:
-            return await super().execute_query_one_async(query, **arguments)
-        except AssertionError as exc:
-            self._masked_violation(exc)
-
-    async def execute_query_all_async(self, query, **arguments):
-        try:
-            return await super().execute_query_all_async(query, **arguments)
-        except AssertionError as exc:
-            self._masked_violation(exc)
-
-
-def connector_for(target: WorkerTarget, *, max_size: int = 3) -> procrastinate.PsycopgConnector:
-    return RlsQueueConnector(
-        conninfo=target.dsn,
-        kwargs={"application_name": APP_NAME_QUEUE, **target.connect_options},
-        min_size=1,
-        max_size=max_size,
-        configure=pool_configure(target),
-    )
 
 
 def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE, TENDER_QUEUE)) -> procrastinate.App:

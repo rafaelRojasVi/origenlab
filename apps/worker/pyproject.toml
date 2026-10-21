@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-origenlab-worker = "origenlab_worker.cli:main"
+origenlab-worker = "origenlab_worker.entry:main"
 
 [dependency-groups]
 dev = [

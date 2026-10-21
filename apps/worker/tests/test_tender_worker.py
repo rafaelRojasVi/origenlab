@@ -153,7 +153,7 @@ def test_a_tender_child_that_fails_at_runtime_idles_and_logs_only_the_class(monk
     idled = []
     monkeypatch.setattr(triage_cli, "_idle_until_terminated", lambda event="triage_worker": idled.append(event))
 
-    def boom(config):
+    def boom(config, **_):
         raise RuntimeError("texto-secreto-del-error")
 
     monkeypatch.setattr(triage_cli, "_serve_tenders", boom)

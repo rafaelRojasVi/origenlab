@@ -31,25 +31,44 @@ dispatch — rather than a copy of it. Four properties hold by construction:
 
 from __future__ import annotations
 
-from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
-from origenlab_api.v2.case_command_routes import case_command_router
-from origenlab_api.v2.case_commands import CASE_COMMAND_NAMES
-from origenlab_api.v2.command_core import CommandTransaction
-from origenlab_api.v2.command_repository import V2CommandRepository
-from origenlab_api.v2.command_routes import command_router
-from origenlab_api.v2.commands import COMMAND_NAMES, CommandRefused
-from origenlab_api.v2.identity import (
-    IdentityMisconfigured,
-    IdentityPort,
-    IdentityRefused,
-    JwksVerifier,
-    LocalDevIdentity,
-    OperatorIdentity,
-    build_identity_port,
-    is_loopback_dsn,
-)
-from origenlab_api.v2.repository import V2Repository, clamp_limit
-from origenlab_api.v2.routes import router
+from importlib import import_module
+from typing import Any
+
+#: Each name the package offers and the submodule it lives in. Loaded on first use (PEP 562), not
+#: on import: a submodule import such as `origenlab_api.v2.quote_case_archive` runs this file, and
+#: importing the routers here pulled FastAPI, every route and the email pipeline (~1,000 modules,
+#: ~70 MB) into each Render worker process that only needed one helper (2026-10-21).
+_LAZY: dict[str, str] = {
+    "V2CaseCommandRepository": "case_command_repository",
+    "case_command_router": "case_command_routes",
+    "CASE_COMMAND_NAMES": "case_commands",
+    "CommandTransaction": "command_core",
+    "V2CommandRepository": "command_repository",
+    "command_router": "command_routes",
+    "COMMAND_NAMES": "commands",
+    "CommandRefused": "commands",
+    "IdentityMisconfigured": "identity",
+    "IdentityPort": "identity",
+    "IdentityRefused": "identity",
+    "JwksVerifier": "identity",
+    "LocalDevIdentity": "identity",
+    "OperatorIdentity": "identity",
+    "build_identity_port": "identity",
+    "is_loopback_dsn": "identity",
+    "V2Repository": "repository",
+    "clamp_limit": "repository",
+    "router": "routes",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module = _LAZY.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(f"{__name__}.{module}"), name)
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "CASE_COMMAND_NAMES",
