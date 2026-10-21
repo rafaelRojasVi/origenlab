@@ -3450,3 +3450,13 @@ Cotizador PDF is filed, never read, and no model call is made for it. No migrati
 worker already reads `comms.message`). Deploys with the worker on merge; the next cron run files the
 quotes R16 marked sent.
 
+### 2.7.145 A bounce someone deleted still blocks its address, 2026-10-21 — built, deploys on merge
+
+The OHAUS campaign's bounce notices were being deleted from contacto@ (whole conversations, our
+sent copy included) before the next capture run; the capture skips Trash (V1 intake rule), so 114 of
+~128 dead addresses never reached `outbound.contact_control` (blocked by hand the same day, V1 and V2,
+`bounces-20261021`). Now a delivery report — sender `MAILER-DAEMON@…` / `postmaster@…` — in the Trash
+is captured and staged like any inbound mail (`capture.intake_skip_reason`, and the shared evidence
+rule `manifest._require_stageable_gmail_payload`, which keeps refusing Spam, drafts and every other
+Trash message). A contacto@ Gmail filter (same day) also sends bounce notices straight to «Rebotes»,
+out of the inbox, so nobody needs to delete them.

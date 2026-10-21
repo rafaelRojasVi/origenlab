@@ -320,7 +320,7 @@ def _capture_one(message_id: str, *, db: SyncDb, gmail: GmailSource, store: EmlS
     except GmailNotFound:  # a draft saved over, or a message deleted before this run reached it
         counts.gone += 1
         return
-    skip = intake_skip_reason(meta.label_ids)
+    skip = intake_skip_reason(meta.label_ids, meta.headers.get("from"))
     if skip is not None:
         setattr(counts, f"skipped_{skip}", getattr(counts, f"skipped_{skip}") + 1)
         return

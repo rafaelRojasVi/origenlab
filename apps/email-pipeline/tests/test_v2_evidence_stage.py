@@ -544,6 +544,23 @@ def test_an_excluded_label_beside_a_permitted_one_is_still_refused() -> None:
         parse_manifest(raw)
 
 
+@pytest.mark.parametrize("sender", ["Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+                                    "postmaster@uni.example"])
+def test_a_delivery_report_in_the_trash_is_stageable_and_nothing_else_is(sender) -> None:
+    """2026-10-21: a bounce someone deleted still carries a dead address; Spam and drafts stay refused."""
+    record = _gmail_record(labels=["TRASH", "CATEGORY_UPDATES"])
+    record["payload"]["sender"] = sender
+    parse_manifest(_manifest(records=[record]))
+    spam = _gmail_record(labels=["SPAM"])
+    spam["payload"]["sender"] = sender
+    with pytest.raises(ManifestRefused, match="excluded_spam"):
+        parse_manifest(_manifest(records=[spam]))
+    person = _gmail_record(labels=["TRASH"])
+    person["payload"]["sender"] = "no-postmaster@uni.example"
+    with pytest.raises(ManifestRefused, match="excluded_trash"):
+        parse_manifest(_manifest(records=[person]))
+
+
 @pytest.mark.parametrize("declared", ["excluded_spam", "excluded_trash", "metadata_only", None, ""])
 def test_only_a_stageable_intake_class_may_be_declared(declared) -> None:
     raw = _manifest(records=[_gmail_record(intake_class=declared)])

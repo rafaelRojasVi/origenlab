@@ -104,6 +104,21 @@ def test_drafts_spam_and_trash_are_skipped_by_label_id(labels, reason) -> None:
     assert intake_skip_reason(labels) == reason
 
 
+@pytest.mark.parametrize("sender,reason", [
+    ("Mail Delivery Subsystem <mailer-daemon@googlemail.com>", None),
+    ("postmaster@cliente.invalid", None),
+    ("MAILER-DAEMON@tiro2.med.cliente.invalid", None),
+    ("Ana <ana@cliente.invalid>", "trash"),
+    ("no-postmaster@cliente.invalid", "trash"),
+    (None, "trash"),
+])
+def test_a_delivery_report_in_the_trash_is_still_captured(sender, reason) -> None:
+    # Someone deleted the bounce's conversation: its address must still reach the block list.
+    assert intake_skip_reason(("TRASH", "CATEGORY_UPDATES"), sender) == reason
+    # Spam and drafts stay skipped, bounce or not.
+    assert intake_skip_reason(("SPAM",), sender) == "spam"
+
+
 def test_an_outbound_campaign_send_is_a_bulk_send_and_a_newsletter_is_not() -> None:
     sent = capture(make_raw(frm=f"OrigenLab <{MAILBOX}>", to="x@cliente.invalid", list_unsubscribe=True), labels=("SENT",))
     received = capture(make_raw(list_unsubscribe=True), labels=("INBOX",))

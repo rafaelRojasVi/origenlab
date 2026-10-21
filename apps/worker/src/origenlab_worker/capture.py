@@ -34,6 +34,7 @@ from email.utils import getaddresses, parseaddr
 from typing import Any
 
 from origenlab_worker.v1_reuse import (
+    DELIVERY_REPORT_SENDER,
     classify_intake_folder,
     classify_send_direction,
     date_iso_from_msg,
@@ -126,14 +127,23 @@ class UnparsedMessage:
     reason: str
 
 
-def intake_skip_reason(label_ids: Sequence[str]) -> str | None:
+def intake_skip_reason(label_ids: Sequence[str], from_header: str | None = None) -> str | None:
     """`draft`, `spam` or `trash` when any label is one V1 intake excludes; else None.
 
     Label *ids*, never names: system ids (`DRAFT`, `SPAM`, `TRASH`, `INBOX`, `SENT`) are what the
     staging rule saw, and a user label named «Borradores 2026» must not exclude a message.
+
+    One exception: a delivery report in the trash is still captured (2026-10-21). People clear
+    «Delivery Status Notification» conversations out of the inbox — our sent copy goes to the trash
+    with them — and a bounce trashed before the next run was skipped for good, so its address was
+    never blocked (114 OHAUS campaign bounces, blocked by hand that day). The evidence check
+    (`require_stageable_gmail_payload`) makes the same exception, by the same sender pattern.
     """
+    bounce = bool(from_header and DELIVERY_REPORT_SENDER.search(from_header))
     for label in label_ids:
         reason = SKIPPED_INTAKE.get(classify_intake_folder(label))
+        if reason == "trash" and bounce:
+            continue
         if reason is not None:
             return reason
     return None
