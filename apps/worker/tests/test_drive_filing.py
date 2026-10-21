@@ -301,3 +301,51 @@ def test_a_wrong_account_files_nothing(dsn) -> None:
         counts = DriveFiler(db.connection, drive, store, TARGET).run()
     assert counts.refusals.get("wrong_account", 0) >= 1 and counts.filed == 0
     assert drive.writes == []
+
+
+@needs_worker_db
+def test_a_cotizador_quote_sent_by_email_is_filed_and_never_read(dsn) -> None:
+    """Rule R16 marks a Cotizador revision sent with the email's `comms.message` as `sent_message_id`
+    and no `origin_source_record_id`: the filer finds the email through it; the quote reader does not."""
+    from origenlab_worker.quote_reader import QuoteReader
+
+    mailbox_id = owner_rows(dsn, "select id::text from comms.mailbox limit 1")
+    mailbox_id = mailbox_id[0][0] if mailbox_id else seed_mailbox(dsn)
+    store, drive = _Store(), FakeDrive()
+    pdf = _pdf(uuid.uuid4().hex)
+    gid = uuid.uuid4().hex[:16]
+    raw = _raw(pdf, "Cotización CN01500A — Cliente Ficticio.pdf")
+    c = build_capture(raw, gmail_message_id=gid, gmail_thread_id=f"t-{gid}", label_ids=("SENT",),
+                      label_names={}, internal_date_ms=INTERNAL_MS, mailbox_address=MAILBOX)
+    path = f"{MAILBOX}/2026/10/{gid}.eml"
+    store.objects[path] = raw
+    with open_worker_db(local_test_target(worker_dsn(dsn))) as db:
+        db.record(c, mailbox_id=mailbox_id, eml_path=f"mail/{path}", eml_sha256=hashlib.sha256(raw).hexdigest(),
+                  size_bytes=len(raw))
+    message = owner_rows(dsn, "select id::text from comms.message where provider_message_id = %s", (gid,))[0][0]
+    sha = hashlib.sha256(pdf).hexdigest()
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-{gid}@example.test",))[0][0]
+    case = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) "
+                           "values ('Caso ficticio', 'lead', %s) returning id::text", (operator,))[0][0]
+    quote = owner_rows(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) "
+                            "values (%s, '01500-26', 'minted') returning id::text", (case,))[0][0]
+    revision = owner_rows(dsn, """
+        insert into crm.quote_revision (quote_id, revision_no, status, origin, quote_currency, price_decimals,
+               subtotal, discount_total, tax_base, tax_total, grand_total, totals_computed_at,
+               party_snapshot, party_snapshot_version, approved_at, approved_by_operator_id,
+               pdf_sha256, sent_at, sent_message_id)
+        values (%s, 2, 'sent', 'authored', 'CLP', 0, 100, 0, 100, 19, 119, now(), '{}'::jsonb, 1, now(), %s,
+                %s, now(), %s) returning id::text""", (quote, operator, sha, message))[0][0]
+
+    with open_worker_db(local_test_target(worker_dsn(dsn))) as db:
+        assert sha not in {r["pdf_sha256"] for r in QuoteReader(db.connection, store, None, "off").candidates(50)}
+        # Newest first: this one (earlier tests leave refused candidates in the shared database).
+        counts = DriveFiler(db.connection, drive, store, TARGET).run(limit=1)
+    assert (counts.filed, counts.refused) == (1, 0), counts.as_log()
+    files = [i for i in drive.items.values() if i["appProperties"].get(qa.PROP_DOC_SHA) == sha]
+    assert len(files) == 1 and drive.blobs[files[0]["id"]] == pdf
+    record = owner_rows(dsn, "select payload from evidence.source_record where dedupe_key = %s",
+                        (f"drive_file:{sha}",))[0][0]
+    assert (record["quote_revision_id"], record["opportunity_id"], record["revision"]) == (revision, case, 2)

@@ -3439,3 +3439,14 @@ skipped, and two PDFs in one email (Ygaero, CN01274A + CN01275) were left to a p
   R15 now reads emailed historical quotes only, as before.
 - **Not yet.** Deploys on merge with the migration (`production-db-migrations`); nothing manual.
 
+### 2.7.144 A Cotizador quote's sent PDF is filed in its case's Drive folder, 2026-10-21 — built, deploys on merge
+
+`origenlab-worker drive-file` (`drive_filing.py`) found a revision's email only through
+`origin_source_record_id`, which a Cotizador revision never has, so the PDF Tatiana emailed was never
+filed. It now also follows `sent_message_id` (set by R16, §2.7.143) to that email's capture and takes
+the attachment by the revision's `pdf_sha256`, into the case folder as for any recorded quote. The
+quote reader (`quote_reader.py`) keeps its own selection — revisions recorded from an email — so a
+Cotizador PDF is filed, never read, and no model call is made for it. No migration, no new grant (the
+worker already reads `comms.message`). Deploys with the worker on merge; the next cron run files the
+quotes R16 marked sent.
+
