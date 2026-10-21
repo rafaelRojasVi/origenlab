@@ -188,6 +188,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "«acme-ejemplo.example», con «CN09876-Persona Ficticia - Acme Ejemplo SpA.pdf» enviada hace 4 días → «Acme Ejemplo SpA», confirmada.",
   },
+  R16: {
+    cuando: "OrigenLab envía, en un correo que ya está en el caso, el PDF de una cotización hecha y aprobada en el Cotizador para ese caso (el número y la letra de revisión del nombre del archivo coinciden).",
+    hace: "Marca esa cotización como enviada y deja el caso en «Enviada». No lee el PDF: lo que dice es lo que se aprobó en el Cotizador. Si el correo lleva varias, marca cada una.",
+    automatica: true,
+    ejemplo: "Se envía «CN09876A-Empresa Ficticia.pdf» (revisión A aprobada en el Cotizador) → la cotización 09876A queda enviada y el caso en «Enviada».",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -206,6 +212,7 @@ const RULE_WHY: Record<string, string> = {
   R13: "responde la solicitud del cliente",
   R14: "el correo ya estaba en el caso",
   R15: "cotización enviada hace 3 días o más",
+  R16: "se envió el PDF del Cotizador",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -225,6 +232,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `Atendió una solicitud reenviada: ${target}`;
   } else if (rule === "R14") {
     verb = `Registró ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
+  } else if (rule === "R16") {
+    verb = `Marcó enviada ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
   } else if (rule === "R15") {
     verb = `Confirmó la institución${a.organization_name ? ` «${a.organization_name}»` : ""}`;
   } else {

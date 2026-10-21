@@ -66,6 +66,7 @@ from origenlab_api.v2.mail_rules import (
     LATE_QUOTE_WINDOW_DAYS,
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
+    RECORD_AUTHORED_QUOTE_SENT,
     SETTLE_DAYS,
     SYSTEM_LABEL,
     UNCONFIRM_ORGANIZATION_RECORD,
@@ -94,6 +95,7 @@ from origenlab_api.v2.quote_import_commands import (
     validated_quote_import,
 )
 from origenlab_api.v2.quote_import_repository import V2QuoteImportRepository
+from origenlab_api.v2.quote_sent import record_authored_quote_sent
 
 APPLY_COMMAND = "apply_mail_rule"
 UNDO_COMMAND = "undo_mail_rule_action"
@@ -199,7 +201,7 @@ select id::text as id, title, stage, version, organization_id::text as organizat
 _QUOTES_SQL = """
 select q.id::text as quote_id, q.opportunity_id::text as opportunity_id, q.quote_number,
        r.id::text as revision_id, r.revision_no, r.status, r.version,
-       r.superseded_by_revision_no is not null as superseded, r.sent_at
+       r.superseded_by_revision_no is not null as superseded, r.sent_at, r.origin, r.approved_at
   from crm.quote q
   join crm.opportunity o on o.id = q.opportunity_id and o.kind = 'sale'
   left join crm.quote_revision r on r.quote_id = q.id
@@ -262,9 +264,9 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
   from platform.command_receipt
  where command_name = %s and status = 'completed'
 """
-#: Rules that act on an email another rule already acted on (R14), each once: their apply receipt
+#: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
-AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14"})
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16"})
 #: R15: the institutions «por confirmar», what created them (the receipt of their
 #: `organization.created` event), and the PDF file name of each quote on their cases that is still
 #: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
@@ -287,6 +289,8 @@ select o.id::text,
            join crm.quote_revision qr on qr.quote_id = q.id
            left join evidence.source_record sr on sr.id = qr.origin_source_record_id
           where op.organization_id = o.id and op.kind = 'sale' and qr.status = 'sent'
+            -- A sent PDF recorded from an email; a Cotizador revision R16 marks sent is not read here.
+            and qr.origin = 'historical_import'
             and qr.created_at <= now() - make_interval(days => %(days)s)
             and coalesce(op.close_reason, '') <> 'discarded_by_correction'
           order by qr.created_at, qr.id), '{}') as files
@@ -363,7 +367,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             q["revisions"].append(QuoteRevision(id=r["revision_id"], revision_no=int(r["revision_no"]),
                                                 status=r["status"], version=int(r["version"]),
                                                 superseded=bool(r["superseded"]),
-                                                sent_at=r["sent_at"].isoformat() if r["sent_at"] else None))
+                                                sent_at=r["sent_at"].isoformat() if r["sent_at"] else None,
+                                                origin=r["origin"] or "",
+                                                approved_at=r["approved_at"].isoformat() if r["approved_at"] else None))
     by_case: dict[str, list[CaseQuote]] = {}
     for qid, q in quotes.items():
         by_case.setdefault(q["opportunity_id"], []).append(
@@ -584,12 +590,14 @@ class MailRulesRepository(V2CaseCommandRepository):
         if len(pairs) > APPLY_BATCH:
             raise CommandRefused(422, "batch_too_large", f"at most {APPLY_BATCH} actions per call")
         actions, _display, _snapshot = self.plan()
+        # One email may carry two actions (R16 beside a proposal): the pair names which.
+        by_pair = {(a.evidence_id, a.rule_id): a for a in actions}
         by_evidence = {a.evidence_id: a for a in actions}
         applied: list[dict[str, Any]] = []
         refused: list[dict[str, Any]] = []
         for pair in pairs:
             evidence_id, rule_id = str(pair["evidence_id"]), str(pair["rule_id"])
-            action = by_evidence.get(evidence_id)
+            action = by_pair.get((evidence_id, rule_id)) or by_evidence.get(evidence_id)
             if action is None or action.rule_id != rule_id or action.mode != AUTO:
                 now = "nada" if action is None else f"{action.rule_id} ({action.mode})"
                 refused.append({"evidence_id": evidence_id, "rule_id": rule_id, "code": "plan_changed",
@@ -762,6 +770,11 @@ class MailRulesRepository(V2CaseCommandRepository):
     def _undo_steps(self, cur: Any, operator: OperatorIdentity, action: dict[str, Any], note: str,
                     receipt_id: str) -> tuple[list[dict[str, Any]], str | None]:
         rule = action.get("rule_id")
+        if rule == "R16":
+            # An issued Cotizador revision never goes back to approved (`quote_revision_authored_frozen`),
+            # and the email did carry its PDF. A quote that should not stand is voided in the Cotizador.
+            raise CommandRefused(409, "sent_quote_is_final",
+                                 "la cotización ya consta como enviada; si no correspondía, anúlala en el Cotizador")
         kept: str | None = None
         created = action.get("created") or {}
         case_id = action.get("case_id")
@@ -911,6 +924,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             LINK_AFTER_CLOSE: MailRulesRepository._link_after_close,
             ATTACH_FORWARD: forwarded_requests.attach_forward_to_case,
             CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
+            RECORD_AUTHORED_QUOTE_SENT: record_authored_quote_sent,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
@@ -1117,6 +1131,8 @@ def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: 
         created["opportunity_id"] = result["opportunity_id"]
         if result.get("organization_created"):
             created["organization_id"] = result["organization_id"]
+    if command == RECORD_AUTHORED_QUOTE_SENT:
+        created.setdefault("sent_revision_ids", []).append(result["quote_revision_id"])
     if command == RECORD_HISTORICAL_QUOTATION:
         # One email may send several alternatives (R1): the first stays in the single keys older
         # receipts carry; every one is listed, so undo voids them all.
