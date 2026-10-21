@@ -607,7 +607,7 @@ def test_check_approvable_passes_a_complete_quote() -> None:
     ({"item_line_nos": (1, 2, 3), "unpriced_line_nos": (2, 3)},
      [("unpriced_line", "La línea 2 no tiene precio (falta costo o precio)."),
       ("unpriced_line", "La línea 3 no tiene precio (falta costo o precio).")]),
-    ({"expense_count": 1}, [("principal_missing", "Hay gastos de importación pero ningún equipo principal; elige uno.")]),
+    ({"expense_count": 1}, [("principal_missing", "Hay gastos de importación pero ningún equipo los lleva; marca «Lleva gastos» en uno.")]),
     ({"missing_fx": ("EUR", "USD")}, [("fx_missing", "Falta el tipo de cambio de EUR."),
                                       ("fx_missing", "Falta el tipo de cambio de USD.")]),
     ({"has_institution": False}, [("no_institution", "El caso no tiene institución.")]),
@@ -744,7 +744,7 @@ def test_approve_refuses_import_expenses_without_a_principal(world) -> None:
     assert len(_lines(world["dsn"], created["revision_id"])) == 5  # the profile's four expense lines
     refused = _approve_refused(world, created["revision_id"], saved["version"])
     assert (refused.status_code, refused.code, refused.message) == (
-        409, "principal_missing", "Hay gastos de importación pero ningún equipo principal; elige uno.")
+        409, "principal_missing", "Hay gastos de importación pero ningún equipo los lleva; marca «Lleva gastos» en uno.")
 
 
 @needs_db

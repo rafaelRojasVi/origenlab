@@ -890,7 +890,7 @@ outside this count and outside this inventory.
 | 11 | `crm.domain_event` | the single audit stream | closed `event_type`; `payload_version`; validated payload; no UPDATE, no DELETE |
 | 12 | `crm.quote` | numbered offer for one opportunity | a minted number is unique; a printed historical number is unique per opportunity (§3.5); the opportunity has an organization |
 | 13 | `crm.quote_revision` | immutable priced snapshot with its party snapshot | frozen once approved, party snapshot included; one open revision per quote; stored totals reconcile; snapshot NOT NULL and validated from `approved`; a `historical_import` revision is one document, immutable, sent or void (§3.5) |
-| 14 | `crm.quote_line` | items, logistics, fees, discounts with their own currency and FX | at most one principal item; a logistics allocation target is an item line |
+| 14 | `crm.quote_line` | items, logistics, fees, discounts with their own currency and FX | principal items carry the import expenses, several sharing them by cost (`20261021200000`); a logistics allocation target is an item line |
 | 15 | `comms.mailbox` | provider account, permissions, sync cursor | address unique; at most one production sender |
 | 16 | `comms.message` | provider message evidence | `(mailbox_id, provider_message_id)` unique; `send_attempt_id` unique |
 | 17 | `comms.message_participant` | from/to/cc addresses with optional resolution | `(message_id, role, address_norm)` |
@@ -1132,7 +1132,7 @@ Every column below is nullable or defaulted, so historical and imported rows car
 | `warranty_terms_es`, `delivery_place_es`, `installation_terms_es`, `client_notes_es` | the printed conditions (`delivery_terms` and `payment_terms` already existed) |
 | `validity_days` | 1–365, or NULL (the `quote_default_validity_days` parameter applies, and 30 days when that is unset or not an integer from 1 to 365); `valid_until` is set at approval |
 | `expense_method` | `dhl_calc` \| `profile` (default) \| `manual` — how import expenses were obtained |
-| `expense_allocation_mode` | `principal` (default: every expense on the principal item) \| `proportional_cost` (spread by cost) |
+| `expense_allocation_mode` | `principal` (default: every expense on the principal item; several marked principal items share them by cost) \| `proportional_cost` (spread by cost) |
 | `principal_rule` | `highest_cost_imported_equipment` (default) \| `first_eur_equipment_over_threshold` \| `manual` |
 | `fx_override_reasons` | JSON object keyed by currency, `{"EUR": {"reason": "…", "clp_per_unit": "1012.50"}}` (synthetic): why the operator replaced the Banco Central rate **and the rate itself**, so it survives a draft with no line in that currency. There is no per-revision FX table |
 

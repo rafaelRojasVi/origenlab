@@ -987,7 +987,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
 APPROVAL_REFUSALS = {
     "no_items": "Agrega al menos un producto.",
     "unpriced_line": "La línea {line_no} no tiene precio (falta costo o precio).",
-    "principal_missing": "Hay gastos de importación pero ningún equipo principal; elige uno.",
+    "principal_missing": "Hay gastos de importación pero ningún equipo los lleva; marca «Lleva gastos» en uno.",
     "fx_missing": "Falta el tipo de cambio de {currency}.",
     "no_institution": "El caso no tiene institución.",
     "no_recipient": "Elige a quién va dirigida.",

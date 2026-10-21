@@ -280,10 +280,13 @@ export function ExpensesSection({
   const principalModel = principal
     ? (principal.product_id && byId.get(principal.product_id)?.model_number) || principal.description || null
     : null;
+  const carriers = stale ? 0 : (computed?.lines.filter((l) => l.is_principal).length ?? 0);
   const where =
     draft.allocation_mode === "proportional_cost"
       ? "Se reparten según el costo de cada línea."
-      : `Se suman al equipo principal${principalModel ? ` (${principalModel})` : ""}. Al cliente no se muestran como línea.`;
+      : carriers > 1
+        ? `Se reparten entre los ${carriers} equipos que llevan gastos, según su costo. Al cliente no se muestran como línea.`
+        : `Se suman al equipo principal${principalModel ? ` (${principalModel})` : ""}. Al cliente no se muestran como línea.`;
   const notices = computed ? expenseNotices(computed.warnings) : [];
   const listProblem = invalid.find((p) => p.field === "manual_expenses" && p.index === undefined)?.message_es ?? null;
   const dim = stale ? " opacity-50" : "";

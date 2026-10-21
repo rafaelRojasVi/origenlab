@@ -246,7 +246,7 @@ describe("ProductsSection — the table", () => {
     expect(within(row).getByText("$ 11.620.000")).toBeInTheDocument();
     expect(within(row).getByText("28,6 %")).toBeInTheDocument();
     expect(within(row).getByText("En rango")).toBeInTheDocument();
-    expect(within(row).getByText("Equipo principal · absorbe los gastos")).toBeInTheDocument();
+    expect(within(row).getByRole("checkbox", { name: "Lleva gastos" })).toBeChecked();
     expect(within(row).getByText("AG-100")).toBeInTheDocument();
     expect(within(row).getByText(/Proveedor Uno/)).toBeInTheDocument();
     const free = screen.getByRole("row", { name: /Servicio de prueba/ });
@@ -271,8 +271,8 @@ describe("ProductsSection — the table", () => {
     expect(new Set(grids).size).toBe(1);
     expect(grids[0]).toBeTruthy();
     expect(table.className).not.toMatch(/min-w-\[9\d\dpx\]/);
-    // The principal badge reads on one line.
-    expect(screen.getByText("Equipo principal · absorbe los gastos")).toHaveClass("whitespace-nowrap");
+    // The «Lleva gastos» tick reads on one line.
+    expect(screen.getAllByText("Lleva gastos")[0]).toHaveClass("whitespace-nowrap");
   });
 
   it("the client view keeps the two tiers with the client's columns only", async () => {
@@ -352,13 +352,15 @@ describe("ProductsSection — the table", () => {
     expect(latest.draft.items[1].quantity).toBe("2.5");
   });
 
-  it("makes a line the principal from its menu", async () => {
+  it("«Lleva gastos» on a second line shares the expenses with the one the API chose", async () => {
     const { latest } = await setup();
-    fireEvent.click(screen.getByRole("button", { name: "Más acciones de la línea 2" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Hacer principal" }));
+    const second = screen.getByRole("row", { name: /Servicio de prueba/ });
+    expect(within(second).getByRole("checkbox", { name: "Lleva gastos" })).not.toBeChecked();
+    fireEvent.click(within(second).getByRole("checkbox", { name: "Lleva gastos" }));
     expect(latest.draft.principal_rule).toBe("manual");
-    expect(latest.draft.items.map((i) => i.is_principal)).toEqual([false, true]);
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(latest.draft.items.map((i) => i.is_principal)).toEqual([true, true]);
+    // The tick follows the draft at once, before the API prices it again.
+    expect(within(second).getByRole("checkbox", { name: "Lleva gastos" })).toBeChecked();
   });
 
   it("removes a line from its menu", async () => {
@@ -449,7 +451,7 @@ describe("ProductsSection — each row keeps its own numbers", () => {
     });
     expect(screen.getByText("Suele ir con Servicio de prueba:")).toBeInTheDocument();
     const free = screen.getByRole("row", { name: /Servicio de prueba/ });
-    expect(within(free).getByText("Equipo principal · absorbe los gastos")).toBeInTheDocument();
+    expect(within(free).getByRole("checkbox", { name: "Lleva gastos" })).toBeChecked();
     expect(within(free).queryByText("Sin costo")).not.toBeInTheDocument();
   });
 
@@ -502,12 +504,12 @@ describe("ProductsSection — costs typed by hand", () => {
 });
 
 describe("ProductsSection — details", () => {
-  it("«Vista cliente» also hides the supplier and the principal badge", async () => {
+  it("«Vista cliente» also hides the supplier and the «Lleva gastos» tick", async () => {
     await setup({ clientView: true });
     const row = screen.getByRole("row", { name: /Agitador de prueba/ });
     expect(within(row).getByText("AG-100")).toBeInTheDocument();
     expect(within(row).queryByText(/Proveedor Uno/)).not.toBeInTheDocument();
-    expect(within(row).queryByText("Equipo principal · absorbe los gastos")).not.toBeInTheDocument();
+    expect(within(row).queryByText("Lleva gastos")).not.toBeInTheDocument();
   });
 
   it("asks about «1.000» as a quantity instead of guessing", async () => {
@@ -569,7 +571,7 @@ describe("ProductsSection — the cost strip under each line", () => {
     expect(first).toHaveTextContent("Me cuesta$ 8.300.000equipo $ 7.500.000 + gastos $ 800.000");
     expect(first).toHaveTextContent("28,6 %");
     expect(first).toHaveTextContent("gano $ 3.320.000");
-    expect(first).toHaveTextContent("+ IVA = $ 13.827.800");
+    expect(first).not.toHaveTextContent("IVA");
     const second = within(screen.getByRole("row", { name: /Servicio de prueba/ })).getByTestId("cost-strip");
     expect(second).toHaveTextContent("Sin costo");
     expect(second).toHaveTextContent("$ 60.000");
@@ -587,10 +589,10 @@ describe("ProductsSection — the cost strip under each line", () => {
     const c = withStrip();
     c.line_economics = c.line_economics!.map((e) => ({ ...e, gross_margin: null, gain_clp: null, margin_state: e.cost_clp ? "expenses_unallocated" : e.margin_state }));
     await setup({ priced: c });
-    expect(screen.getAllByText("Elige el equipo principal para repartir los gastos de importación")).toHaveLength(1);
+    expect(screen.getAllByText("Marca «Lleva gastos» en los equipos que llevan los gastos de importación")).toHaveLength(1);
     expect(screen.queryByText("28,6 %", { selector: "[data-testid=cost-strip] *" })).not.toBeInTheDocument();
     cleanup();
     await setup({ priced: withStrip() });
-    expect(screen.queryByText(/Elige el equipo principal/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Marca «Lleva gastos»/)).not.toBeInTheDocument();
   });
 });

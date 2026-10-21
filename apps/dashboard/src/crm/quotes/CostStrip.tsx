@@ -1,8 +1,9 @@
 /**
  * The strip under a Cotizador line, one compact row: «Me cuesta» (the line's cost in pesos with the
- * import expenses the engine put on it) · the margin pill and «gano $» · «Le cobro (neto)» with
- * «+ IVA =». For the operator to read cost against price at a glance (owner, 2026-10-19; mockup «Lo
- * que cuesta y lo que se cobra»; tightened to one row 2026-10-21). Every number is the API's `line_economics`, only formatted: the browser adds nothing.
+ * import expenses the engine put on it) · the margin pill and «gano $» · «Le cobro (neto)». IVA is
+ * only in the quote's total, never per line (owner, 2026-10-21: the line showed its price twice).
+ * For the operator to read cost against price at a glance (owner, 2026-10-19; mockup «Lo que cuesta
+ * y lo que se cobra»; tightened to one row 2026-10-21). Every number is the API's `line_economics`, only formatted: the browser adds nothing.
  *
  * Internal: costs and margins are for sales and administration (the Cotizador's API refuses anyone
  * else), the editor hides the strip in «Vista cliente», and the printable quote never carries it.
@@ -71,9 +72,6 @@ export function CostStrip({ economics, n, stale = false }: { economics: LineEcon
       <span className="ml-auto flex items-baseline gap-1.5">
         <span>Le cobro (neto)</span>
         <span className="font-mono font-semibold tabular-nums text-brand-700">{sale ?? "—"}</span>
-        {economics.total_with_iva_clp != null ? (
-          <span className="text-[12px] text-ink-faint">+ IVA = {clp(economics.total_with_iva_clp)}</span>
-        ) : null}
       </span>
     </div>
   );

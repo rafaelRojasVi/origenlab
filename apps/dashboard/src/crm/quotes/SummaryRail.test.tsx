@@ -343,7 +343,7 @@ describe("SummaryRail — avisos", () => {
     setup({ state: base });
     await settled();
     const avisos = screen.getByRole("region", { name: "Avisos" });
-    expect(within(avisos).getByText("Hay gastos de importación pero ningún equipo principal.")).toBeInTheDocument();
+    expect(within(avisos).getByText("Hay gastos de importación pero ningún equipo los lleva.")).toBeInTheDocument();
     expect(within(avisos).getByText("La línea 2 no tiene costo.")).toBeInTheDocument();
     expect(within(avisos).getByText("algo_nuevo")).toBeInTheDocument();
     expect(within(avisos).queryByText(/profile_freight_clp/)).not.toBeInTheDocument();

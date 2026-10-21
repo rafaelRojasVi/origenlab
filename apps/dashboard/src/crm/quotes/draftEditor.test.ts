@@ -21,7 +21,7 @@ import {
   sendableDraft,
   setExpenseMethod,
   setFxOverride,
-  setPrincipal,
+  toggleExpenses,
   setRecipient,
   setTerm,
   updateItem,
@@ -82,10 +82,16 @@ describe("draft helpers", () => {
     expect(base.items).toHaveLength(2);
   });
 
-  it("makes one line principal and switches the rule to manual", () => {
-    const d = setPrincipal(updateItem(draftFixture(), 0, { is_principal: true }), 1);
+  it("«Lleva gastos» adds a line to the one the API chose and switches the rule to manual", () => {
+    const base = withUids(draftFixture());
+    const keys = base.items.map((i) => i.uid ?? "");
+    const d = toggleExpenses(base, 1, { ...computedFixture(), principal_line_no: 1 }, keys);
     expect(d.principal_rule).toBe("manual");
-    expect(d.items.map((i) => i.is_principal)).toEqual([false, true]);
+    expect(d.items.map((i) => i.is_principal)).toEqual([true, true]);
+    // Once manual, a tick toggles only its own line; unticking the last one leaves none.
+    const one = toggleExpenses(d, 0, null, keys);
+    expect(one.items.map((i) => i.is_principal)).toEqual([false, true]);
+    expect(toggleExpenses(one, 1, null, keys).items.map((i) => i.is_principal)).toEqual([false, false]);
   });
 
   it("copies the derived expenses into manual ones when switching to manual (B5)", () => {
@@ -448,7 +454,7 @@ describe("expense and condition rows", () => {
     const keys = d.items.map((i) => i.uid ?? "");
     expect(principalItemOf(d, { ...computedFixture(), principal_line_no: 2 }, keys)?.description).toBe("Servicio de prueba");
     expect(principalItemOf(d, { ...computedFixture(), principal_line_no: null }, keys)).toBeNull();
-    const marked = setPrincipal(d, 1);
+    const marked = toggleExpenses(d, 1, null, keys);
     expect(principalItemOf(marked, null, keys)?.description).toBe("Servicio de prueba");
   });
 });

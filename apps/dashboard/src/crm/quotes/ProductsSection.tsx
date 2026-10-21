@@ -18,7 +18,7 @@ import {
   computedLineFor,
   principalItemOf,
   removeItem,
-  setPrincipal,
+  toggleExpenses,
   updateItem,
   type DraftProblem,
 } from "./draftEditor";
@@ -194,7 +194,7 @@ export function ProductsSection({
 
       {unallocated ? (
         <p role="note" className="mx-5 mb-3 rounded-md border border-warn/30 bg-warn-bg px-3 py-2 text-[13px] font-medium text-ink">
-          Elige el equipo principal para repartir los gastos de importación
+          Marca «Lleva gastos» en los equipos que llevan los gastos de importación
         </p>
       ) : null}
 
@@ -256,7 +256,8 @@ export function ProductsSection({
                   disabled={disabled}
                   focusDescription={focusLine === i}
                   onPatch={(patch) => edit((d) => updateItem(d, i, patch))}
-                  onPrincipal={() => edit((d) => setPrincipal(d, i))}
+                  manualExpenses={draft.principal_rule === "manual"}
+                  onToggleExpenses={() => edit((d) => toggleExpenses(d, i, computed, computedKeys))}
                   onRemove={() => {
                     setFocusLine(null);
                     edit((d) => removeItem(d, i));

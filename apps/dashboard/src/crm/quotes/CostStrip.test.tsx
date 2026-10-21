@@ -15,7 +15,8 @@ describe("CostStrip", () => {
     expect(strip).toHaveTextContent("Me cuesta$ 880.000equipo $ 450.000 + gastos $ 430.000");
     expect(strip).toHaveTextContent("31,0 %");
     expect(strip).toHaveTextContent("gano $ 395.000");
-    expect(strip).toHaveTextContent("Le cobro (neto)$ 1.275.000+ IVA = $ 1.517.250");
+    expect(strip).toHaveTextContent("Le cobro (neto)$ 1.275.000");
+    expect(strip).not.toHaveTextContent("IVA");
     expect(screen.getByText("31,0 %").className).toContain("text-good");
   });
 

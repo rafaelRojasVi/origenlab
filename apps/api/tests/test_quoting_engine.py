@@ -56,6 +56,29 @@ def test_manual_principal():
     assert r.principal_line_no == 2
 
 
+def test_marked_lines_share_the_expenses_by_cost():
+    items = [item(1, cost="3000", principal=True), item(2, cost="1000", principal=True), item(3, cost="2000")]
+    r = compute(inp(items, [ExpenseLine(1, "Flete", D("400001"), "CLP", "manual")], rule="manual"))
+    assert [l.expense_to_line for l in r.lines] == [D(300001), D(100000), D(0)]   # remainder to the costliest
+    assert r.principal_line_no == 1
+    assert [l.is_principal for l in r.lines] == [True, True, False]
+    assert r.warnings == ()
+
+
+def test_marked_lines_weigh_their_quantity_and_skip_a_line_without_cost():
+    items = [item(1, qty="2", cost="1000", principal=True), item(2, cost="2000", principal=True),
+             item(3, cost=None, mode="none", pct=None, typed="5000", principal=True)]
+    r = compute(inp(items, [ExpenseLine(1, "Flete", D("1000"), "CLP", "manual")], rule="manual"))
+    assert [l.expense_to_line for l in r.lines] == [D(500), D(500), D(0)]
+    assert r.lines[0].unit_base == D(1000250)                                         # 500 over 2 units
+
+
+def test_one_marked_line_takes_every_expense():
+    items = [item(1, cost="3000"), item(2, cost="1000", principal=True)]
+    r = compute(inp(items, [ExpenseLine(1, "Flete", D("1001"), "CLP", "manual")], rule="manual"))
+    assert [l.expense_to_line for l in r.lines] == [D(0), D(1001)]
+
+
 def test_por_precio_uses_the_typed_price():
     r = compute(inp([item(1, cost="1000", mode="none", pct=None, typed="1500000.4")]))
     assert r.lines[0].unit_price == D(1500000)

@@ -22,7 +22,7 @@ import { ProductImage } from "../catalog/ProductImage";
 
 /**
  * A row is two tiers (I1): the product on a line of its own (thumb, name, code · supplier, the
- * principal badge), then the numbers on this grid — Cant. · Costo unit. · Recargo · Precio unit. ·
+ * «Lleva gastos» tick), then the numbers on this grid — Cant. · Costo unit. · Recargo · Precio unit. ·
  * Total · Margen · menu. The header's numbers use the same grid. Its minimum (692 px plus the row's
  * padding) fits a 760 px column beside the summary rail with no horizontal scroll; the cost, price
  * and total columns take what is left.
@@ -196,7 +196,8 @@ export function LineRow({
   disabled,
   focusDescription,
   onPatch,
-  onPrincipal,
+  manualExpenses = false,
+  onToggleExpenses,
   onRemove,
 }: {
   index: number;
@@ -215,13 +216,16 @@ export function LineRow({
   /** A new free line: put the cursor in its description. */
   focusDescription: boolean;
   onPatch: (patch: Partial<QuoteDraftItem>) => void;
-  onPrincipal: () => void;
+  /** The operator marked the lines that carry the expenses: the tick is the draft's, not the API's. */
+  manualExpenses?: boolean;
+  /** «Lleva gastos»: the line carries (a share of) the import expenses. */
+  onToggleExpenses: () => void;
   onRemove: () => void;
 }) {
   const n = index + 1;
   const free = !item.product_id;
   const byPrice = item.margin_mode === "none";
-  const principal = line ? line.is_principal : !!item.is_principal;
+  const principal = manualExpenses ? !!item.is_principal : line ? line.is_principal : !!item.is_principal;
   const [menu, setMenu] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
@@ -296,7 +300,7 @@ export function LineRow({
               {item.description}
             </span>
           )}
-          {product?.code || (product?.supplier && !clientView) || free || (principal && !clientView) ? (
+          {product?.code || (product?.supplier && !clientView) || free || !clientView ? (
             <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
               {product?.code || (product?.supplier && !clientView) || free ? (
                 <span className="min-w-0 truncate text-[12.5px] text-ink-muted">
@@ -306,11 +310,22 @@ export function LineRow({
                   {free && !product?.code ? "Línea libre (sin catálogo)" : null}
                 </span>
               ) : null}
-              {principal && !clientView ? (
-                <span className="whitespace-nowrap rounded-md bg-brand-50 px-1.5 py-0.5 text-[11.5px] font-semibold text-brand-700">
-                  Equipo principal · absorbe los gastos
-                </span>
-              ) : null}
+              {clientView ? null : (
+                <label
+                  className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${
+                    principal ? "bg-brand-50 text-brand-700" : "text-ink-muted hover:bg-canvas-sunken"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={principal}
+                    disabled={disabled}
+                    onChange={onToggleExpenses}
+                    className="h-3.5 w-3.5 accent-brand-700"
+                  />
+                  Lleva gastos
+                </label>
+              )}
             </div>
           ) : null}
         </div>
@@ -439,19 +454,6 @@ export function LineRow({
           </button>
           {menu ? (
             <div role="menu" aria-label={`Línea ${n}`} className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-line bg-canvas-raised py-1 text-left shadow-lg">
-              {principal ? null : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setMenu(false);
-                    onPrincipal();
-                  }}
-                  className="block w-full px-3 py-2 text-left text-[13px] text-ink hover:bg-canvas-sunken"
-                >
-                  Hacer principal
-                </button>
-              )}
               <button
                 type="button"
                 role="menuitem"

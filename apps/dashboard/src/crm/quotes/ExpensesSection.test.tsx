@@ -106,6 +106,14 @@ describe("ExpensesSection — derived expenses", () => {
     expect(screen.getByText("Se reparten según el costo de cada línea.")).toBeInTheDocument();
   });
 
+  it("says the expenses are shared when several lines carry them", async () => {
+    const lines = [1, 2].map((line_no) => ({ line_no, is_principal: true })) as Computed["lines"];
+    await setup({ computed: priced({ lines }) });
+    expect(
+      screen.getByText("Se reparten entre los 2 equipos que llevan gastos, según su costo. Al cliente no se muestran como línea."),
+    ).toBeInTheDocument();
+  });
+
   it("offers only Perfil and Manual", async () => {
     await setup();
     const group = screen.getByRole("group", { name: "Cómo calcular los gastos" });

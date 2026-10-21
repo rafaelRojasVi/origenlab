@@ -152,9 +152,8 @@ class QuoteDraft(_Model):
     def _consistent(self) -> "QuoteDraft":
         if self.recipient is not None and self.recipient_participant_id is not None:
             raise ValueError("give recipient or recipient_participant_id, not both")
+        # Several marked lines share the import expenses by cost (owner, 2026-10-21).
         principals = sum(1 for item in self.items if item.is_principal)
-        if principals > 1:
-            raise ValueError("at most one item may be principal")
         if principals and self.principal_rule != "manual":
             raise ValueError("is_principal is only allowed when principal_rule is manual")
         currencies = [o.currency for o in self.fx_overrides]

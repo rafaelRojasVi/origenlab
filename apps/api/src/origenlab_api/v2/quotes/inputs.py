@@ -480,8 +480,12 @@ def _s(value: Any) -> Any:
 
 
 def expense_target(resolved: Resolved, result: EngineResult) -> int | None:
-    """The item line an expense line is allocated to: the principal, unless costs are spread."""
-    return result.principal_line_no if resolved.engine_input.allocation_mode == "principal" else None
+    """The item line an expense line is allocated to: the principal, unless costs are spread (by
+    the quote's mode, or over several marked lines)."""
+    if resolved.engine_input.allocation_mode != "principal":
+        return None
+    carriers = sum(1 for line in result.lines if line.is_principal)
+    return result.principal_line_no if carriers <= 1 else None
 
 
 def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:

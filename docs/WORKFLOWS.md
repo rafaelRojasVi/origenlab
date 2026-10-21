@@ -424,8 +424,10 @@ grand_total         = subtotal + tax_total
 Allocated logistics lines price at 0; unallocated logistics, fees and
 discounts price on their own.
 
-- **A quote revision may have zero or one principal item** — at most one
-  `item` line with `is_principal`, enforced by a partial unique index.
+- **A quote revision may have any number of principal items** — the `item`
+  lines with `is_principal` carry the import expenses. Until 2026-10-21 a partial
+  unique index allowed one; migration `20261021200000` dropped it so several
+  marked equipment lines share the expenses (owner: four imported balances on one quote).
 - **Logistics may be allocated only to an `item` line.**
   `allocated_to_line_no` must reference an `item` line in the same revision.
 - **A principal item becomes mandatory only when a logistics line is allocated
@@ -445,7 +447,10 @@ qty`) is *not* rounded; the unit price (`peso(base × (1 + markup))`, or `peso(b
 for margin mode, or the operator's typed price rounded) and the line total (`peso(qty × price)`)
 are; IVA is `peso(net × rate)`. A margin of 100% or more and a quantity of zero are refused. Expenses
 go to the revision's principal item (`principal` mode) or are spread by cost
-(`proportional_cost`, floored to the peso with the remainder on the principal); a quote-level margin
+(`proportional_cost`, floored to the peso with the remainder on the principal). Lines the operator
+marks («Lleva gastos», the `manual` principal rule) share them the same way, by quantity × unit cost
+in pesos among the marked lines only, the remainder on the costliest marked line (the principal);
+one marked line takes them all, as before. A quote-level margin
 is `(net − cost base) ÷ net` and is classified `loss`, `below_target`, `on_target`, `above_target`
 or `no_cost` against `margin_target_min` / `margin_target_max`.
 
