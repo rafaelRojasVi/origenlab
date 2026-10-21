@@ -7,8 +7,10 @@ is put in `Cotizaciones/Casos/<case folder>` without anyone downloading or uploa
 and the case card links to it.
 
 **What it files.** A `crm.quote_revision` that is not void, carries a `pdf_sha256`, was recorded
-from a live `gmail_message` capture whose `.eml` is in Storage, and has no `drive_file` record
-yet. Historical revisions recorded from staged records have no `.eml` here; the laptop archive
+from a live `gmail_message` capture — or, for a Cotizador revision, was sent in one (rule R16 sets
+its `sent_message_id`; 2026-10-21) — whose `.eml` is in Storage, and has no `drive_file` record
+yet. The attachment is taken by its hash; the quote reader (`quote_reader.py`) still selects only
+revisions recorded from an email, so a Cotizador PDF is filed, never read. Historical revisions recorded from staged records have no `.eml` here; the laptop archive
 (`apps/api/scripts/quote_drive_case_archive.py`) filed those, and `drive-ledger-import` records
 its links.
 
@@ -63,7 +65,14 @@ select r.id::text as revision_id, r.revision_no, r.pdf_sha256, q.id::text as quo
   join crm.quote q on q.id = r.quote_id
   join crm.opportunity o on o.id = q.opportunity_id
   left join crm.organization org on org.id = o.organization_id
-  join evidence.source_record sr on sr.id = r.origin_source_record_id and sr.kind = 'gmail_message'
+  -- The email the PDF came in: the one a historical revision was recorded from, else the one a
+  -- Cotizador revision was sent in (`sent_message_id`, set by rule R16), by its capture's key.
+  join evidence.source_record sr
+    on sr.kind = 'gmail_message'
+   and sr.id = coalesce(r.origin_source_record_id,
+                        (select s.id from comms.message sm
+                           join evidence.source_record s on s.dedupe_key = 'gmail_message:' || sm.provider_message_id
+                          where sm.id = r.sent_message_id))
   join lateral (select cm.eml_storage_path, cm.eml_sha256 from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
                    and cm.eml_storage_path is not null
