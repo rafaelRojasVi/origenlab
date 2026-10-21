@@ -5,7 +5,8 @@
  * already in a case (R1), which is the conversation going on and never needed a person (owner,
  * 2026-10-15: «that's so much»). Emails filed on one case by one rule are one row («3 correos
  * archivados»); five rows show, the rest behind «Ver N más». Each row says why, opens the case, and
- * «Quitar» undoes it — every email of a grouped row (sales or admin). Nothing renders when there is
+ * «Quitar» undoes it — every email of a grouped row (sales or admin), except a Cotizador quote marked
+ * sent (R16), which is final: a wrong one is voided in the Cotizador. Nothing renders when there is
  * no news.
  */
 import { useCallback, useState } from "react";
@@ -121,6 +122,7 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
   const item = items[0];
   const opened = item.kind === "opened";
   const many = items.length > 1;
+  const sent = item.rule_id === "R16";
 
   async function remove() {
     setBusy(true);
@@ -137,7 +139,8 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
     }
   }
 
-  const label = opened ? "Solicitud abierta" : many ? `${items.length} correos archivados` : "Archivado en el caso";
+  const label = sent ? "Cotización enviada" : opened ? "Solicitud abierta"
+    : many ? `${items.length} correos archivados` : "Archivado en el caso";
   return (
     <div data-testid="automatic-row" className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5">
       <div className="min-w-[12rem] flex-1">
@@ -160,7 +163,7 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
         {item.case_id ? (
           <Button variant="secondary" onClick={() => navigate("oportunidades", item.case_id)}>Abrir caso</Button>
         ) : null}
-        {mayDecide ? (
+        {mayDecide && !sent ? (
           <Button variant="quiet" onClick={() => void remove()} busy={busy} busyLabel="Quitando…" disabled={busy}>
             Quitar
           </Button>

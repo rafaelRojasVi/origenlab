@@ -3411,3 +3411,31 @@ worker's match, machine evidence) and `crm.notice_review` (a person's verdict, a
   as judge) will learn from.
 - **Not yet.** Deploys on merge with the migration (`production-db-migrations`); nothing manual.
 
+### 2.7.143 A Cotizador quote emailed by contacto@ is «sent» and its case «Enviada» (R16), 2026-10-21 — built, deploys on merge
+
+Rule **R16** (`mail_rules.py`, step `quote_sent.record_authored_quote_sent`), on the automatic timer, no
+deploy flag. A quote approved in the Cotizador stayed «aprobada» and its case «Solicitada» after
+Tatiana emailed its PDF: the rules recorded only numbers no case held, so a Cotizador number was
+skipped, and two PDFs in one email (Ygaero, CN01274A + CN01275) were left to a person.
+
+- **When.** An outbound email from contacto@ carrying a PDF whose file name names the number and
+  revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»;
+  the email's year, else the year before; never a «(borrador)» print) of a revision that is
+  `authored`, approved, not superseded, not sent, and approved before the email left.
+- **Several cases.** Production (read-only, 2026-10-21): Ygaero's reply on the request's thread
+  carried 01274A (request case) and 01275 (a second case the Cotizador opened), and R1 left it to a
+  person; Golden Omega's reply sat on a lost case's thread. R16 moves each case its PDFs name and links
+  the email there; a closed case among them, an email a person put elsewhere, or an open case of its
+  thread no PDF names leave it to a person.
+- **What.** Each such revision `approved → sent` (`sent_at`, `sent_message_id` = the captured
+  `comms.message`, `pdf_sha256` = the attachment), event `quote_revision.transitioned`; the case walks
+  to «Enviada». The PDF is not read; the worker's Drive filing and PDF reader select revisions by
+  `origin_source_record_id`, which a Cotizador revision never has, so neither touches it.
+- **Catch-up.** It also reads emails other rules already acted on (once per email), so quotes sent
+  before the merge move by themselves on the first passes.
+- **Migration `20261021100000`.** `quote_revision_sent_message_key` becomes `unique (sent_message_id,
+  quote_id)`: one email may send several quotes. No table, policy or grant changes.
+- **Not undoable** from Hoy/Historial (`sent_quote_is_final`): a wrong one is voided in the Cotizador.
+  R15 now reads emailed historical quotes only, as before.
+- **Not yet.** Deploys on merge with the migration (`production-db-migrations`); nothing manual.
+

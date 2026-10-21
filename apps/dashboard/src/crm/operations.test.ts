@@ -7,8 +7,8 @@ const base: OpsAction = {
 };
 
 describe("rule guide", () => {
-  it("explains exactly R1–R15, in full", () => {
-    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"]);
+  it("explains exactly R1–R16, in full", () => {
+    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16"]);
     for (const [id, g] of Object.entries(RULE_GUIDE)) {
       for (const field of [g.cuando, g.hace, g.ejemplo]) expect(field.trim().length, id).toBeGreaterThan(10);
     }
@@ -16,7 +16,7 @@ describe("rule guide", () => {
 
   it("marks as automatic only the rules the API runs on its timer", () => {
     const auto = Object.entries(RULE_GUIDE).filter(([, g]) => g.automatica).map(([id]) => id);
-    expect(auto).toEqual(["R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15"]);
+    expect(auto).toEqual(["R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16"]);
   });
 });
 
@@ -35,6 +35,8 @@ describe("actionSentence", () => {
       .toBe("Registró la cotización 09876-26 en el caso «Caso X» — el correo ya estaba en el caso (R14)");
     expect(actionSentence({ ...base, rule_id: "R15", case_id: null, case_title: null, organization_name: "Acme Ejemplo SpA" }))
       .toBe("Confirmó la institución «Acme Ejemplo SpA» — cotización enviada hace 3 días o más (R15)");
+    expect(actionSentence({ ...base, rule_id: "R16", quote_number: "09876A-26" }))
+      .toBe("Marcó enviada la cotización 09876A-26 en el caso «Caso X» — se envió el PDF del Cotizador (R16)");
   });
   it("says when it was undone", () => {
     expect(actionSentence({ ...base, undone: true })).toMatch(/· deshecho$/);

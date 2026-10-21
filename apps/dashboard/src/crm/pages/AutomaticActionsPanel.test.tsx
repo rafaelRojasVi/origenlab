@@ -97,6 +97,18 @@ describe("Hecho automáticamente", () => {
     renderPanel();
     await waitFor(() => expect(screen.queryByText("Hecho automáticamente")).toBeNull());
   });
+
+  it("a Cotizador quote marked sent (R16) says so and has no «Quitar»", async () => {
+    stub([{ receipt_id: RECEIPT_B, applied_at: "2026-10-21T12:00:00+00:00", rule_id: "R16", kind: "filed",
+      source: "email", reasons: ["el correo está en el caso", "contacto@ envió el PDF de la cotización 09876A-26"],
+      case_id: "caso-2", case_title: "Universidad Ficticia — balanzas", quote_number: "09876A-26",
+      what: "Cotización balanzas" }]);
+    renderPanel("admin");
+    const [row] = await screen.findAllByTestId("automatic-row");
+    expect(row).toHaveTextContent("Cotización enviada");
+    expect(within(row).queryByRole("button", { name: "Quitar" })).toBeNull();
+    expect(within(row).getByRole("button", { name: "Abrir caso" })).toBeInTheDocument();
+  });
 });
 
 describe("Hecho automáticamente, only what is news", () => {

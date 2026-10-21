@@ -23,6 +23,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
 | R14 | outbound from contacto@, sent in the last `LATE_QUOTE_WINDOW_DAYS`, already linked to exactly one open case (by a rule or a person), carrying exactly one CN PDF whose number no case records | auto: the R1 gates (requesting institution, open stage, correlative not under another year), then «Enviada» + quote on that case; no link (it is there). The one rule that still reads an email another rule acted on |
 | R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes, naming which institution, not only a kind; else a person); confirmed with no operator named. Keyed by the institution's id, not an email |
+| R16 | outbound from contacto@, carrying the PDF of a Cotizador revision of that case that is approved and not yet sent — matched by the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; a «(borrador)» print never; the email's year, else the year before), sent after the approval | auto: each such revision → «sent» (the email, its PDF's hash), the case → «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several PDFs in one email: each its revision, on each case it belongs to, the email linked there. A closed case among them, an email a person put elsewhere, or an open case of its thread no PDF names → nothing. Reads an email another rule acted on, once |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -56,7 +57,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15")
+                             "R14", "R15", "R16")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -175,6 +176,9 @@ class QuoteRevision:
     version: int
     superseded: bool
     sent_at: str | None = None
+    #: 'authored' (the Cotizador) or 'historical_import' (a sent PDF recorded as found). R16 reads it.
+    origin: str = ""
+    approved_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -705,17 +709,23 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
     index = _Index(snapshot)
     out: list[PlannedAction] = []
     for e in sorted(snapshot.evidence, key=lambda x: x.id):
+        action: PlannedAction | None = None
         if e.id in snapshot.applied_evidence_ids:
-            # Another rule acted on this email already. Only R14 still reads it — once: a sent quote
-            # the earlier action linked but did not record (owner 2026-10-19).
+            # Another rule acted on this email already. Only R14 and R16 still read it — each once: a
+            # sent quote the earlier action linked but did not record (owner 2026-10-19), a Cotizador
+            # quote it carried (owner 2026-10-21).
             if (e.id, "R14") not in snapshot.applied_pairs and e.linked_case_ids:
-                late = _late_quote_rule(e, index)
-                if late is not None:
-                    out.append(late)
-            continue
-        action = _plan_one(e, index)
+                action = _late_quote_rule(e, index)
+        else:
+            action = _plan_one(e, index)
         if action is not None:
             out.append(action)
+        # R16 waits while another rule acts on the same email in this pass (both would move its
+        # case); it plans on the next pass, once that action's receipt is in.
+        if (action is None or action.mode != AUTO) and (e.id, "R16") not in snapshot.applied_pairs:
+            sent = _authored_sent_rule(e, index)
+            if sent is not None:
+                out.append(sent)
     for f in sorted(snapshot.forwards, key=lambda x: x.id):
         if f.id not in snapshot.applied_evidence_ids and not (set(f.ids) & snapshot.applied_evidence_ids):
             out.append(_plan_forward(f, index))
@@ -1362,6 +1372,127 @@ def _late_quote_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     return PlannedAction(e.id, "R14", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id, quote_number=number, commands=steps,
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+#: R16's step (`quote_sent.record_authored_quote_sent`).
+RECORD_AUTHORED_QUOTE_SENT = "record_authored_quote_sent"
+#: A quote number in a PDF's file name with its revision letter («CN01274» is revision 1, «CN01274A»
+#: revision 2: `numbering.cn_label`), read on the folded name (`fold`). The Cotizador's print view
+#: titles the page «Cotización CN01274A — Institución» (`QuotePrintView.printTitle`, `quoteLabel`), so
+#: that is the name «Guardar como PDF» offers; a hand-renamed «CN01274A-….pdf» reads the same. The
+#: capture's `cn_tokens` keep the digits only, so R16 reads the letter here. A letter followed by more
+#: letters («CN01275Ygaero») is not a revision letter and names nothing.
+_CN_REVISION = re.compile(r"(?<![a-z0-9])cn[\s_-]?(\d{3,6})([a-z]?)(?![a-z0-9])")
+#: The print view's title of a draft: that PDF is not the approved document.
+_DRAFT_MARK = "borrador"
+
+
+def named_revisions(filename: str | None, sent_at: str | None) -> set[tuple[tuple[int, int], int]]:
+    """((year, correlative), revision number) for each quote a PDF's file name names, the year being
+    the email's (the name carries none); none for a draft's print. R16 plans with it and `quote_sent`
+    re-checks the stored email with it."""
+    name = fold(filename)
+    if _DRAFT_MARK in name:
+        return set()
+    out: set[tuple[tuple[int, int], int]] = set()
+    for digits, letter in _CN_REVISION.findall(name):
+        key = gmail_quote_key(f"CN{int(digits):05d}", sent_at)
+        if key is not None:
+            out.add((key, 1 if not letter else ord(letter.upper()) - ord("A") + 2))
+    return out
+
+
+def year_before(key: tuple[int, int]) -> tuple[int, int]:
+    """The name carries no year, so the email's is assumed: a quote approved in December and emailed in
+    January reads a year late. R16 also tries the year before when the email's names nothing — an
+    exact number, revision letter and approved Cotizador revision bound the guess."""
+    return ((key[0] - 1) % 100, key[1])
+
+
+def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R16 (owner, 2026-10-21): contacto@ emailed the PDF of a quote the Cotizador approved on the case
+    the email is on. The revision becomes «sent» and the case «Enviada». Nothing is read from the PDF —
+    the Cotizador holds what it says; the email proves it went out.
+
+    Every PDF must name exactly one quote; each one naming a revision of this case that is the
+    Cotizador's (`origin = 'authored'`), approved, not superseded, not yet sent and approved before the
+    email left counts — on each case they belong to (a client's request and the case the Cotizador
+    opened beside it), the email linked there if it is not. A closed case among them, a stage past
+    «Enviada», an email a person put on another case, or an open case of its thread none of the PDFs
+    names leave the email to a person. Historical quotes are R1/R14's, never this rule's."""
+    if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
+        return None
+    sent = _instant(e.sent_at)
+    if sent is None:
+        return None
+    found: dict[str, tuple[CaseState, CaseQuote, QuoteRevision, MailDocument]] = {}
+    for doc in sorted(e.documents, key=lambda d: (d.filename or "", d.sha256 or "")):
+        named = named_revisions(doc.filename, e.sent_at)
+        if not _is_pdf(doc) or not doc.sha256 or len(named) != 1:
+            continue
+        [(named_key, revision_no)] = named
+        keys = [named_key, year_before(named_key)]
+        for key in keys:
+            cases = ix.by_quote_key.get(key, [])
+            if len(cases) != 1:
+                continue
+            c = cases[0]
+            matched = [(q, r) for q in c.quotes if quote_key(q.quote_number, None) == key for r in q.revisions
+                       if r.revision_no == revision_no and r.origin == "authored" and r.status == "approved"
+                       and not r.superseded and r.sent_at is None
+                       and (approved := _instant(r.approved_at)) is not None and approved <= sent]
+            for q, r in matched:
+                found.setdefault(r.id, (c, q, r, doc))
+            if matched:
+                break  # the email's year first; the year before only when it names nothing
+    if not found:
+        return None
+    cases = {c.id: c for c, _, _, _ in found.values()}
+    if any(c.closed or c.stage not in _TO_QUOTING for c in cases.values()):
+        return None
+    if set(e.linked_case_ids) - set(cases):
+        return None  # a person or a rule put it on a case none of its PDFs names
+    # A reply on an old thread is fine when that thread's case is closed (a client asking again on a
+    # lost quote's thread); an open case of the thread that none of the PDFs names is a person's call.
+    if any(not t.closed and t.id not in cases for t in ix.by_thread.get(e.thread_id or "", [])):
+        return None
+    # Each PDF is its own case's evidence: two cases of one client (a request and the case «Nueva
+    # cotización» opened beside it) each get their revision sent, the email and «Enviada». The case
+    # the thread or a link already names goes last, so the action's case is that one.
+    known = set(e.linked_case_ids) | {t.id for t in ix.by_thread.get(e.thread_id or "", [])}
+    order = sorted(cases.values(), key=lambda c: (c.id in known, c.title, c.id))
+    from_cotizador = sorted(found.values(), key=lambda f: (f[1].quote_number, f[2].revision_no))
+    labels = [_revision_label(q.quote_number, r.revision_no) for _, q, r, _ in from_cotizador]
+    reasons = [f"contacto@ envió el PDF de {'las cotizaciones' if len(labels) > 1 else 'la cotización'} "
+               f"{', '.join(labels)}, aprobada{'s' if len(labels) > 1 else ''} en el Cotizador"]
+    if len(order) > 1:
+        reasons.append(f"son de {len(order)} casos del cliente: cada uno queda en «Enviada»")
+    note = _note("R16", reasons)
+    steps: list[dict[str, Any]] = []
+    for c in order:
+        # `record_authored_quote_sent` answers its case and version, so the steps after it act there.
+        steps += [{"command": RECORD_AUTHORED_QUOTE_SENT, "inputs": {
+            "quote_revision_id": r.id, "quote_revision_version": r.version, "source_record_id": e.id,
+            "document_sha256": doc.sha256, "note": note}} for cc, _, r, doc in from_cotizador if cc.id == c.id]
+        if c.id not in e.linked_case_ids:
+            # Not on the case yet: R2 leaves an email naming two cases to a person, and R1 a thread
+            # whose case is another (production 2026-10-19/20: Ygaero, Golden Omega); the number and
+            # revision letter of an approved quote do not.
+            steps.append(_link_step(c, e.id, "mentions", note))
+        steps += [_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]]
+    first, main = order[0], order[-1]
+    return PlannedAction(e.id, "R16", AUTO, tuple(reasons), case_id=main.id, case_title=main.title,
+                         organization_id=main.organization_id, quote_number=labels[0], commands=tuple(steps),
+                         candidates=tuple(c.id for c in order) if len(order) > 1 else (),
+                         context={"case": first.id, "case_version": first.version, "from_stage": first.stage})
+
+
+def _revision_label(quote_number: str, revision_no: int) -> str:
+    """«01274-26», then «01274A-26» for revision 2 (`numbering.revision_label`, kept pure here)."""
+    if revision_no <= 1:
+        return quote_number
+    head, sep, year = quote_number.partition("-")
+    return f"{head}{chr(ord('A') + revision_no - 2)}{sep}{year}"
 
 
 #: R14: how far back a sent email may be (the same window as Operaciones' «sin registrar» list).
