@@ -486,14 +486,14 @@ export function LineRow({
 
       {/* The line's note and problems: under both tiers, not a column of their own. */}
       {!showNote && !disabled ? (
-        <div className="mt-1 pl-[52px]">
+        <div className="mt-1">
           <button
             type="button"
             onClick={() => {
               focusNote.current = true;
               setNoteOpen(true);
             }}
-            className="min-h-[32px] text-[12.5px] font-semibold text-brand-700 hover:underline"
+            className="min-h-[24px] text-[12px] font-semibold text-brand-700 hover:underline"
           >
             + Descripción para el cliente
           </button>
