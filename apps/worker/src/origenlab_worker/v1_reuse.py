@@ -17,6 +17,9 @@ from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
     ManifestRefused,
 )
 from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
+    DELIVERY_REPORT_SENDER,
+)
+from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
     _require_stageable_gmail_payload as require_stageable_gmail_payload,
 )
 from origenlab_email_pipeline.parse_mbox import date_iso_from_msg, recipients_header, walk_attachments
@@ -50,6 +53,7 @@ __all__ = [
     "classify_intake_folder",
     "classify_send_direction",
     "date_iso_from_msg",
+    "DELIVERY_REPORT_SENDER",
     "message_from_bytes",
     "recipients_header",
     "require_stageable_gmail_payload",

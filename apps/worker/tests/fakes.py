@@ -6,6 +6,8 @@ its dedupe key, `put_if_absent` never replaces — so a test of the run is a tes
 
 from __future__ import annotations
 
+import email
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -147,8 +149,9 @@ class FakeGmail:
         m = self.messages.get(message_id)
         if m is None:
             raise GmailNotFound("not_found")
+        frm = email.message_from_bytes(m.raw).get("From") if m.raw else None
         return MessageMeta(message_id, m.thread_id, m.labels, m.size or len(m.raw), m.internal_ms,
-                           {"from": "Ana <ana@cliente.invalid>", "subject": "x"})
+                           {"from": str(frm or "Ana <ana@cliente.invalid>"), "subject": "x"})
 
     def raw(self, message_id: str) -> RawMessage:
         self.raw_calls.append(message_id)

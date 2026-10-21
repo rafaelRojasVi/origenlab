@@ -148,12 +148,21 @@ def _normalize(kind: str, value: str) -> str:
     return folded
 
 
+#: The senders of delivery reports (RFC 3464): `MAILER-DAEMON@…`, `postmaster@…`.
+DELIVERY_REPORT_SENDER = re.compile(r"(?i)(?<![a-z0-9._%+-])(?:mailer-daemon|postmaster)@")
+
+
 def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> None:
     """Refuse a Gmail record that intake rules exclude — whatever the manifest claims.
 
     Two independent facts must agree: the class the operator declared, and the Gmail labels
     the message actually carries. A draft, a Spam message or a Trash message is refused on
     the labels alone, so a mistyped or optimistic `intake_class` cannot let one through.
+
+    One exception (2026-10-21): a delivery report in the Trash is stageable. It is a machine's
+    notice that an address is dead, not a person's mail someone discarded; people clear bounce
+    conversations out of the inbox, and the address must still reach the block list. Only the
+    Trash, only a report's sender (`payload.sender`); a bounce in Spam or a draft stays refused.
     """
     declared = payload.get("intake_class")
     _require(
@@ -168,8 +177,11 @@ def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> Non
         f"{where}: payload.gmail_labels must be a list of strings — it is the evidence "
         "that the declared intake_class is true, so it is required, not optional",
     )
+    bounce = bool(DELIVERY_REPORT_SENDER.search(str(payload.get("sender") or "")))
     for label in labels:
         label_class = classify_intake_folder(label)
+        if label_class == "excluded_trash" and bounce:
+            continue
         _require(
             label_class not in ("metadata_only", "excluded_spam", "excluded_trash"),
             f"{where}: the label {label!r} classifies as {label_class}, which intake "
