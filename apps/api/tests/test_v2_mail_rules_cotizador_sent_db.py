@@ -51,11 +51,13 @@ def _admin(dsn: str) -> OperatorIdentity:
                             status="active")
 
 
-def _email(dsn: str, documents: list[dict], *, case_id: str | None, linked_by: str, sent_at: datetime) -> tuple[str, str]:
+def _email(dsn: str, documents: list[dict], *, case_id: str | None, linked_by: str, sent_at: datetime,
+           thread: str | None = None, sender: str = "Tatiana <contacto@origenlab.cl>") -> tuple[str, str]:
     """A captured outbound Gmail message from contacto@, its stored copy, and its link to the case (R2's)."""
     gid = uuid.uuid4().hex[:16]
-    payload = {"gmail_message_id": gid, "gmail_thread_id": f"t-{gid}", "direction_hint": "external",
-               "sender": "Tatiana <contacto@origenlab.cl>", "recipients": "compras@cliente-ficticio.test",
+    thread = thread or f"t-{gid}"
+    payload = {"gmail_message_id": gid, "gmail_thread_id": thread, "direction_hint": "external",
+               "sender": sender, "recipients": "compras@cliente-ficticio.test",
                "subject_raw": "Cotizaciones", "sent_at": sent_at.isoformat(), "documents": documents}
     [(record,)] = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
                               "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
@@ -64,7 +66,7 @@ def _email(dsn: str, documents: list[dict], *, case_id: str | None, linked_by: s
                           (f"mbox-{gid}@example.test",))
     [(message,)] = _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, "
                                "direction, internal_date) values (%s, %s, %s, 'outbound', now()) returning id::text",
-                          (mailbox, gid, f"t-{gid}"))
+                          (mailbox, gid, thread))
     if case_id is not None:
         _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
                     "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case_id, record, linked_by))
@@ -72,8 +74,11 @@ def _email(dsn: str, documents: list[dict], *, case_id: str | None, linked_by: s
 
 
 def _doc(name: str) -> dict:
-    digits = name[2:7]
-    return {"filename": name, "sha256": uuid.uuid4().hex * 2, "cn_tokens": [f"CN{digits}"]}
+    """An attachment as the capture stores it: CN tokens by `capture.CN_TOKEN` (digits only)."""
+    import re
+
+    tokens = sorted({f"CN{int(d):05d}" for d in re.findall(r"(?i)(?<![A-Za-z0-9])CN[\s_-]?(\d{3,6})(?!\d)", name)})
+    return {"filename": name, "sha256": uuid.uuid4().hex * 2, "cn_tokens": tokens}
 
 
 def _mail_rules(dsn: str):
@@ -104,9 +109,9 @@ def test_two_cotizador_pdfs_in_one_email_mark_both_sent_and_the_case_enviada(wor
     two = _approved(world, case_id)
     serial_one = one["quote_number"][:5]
 
-    # One renamed by hand, one saved under the name the browser offers (no CN token for the capture).
+    # One renamed by hand, one saved under the name the browser offers.
     docs = [_doc(f"CN{serial_one}A-Cliente Ficticio.pdf"),
-            {**_doc(f"Cotización {two['quote_number']} — Cliente Ficticio.pdf"), "cn_tokens": []}]
+            _doc(f"Cotización CN{two['quote_number'][:5]} — Cliente Ficticio.pdf")]
     sent_at = datetime.now(UTC) + timedelta(minutes=1)
     email, message = _email(dsn, docs, case_id=case_id, linked_by=admin.operator_id, sent_at=sent_at)
 
@@ -148,20 +153,50 @@ def test_a_pdf_emailed_before_the_approval_is_left_alone(world) -> None:
     assert _revision(dsn, quote["revision_id"])["status"] == "approved"
 
 
-def test_a_browser_named_pdf_on_a_new_email_is_linked_and_sent(world) -> None:
+def test_a_new_email_is_linked_by_r2_then_sent_by_r16_on_the_next_pass(world) -> None:
     dsn = world["dsn"]
     admin = _admin(dsn)
     case_id = _case(dsn, world["operator"], world["institution"])
     quote = _approved(world, case_id)
-    doc = {**_doc(f"Cotización {quote['quote_number']} — Cliente Ficticio.pdf"), "cn_tokens": []}
+    doc = _doc(f"Cotización CN{quote['quote_number'][:5]} — Cliente Ficticio.pdf")
     email, _ = _email(dsn, [doc], case_id=None, linked_by=admin.operator_id,
                       sent_at=datetime.now(UTC) + timedelta(minutes=1))
     repo = _mail_rules(dsn)
-    result = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
-    assert not result["refused"], result["refused"]
-    assert [s["command"] for s in result["applied"][0]["steps"]][:2] == ["link_case_evidence",
-                                                                         "record_authored_quote_sent"]
+    assert set(_planned(repo, email)) == {"R2"}  # one pass: the link by number, alone
+    linked = repo.apply(admin, [{"evidence_id": email, "rule_id": "R2"}])
+    assert not linked["refused"], linked["refused"]
+    assert _revision(dsn, quote["revision_id"])["status"] == "approved"
+    sent = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])  # the next pass
+    assert not sent["refused"], sent["refused"]
+    assert [s["command"] for s in sent["applied"][0]["steps"]][:2] == ["record_authored_quote_sent",
+                                                                       "advance_case_stage"]
     assert _revision(dsn, quote["revision_id"])["status"] == "sent"
     assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
                       "and opportunity_id = %s and unlinked_at is null", (email, case_id))[0]["n"] == 1
     assert _rows(dsn, "select stage from crm.opportunity where id = %s", (case_id,))[0]["stage"] == "quoting"
+
+
+def test_the_ygaero_shape_two_cases_one_reply(world) -> None:
+    """A request (case A) whose thread gets the reply; the Cotizador put the second quote on case B."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_a = _case(dsn, world["operator"], world["institution"])
+    case_b = _case(dsn, world["operator"], world["institution"])
+    one, two = _approved(world, case_a), _approved(world, case_b)
+    thread = f"t-{uuid.uuid4().hex[:12]}"
+    _email(dsn, [], case_id=case_a, linked_by=admin.operator_id, sent_at=datetime.now(UTC) - timedelta(days=1),
+           thread=thread, sender="compras@cliente-ficticio.test")
+    docs = [_doc(f"Cotización CN{one['quote_number'][:5]} — Cliente.pdf"),
+            _doc(f"Cotización CN{two['quote_number'][:5]} — Cliente.pdf")]
+    email, _ = _email(dsn, docs, case_id=None, linked_by=admin.operator_id,
+                      sent_at=datetime.now(UTC) + timedelta(minutes=1), thread=thread)
+    repo = _mail_rules(dsn)
+    result = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
+    assert not result["refused"], result["refused"]
+    assert result["applied"][0]["case_id"] == case_a  # the thread's case is the action's
+    for revision_id in (one["revision_id"], two["revision_id"]):
+        assert _revision(dsn, revision_id)["status"] == "sent"
+    for case_id in (case_a, case_b):
+        assert _rows(dsn, "select stage from crm.opportunity where id = %s", (case_id,))[0]["stage"] == "quoting"
+        assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
+                          "and opportunity_id = %s and unlinked_at is null", (email, case_id))[0]["n"] == 1

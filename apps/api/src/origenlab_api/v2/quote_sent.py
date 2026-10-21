@@ -13,7 +13,8 @@ against the stored email, in this transaction.
 **What it writes.** The revision `approved → sent` with `sent_at` (the email's), `sent_message_id`
 (the `comms.message` the capture stored for it) and `pdf_sha256` (the attachment's) — the columns
 `crm.quote_revision_authored_frozen()` lets change once, on exactly that move — and one
-`quote_revision.transitioned` event. No case, link or stage: the rule's other steps do those.
+`quote_revision.transitioned` event. No case, link or stage: the rule's other steps do those, on the
+case this step answers (its id and current version), so one email's PDFs of two cases move both.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ select r.id::text as id, r.version, r.status, r.origin, r.sent_at, r.pdf_sha256,
 
 def record_authored_quote_sent(repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                receipt_id: str) -> dict[str, Any]:
-    from origenlab_api.v2.mail_rules import named_revisions, quote_key
+    from origenlab_api.v2.mail_rules import named_revisions, quote_key, year_before
 
     cur.execute(_REVISION_SQL, (fields["quote_revision_id"],))
     row = cur.fetchone()
@@ -64,7 +65,13 @@ def record_authored_quote_sent(repo: Any, cur: Any, operator: OperatorIdentity, 
     carried = [d for d in payload.get("documents") or [] if isinstance(d, dict)
                and str(d.get("sha256") or "").lower() == sha
                and str(d.get("filename") or "").lower().endswith(".pdf")]
-    if not any(key == want for d in carried for key, _ in named_revisions(d.get("filename"), payload.get("sent_at"))):
+    def names_it(d: dict[str, Any]) -> bool:
+        for key, _ in named_revisions(d.get("filename"), payload.get("sent_at")):
+            if key == want or year_before(key) == want:
+                return True
+        return False
+
+    if not any(names_it(d) for d in carried):
         raise CommandRefused(409, "pdf_not_in_message",
                              f"the message carries no PDF of {rev['quote_number']} with that hash")
     if rev["pdf_sha256"] is not None and str(rev["pdf_sha256"]).lower() != sha:
@@ -94,5 +101,9 @@ def record_authored_quote_sent(repo: Any, cur: Any, operator: OperatorIdentity, 
                        payload={"from": "approved", "to": "sent", "source_record_id": fields["source_record_id"],
                                 "document_sha256": sha, "note": fields.get("note")},
                        operator=operator, receipt_id=receipt_id)
+    # The case the next steps of the action act on (the link, the walk to «Enviada»), as it is now.
+    cur.execute("select version from crm.opportunity where id = %s for update", (rev["opportunity_id"],))
+    case_version = int(cur.fetchone()[0])
     return {"command": "record_authored_quote_sent", "quote_revision_id": rev["id"], "quote_id": rev["quote_id"],
-            "quote_number": rev["quote_number"], "version": int(updated[0])}
+            "quote_number": rev["quote_number"], "version": int(updated[0]),
+            "opportunity_id": rev["opportunity_id"], "opportunity_version": case_version}

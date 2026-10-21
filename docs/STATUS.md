@@ -3419,10 +3419,14 @@ Tatiana emailed its PDF: the rules recorded only numbers no case held, so a Coti
 skipped, and two PDFs in one email (Ygaero, CN01274A + CN01275) were left to a person.
 
 - **When.** An outbound email from contacto@ carrying a PDF whose file name names the number and
-  revision letter (`CN01274A…`, or the browser's own «Cotización 01274A-26 — ….pdf»; never a
-  «(borrador)» print) of a revision that is `authored`, approved, not superseded, not sent, and
-  approved before the email left. An email on no case yet is linked to that case (a browser-named PDF
-  has no CN token, so R1/R2 cannot place it on a new thread), unless its thread is another case's.
+  revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»;
+  the email's year, else the year before; never a «(borrador)» print) of a revision that is
+  `authored`, approved, not superseded, not sent, and approved before the email left.
+- **Several cases.** Production (read-only, 2026-10-21): Ygaero's reply on the request's thread
+  carried 01274A (request case) and 01275 (a second case the Cotizador opened), and R1 left it to a
+  person; Golden Omega's reply sat on a lost case's thread. R16 moves each case its PDFs name and links
+  the email there; a closed case among them, an email a person put elsewhere, or an open case of its
+  thread no PDF names leave it to a person.
 - **What.** Each such revision `approved → sent` (`sent_at`, `sent_message_id` = the captured
   `comms.message`, `pdf_sha256` = the attachment), event `quote_revision.transitioned`; the case walks
   to «Enviada». The PDF is not read; the worker's Drive filing and PDF reader select revisions by

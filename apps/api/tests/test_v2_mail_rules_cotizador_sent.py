@@ -6,6 +6,8 @@ Every address, domain, name and number here is fictitious (`.test`).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from origenlab_api.v2.mail_rules import (
     RULE_IDS,
     CaseQuote,
@@ -84,7 +86,7 @@ def test_two_cotizador_pdfs_in_one_email_are_both_sent_and_the_case_walks_to_env
     assert all(s["source_record_id"] == "e-1" for s in sent)
     assert a.commands[-1]["inputs"]["stage"] == "quoting"
     assert a.context == {"case": "c-1", "case_version": 7, "from_stage": "qualified"}
-    assert "01274A-26, 01275-26" in a.reasons[1]
+    assert "01274A-26, 01275-26" in a.reasons[0]
 
 
 def test_the_revision_letter_must_match() -> None:
@@ -126,10 +128,45 @@ def test_needs_contacto_outbound_on_the_case_and_an_open_stage() -> None:
     assert [c["command"] for c in negotiating.commands] == ["record_authored_quote_sent"]
 
 
-def test_two_cases_or_a_pdf_naming_two_quotes_leave_it_to_a_person() -> None:
+def test_pdfs_of_two_cases_move_both_the_ygaero_shape() -> None:
+    # Production 2026-10-19: the reply on the request's thread (case A, holds 01274) carries 01274A and
+    # 01275, which the Cotizador put on a second case B with no email. Each case gets its own.
+    a_quote = quote("01274-26", authored("r-1", 1, superseded=True), authored("r-2", 2))
+    b_quote = quote("01275-26", authored("r-3", 1))
+    a_case = case(a_quote, id="c-a", title="Ygaero — solicitud", stage="qualified", thread_ids=("t-1",))
+    b_case = case(b_quote, id="c-b", title="Ygaero — cotización", stage="lead", thread_ids=())
+    e = mail(pdf("Cotización CN01274A — Cliente.pdf", SHA_A), pdf("Cotización CN01275 — Cliente.pdf", SHA_B),
+             linked_case_ids=())
+    [a] = r16(e, cases=(a_case, b_case))
+    # B first (no thread, no link), then A (the thread's case), which is the action's case.
+    assert [c["command"] for c in a.commands] == [
+        "record_authored_quote_sent", "link_case_evidence", "advance_case_stage", "advance_case_stage",
+        "advance_case_stage",
+        "record_authored_quote_sent", "link_case_evidence", "advance_case_stage"]
+    assert a.commands[0]["inputs"]["quote_revision_id"] == "r-3" and a.commands[5]["inputs"]["quote_revision_id"] == "r-2"
+    assert a.context == {"case": "c-b", "case_version": 7, "from_stage": "lead"}
+    assert (a.case_id, a.candidates) == ("c-a", ("c-b", "c-a"))
+    assert "2 casos" in a.reasons[1]
+    # One of them closed, or an email a person put on a third case → a person decides.
+    assert r16(e, cases=(a_case, replace(b_case, stage="lost", closed=True))) == []
+    assert r16(replace(e, linked_case_ids=("c-x",)), cases=(a_case, b_case, case(id="c-x"))) == []
+
+
+def test_an_old_lost_thread_does_not_block_the_golden_omega_shape() -> None:
+    # Production 2026-10-20: «Re: Cotización Vasos pp» on the thread of a lost case; 01276 is on a new case.
+    q = quote("01276-26", authored("r-1", 1))
+    new_case = case(q, id="c-new", stage="lead", thread_ids=())
+    lost = case(id="c-old", stage="lost", closed=True, thread_ids=("t-1",))
+    [a] = r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, lost))
+    assert a.case_id == "c-new" and [c["command"] for c in a.commands][:2] == ["record_authored_quote_sent",
+                                                                               "link_case_evidence"]
+    # The same reply on an OPEN case's thread that no PDF names stays with a person.
+    open_other = replace(lost, stage="quoting", closed=False)
+    assert r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, open_other)) == []
+
+
+def test_a_pdf_naming_two_quotes_leaves_it_to_a_person() -> None:
     one, two = quote("01276-26", authored("r-1", 1)), quote("01277-26", authored("r-2", 1))
-    both = mail(pdf("CN01276-a.pdf", SHA_A), pdf("CN01277-b.pdf", SHA_B), linked_case_ids=("c-1", "c-2"))
-    assert r16(both, cases=(case(one), case(two, id="c-2"))) == []
     assert r16(mail(pdf("CN01276-CN01277.pdf")), cases=(case(one, two),)) == []
     # Not a PDF.
     assert r16(mail(MailDocument(filename="CN01276-a.xlsx", sha256=SHA_A, cn_tokens=("CN01276",))),
@@ -168,43 +205,47 @@ def test_a_historical_number_beside_a_cotizador_pdf_is_left_to_r14_first() -> No
 
 
 def test_the_browsers_own_file_name_counts_and_a_draft_print_does_not() -> None:
-    # «Guardar como PDF» offers the print view's title; the capture reads no CN token in it.
+    # «Guardar como PDF» offers the print view's title, «Cotización CN01276A — Institución».
     q = quote("01276-26", authored("r-1", 1, status="void"), authored("r-2", 2))
-    [a] = r16(mail(pdf("Cotización 01276A-26 — Cliente Ficticio.pdf", tokens=())), cases=(case(q),))
+    [a] = r16(mail(pdf("Cotización CN01276A — Cliente Ficticio.pdf")), cases=(case(q),))
     assert a.commands[0]["inputs"]["quote_revision_id"] == "r-2"
-    assert r16(mail(pdf("Cotización 01276A-26 — Cliente Ficticio (borrador).pdf", tokens=())), cases=(case(q),)) == []
+    assert r16(mail(pdf("Cotización CN01276A — Cliente Ficticio (borrador).pdf")), cases=(case(q),)) == []
     # A hand-renamed file in lower case is the same quote.
     assert len(r16(mail(pdf("cn01276a-cliente.pdf")), cases=(case(q),))) == 1
 
 
-def test_the_title_carries_its_year_across_new_year() -> None:
-    # Approved in December 2025, emailed in January: a CN token reads the email's year (26), the title its own.
+def test_a_december_quote_emailed_in_january() -> None:
+    # The name carries no year: January's (26) is read first, then the year before.
     q = quote("01250-25", authored("r-1", 1, approved_at="2025-12-30T13:00:00+00:00"))
     january = "2026-01-05T15:00:00+00:00"
-    assert len(r16(mail(pdf("Cotización 01250-25 — Cliente.pdf", tokens=()), sent_at=january), cases=(case(q),))) == 1
-    assert r16(mail(pdf("CN01250-Cliente.pdf"), sent_at=january), cases=(case(q),)) == []
+    [a] = r16(mail(pdf("Cotización CN01250 — Cliente.pdf"), sent_at=january), cases=(case(q),))
+    assert a.commands[0]["inputs"]["quote_revision_id"] == "r-1"
+    # The email's year wins when both exist.
+    newer = quote("01250-26", authored("r-9", 1, approved_at="2026-01-02T13:00:00+00:00"))
+    [b] = r16(mail(pdf("CN01250-Cliente.pdf"), sent_at=january), cases=(case(q, newer),))
+    assert [c["inputs"]["quote_revision_id"] for c in b.commands if c["command"] == "record_authored_quote_sent"] == ["r-9"]
 
 
-def test_named_revisions_reads_both_forms() -> None:
+def test_named_revisions() -> None:
     from origenlab_api.v2.mail_rules import named_revisions
 
-    assert named_revisions("CN01274A-Ygaero.pdf", SENT) == {((26, 1274), 2)}
+    assert named_revisions("Cotización CN01274A — Ygaero Chile SpA.pdf", SENT) == {((26, 1274), 2)}
     assert named_revisions("CN01275 Ygaero.pdf", SENT) == {((26, 1275), 1)}
-    assert named_revisions("Cotizacion_01274B-26.pdf", SENT) == {((26, 1274), 3)}
+    assert named_revisions("cn01274b-x.pdf", SENT) == {((26, 1274), 3)}
     assert named_revisions("CN01275Ygaero.pdf", SENT) == set()
-    assert named_revisions("Cotización 01274-26 (borrador).pdf", SENT) == set()
+    assert named_revisions("Cotización CN01274 — X (borrador).pdf", SENT) == set()
     assert named_revisions(None, SENT) == set()
 
 
 def test_a_browser_named_pdf_on_a_new_thread_is_linked_by_r16_itself() -> None:
-    # No CN token: R2 cannot place it, and a new thread is no case's (R1). R16 links it, then marks it.
+    # Nothing linked it (here: no CN token for R2, a new thread for R1). R16 marks it, then links it.
     q = quote("01276-26", authored("r-1", 1))
-    doc = pdf("Cotización 01276-26 — Cliente Ficticio.pdf", tokens=())
+    doc = pdf("Cotización CN01276 — Cliente Ficticio.pdf", tokens=())
     fresh = mail(doc, linked_case_ids=(), thread_id="t-new")
     [a] = r16(fresh, cases=(case(q),))
-    assert [c["command"] for c in a.commands] == ["link_case_evidence", "record_authored_quote_sent",
+    assert [c["command"] for c in a.commands] == ["record_authored_quote_sent", "link_case_evidence",
                                                   "advance_case_stage"]
-    assert a.commands[0]["inputs"]["source_record_id"] == "e-1" and a.commands[0]["inputs"]["note"].startswith(
+    assert a.commands[1]["inputs"]["source_record_id"] == "e-1" and a.commands[1]["inputs"]["note"].startswith(
         "Sistema (correo) R16")
     # On another case's thread it stays with a person.
     assert r16(fresh, cases=(case(q), case(id="c-2", thread_ids=("t-new",)))) == []
