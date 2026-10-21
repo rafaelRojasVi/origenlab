@@ -38,6 +38,8 @@ import asyncio
 import json
 import re
 import signal
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -412,12 +414,52 @@ def discovery_for(config: BidConfig, *, urlopen_fn: Any = None,
     return run
 
 
-def _serve_tenders(config: BidConfig) -> None:  # pragma: no cover - needs a database
+#: A discovery run that has not finished in 14 minutes is stopped before the next one is due.
+DISCOVERY_TIMEOUT_S = 14 * 60
+
+
+def run_tender_discovery_once(env: Mapping[str, str]) -> int:
+    """`tender-discovery`: one «En Mercado Público» run, printed as one JSON line of counts. Run by
+    the tender child in a process of its own (`discovery_in_subprocess`) so the ~4,800-tender list
+    and the catalog vocabulary are freed when it exits instead of staying in the child all day."""
+    try:
+        counts = discovery_for(bid_config_from_env(env))()
+    except ConfigRefused as exc:
+        counts = {"outcome": "config_refused", "error": exc.code}
+    print(json.dumps(counts, sort_keys=True, default=str), flush=True)
+    return EXIT_OK
+
+
+def discovery_in_subprocess(env: Mapping[str, str], *, run: Callable[..., Any] = subprocess.run,
+                            timeout_s: float = DISCOVERY_TIMEOUT_S) -> Callable[[], dict[str, Any]]:
+    """`QueueContext.discovery` for the tender child: `tender-discovery` in a short-lived process.
+    Its stderr is dropped (a traceback could carry the ticket); a run that prints no counts is
+    reported by its exit code only."""
+
+    def run_once() -> dict[str, Any]:
+        try:
+            done = run([sys.executable, "-m", "origenlab_worker.entry", "tender-discovery"], env=dict(env),
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return {"outcome": "failed", "error": "TimeoutExpired"}
+        lines = [line for line in (done.stdout or "").splitlines() if line.startswith("{")]
+        try:
+            counts = json.loads(lines[-1])
+        except (IndexError, ValueError):
+            counts = None
+        if not isinstance(counts, dict):
+            return {"outcome": "failed", "error": f"exit_{done.returncode}"}
+        return counts
+
+    return run_once
+
+
+def _serve_tenders(config: BidConfig, *, discovery: Callable[[], dict[str, Any]]) -> None:  # pragma: no cover
     """Run the tender queue until SIGTERM: one preparation at a time, and the discovery sweep."""
     from origenlab_worker import task_queue
 
     task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
-    task_queue.CONTEXT.discovery = discovery_for(config)
+    task_queue.CONTEXT.discovery = discovery
 
     async def serve() -> None:
         with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
@@ -446,7 +488,7 @@ def run_tender_worker(env: Mapping[str, str], started: float) -> int:
     line["models"] = {"read": config.models.read, "fill": config.models.fill, "match": config.models.match}
     _emit(dict(line), started)
     try:
-        _serve_tenders(config)
+        _serve_tenders(config, discovery=discovery_in_subprocess(env))
     except Exception as exc:  # noqa: BLE001 — the class, never the text
         line.update(mode="failed", error=type(exc).__name__)
         _emit(line, started)
@@ -505,5 +547,5 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
 
 __all__ = ["DEFAULT_SINCE_DAYS", "ENV_ANTHROPIC_API_KEY", "ENV_BID_ENABLED", "ENV_BID_FILL_MODEL", "ENV_BID_MATCH_MODEL",
            "ENV_BID_READ_MODEL", "ENV_TRIAGE_ENABLED", "ENV_TRIAGE_MODEL", "ENV_TRIAGE_MODEL_ENABLED", "BidConfig",
-           "TriageConfig", "bid_config_from_env", "bid_enabled", "bid_sweep_for", "run_tender_worker", "run_triage_once",
+           "TriageConfig", "bid_config_from_env", "bid_enabled", "bid_sweep_for", "discovery_in_subprocess", "run_tender_discovery_once", "run_tender_worker", "run_triage_once",
            "run_triage_worker", "triage_config_from_env", "triage_enabled"]

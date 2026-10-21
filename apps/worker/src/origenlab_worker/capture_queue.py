@@ -26,9 +26,9 @@ from origenlab_worker.database import (
     averify_worker_connection, remote_worker_target, write_ca_file,
 )
 from origenlab_worker.errors import ConfigRefused
-from origenlab_worker.task_queue import connector_for
+from origenlab_worker.flags import ENV_CAPTURE_SCHEDULER, capture_enabled
+from origenlab_worker.queue_connector import connector_for
 
-ENV_CAPTURE_SCHEDULER = "ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED"
 QUEUE = "capture"
 TASK = "capture_mail_cycle"
 PERIODIC_ID = "gmail-drive-v1"
@@ -77,8 +77,7 @@ class CaptureRefused(RuntimeError):
     """Auth/configuration failure; no immediate queue retry."""
 
 
-def enabled(env: Mapping[str, str]) -> bool:
-    return env.get(ENV_CAPTURE_SCHEDULER, "").strip().lower() == "true"
+enabled = capture_enabled
 
 
 def target_from_env(env: Mapping[str, str]) -> WorkerTarget:
