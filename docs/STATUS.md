@@ -3471,7 +3471,21 @@ Now: the v2 package resolves its names on first use; `origenlab-worker` is `entr
 the supervisor and its children without `cli` (supervisor ~13 MB, capture scheduler ~35 MB — its
 connector moved to `queue_connector.py` — triage and tender ~48 MB at start); and the tender
 child's 15-minute discovery runs as `tender-discovery` in a process that exits, so the ~4,800-tender
-list is not kept. The plan was raised to standard on Render the same day as a stopgap; once memory
-is confirmed well under 512 MB after this deploys, it goes back to starter (`render.yaml` still
-declares starter).
+list is not kept. The plan was raised to standard on Render the same day as a stopgap and returned
+to **starter** at 16:33Z once this was live: 279–362 MB over the next 20 minutes, no restarts.
+
+### 2.7.147 Several equipment lines share a quote's import expenses; no IVA per line; the PDF's later pages keep their margin, 2026-10-21 — built, deploys on merge
+
+Owner (Tatiana quoting four imported OHAUS balances on one quote, CN01277): the import expenses all
+landed on one «equipo principal». Each Cotizador line now has a «Lleva gastos» tick (it replaces
+«Hacer principal»); the ticked lines share the expenses by cost — quantity × unit cost in pesos —
+with the rounding remainder on the costliest, and one ticked line takes them all as before. The
+first tick starts from the line the engine chose, so ticking a second shares between the two. The
+marks are the lines' `is_principal` under the `manual` rule, so approval re-prices them unchanged.
+- **Migration `20261021200000`.** Drops `quote_line_one_principal_per_revision` (the partial unique
+  index allowing one principal item per revision); a principal is still always an item line.
+- The line's cost strip no longer shows «+ IVA =» (the line's price read twice); IVA stays in the
+  quote's total.
+- The printed quote repeats the sheet's padding and green line on every page
+  (`box-decoration-break: clone`): a second page used to start at the paper's top edge.
 

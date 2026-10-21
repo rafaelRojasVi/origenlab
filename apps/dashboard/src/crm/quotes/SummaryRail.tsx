@@ -529,7 +529,7 @@ function notices(state: DraftEditorState, editable: boolean): string[] {
   for (const w of state.computed?.warnings ?? []) {
     if (w.startsWith("dhl_fallback:") || w.startsWith("profile_parameter_missing:")) continue;
     if (w === "principal_missing") {
-      out.push("Hay gastos de importación pero ningún equipo principal.");
+      out.push("Hay gastos de importación pero ningún equipo los lleva.");
       continue;
     }
     const noCost = /^no_cost:(\d+)$/.exec(w);

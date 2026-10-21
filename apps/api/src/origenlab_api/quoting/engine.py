@@ -45,7 +45,7 @@ class ItemLine:
     margin_mode: str            # markup | margin | none
     margin_pct: Decimal | None
     typed_unit_price: Decimal | None
-    is_principal: bool = False  # only read when principal_rule == "manual"
+    is_principal: bool = False  # only read when principal_rule == "manual": the lines that carry the expenses
 
 
 @dataclass(frozen=True)
@@ -120,9 +120,16 @@ def _cost_clp(inp: EngineInput, line: ItemLine) -> Decimal | None:
     return peso(line.unit_cost * _rate(inp, line.cost_currency))                       # J15
 
 
+def _marked(inp: EngineInput) -> list[int]:
+    """The lines the operator marked to carry the import expenses (manual rule; owner, 2026-10-21)."""
+    return [l.line_no for l in inp.items if l.is_principal] if inp.principal_rule == "manual" else []
+
+
 def _principal(inp: EngineInput, costs: dict[int, Decimal | None]) -> int | None:
     if inp.principal_rule == "manual":
-        return next((l.line_no for l in inp.items if l.is_principal), None)
+        marked = _marked(inp)
+        priced = [(costs[n], -n) for n in marked if costs[n] is not None]
+        return -max(priced)[1] if priced else next(iter(marked), None)
     if inp.principal_rule == "first_eur_equipment_over_threshold":                       # N15, G3
         return next((l.line_no for l in inp.items
                      if l.item_type == "equipment" and l.cost_currency == "EUR"
@@ -137,10 +144,14 @@ def _allocate(inp: EngineInput, costs: dict[int, Decimal | None], principal: int
     alloc = {l.line_no: ZERO for l in inp.items}
     if expenses == 0 or principal is None:
         return alloc
-    if inp.allocation_mode != "proportional_cost":
+    marked = set(_marked(inp))
+    if inp.allocation_mode != "proportional_cost" and len(marked) < 2:
         alloc[principal] = expenses                                                      # P15
         return alloc
-    weights = {l.line_no: l.quantity * costs[l.line_no] for l in inp.items if costs[l.line_no]}
+    # Spread by cost: over every line, or in principal mode over the marked lines only.
+    shared = marked if inp.allocation_mode != "proportional_cost" else {l.line_no for l in inp.items}
+    weights = {l.line_no: l.quantity * costs[l.line_no] for l in inp.items
+               if l.line_no in shared and costs[l.line_no]}
     total = sum(weights.values(), ZERO)
     if total == 0:
         alloc[principal] = expenses
@@ -185,6 +196,7 @@ def compute(inp: EngineInput) -> EngineResult:
     if expenses_clp and principal is None:
         warnings.append("principal_missing")
     alloc = _allocate(inp, costs, principal, expenses_clp)
+    marked = set(_marked(inp))
     out: list[LineResult] = []
     cost_base, net, any_missing = ZERO, ZERO, False
     for l in inp.items:
@@ -206,7 +218,7 @@ def compute(inp: EngineInput) -> EngineResult:
         real_markup = None if (price is None or not base) else price / base - ONE         # U15
         gross = None if (price is None or base is None or price == 0) else (price - base) / price   # V15
         out.append(LineResult(l.line_no, cost, exp, base, price, total, real_markup, gross,
-                              _state(gross, inp), l.line_no == principal))
+                              _state(gross, inp), l.line_no == principal or l.line_no in marked))
         if total is not None:
             net += total                                                                  # K3
             if base is not None:

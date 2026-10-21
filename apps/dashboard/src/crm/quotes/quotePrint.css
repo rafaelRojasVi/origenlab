@@ -204,6 +204,10 @@
     flex-direction: column;
     min-height: 296mm;
     box-sizing: border-box;
+    /* Each page of a longer quote gets the sheet's padding and green line again: without it the
+       second page started at the paper's top edge, cut, with no margin (owner, 2026-10-21). */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
   .qp-sheet > * + * { margin-top: 14px; }
   /* One page for an ordinary quote: a little tighter on paper than on screen. */

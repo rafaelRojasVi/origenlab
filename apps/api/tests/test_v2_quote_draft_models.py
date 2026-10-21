@@ -67,14 +67,14 @@ def test_item_bounds() -> None:
             DraftItemLine(**{**_LINE, **bad})
 
 
-def test_at_most_one_principal_and_only_with_the_manual_rule() -> None:
+def test_marked_lines_only_with_the_manual_rule() -> None:
     two = [{**_LINE, "is_principal": True}, {**_LINE, "is_principal": True}]
-    with pytest.raises(ValidationError, match="at most one"):
-        QuoteDraft(items=two, principal_rule="manual")
+    with pytest.raises(ValidationError, match="manual"):
+        QuoteDraft(items=two)
     with pytest.raises(ValidationError, match="manual"):
         QuoteDraft(items=[{**_LINE, "is_principal": True}])
-    ok = QuoteDraft(items=[{**_LINE, "is_principal": True}, _LINE], principal_rule="manual")
-    assert sum(i.is_principal for i in ok.items) == 1
+    ok = QuoteDraft(items=[*two, _LINE], principal_rule="manual")   # several share the expenses
+    assert sum(i.is_principal for i in ok.items) == 2
 
 
 def test_duplicate_fx_override_currencies_are_refused() -> None:

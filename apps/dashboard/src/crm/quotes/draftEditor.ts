@@ -312,12 +312,20 @@ export function principalItemOf(draft: QuoteDraft, computed: Computed | null, co
   return (uid ? draft.items.find((i) => i.uid === uid) : draft.items.find((i) => i.is_principal)) ?? null;
 }
 
-/** The operator picks the principal line (it absorbs the import expenses): the rule becomes manual. */
-export function setPrincipal(draft: QuoteDraft, index: number): QuoteDraft {
+/**
+ * «Lleva gastos» on a line (owner, 2026-10-21): the import expenses go to the marked lines, shared
+ * by cost when there are several. The first tick starts from the line the API chose by itself, so
+ * ticking a second line shares between the two; the rule becomes manual. Unticking the last one
+ * leaves none marked: the quote then says the expenses have no line to go to.
+ */
+export function toggleExpenses(draft: QuoteDraft, index: number, computed: Computed | null, computedKeys: string[]): QuoteDraft {
+  const auto = draft.principal_rule === "manual" ? null : principalItemOf(draft, computed, computedKeys);
+  const marked = draft.items.map((item) => (draft.principal_rule === "manual" ? !!item.is_principal : item === auto));
+  marked[index] = !marked[index];
   return {
     ...draft,
     principal_rule: "manual",
-    items: draft.items.map((item, i) => ({ ...item, is_principal: i === index })),
+    items: draft.items.map((item, i) => ({ ...item, is_principal: marked[i] })),
   };
 }
 
