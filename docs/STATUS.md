@@ -3460,3 +3460,18 @@ is captured and staged like any inbound mail (`capture.intake_skip_reason`, and 
 rule `manifest._require_stageable_gmail_payload`, which keeps refusing Spam, drafts and every other
 Trash message). A contacto@ Gmail filter (same day) also sends bounce notices straight to «Rebotes»,
 out of the inbox, so nobody needs to delete them.
+
+### 2.7.146 The mail worker imports only what each process runs, 2026-10-21 — built, deploys on merge
+
+From 2026-10-20 13:00, when the tender child went live, `origenlab-mail-triage` sat at ~420 MB
+(266 MB before) and peaked over starter's 512 MB: about 25 restarts in a day. Each of its four
+long-running processes imported the whole CLI — ~1,000 modules, ~83 MB, FastAPI and the V1 pipeline
+included — because `origenlab_api/v2/__init__.py` imported every router and `cli.py` every command.
+Now: the v2 package resolves its names on first use; `origenlab-worker` is `entry.main`, which starts
+the supervisor and its children without `cli` (supervisor ~13 MB, capture scheduler ~35 MB — its
+connector moved to `queue_connector.py` — triage and tender ~48 MB at start); and the tender
+child's 15-minute discovery runs as `tender-discovery` in a process that exits, so the ~4,800-tender
+list is not kept. The plan was raised to standard on Render the same day as a stopgap; once memory
+is confirmed well under 512 MB after this deploys, it goes back to starter (`render.yaml` still
+declares starter).
+

@@ -7,7 +7,7 @@ import procrastinate
 import pytest
 from procrastinate import testing
 
-from origenlab_worker import task_queue
+from origenlab_worker import queue_connector, task_queue
 from origenlab_worker.triage import ModelUnavailable
 
 
@@ -123,7 +123,7 @@ def test_the_pool_pins_the_queue_search_path_after_verifying(monkeypatch) -> Non
         async def commit(self):
             calls.append("commit")
 
-    monkeypatch.setattr(task_queue, "averify_worker_connection", fake_verify)
+    monkeypatch.setattr(queue_connector, "averify_worker_connection", fake_verify)
     asyncio.run(task_queue.pool_configure(object())(Conn()))
     assert calls == [("verify", 16, 16), ("execute", "set search_path to procrastinate, pg_catalog"), "commit"]
 

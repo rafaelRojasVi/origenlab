@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 ENV_BID_ENABLED = "ORIGENLAB_WORKER_BID_ENABLED"
+ENV_CAPTURE_SCHEDULER = "ORIGENLAB_WORKER_CAPTURE_SCHEDULER_ENABLED"
 
 
 def bid_enabled(env: Mapping[str, str]) -> bool:
@@ -13,4 +14,9 @@ def bid_enabled(env: Mapping[str, str]) -> bool:
     return (env.get(ENV_BID_ENABLED) or "").strip().lower() == "true"
 
 
-__all__ = ["ENV_BID_ENABLED", "bid_enabled"]
+def capture_enabled(env: Mapping[str, str]) -> bool:
+    """`true` (any case, trimmed) starts the capture scheduler child."""
+    return env.get(ENV_CAPTURE_SCHEDULER, "").strip().lower() == "true"
+
+
+__all__ = ["ENV_BID_ENABLED", "ENV_CAPTURE_SCHEDULER", "bid_enabled", "capture_enabled"]
