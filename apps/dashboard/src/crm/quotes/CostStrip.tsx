@@ -1,8 +1,8 @@
 /**
- * The strip under a Cotizador line: «Me cuesta» (the line's cost in pesos with the import expenses
- * the engine put on it) → the margin pill and «gano $» → «Le cobro (neto)» with «+ IVA =». For the
- * operator to read cost against price at a glance (owner, 2026-10-19; mockup «Lo que cuesta y lo que
- * se cobra»). Every number is the API's `line_economics`, only formatted: the browser adds nothing.
+ * The strip under a Cotizador line, one compact row: «Me cuesta» (the line's cost in pesos with the
+ * import expenses the engine put on it) · the margin pill and «gano $» · «Le cobro (neto)» with
+ * «+ IVA =». For the operator to read cost against price at a glance (owner, 2026-10-19; mockup «Lo
+ * que cuesta y lo que se cobra»; tightened to one row 2026-10-21). Every number is the API's `line_economics`, only formatted: the browser adds nothing.
  *
  * Internal: costs and margins are for sales and administration (the Cotizador's API refuses anyone
  * else), the editor hides the strip in «Vista cliente», and the printable quote never carries it.
@@ -43,41 +43,38 @@ export function CostStrip({ economics, n, stale = false }: { economics: LineEcon
       data-testid="cost-strip"
       aria-label={`Costo y margen de la línea ${n}`}
       aria-busy={stale || undefined}
-      className={`mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr]${stale ? " opacity-50" : ""}`}
+      className={`mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-md bg-canvas-sunken px-3 py-1.5 text-[12.5px] text-ink-muted${stale ? " opacity-50" : ""}`}
     >
-      <div className="flex min-w-0 flex-col gap-0.5 rounded-[10px] border border-line bg-canvas-sunken px-3 py-2">
-        <span className="text-[12px] text-ink-muted">Me cuesta</span>
-        <span className="font-mono text-[17px] font-medium tabular-nums text-ink">{cost ?? "—"}</span>
-        <span className="text-[12px] text-ink-muted">
-          {costNote}
-        </span>
-      </div>
-      <div className="flex items-center justify-start gap-2.5 px-1 sm:flex-col sm:justify-center sm:gap-1 sm:text-center">
-        <span className="text-[12px] text-ink-faint">margen</span>
+      <span className="flex min-w-0 items-baseline gap-1.5">
+        <span>Me cuesta</span>
+        <span className="font-mono font-medium tabular-nums text-ink">{cost ?? "—"}</span>
+        <span className="truncate text-[12px] text-ink-faint">{costNote}</span>
+      </span>
+      <span className="flex items-center gap-1.5">
         {state === "no_price" ? (
-          <span className="whitespace-nowrap rounded-full border border-line px-3 py-1 text-[13px] font-semibold text-ink-muted">Falta precio</span>
+          <span className="whitespace-nowrap rounded-full border border-line px-2 py-px text-[12px] font-semibold text-ink-muted">Falta precio</span>
         ) : pct ? (
           <span
-            className={`whitespace-nowrap rounded-full border px-3 py-1 font-mono text-[15px] font-medium tabular-nums ${PILL[economics.margin_state] ?? PILL_OUTSIDE}`}
+            className={`whitespace-nowrap rounded-full border px-2 py-px font-mono text-[12px] font-medium tabular-nums ${PILL[economics.margin_state] ?? PILL_OUTSIDE}`}
           >
             {pct}
           </span>
         ) : state === "expenses_unallocated" ? null : (
-          <span className="font-mono text-[15px] text-ink-faint">—</span>
+          <span className="font-mono text-ink-faint">—</span>
         )}
         {economics.gain_clp != null ? (
-          <span className="text-[12px] text-ink-muted">
-            gano <span className="font-mono tabular-nums">{clp(economics.gain_clp)}</span>
+          <span>
+            gano <span className="font-mono tabular-nums text-ink">{clp(economics.gain_clp)}</span>
           </span>
         ) : null}
-      </div>
-      <div className="flex min-w-0 flex-col gap-0.5 rounded-[10px] border border-brand-700 bg-brand-50 px-3 py-2">
-        <span className="text-[12px] text-ink-muted">Le cobro (neto)</span>
-        <span className="font-mono text-[17px] font-medium tabular-nums text-brand-700">{sale ?? "—"}</span>
+      </span>
+      <span className="ml-auto flex items-baseline gap-1.5">
+        <span>Le cobro (neto)</span>
+        <span className="font-mono font-semibold tabular-nums text-brand-700">{sale ?? "—"}</span>
         {economics.total_with_iva_clp != null ? (
-          <span className="text-[12px] text-ink-muted">+ IVA = {clp(economics.total_with_iva_clp)}</span>
+          <span className="text-[12px] text-ink-faint">+ IVA = {clp(economics.total_with_iva_clp)}</span>
         ) : null}
-      </div>
+      </span>
     </div>
   );
 }
