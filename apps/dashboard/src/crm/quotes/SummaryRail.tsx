@@ -24,7 +24,7 @@ import { formatMoney } from "../money";
 import { EconomicsCard } from "./EconomicsCard";
 import { EnteredExpensesCard } from "./EnteredExpensesCard";
 import { Button } from "../ui";
-import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, type DraftEditorState } from "./draftEditor";
+import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, setWithoutIva, type DraftEditorState } from "./draftEditor";
 import type { QuoteDraft, QuotePreferences, QuoteWorkspace } from "./quoteApi";
 import { quoteRefusalText } from "./quoteRefusal";
 import { MARGIN_TARGET_FALLBACK, compareDecimal } from "./preferenceFields";
@@ -159,7 +159,7 @@ export function SummaryRail({
   return (
     <aside aria-label="Resumen de la cotización" className="flex min-w-0 max-w-[400px] flex-[1_1_320px] flex-col gap-3.5">
       {editable ? <PricesChanged state={state} disabled={disabled} onSaveNow={onSaveNow} /> : null}
-      <TotalsCard state={state} editable={editable} stale={stale} clientView={clientView} />
+      <TotalsCard state={state} editable={editable} stale={stale} clientView={clientView} disabled={disabled} edit={edit} />
       {clientView ? null : (
         <EconomicsCard
           economics={editable ? state.computed?.economics : ws.current?.economics}
@@ -249,11 +249,15 @@ function TotalsCard({
   editable,
   stale,
   clientView,
+  disabled = false,
+  edit,
 }: {
   state: DraftEditorState;
   editable: boolean;
   stale: boolean;
   clientView: boolean;
+  disabled?: boolean;
+  edit?: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
 }) {
   const cur = state.workspace.current;
   const currency = cur?.quote_currency ?? "CLP";
@@ -262,6 +266,8 @@ function TotalsCard({
   const iva = editable ? totals?.iva : cur?.tax_total;
   const total = editable ? totals?.total : cur?.grand_total;
   const money = (v: string | null | undefined) => formatMoney(v, currency) ?? "—";
+  // «Sin IVA»: the draft's tick while editing, else the revision's stored rate of 0.
+  const withoutIva = editable ? !!state.draft.without_iva : cur?.tax_rate != null && Number(cur.tax_rate) === 0;
   return (
     <section
       aria-label="Totales"
@@ -272,15 +278,32 @@ function TotalsCard({
         <span className="text-[#a9bdb7]">Neto</span>
         <span className="font-mono tabular-nums">{money(net)}</span>
       </div>
-      <div className="flex justify-between text-sm">
-        <span className="text-[#a9bdb7]">{ivaLabel(cur?.tax_rate)}</span>
-        <span className="font-mono tabular-nums">{money(iva)}</span>
-      </div>
+      {withoutIva ? null : (
+        <div className="flex justify-between text-sm">
+          <span className="text-[#a9bdb7]">{ivaLabel(cur?.tax_rate && Number(cur.tax_rate) > 0 ? cur.tax_rate : "0.19")}</span>
+          <span className="font-mono tabular-nums">{money(iva)}</span>
+        </div>
+      )}
       <div className="h-px bg-[#2c3433]" />
       <div className="flex items-baseline justify-between">
-        <span className="text-sm text-[#a9bdb7]">Total</span>
+        <span className="text-sm text-[#a9bdb7]">{withoutIva ? "Total sin IVA" : "Total"}</span>
         <span className="font-mono text-[26px] font-medium tabular-nums">{money(total)}</span>
       </div>
+      {editable && edit ? (
+        <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[#a9bdb7]">
+          <input
+            type="checkbox"
+            checked={withoutIva}
+            disabled={disabled}
+            onChange={(e) => {
+              const on = e.target.checked;
+              edit((d) => setWithoutIva(d, on));
+            }}
+            className="h-4 w-4 accent-[#5eead4]"
+          />
+          Sin IVA
+        </label>
+      ) : null}
       {editable && !totals ? <p className="text-[12.5px] text-[#a9bdb7]">Todavía no hay precios calculados.</p> : null}
       {totals && !clientView ? (
         <MarginBlock totals={totals} currency={currency} band={targetBand(state.workspace.params)} />

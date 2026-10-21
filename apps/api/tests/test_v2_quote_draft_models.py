@@ -167,3 +167,15 @@ def test_the_recipient_is_exactly_one_pick() -> None:
     assert QuoteDraft(recipient_participant_id=pid).recipient_participant_id == uuid.UUID(pid)
     with pytest.raises(ValidationError, match="not both"):
         QuoteDraft(recipient_participant_id=pid, recipient={"participant_id": pid})
+
+
+def test_the_tax_rate_of_a_draft() -> None:
+    from decimal import Decimal
+
+    from origenlab_api.v2.quotes.draft import draft_tax_rate
+
+    params = {"iva_rate": Decimal("0.19")}
+    assert draft_tax_rate(QuoteDraft(without_iva=True), Decimal("0.19"), params) == 0
+    assert draft_tax_rate(QuoteDraft(), Decimal("0.18"), params) == Decimal("0.18")   # the revision's own
+    assert draft_tax_rate(QuoteDraft(), Decimal(0), params) == Decimal("0.19")        # «Sin IVA» unticked
+    assert draft_tax_rate(QuoteDraft(), None, {}) == Decimal("0.19")

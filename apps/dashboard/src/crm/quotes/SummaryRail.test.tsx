@@ -156,6 +156,21 @@ describe("SummaryRail — totals and margin", () => {
     expect(band.querySelector("[data-marker]")).toHaveStyle({ left: "calc(29.37% - 6px)" });
   });
 
+  it("«Sin IVA» sets the draft without IVA; ticked, the rail shows no IVA row and «Total sin IVA»", async () => {
+    const { applied } = setup();
+    await settled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Sin IVA" }));
+    expect(applied().without_iva).toBe(true);
+    cleanup();
+    const base = stateFor();
+    setup({ state: { ...base, draft: { ...base.draft, without_iva: true } } });
+    await settled();
+    const totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).queryByText(/IVA 19/)).not.toBeInTheDocument();
+    expect(within(totals).getByText("Total sin IVA")).toBeInTheDocument();
+    expect(within(totals).getByRole("checkbox", { name: "Sin IVA" })).toBeChecked();
+  });
+
   it("draws the target band from the workspace's preferences (params), not from constants", async () => {
     const params = { markups: {}, margin_target_min: "0.30", margin_target_max: "0.505", price_deviation_warn_pct: "0.15" };
     setup({ state: stateFor({}, {}, { params }) });

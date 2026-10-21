@@ -3489,3 +3489,10 @@ marks are the lines' `is_principal` under the `manual` rule, so approval re-pric
 - The printed quote repeats the sheet's padding and green line on every page
   (`box-decoration-break: clone`): a second page used to start at the paper's top edge.
 
+### 2.7.148 «Sin IVA» on a Cotizador quote, 2026-10-21 — built, deploys on merge
+
+Owner: some quotes go without IVA. The totals card has a «Sin IVA» tick (the draft's `without_iva`);
+saved, the revision's `tax_rate` is 0, so IVA is 0 and the total is the net; unticked, it takes the
+`iva_rate` parameter again. A draft reloads ticked when its rate is 0, and approval re-prices with
+the stored rate as before (no migration: `tax_rate` already allowed 0). The PDF then prints only
+«Total CLP sin IVA» (no Neto/IVA rows, and a tender offer no per-line IVA columns).

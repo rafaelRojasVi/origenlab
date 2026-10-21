@@ -310,6 +310,15 @@ describe("Vista previa PDF — a tender's offer", () => {
     };
   }
 
+  it("a quote «Sin IVA» prints its total without an IVA row", () => {
+    const ws = approved();
+    const dialog = show({ ...ws, current: { ...ws.current!, tax_rate: "0", tax_total: "0", grand_total: "2000000" } });
+    const totals = within(within(dialog).getByLabelText("Totales"));
+    expect(totals.queryByText(/IVA 19/)).not.toBeInTheDocument();
+    expect(totals.queryByText("Neto")).not.toBeInTheDocument();
+    expect(totals.getByText("Total CLP sin IVA").nextSibling).toHaveTextContent("$ 2.000.000");
+  });
+
   it("prints the bidder, the tender code and the IVA and total of every line", () => {
     const dialog = show(tenderQuote(BIDDER));
     const sheet = within(dialog);

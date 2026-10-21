@@ -76,7 +76,7 @@ from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
 from origenlab_api.v2.case_commands import SUPPLIER_RELATIONSHIP_ROLES
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _like_escape, _plain
 from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft
+from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft, draft_tax_rate
 from origenlab_api.v2.quotes.economics import frozen_economics, frozen_line_economics, month_range, report
 from origenlab_api.v2.quotes.inputs import (
     PARAMETERS_SQL,
@@ -924,9 +924,7 @@ class V2QuoteReads:
 
     def _priced(self, cur: Any, draft: QuoteDraft, tax_rate: Decimal | None,
                 params: dict[str, Decimal | str], fx: FxResolver) -> dict[str, Any]:
-        params = dict(params)
-        if tax_rate is not None:
-            params["iva_rate"] = Decimal(tax_rate)
+        params = {**params, "iva_rate": draft_tax_rate(draft, tax_rate, params)}
         try:
             resolved = resolve_draft(cur, draft, params, fx, self._today())
             result = compute(resolved.engine_input)
