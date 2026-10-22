@@ -8,7 +8,6 @@ Last reviewed: 2026-08-28
 > [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](./architecture/CURRENT_SYSTEM_TRUTH.md) ·
 > [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
 
-This is the primary monorepo context document for coding agents and contributors.
 
 <a id="m-proj-what"></a>
 ## What this repo is

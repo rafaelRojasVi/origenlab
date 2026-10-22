@@ -132,6 +132,8 @@ cd apps/email-pipeline && uv sync && uv run origenlab operator-automation-status
 
 Do not run `--apply`, send, purge, or mirror workflows from this README. See app runbooks for operator procedures.
 
+**Testing:** `make setup` (once), `make db-up` (once per session), then `make check` — see [AGENTS.md → Testing](AGENTS.md).
+
 ## Security
 
 This repository is **public**. Do not commit `.env`, SQLite databases, mail archives, `reports/out`, keys, or client collateral.

@@ -1,8 +1,6 @@
 # OrigenLab API (`apps/api`)
 
 > **Operator handoff (v1 freeze):** [../dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)
->
-> **Portfolio demo guide:** [docs/PORTFOLIO_DEMO_GUIDE.md](docs/PORTFOLIO_DEMO_GUIDE.md)
 
 **Operator API** over SQLite, Postgres, and `reports/out/active/current`: read routes for the dashboard, read-only `/mirror/*` reporting, and the **durable commercial CRM commands under `POST /operations/*`** (trusted operator identity, Idempotency-Key, optimistic concurrency, append-only events). This app is separated from `apps/email-pipeline` so daily ingest, DNR refresh, and outbound CLIs stay unchanged. Canonical architecture: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
 
