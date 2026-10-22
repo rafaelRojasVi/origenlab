@@ -450,10 +450,10 @@ ol_bootstrap_platform_objects_into() {
 create schema if not exists extensions authorization postgres;
 grant usage on schema extensions to anon, authenticated, service_role;
 grant usage, create on schema extensions to dashboard_user;
--- Application roles must also be able to reference operator classes and other objects in the
+-- origenlab_owner must be able to reference operator classes and other objects in the
 -- extensions schema (e.g. extensions.gin_trgm_ops in CREATE INDEX). On hosted Supabase the
 -- platform grants this automatically; here we emulate it.
-grant usage on schema extensions to origenlab_owner, origenlab_api, origenlab_worker;
+grant usage on schema extensions to origenlab_owner;
 -- btree_gist backs the exclusion constraints on crm.affiliation,
 -- crm.organization_relationship and crm.opportunity_participant. A restore of those tables
 -- needs the operator class to exist before their constraints are created.

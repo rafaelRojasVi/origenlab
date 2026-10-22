@@ -217,7 +217,7 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
  order by o.created_at desc
  limit 300
 """
-_KNOWN_QUOTE_NUMBERS = "select quote_number from crm.quote order by 1 desc limit 2000"
+_KNOWN_QUOTE_NUMBERS = "select quote_number from crm.quote"
 _RECIPIENTS = """
 select p.address_norm from comms.message_participant p
  where p.message_id = %s and p.role in ('to', 'cc') order by 1
@@ -292,27 +292,6 @@ select o.id::text, o.name
           and (rel.valid_to is null or rel.valid_to > current_date)
    )
  order by length(o.name) desc, o.id
-"""
-# SQL pre-filter for requester matching: word_similarity uses the GIN trigram index on
-# lower(crm.organization.name) (added by 20261022100000). Returns candidates for
-# match_requester_organization() to verify exactly via fold(). The threshold 0.25 is low
-# to avoid false negatives; the Python step does the exact check.
-_REQUESTER_MATCH_SQL = """
-select o.id::text, o.name
-  from crm.organization o
- where o.status = 'active'
-   and o.confirmation = 'confirmed'
-   and o.merged_into_organization_id is null
-   and not exists (
-       select 1
-         from crm.organization_relationship rel
-        where rel.organization_id = o.id
-          and rel.role in ('supplier', 'manufacturer')
-          and (rel.valid_to is null or rel.valid_to > current_date)
-   )
-   and extensions.word_similarity(lower(o.name), lower(%(body)s)) > 0.25
- order by extensions.word_similarity(lower(o.name), lower(%(body)s)) desc, length(o.name) desc, o.id
- limit 50
 """
 
 
@@ -414,20 +393,9 @@ class TriageDb:
             return match_products(cur, mail.subject, mail.body)
 
     def requester_match(self, body: str) -> dict[str, Any]:
-        """Exact, unique CRM institution name in the cleaned body; no model and no fuzzy match.
-
-        Uses a SQL word-similarity pre-filter (_REQUESTER_MATCH_SQL) with the GIN trigram index
-        on crm.organization.lower(name) to keep the candidate set small. The Python
-        match_requester_organization() step then does the exact identity-text check.
-        Falls back to the unfiltered query when the body is too short for word_similarity.
-        """
-        # word_similarity needs at least a few characters to be meaningful.
-        use_sql_filter = len(body.strip()) >= 10
+        """Exact, unique CRM institution name in the cleaned body; no model and no fuzzy match."""
         with self._tx() as cur:
-            if use_sql_filter:
-                cur.execute(_REQUESTER_MATCH_SQL, {"body": body})
-            else:
-                cur.execute(_REQUESTER_ORGANIZATIONS)
+            cur.execute(_REQUESTER_ORGANIZATIONS)
             organizations = [(str(oid), str(name)) for oid, name in cur.fetchall()]
         return match_requester_organization(body, organizations)
 

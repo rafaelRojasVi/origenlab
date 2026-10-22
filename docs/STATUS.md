@@ -36,7 +36,7 @@ says "frozen", "not deployed" or "not created", this section is the current stat
 
 | Item | State (2026-10-22) |
 |---|---|
-| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Migration head `20261021200000` (66 files in `supabase/migrations/`), applied by the release automation |
+| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Migration head `20261022100000` (67 files in `supabase/migrations/`), applied by the release automation |
 | Release | `OL_RELEASE_AUTOMATION_ENABLED=true` since 2026-10-13: a merge to `main`, once CI passes, runs `production-db-migrations` end to end — encrypted backup → migrations → worker → API → dashboard at the merge SHA → postflight. Render auto-deploy stays off |
 | API | Render web service `origenlab` (`render.yaml` calls it `origenlab-api`), Python runtime, root `apps/api`, Starter, Oregon |
 | Worker | Render Background Worker `origenlab-mail-triage`, starter, root `apps/worker`: a supervisor with triage, capture (every minute: gmail-sync → drive-file → quote-read) and tender children. 279–362 MB since 2026-10-21 (#813) |
@@ -2053,19 +2053,16 @@ API only; no migration, proxy, or dashboard change.
 
 ### 2.7.152 Database performance indexes + worker memory, 2026-10-22 — built, not yet deployed
 
-**Migration `20261022100000_perf_indexes.sql`** adds four indexes and the `pg_trgm` extension:
+**Migration `20261022100000_perf_indexes.sql`** adds three indexes and the `pg_trgm` extension. Prerequisite applied 2026-10-22 as `postgres` in the Supabase SQL editor: `create extension if not exists pg_trgm with schema extensions; grant usage on schema extensions to origenlab_owner;`.
 
 | Index | Table | Kind | Motivation |
 |---|---|---|---|
 | `message_provider_thread_idx` | `comms.message(provider_thread_id)` | B-tree partial | Worker triage joins on thread id alone (no mailbox filter); existing `message_thread_idx` leads with `mailbox_id` and is not used |
 | `source_record_gmail_thread_idx` | `evidence.source_record((payload->>'gmail_thread_id'))` | B-tree expression partial | `CASE_CARDS_SQL`, `_LINKED_CASES`, `_TENDER_THREAD` all filter on this payload key |
 | `product_model_key_trgm_idx` | `catalog.product(model_key)` | GIN trgm | Catalog reads use leading-wildcard `LIKE`; trigram index supports it |
-| `organization_name_trgm_idx` | `crm.organization(lower(name))` | GIN trgm | SQL requester-match pre-filter (`word_similarity`) added to triage.py |
 
-`pg_trgm` installed via a DO-block role-step (the extension schema belongs to the Supabase connection role, not `origenlab_owner`).
+A conditional DO block runs as the connection role: if `pg_trgm` is absent it tries to install it (succeeds on fresh clusters; raises a clear exception naming the prerequisite if the session lacks privilege). Ditto for `USAGE on extensions` for `origenlab_owner`.
 
 **Worker changes** (`apps/worker/src/origenlab_worker/triage.py`, `render.yaml`):
-- `CASE_CARDS_SQL`: `LIMIT 300` added to cap the case snapshot read.
-- `_KNOWN_QUOTE_NUMBERS`: capped at 2000 rows.
-- `requester_match()`: SQL `word_similarity` pre-filter (`_REQUESTER_MATCH_SQL`) on `crm.organization` reduces the Python candidate set; falls back to the unfiltered query for very short bodies.
-- `render.yaml`: `uv run --no-sync origenlab-worker` → `.venv/bin/origenlab-worker` (bypasses uv startup overhead); `MALLOC_ARENA_MAX=2` added to both the cron and triage worker services.
+- `CASE_CARDS_SQL`: `LIMIT 300` added; results ordered by `o.created_at desc` (recency).
+- `render.yaml`: `uv run --no-sync origenlab-worker` → `.venv/bin/origenlab-worker` (bypasses uv startup overhead); `MALLOC_ARENA_MAX=2` added to both the cron and triage worker services. **Render services were created by hand and do not follow render.yaml** — apply the same start command (`.venv/bin/origenlab-worker mail-worker`) and env var (`MALLOC_ARENA_MAX=2`) in the Render dashboard for the `origenlab-mail-triage` worker service.

@@ -1,5 +1,5 @@
--- Performance indexes (2026-10-22): thread-id lookups, Gmail payload thread id, pg_trgm for
--- catalog model-key search and organization requester matching.
+-- Performance indexes (2026-10-22): thread-id lookups, Gmail payload thread id, and pg_trgm
+-- for catalog model-key search.
 --
 -- Evidence for each index:
 --   comms.message(provider_thread_id): CASE_CARDS_SQL (triage.py) joins
@@ -17,13 +17,7 @@
 --
 --   catalog.product(model_key) gin_trgm_ops: catalog/reads.py _SEARCH_WHERE uses
 --     p.model_key like '%%' || %(qkey)s || '%%' (reads.py:24) -- a leading-wildcard LIKE that
---     a GIN trigram index supports directly. Also alias_key like '%%' || qkey || '%%' (reads.py:26)
---     but that is on catalog.product_model_alias, not product.
---
---   crm.organization(lower(name)) gin_trgm_ops: the new SQL-based requester matching
---     (triage.py _REQUESTER_MATCH_SQL) uses word_similarity(lower(o.name), lower(%(body)s))
---     with threshold 0.5; the GIN trgm index on lower(name) makes this O(candidates) rather
---     than O(all active organizations).
+--     a GIN trigram index supports directly.
 --
 -- Production lock estimate (row counts from docs/STATUS.md §2.1, 2026-09-30 snapshot):
 --   comms.message: not in the count table; the worker captures ~10 messages per 10-minute cron
@@ -34,30 +28,53 @@
 --     ~4,000 rows (estimate). <1 second (estimate).
 --   catalog.product: ~10,000 rows (STATUS.md §2.7.61 loaded catalog). GIN build: ~1-5 seconds
 --     (estimate). ShareLock for that duration.
---   crm.organization: 1,812 rows (STATUS.md §2.1). GIN build: <1 second (estimate).
 --
--- Rollback: add a corrective migration that drops these four indexes.
+-- Rollback: add a corrective migration that drops these three indexes.
+--
+-- Prerequisite (run once as postgres in the Supabase SQL editor — DONE 2026-10-22):
+--   create extension if not exists pg_trgm with schema extensions;
+--   grant usage on schema extensions to origenlab_owner;
 --
 -- This migration uses a DO block to step back to the connection role for the pg_trgm extension
--- (CREATE EXTENSION requires CREATE on the extensions schema, which belongs to the Supabase
--- connection role, not to origenlab_owner). The release parser rule is satisfied: the first
+-- and the USAGE grant. On a fresh cluster the DO block installs them; on production they are
+-- already present and both branches are skipped. The release parser rule is satisfied: the first
 -- statement is `set role origenlab_owner` and the last is `reset role`.
 
 set role origenlab_owner;
 
--- Step back to the connection role: trusted-extension installation requires CREATE on the
--- Supabase-managed extensions schema, which is held by the connection role (postgres/supabase),
--- not by origenlab_owner.
-do $$ begin reset role; end $$;
+-- Step back to connection role for the prerequisite check-and-install.
+-- In production both checks pass (prerequisites applied 2026-10-22) and neither branch fires.
+-- On a fresh cluster (CI, local) the connection is a superuser and both succeed.
+do $$
+declare
+  prereq text :=
+    'create extension if not exists pg_trgm with schema extensions; '
+    'grant usage on schema extensions to origenlab_owner;';
+begin
+  reset role;  -- back to connection role (postgres / origenlab_migrator)
 
-create extension if not exists pg_trgm with schema extensions;
+  -- (a) install pg_trgm if absent
+  if not exists (select 1 from pg_extension where extname = 'pg_trgm') then
+    begin
+      execute 'create extension pg_trgm with schema extensions';
+    exception when insufficient_privilege then
+      raise exception
+        'pg_trgm is absent and this session cannot install it. '
+        'Run once as postgres in the Supabase SQL editor before merging: %', prereq;
+    end;
+  end if;
 
--- On hosted Supabase the platform grants all roles USAGE on the extensions schema, so
--- operator classes and functions installed there (e.g. extensions.gin_trgm_ops,
--- extensions.word_similarity) resolve without search_path tricks. Disposable test
--- clusters (disposable_test_cluster.sh) and local worktrees apply migrations without
--- that platform pre-grant, so we emit it here. The grant is idempotent.
-grant usage on schema extensions to origenlab_owner, origenlab_api, origenlab_worker;
+  -- (b) ensure origenlab_owner has USAGE on the extensions schema
+  if not has_schema_privilege('origenlab_owner', 'extensions', 'USAGE') then
+    begin
+      execute 'grant usage on schema extensions to origenlab_owner';
+    exception when insufficient_privilege then
+      raise exception
+        'origenlab_owner lacks USAGE on the extensions schema and this session cannot grant it. '
+        'Run once as postgres in the Supabase SQL editor before merging: %', prereq;
+    end;
+  end if;
+end $$;
 
 set role origenlab_owner;
 
@@ -83,11 +100,5 @@ create index source_record_gmail_thread_idx
 create index product_model_key_trgm_idx
     on catalog.product
  using gin (model_key extensions.gin_trgm_ops);
-
--- 4. crm.organization: GIN trigram index on lower(name) for the SQL-based word-similarity
---    requester matching (triage.py _REQUESTER_MATCH_SQL uses word_similarity(lower(o.name), ...)).
-create index organization_name_trgm_idx
-    on crm.organization
- using gin (lower(name) extensions.gin_trgm_ops);
 
 reset role;

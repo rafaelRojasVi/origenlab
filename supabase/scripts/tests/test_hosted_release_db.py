@@ -194,7 +194,7 @@ class RealReleaseDatabase(unittest.TestCase):
         self.sql("DROP SCHEMA crm CASCADE; CREATE SCHEMA extensions", self.env)
         for role in ("anon", "authenticated", "service_role", "origenlab_api", "origenlab_worker"):
             self.sql(f"DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{role}') THEN CREATE ROLE {role} NOLOGIN; END IF; END $$", self.env)
-        self.sql("CREATE EXTENSION btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", self.env)
+        self.sql("CREATE EXTENSION btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner", self.env)
         backup.execute(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", str(repo / "supabase/roles.sql")], self.env)
         rows = migrations.chain(repo)
         self.assertGreaterEqual(len(rows), 50)
@@ -209,7 +209,7 @@ class RealReleaseDatabase(unittest.TestCase):
         self.sql(f'CREATE DATABASE {recovery}')
         try:
             env = dict(self.env, PGDATABASE=recovery)
-            self.sql("CREATE SCHEMA extensions; CREATE EXTENSION btree_gist WITH SCHEMA extensions; CREATE EXTENSION pg_trgm WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", env)
+            self.sql("CREATE SCHEMA extensions; CREATE EXTENSION btree_gist WITH SCHEMA extensions; CREATE EXTENSION pg_trgm WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner", env)
             backup.execute(["pg_restore", "--exit-on-error", "--dbname", recovery, str(dump)], env)
             schemas = ",".join(repr(x) for x in backup.SCHEMAS)
             counts = f"select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ({schemas}) and c.relkind='r'; select count(*) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname in ({schemas})"
