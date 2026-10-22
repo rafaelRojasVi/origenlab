@@ -146,5 +146,5 @@ def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
                 gmail_message_id=row.get("gmail_message_id"),
                 ledger=ledger,
             )
-            _add(index, link, str(p))
+            _add(index, link, f"{p}:{n}")
     return index
