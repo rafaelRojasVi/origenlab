@@ -27,6 +27,8 @@ jobs:
           node-version-file: apps/dashboard/.nvmrc
           cache: npm
           cache-dependency-path: apps/dashboard/package-lock.json
+      - run: npm ci
+        working-directory: apps/dashboard
       - run: make test-dashboard
       - name: Lint (non-blocking)
         working-directory: apps/dashboard
