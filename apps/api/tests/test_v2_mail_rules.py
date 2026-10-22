@@ -501,7 +501,8 @@ def test_r7_a_quote_request_from_a_known_institution_opens_an_en_estudio_case() 
     assert (action.rule_id, action.mode) == ("R7", "auto")
     assert action.organization_id == "o-1"
     assert [c["command"] for c in action.commands] == [
-        "open_commercial_case", "add_case_organization", "advance_case_stage", "advance_case_stage",
+        "open_commercial_case", "add_case_sender_participant", "add_case_organization",
+        "advance_case_stage", "advance_case_stage",
     ]
     assert [c["inputs"]["stage"] for c in action.commands if c["command"] == "advance_case_stage"] == [
         "qualifying", "qualified",
@@ -525,8 +526,9 @@ def test_r7_free_mail_waits_for_requester_check_then_opens_solicitada_without_in
     ))
     assert (action.rule_id, action.mode) == ("R7", "auto")
     assert action.organization_id is None
-    assert len(action.commands) == 1
+    assert len(action.commands) == 2
     assert action.commands[0]["command"] == "open_commercial_case"
+    assert action.commands[1]["command"] == "add_case_sender_participant"
     assert "Solicitud de cotización" in action.case_title
     assert any("sin institución" in reason for reason in action.reasons)
 
@@ -548,7 +550,8 @@ def test_r7_free_mail_uses_a_unique_exact_requester_identity_from_the_worker() -
     ))
     assert (action.rule_id, action.mode, action.organization_id) == ("R7", "auto", "o-1")
     assert [c["command"] for c in action.commands] == [
-        "open_commercial_case", "add_case_organization", "advance_case_stage", "advance_case_stage",
+        "open_commercial_case", "add_case_sender_participant", "add_case_organization",
+        "advance_case_stage", "advance_case_stage",
     ]
     assert action.commands[-1]["inputs"]["stage"] == "qualified"
 
@@ -561,7 +564,7 @@ def test_r7_unknown_domain_quote_request_opens_solicitada_after_requester_check_
     ))
     assert (action.rule_id, action.mode) == ("R7", "auto")
     assert action.organization_id is None
-    assert [c["command"] for c in action.commands] == ["open_commercial_case"]
+    assert [c["command"] for c in action.commands] == ["open_commercial_case", "add_case_sender_participant"]
 
 
 def test_anything_else_is_r8() -> None:

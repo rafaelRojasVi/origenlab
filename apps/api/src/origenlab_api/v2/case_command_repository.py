@@ -47,7 +47,9 @@ grants constrain these writes exactly as they will in production.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from origenlab_api.v2.case_documents import (
     ATTACH_CASE_DOCUMENT,
@@ -83,8 +85,8 @@ from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
-from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.crm_authoring import _handle_register_organization
+from origenlab_api.v2.commands import CommandRefused, normalize_email
+from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_register_organization
 from origenlab_api.v2.current_revision import resolve_current_revision
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS
@@ -1239,6 +1241,95 @@ class V2CaseCommandRepository(CommandTransaction):
             "created": [],
             "event_ids": events,
         }
+
+    # ------------------------------------------------------------------ sender participant (owner, 2026-10-22)
+
+    def _add_case_sender_participant(
+        self, cur: Any, operator: OperatorIdentity, receipt_id: str, *,
+        email: str, case_id: str, note: str,
+    ) -> dict[str, Any]:
+        """Add the sender/customer email as a ``quote_recipient`` participant of a request case.
+
+        Called after ``open_commercial_case`` by R7 (mail-rules step) and by
+        ``create_request_from_forward`` (both the mail-rules and the operator-UI paths), so that
+        ``client_open_cases`` can locate the request case when the operator later opens
+        «+ Nueva» for that same person.
+
+        Skips silently when the address is an OrigenLab or Labdelivery address, when the contact
+        point exists but is deactivated, or when the case already has a participant for that
+        address. Creating a contact point for an unknown address is the same path the quote
+        save uses (``_recipient_for`` → ``_create_contact_point``): it is confirmed,
+        ``unattributed`` (nobody owns it yet), and fired as ``contact_point.created``.
+        (owner, 2026-10-22)
+        """
+        if not email or "@" not in email:
+            return {"skipped": True, "reason": "no_email"}
+        address = normalize_email(email)
+        if not_a_recipient(address):
+            return {"skipped": True, "reason": not_a_recipient(address)}
+
+        # Resolve or create the contact point — same path as _recipient_for in quotes/commands.py.
+        cur.execute(
+            "select id::text, person_id::text, status from crm.contact_point "
+            "where kind = 'email' and value_norm = %s for update",
+            (address,),
+        )
+        found = cur.fetchone()
+        if found is not None:
+            if found[2] != "active":
+                return {"skipped": True, "reason": "contact_point_inactive"}
+            contact_point_id: str = found[0]
+            person_id: str | None = found[1]
+        else:
+            contact_point_id = _create_contact_point(
+                self, cur, operator, receipt_id,
+                kind="email", value_norm=address, value_display=address,
+                person_id=None, organization_id=None, usage="unattributed",
+            )
+            person_id = None
+
+        # Idempotent: reuse an existing current participant with the same contact point or person.
+        cur.execute(
+            "select id::text from crm.opportunity_participant "
+            "where opportunity_id = %s::uuid and valid_to is null "
+            "and (contact_point_id = %s::uuid"
+            " or (%s::uuid is not null and person_id = %s::uuid))",
+            (case_id, contact_point_id, person_id, person_id),
+        )
+        existing = cur.fetchone()
+        if existing is not None:
+            return {"participant_id": existing[0], "contact_point_id": contact_point_id, "reused": True}
+
+        # Primary when the case has no primary quote_recipient yet (same guard as _recipient_for).
+        cur.execute(
+            "select exists (select 1 from crm.opportunity_participant "
+            "where opportunity_id = %s::uuid and role = 'quote_recipient' "
+            "and is_primary and valid_to is null) as taken",
+            (case_id,),
+        )
+        primary = not cur.fetchone()[0]
+        today = datetime.now(ZoneInfo("America/Santiago")).date()
+        cur.execute(
+            """
+            insert into crm.opportunity_participant
+                (opportunity_id, person_id, contact_point_id, role, is_primary, valid_from,
+                 confirmation, confirmed_by_operator_id)
+            values (%s::uuid, %s::uuid, %s::uuid, 'quote_recipient', %s, %s,
+                    'confirmed', %s::uuid)
+            returning id::text
+            """,
+            (case_id, person_id, contact_point_id, primary, today, operator.operator_id),
+        )
+        participant_id: str = cur.fetchone()[0]
+        self._append_event(
+            cur, aggregate_kind="opportunity_participant", aggregate_id=participant_id,
+            event_type="participant.added",
+            payload={"opportunity_id": case_id, "role": "quote_recipient",
+                     "person_id": person_id, "contact_point_id": contact_point_id,
+                     "is_primary": primary},
+            operator=operator, receipt_id=receipt_id,
+        )
+        return {"participant_id": participant_id, "contact_point_id": contact_point_id, "created": True}
 
     # ------------------------------------------------- the quote on the case
     #

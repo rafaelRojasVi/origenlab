@@ -342,8 +342,15 @@ involved; the opportunity row names no person and no channel.
 The commercial-case tables ([`DOMAIN.md`](DOMAIN.md) §3.6) and their commands
 both exist as of 2026-09-22. The steps above describe the participant-centred
 path, which has no command boundary; the path below does, and it is the one a
-case actually takes. `crm.person` is empty and no command creates a
-participant, so steps 3–5 above remain unimplemented.
+case actually takes. `crm.person` is empty and no operator command creates a
+participant, so steps 3–5 above remain unimplemented for the operator UI.
+
+**Request cases opened by mail rules (R7, R11)** gain a `quote_recipient`
+participant for the sender/customer email as part of the same transaction
+(2026-10-22): the contact point is resolved or created, and the participant
+row is inserted. This is the sole entry point that creates participants today;
+`client_open_cases` uses it to find the request case when the operator later
+opens «+ Nueva» for the same address, preventing duplicate cases.
 
 | Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
 |---|---|---|---|---|---|

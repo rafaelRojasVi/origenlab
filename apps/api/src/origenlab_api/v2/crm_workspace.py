@@ -377,9 +377,9 @@ _SQL_PIPELINE_CONTACT = """
 _SQL_PIPELINE_PARTICIPANTS = """
     select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, p.person_id::text as person_id
       from crm.opportunity_participant p
-      left join crm.person pe on pe.id = p.person_id
-     where p.valid_to is null
-     order by p.is_primary desc
+      join crm.person pe on pe.id = p.person_id  -- a contact_point-only participant is found by
+     where p.valid_to is null                     -- client_open_cases but not shown as the CRM contact
+     order by p.is_primary desc                   -- until a person claims the address (owner, 2026-10-22)
 """
 
 # Codes that stop a case from moving until an operator decides something. Everything else in a

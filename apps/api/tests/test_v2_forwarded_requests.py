@@ -169,6 +169,43 @@ def test_a_labdelivery_only_forward_opens_a_case_with_no_email_at_all(db) -> Non
 
 
 @needs_db
+def test_crear_solicitud_adds_customer_as_participant_so_client_open_cases_finds_it(db) -> None:
+    """create_request_from_forward wires the customer email as a quote_recipient participant so
+    client_open_cases locates the request case when the operator opens «+ Nueva».  (owner, 2026-10-22)"""
+    import psycopg
+
+    from origenlab_api.v2.quotes.reads import client_open_cases
+    from v2_command_harness import runtime_dsn
+
+    email = f"part-{uuid.uuid4().hex[:6]}@laboratorio-ficticio.cl"
+    op, (lab, ours), _ = _seed(db, ["labdelivery", "origenlab"], email)
+    out = _run(db, op, CREATE_REQUEST_FROM_FORWARD, CreateRequestFromForwardBody(
+        forwarded_request_id=lab, new_organization_name="Laboratorio Ficticio EIRL", note="participante"))
+    case_id = out["opportunity_id"]
+
+    # A quote_recipient participant for the customer must be present.
+    with _owner(db) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select cp.id::text, p.role from crm.opportunity_participant p "
+            "join crm.contact_point cp on cp.id = p.contact_point_id "
+            "where p.opportunity_id = %s and cp.value_norm = %s and p.valid_to is null",
+            (case_id, email),
+        )
+        row = cur.fetchone()
+    assert row is not None, f"no participant found for {email!r} on case {case_id!r}"
+    cp_id, role = row
+    assert role == "quote_recipient"
+
+    # client_open_cases must find the case via the contact_point.
+    with psycopg.connect(runtime_dsn(db), autocommit=True) as conn:
+        conn.execute("set role origenlab_api")
+        with conn.cursor() as cur:
+            cases = client_open_cases(cur, contact_point_id=cp_id)
+    assert any(c["id"] == case_id for c in cases), (
+        f"case {case_id!r} not in {[c['id'] for c in cases]}")
+
+
+@needs_db
 def test_descartar_removes_every_copy(db) -> None:
     email = f"nota-{uuid.uuid4().hex[:6]}@empresa-ficticia.cl"
     op, (a, b), _ = _seed(db, ["labdelivery", "origenlab"], email)

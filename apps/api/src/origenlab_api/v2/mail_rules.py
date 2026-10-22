@@ -740,6 +740,9 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
 
 ATTACH_FORWARD = "attach_forward_to_case"
 CREATE_REQUEST_FROM_FORWARD_STEP = "create_request_from_forward"
+#: Step added after ``open_commercial_case`` on R7 to wire the sender as a participant so
+#: ``client_open_cases`` finds the request case when the operator opens «+ Nueva». (owner, 2026-10-22)
+ADD_CASE_SENDER_PARTICIPANT = "add_case_sender_participant"
 
 
 def _plan_forward(f: ForwardRequest, ix: _Index) -> PlannedAction:
@@ -1762,9 +1765,13 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
         reasons = [f"solicitud de cotización de «{o.name}»", how, *([AI_REQUEST_REASON] if by_ai else [])]
         note = _note("R7", reasons)
         title = _request_case_title(e, o)
+        sender_addr = _sender(e) or ""
         commands = (
             {"command": "open_commercial_case", "inputs": {
                 "title": title, "origin_source_record_id": e.id, "note": note}},
+            # Add the sender as a participant so client_open_cases finds this case. (owner, 2026-10-22)
+            {"command": ADD_CASE_SENDER_PARTICIPANT, "inputs": {
+                "opportunity_id": "@case", "email": sender_addr, "note": note}},
             {"command": "add_case_organization", "inputs": {
                 "opportunity_id": "@case", "opportunity_version": "@case_version",
                 "organization_id": o.id, "organization_version": o.version,
@@ -1786,18 +1793,25 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
     extra = [AI_REQUEST_REASON] if by_ai else []
     note = _note("R7", [reason, *extra, "se abre caso sin inventar institución solicitante"])
     title = _request_case_title(e)
+    sender_addr = _sender(e) or ""
     return PlannedAction(
         e.id, "R7", AUTO, (reason, *extra, "caso abierto en «Solicitada» sin institución hasta confirmación"),
         case_title=title,
-        commands=({"command": "open_commercial_case", "inputs": {
-            "title": title, "origin_source_record_id": e.id, "note": note}},),
+        commands=(
+            {"command": "open_commercial_case", "inputs": {
+                "title": title, "origin_source_record_id": e.id, "note": note}},
+            # Add the sender as a participant so client_open_cases finds this case. (owner, 2026-10-22)
+            {"command": ADD_CASE_SENDER_PARTICIPANT, "inputs": {
+                "opportunity_id": "@case", "email": sender_addr, "note": note}},
+        ),
     )
 
 
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "ATTACH_FORWARD", "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
+    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
+    "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
     "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",
     "gmail_quote_key", "mail_direction", "plan", "quote_key", "quote_number_tokens", "santiago_year",
