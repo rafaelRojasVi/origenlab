@@ -212,7 +212,7 @@ async function postCaseCommand(path: string, body: unknown, idempotencyKey: stri
  * customer unless one of that name (or domain) exists, which is then used. */
 export interface NewCaseOrganization {
   name: string;
-  kind?: "company" | "university" | "public_institution" | "hospital" | "laboratory" | "other";
+  kind?: "company" | "university" | "public_institution" | "hospital" | "laboratory" | "individual" | "other";
   domain?: string;
 }
 

@@ -318,7 +318,8 @@ export interface QuoteWorkspace {
     closed: boolean;
     /** The case's version, for a command on the case (e.g. naming its institution). */
     version?: number;
-    institution: { id: string; name: string; rut: string | null } | null;
+    /** `kind` «individual» is a persona natural; absent from an older API. */
+    institution: { id: string; name: string; rut: string | null; kind?: string | null } | null;
     participants: QuoteWorkspaceParticipant[];
     contacts: QuoteWorkspaceContact[];
     lo_que_pidio: string | null;
@@ -607,7 +608,8 @@ export const previewQuote = (revisionId: string, draft: QuoteDraft, signal?: Abo
 /* ── commands ─────────────────────────────────────────────────────────────── */
 
 /** The kinds a new institution may be (`NewOrganizationKind` upstream). */
-export type NewClientKind = "company" | "university" | "public_institution" | "hospital" | "laboratory" | "other";
+/** `individual`: a persona natural (particular), their own client record (owner, 2026-10-22). */
+export type NewClientKind = "company" | "university" | "public_institution" | "hospital" | "laboratory" | "individual" | "other";
 
 /** The institution a person, a contact point or an address with none is connected to: one held, or a new one. */
 export type QuoteClientInstitution =

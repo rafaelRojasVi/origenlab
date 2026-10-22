@@ -499,6 +499,7 @@ export function NewQuoteDialog({
           <InstitutionField
             picked={institution}
             kind={institutionKind}
+            personName={client.kind === "person" ? (client.person.name ?? null) : null}
             busy={busy}
             onPick={(next) => {
               setInstitution(next);
@@ -593,18 +594,24 @@ function focusTabWhenShown(quoteId: string) {
 function InstitutionField({
   picked,
   kind,
+  personName = null,
   busy,
   onPick,
   onKind,
 }: {
   picked: InstitutionPick | null;
   kind: NewClientKind;
+  /** The person's name, for «Persona natural»; null for a bare address. */
+  personName?: string | null;
   busy: boolean;
   onPick: (next: InstitutionPick | null) => void;
   onKind: (kind: NewClientKind) => void;
 }) {
   const ids = useId();
   const [text, setText] = useState("");
+  // «Persona natural (particular)» (owner, 2026-10-22): the person becomes their own client record
+  // (kind «individual»), so the quote's case reaches «Enviada» like any other.
+  const [persona, setPersona] = useState<string | null>(null);
   const term = text.trim();
   const { found, retry } = useClientSuggestions(term, picked === null);
   const options: Option[] = useMemo(() => {
@@ -621,9 +628,70 @@ function InstitutionField({
   const listId = `${ids}-instituciones`;
   const hint = (
     <p className="text-[12.5px] text-ink-muted">
-      Opcional: déjala vacía si es una persona natural (particular). Se asocia también a la persona y al caso.
+      Una persona natural queda como su propio cliente en el CRM. Se asocia también a la persona y al caso.
     </p>
   );
+
+  if (picked && picked.kind === "new" && kind === "individual") {
+    return (
+      <div className="space-y-1.5">
+        <p className="text-[13px] text-ink-muted">Cliente</p>
+        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-line px-3 py-2 text-[14px] text-ink">
+          <span className="min-w-0 truncate">
+            <span className="font-semibold">{picked.name}</span> · persona natural
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              onKind("company");
+              onPick(null);
+            }}
+            className="shrink-0 text-[13px] font-semibold text-brand-700 underline"
+          >
+            Cambiar
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (persona !== null) {
+    return (
+      <div className="space-y-1.5">
+        <label htmlFor={`${ids}-persona`} className="block text-[13px] text-ink-muted">
+          Nombre de la persona natural
+        </label>
+        <input
+          id={`${ids}-persona`}
+          type="text"
+          value={persona}
+          maxLength={NAME_MAX}
+          disabled={busy}
+          placeholder="Nombre y apellido"
+          onChange={(e) => setPersona(e.target.value)}
+          className="h-11 w-full min-w-0 rounded-[10px] border-[1.5px] border-line-strong bg-canvas-raised px-3 text-[14.5px] text-ink placeholder:text-ink-faint focus:border-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-600/30 disabled:opacity-60"
+        />
+        <div className="flex gap-3">
+          <button
+            type="button"
+            disabled={busy || !persona.trim()}
+            onClick={() => {
+              onKind("individual");
+              onPick({ kind: "new", name: persona.trim().slice(0, NAME_MAX) });
+              setPersona(null);
+            }}
+            className="text-[13px] font-semibold text-brand-700 underline disabled:opacity-50"
+          >
+            Usar como persona natural
+          </button>
+          <button type="button" disabled={busy} onClick={() => setPersona(null)} className="text-[13px] text-ink-muted underline">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (picked) {
     return (
@@ -689,6 +757,14 @@ function InstitutionField({
           }
         />
       ) : null}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => setPersona(personName ?? "")}
+        className="text-[13px] font-semibold text-brand-700 underline"
+      >
+        Es persona natural (particular)
+      </button>
       {hint}
     </div>
   );

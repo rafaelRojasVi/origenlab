@@ -3504,3 +3504,16 @@ the Cliente card still said «Sin institución · RUT pendiente» with «Agregar
 action, so the owner could not tell (#818). It now reads «Persona natural (particular)», the person
 from «Para» or what «Datos del cliente» typed (name, institution name, RUT), and that the quote is
 issued in the person's name; adding an institution is a secondary link. Dashboard only.
+
+### 2.7.150 A persona natural is their own client record, 2026-10-22 — built, deploys on merge
+
+A quote for a particular was approved without an institution (#816), but its case could never reach
+«Enviada»: `opportunity_organization_required_from_qualified` requires the requesting institution
+from «Calificada» on, so R16 rolled back (CN01281A, emailed 22 Oct, stayed «Solicitada»). Owner's
+choice: the person becomes their own client record — `crm.organization.kind = 'individual'`, the kind
+the history import already gave six particulars — instead of relaxing the constraint. «Es persona
+natural» on the quote's Cliente card (name prefilled from «Datos del cliente» or the recipient) and
+«Es persona natural (particular)» in «Nueva cotización» register it (or reuse one of that name) as
+the requesting institution; the card then shows the person and «Persona natural (particular)». A
+persona natural is found by name only and takes no email domain, so a particular writing from a
+company's address never claims that company's domain. No migration (`kind` is free text).

@@ -151,7 +151,7 @@ select q.id::text as id, q.quote_number, q.opportunity_id::text as opportunity_i
           join procurement.notice n on n.id = e.notice_id
          where e.opportunity_id = o.id and e.relation = 'origin' and e.unlinked_at is null
          order by e.linked_at desc limit 1) as tender_code,
-       inst.id::text as institution_id, inst.name as institution_name,
+       inst.id::text as institution_id, inst.name as institution_name, inst.kind as institution_kind,
        (select e.value_norm from crm.external_identifier e
          where e.organization_id = inst.id and e.scheme = 'rut' order by e.created_at, e.id limit 1) as rut
   from crm.quote q
@@ -1136,7 +1136,8 @@ class V2QuoteReads:
             "case": {
                 "id": case_id, "title": quote["title"], "stage": quote["stage"], "closed": quote["closed_at"] is not None,
                 "version": quote["case_version"],
-                "institution": ({"id": quote["institution_id"], "name": quote["institution_name"], "rut": quote["rut"]}
+                "institution": ({"id": quote["institution_id"], "name": quote["institution_name"], "rut": quote["rut"],
+                                 "kind": quote["institution_kind"]}
                                 if quote["institution_id"] else None),
                 "participants": [{k: p[k] for k in ("id", "name", "email", "primary", "role")}
                                  for p in rows["participants"]],

@@ -175,7 +175,11 @@ def _email(value: str | None) -> str | None:
 
 
 #: The kinds the dashboard offers for a new institution (plan R2).
-NewOrganizationKind = Literal["company", "university", "public_institution", "hospital", "laboratory", "other"]
+# «individual» = persona natural (owner, 2026-10-22; the kind the history import already gave particulars):
+# a particular is their own client record, so a case, its quote and every rule that needs a requesting
+# institution work as for a company.
+NewOrganizationKind = Literal["company", "university", "public_institution", "hospital", "laboratory", "individual",
+                              "other"]
 
 
 class NewInstitution(_Model):
