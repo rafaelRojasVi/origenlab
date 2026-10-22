@@ -53,7 +53,9 @@ function taxLabel(rate: string | null): string {
 }
 
 export function printTitle(q: PrintableQuote): string {
-  const who = q.institution?.name ? ` — ${q.institution.name}` : "";
+  // A persona natural has no institution: the person is the client.
+  const name = q.institution?.name ?? q.recipient?.name;
+  const who = name ? ` — ${name}` : "";
   return `Cotización ${q.label}${who}${q.draft ? " (borrador)" : ""}`;
 }
 
@@ -164,7 +166,7 @@ export function QuotePrintView({
           <section className="qp-client" aria-label="Cliente">
             <div>
               <span className="qp-eyebrow-muted">Cliente</span>
-              <span className="qp-strong">{quote.institution?.name ?? "—"}</span>
+              <span className="qp-strong">{quote.institution?.name ?? quote.recipient?.name ?? "—"}</span>
               {quote.institution?.rut ? <span className="qp-muted">RUT {quote.institution.rut}</span> : null}
               {quote.client.address ? <span className="qp-muted">{quote.client.address}</span> : null}
               {quote.client.city ? <span className="qp-muted">{quote.client.city}</span> : null}

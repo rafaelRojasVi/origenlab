@@ -989,7 +989,7 @@ APPROVAL_REFUSALS = {
     "unpriced_line": "La línea {line_no} no tiene precio (falta costo o precio).",
     "principal_missing": "Hay gastos de importación pero ningún equipo los lleva; marca «Lleva gastos» en uno.",
     "fx_missing": "Falta el tipo de cambio de {currency}.",
-    "no_institution": "El caso no tiene institución.",
+    "no_institution": "La licitación no tiene institución compradora.",
     "no_recipient": "Elige a quién va dirigida.",
     "placeholder_left": "Completa «{field}»: aún tiene un texto entre corchetes.",
 }
@@ -1035,7 +1035,9 @@ def check_approvable(facts: ApprovalFacts) -> list[tuple[str, str]]:
     if facts.expense_count and facts.principal_line_no is None:
         out.append(("principal_missing", APPROVAL_REFUSALS["principal_missing"]))
     out += [("fx_missing", APPROVAL_REFUSALS["fx_missing"].format(currency=c)) for c in facts.missing_fx]
-    if not facts.has_institution:
+    # A persona natural (a particular) has no institution: the recipient is the client. A tender's
+    # offer names the buying institution and has no recipient, so it still needs one.
+    if not facts.has_institution and not facts.recipient_required:
         out.append(("no_institution", APPROVAL_REFUSALS["no_institution"]))
     if facts.recipient_required and not facts.has_recipient:
         out.append(("no_recipient", APPROVAL_REFUSALS["no_recipient"]))
@@ -1116,17 +1118,23 @@ def _approval_facts(lines: list[dict[str, Any]], result: EngineResult, instituti
         printed=printed_texts(terms, lines), recipient_required=recipient_required)
 
 
-def party_snapshot(*, institution: dict[str, Any], recipient: dict[str, Any] | None, terms: DraftTerms, validity_days: int,
+def party_snapshot(*, institution: dict[str, Any] | None, recipient: dict[str, Any] | None, terms: DraftTerms, validity_days: int,
                    quote_number: str, label: str, approved_by: str, approved_on: date,
                    valid_until: date, client_details: dict[str, Any] | None = None) -> dict[str, Any]:
     """What the client's document says, frozen at approval. No cost, price or margin: the PDF reads it.
 
     What the operator typed in «Datos del cliente» (`client_details`) wins over what the CRM knows.
-    A tender's offer has no recipient: `recipient` is null and nothing prints an «Atención» line."""
+    A tender's offer has no recipient: `recipient` is null and nothing prints an «Atención» line.
+    A persona natural has no institution: `institution` is null unless a name or RUT was typed."""
     typed = {k: v for k, v in (client_details or {}).items() if isinstance(v, str) and v.strip()}
+    if institution is None:
+        party = ({"id": None, "name": typed.get("institution_name"), "rut": typed.get("rut")}
+                 if typed.get("institution_name") or typed.get("rut") else None)
+    else:
+        party = {"id": institution["id"], "name": typed.get("institution_name") or institution["name"],
+                 "rut": typed.get("rut") or institution["rut"]}
     return {
-        "institution": {"id": institution["id"], "name": typed.get("institution_name") or institution["name"],
-                        "rut": typed.get("rut") or institution["rut"]},
+        "institution": party,
         "recipient": None if recipient is None else {
             "participant_id": recipient["participant_id"],
             "name": typed.get("contact_name") or recipient["name"], "email": recipient["email"]},
@@ -1278,7 +1286,7 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
                                                 recipient_required=not tender))
     if refusals:
         raise CommandRefused(409, refusals[0][0], " · ".join(message for _, message in refusals))
-    assert institution is not None and (tender or recipient is not None)  # noqa: S101 - refused above otherwise
+    assert (institution is not None) if tender else (recipient is not None)  # noqa: S101 - refused above otherwise
 
     # The stored prices are what was priced, from the same inputs; a difference means the engine
     # changed since the save, and freezing would make the lines disagree with the totals.

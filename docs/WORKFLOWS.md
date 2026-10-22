@@ -574,8 +574,10 @@ authored draft is approved directly.
   the error code): `no_items` «Agrega al menos un producto.»; `unpriced_line` «La línea N no tiene
   precio (falta costo o precio).»; `principal_missing` «Hay gastos de importación pero ningún equipo
   principal; elige uno.» (any expense above zero, a manual one included); `fx_missing` «Falta el
-  tipo de cambio de X.»; `no_institution` «El caso no tiene institución.»; `no_recipient` «Elige a
-  quién va dirigida.» (the recipient must still be a current participant of the case);
+  tipo de cambio de X.»; `no_institution` «La licitación no tiene institución compradora.» (tenders
+  only: a quote for a persona natural — a particular with no institution — is approved with its
+  recipient as the client, printing the name and RUT typed in «Datos del cliente», if any);
+  `no_recipient` «Elige a quién va dirigida.» (the recipient must still be a current participant of the case);
   `placeholder_left` «Completa «campo»: aún tiene un texto entre corchetes.» — checked on the
   printed conditions, the extra conditions and the line notes, **not** on product descriptions (a
   bracket in a model name is the product's).
