@@ -8,7 +8,7 @@ from pathlib import Path
 from origenlab_worker import storage, triage_cli, cli, capture_queue
 
 RENDER_YAML = Path(__file__).resolve().parents[3] / "render.yaml"
-PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never", "PYTHON_VERSION": "3.12.13"}
+PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never", "MALLOC_ARENA_MAX": "2", "PYTHON_VERSION": "3.12.13"}
 
 
 def _service() -> str:
@@ -21,7 +21,7 @@ def _service() -> str:
 def test_the_worker_runs_the_triage_queue_from_apps_worker() -> None:
     service = _service()
     for line in ("runtime: python", "rootDir: apps/worker", "buildCommand: uv sync --frozen --no-dev",
-                 "startCommand: uv run --no-sync origenlab-worker mail-worker"):
+                 "startCommand: .venv/bin/origenlab-worker mail-worker"):
         assert line in service, line
 
 

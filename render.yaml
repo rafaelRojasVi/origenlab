@@ -107,7 +107,7 @@ services:
     buildCommand: uv sync --frozen --no-dev
     # Capture, then file the recorded quote PDFs in Drive (paused until
     # ORIGENLAB_WORKER_DRIVE_FILING_ENABLED=true; docs/OPERATIONS.md §8.10).
-    startCommand: uv run --no-sync origenlab-worker gmail-sync && uv run --no-sync origenlab-worker drive-file && uv run --no-sync origenlab-worker quote-read
+    startCommand: .venv/bin/origenlab-worker gmail-sync && .venv/bin/origenlab-worker drive-file && .venv/bin/origenlab-worker quote-read
     # The cron imports V1's parser from apps/email-pipeline (v1_reuse) and the case archive from
     # apps/api (quote_case_archive), so a change there rebuilds it too; paths are relative to the
     # repository root, not rootDir.
@@ -121,6 +121,9 @@ services:
       # Not a secret: use the image's Python, never download one at build or run time.
       - key: UV_PYTHON_DOWNLOADS
         value: never
+      # Reduce glibc memory fragmentation in long-running processes (apps/worker/README.md §perf).
+      - key: MALLOC_ARENA_MAX
+        value: 2
       # The interpreter apps/worker/.python-version pins, in case Render does not read that file.
       - key: PYTHON_VERSION
         value: 3.12.13
@@ -181,7 +184,7 @@ services:
     plan: starter
     rootDir: apps/worker
     buildCommand: uv sync --frozen --no-dev
-    startCommand: uv run --no-sync origenlab-worker mail-worker
+    startCommand: .venv/bin/origenlab-worker mail-worker
     buildFilter:
       paths:
         - apps/worker/**
@@ -191,6 +194,8 @@ services:
     envVars:
       - key: UV_PYTHON_DOWNLOADS
         value: never
+      - key: MALLOC_ARENA_MAX
+        value: 2
       - key: PYTHON_VERSION
         value: 3.12.13
       - key: ORIGENLAB_WORKER_TRIAGE_ENABLED

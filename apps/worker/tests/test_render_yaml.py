@@ -35,7 +35,7 @@ SECRET_KEYS = (
 
 
 #: The only plain values: not secrets, set in the file on purpose.
-PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never", "PYTHON_VERSION": "3.12.13"}
+PLAIN_VALUES = {"UV_PYTHON_DOWNLOADS": "never", "MALLOC_ARENA_MAX": "2", "PYTHON_VERSION": "3.12.13"}
 
 
 def _service() -> str:
@@ -49,9 +49,9 @@ def test_the_cron_service_runs_the_worker_every_ten_minutes() -> None:
     service = _service()
     for line in ('schedule: "*/10 * * * *"', "runtime: python", "rootDir: apps/worker",
                  "buildCommand: uv sync --frozen --no-dev",
-                 "startCommand: uv run --no-sync origenlab-worker gmail-sync "
-                 "&& uv run --no-sync origenlab-worker drive-file "
-                 "&& uv run --no-sync origenlab-worker quote-read"):
+                 "startCommand: .venv/bin/origenlab-worker gmail-sync "
+                 "&& .venv/bin/origenlab-worker drive-file "
+                 "&& .venv/bin/origenlab-worker quote-read"):
         assert line in service, line
     assert "--init" not in service and "--dry-run" not in service
 
