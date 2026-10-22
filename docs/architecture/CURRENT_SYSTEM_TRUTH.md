@@ -20,8 +20,7 @@ independently re-checked in this pass.
 
 One page of what the system actually is today — the authoritative source of truth
 **for the running V1 system**. If another **V1** doc contradicts this one (including
-`COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`, which is a historical/point-in-time audit and
-evidence record, not current truth), this one wins; fix the other doc.
+`COMMERCIAL_OPERATING_SYSTEM_AUDIT.md` (deleted 2026-10-22; see git history), which was a historical/point-in-time audit and evidence record, not current truth), this one wins; fix the other doc.
 
 ## Topology
 

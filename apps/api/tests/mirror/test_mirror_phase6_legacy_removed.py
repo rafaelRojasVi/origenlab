@@ -12,19 +12,10 @@ from parity_routes import REQUIRED_MIRROR_OPENAPI_PATHS
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
-_PHASE6_DOC = _REPO_ROOT / "apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md"
 _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
 _DASHBOARD_PKG = _REPO_ROOT / "apps/dashboard/package.json"
 _LEGACY_SMOKE = _REPO_ROOT / "apps/dashboard/scripts/legacy-smoke.mjs"
-
-
-def test_phase6_legacy_removal_doc_exists() -> None:
-    assert _PHASE6_DOC.is_file()
-    text = _PHASE6_DOC.read_text(encoding="utf-8")
-    assert "Phase 6" in text
-    assert "origenlab_api" in text
-    assert "smoke:legacy" in text
 
 
 def test_legacy_email_pipeline_tree_removed() -> None:
@@ -49,6 +40,19 @@ def test_smoke_legacy_and_script_removed() -> None:
     pkg = _DASHBOARD_PKG.read_text(encoding="utf-8")
     assert "smoke:legacy" not in pkg
     assert '"smoke:mirror"' in pkg
+
+
+def test_strict_phase6_grep_gate_passes() -> None:
+    proc = subprocess.run(
+        ["bash", str(_GATE_SCRIPT)],
+        cwd=str(_REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "Unallowlisted hits: 0" in proc.stdout
 
 
 def test_active_dashboard_unchanged_phase6() -> None:

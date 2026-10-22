@@ -70,7 +70,7 @@ row's continued existence.
 - If a promoted opportunity's source tender later changes (new close date,
   addendum), nothing today re-notifies or re-links the durable opportunity —
   a known, documented gap (see `docs/architecture/
-  COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`), not fixed by this workflow.
+  historical COMMERCIAL_OPERATING_SYSTEM_AUDIT.md, deleted 2026-10-22), not fixed by this workflow.
 
 ## Evidence that should be retained
 The PR3 source row and its evidence chain, even after promotion (never

@@ -208,7 +208,7 @@ needs cookies and redirects, so `src/auth.ts` makes three exceptions and no othe
 
 The operator header is deleted on every path and never rebuilt: the Worker no longer reads the
 Cloudflare Access identity, so identity reaches the API only as the `__Host-` session cookie
-(source changed 2026-10-03; built, not deployed — `docs/STATUS.md` §2.7.41).
+(source changed 2026-10-03; built, not deployed — `docs/STATUS.md` §2.7 (row §2.7.41)).
 
 ## Environment
 

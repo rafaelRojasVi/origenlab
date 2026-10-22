@@ -160,3 +160,50 @@ valid reason to relax a rule in these documents.
   ADR collection or another blueprint. Extend the owning document instead.
   The `STATUS.md` carve-out above is closed and is not a precedent.
 - Validate relative links from the monorepo root with `python3 docs/check_doc_links.py`.
+
+<a id="m-docmap-entry"></a>
+## V1 reference entry points
+
+V1 app docs (superseded for V2 work — V2 canonical documents take priority).
+
+| Area | Docs |
+|------|------|
+| Monorepo | [`README.md`](../README.md) · [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) · [`RELEASE_PROCESS.md`](RELEASE_PROCESS.md) |
+| V1 system truth | [`architecture/CURRENT_SYSTEM_TRUTH.md`](architecture/CURRENT_SYSTEM_TRUTH.md) |
+| Operator API (:8001) | [`apps/api/README.md`](../apps/api/README.md) · [`apps/api/docs/README.md`](../apps/api/docs/README.md) |
+| Dashboard (:5173) | [`apps/dashboard/README.md`](../apps/dashboard/README.md) |
+| Dashboard proxy | [`apps/dashboard-proxy/README.md`](../apps/dashboard-proxy/README.md) |
+| Email pipeline | [`apps/email-pipeline/README.md`](../apps/email-pipeline/README.md) · [`docs/README.md`](../apps/email-pipeline/docs/README.md) · [`RUNBOOK.md`](../apps/email-pipeline/docs/RUNBOOK.md) |
+| Web | [`apps/web/README.md`](../apps/web/README.md) |
+| Data authority | [`data/DATA_AUTHORITY_MAP.md`](data/DATA_AUTHORITY_MAP.md) · [`data/SQLITE_REGISTER.md`](data/SQLITE_REGISTER.md) |
+| Business workflows | [`workflows/README.md`](workflows/README.md) |
+
+### Operator stack (HTTP + UI)
+
+| App | Canonical docs |
+|-----|----------------|
+| **Operator API** (`apps/api`, :8001) | [`apps/api/README.md`](../apps/api/README.md) · [`apps/api/docs/README.md`](../apps/api/docs/README.md) |
+| **Dashboard** (`apps/dashboard`, :5173) | [`apps/dashboard/README.md`](../apps/dashboard/README.md) |
+| **Dashboard proxy** (`apps/dashboard-proxy`) | [`apps/dashboard-proxy/README.md`](../apps/dashboard-proxy/README.md) |
+| **Email pipeline** (SQLite OLTP, ingest, outbound) | [`OUTBOUND_SOURCE_OF_TRUTH.md`](../apps/email-pipeline/docs/OUTBOUND_SOURCE_OF_TRUTH.md) · [`RUNBOOK.md`](../apps/email-pipeline/docs/RUNBOOK.md) |
+
+<a id="m-docmap-lifecycle"></a>
+## Lifecycle labels
+
+Use this metadata block at the top of maintained V1 docs:
+
+```
+Status: canonical | generated | historical
+Owner: team-or-person
+Last reviewed: YYYY-MM-DD
+Canonical replacement: <path>   # for historical docs only
+```
+
+<a id="m-docmap-link-check"></a>
+## Link checking
+
+From the monorepo root:
+
+```bash
+python3 docs/check_doc_links.py
+```

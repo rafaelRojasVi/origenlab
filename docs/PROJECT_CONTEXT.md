@@ -8,7 +8,6 @@ Last reviewed: 2026-08-28
 > [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](./architecture/CURRENT_SYSTEM_TRUTH.md) ·
 > [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](./architecture/TARGET_COMMERCIAL_ARCHITECTURE.md)
 
-This is the primary monorepo context document for coding agents and contributors.
 
 <a id="m-proj-what"></a>
 ## What this repo is
@@ -73,7 +72,7 @@ Support OrigenLab's commercial operation by:
 **Factual project truth** (what the repo is, how it runs, where data lives):
 
 1. This file ([`docs/PROJECT_CONTEXT.md`](./PROJECT_CONTEXT.md))
-2. That app’s [`APP_CONTEXT.md`](../apps/web/docs/APP_CONTEXT.md) (web) or [`APP_CONTEXT.md`](../apps/email-pipeline/docs/APP_CONTEXT.md) (email-pipeline), plus other **canonical app docs** in the same `docs/` folder (`RUNBOOK.md`, `ARCHITECTURE.md`, `BUSINESS_CONTEXT.md`; email-pipeline also [`DATA_LOCATIONS.md`](../apps/email-pipeline/docs/DATA_LOCATIONS.md#m-epdata-root)), and domain subfolders as in [`DOCUMENTATION_MAP.md`](./DOCUMENTATION_MAP.md#m-docmap-mapping)
+2. That app’s [`APP_CONTEXT.md`](../apps/web/docs/APP_CONTEXT.md) (web) or [`APP_CONTEXT.md`](../apps/email-pipeline/docs/APP_CONTEXT.md) (email-pipeline), plus other **canonical app docs** in the same `docs/` folder (`RUNBOOK.md`, `ARCHITECTURE.md`, `BUSINESS_CONTEXT.md`; email-pipeline also [`DATA_LOCATIONS.md`](../apps/email-pipeline/docs/DATA_LOCATIONS.md#m-epdata-root))
 3. That app’s [`README.md`](../apps/web/README.md) (web) or [`README.md`](../apps/email-pipeline/README.md) (email-pipeline)
 4. Executable source: code, scripts, [`apps/email-pipeline/pyproject.toml`](../apps/email-pipeline/pyproject.toml) / [`apps/web/package.json`](../apps/web/package.json), schema modules, [`apps/email-pipeline/.env.example`](../apps/email-pipeline/.env.example)
 
@@ -94,4 +93,4 @@ Support OrigenLab's commercial operation by:
 <a id="m-proj-nav"></a>
 ## Navigation
 
-- Documentation map: [`DOCUMENTATION_MAP.md`](./DOCUMENTATION_MAP.md#m-docmap-entry) · [link check & linking conventions](./DOCUMENTATION_MAP.md#m-docmap-link-check)
+- Documentation map and link check: [`docs/README.md`](./README.md#m-docmap-entry)

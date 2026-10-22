@@ -21,7 +21,7 @@ This folder is the **default** destination for generated reports (HTML + JSON).
 
 **`operational_stack_last_run.json`** (mismo directorio `active/`) lo escribe al final [`run_leads_operational_stack.sh`](../../scripts/leads/run_leads_operational_stack.sh) después de `publish_gate` (salvo que falle un paso **anterior** al gate). Incluye **`run_id`**, `started_at_utc`, `completed_at_utc`, `publish_gate` (`executed`, `passed`, `exit_code`), más `db_path_resolved`, `reconcile_mode`, `skipped.*`, `ingest.*`, `git_revision` opcional. Una copia idéntica por corrida queda en **`operational_run_manifests/<run_id>.json`**. [`build_leads_client_pack.py`](../../scripts/reports/build_leads_client_pack.py) vuelca `provenance` en `client_pack_latest/summary.json` (incluye `operational_run_id` dentro del stack; **`publish_gate_validated_this_artifact` siempre false** en el pack).
 
-El resumen legible en Markdown es **[`docs/generated/operational_trust_scorecard.md`](../../docs/generated/operational_trust_scorecard.md)** (también generado; no editar a mano salvo que el proceso cambie).
+El resumen legible en Markdown es **`docs/generated/operational_trust_scorecard.md`** (gitignored; también generado — no editar a mano salvo que el proceso cambie).
 
 **Contraste:** Carpetas `full_*` u otros informes bajo `reports/out/` son **runs** de informe de correo; `client_pack_latest/` es el **último paquete leads** para cliente; `active/` agrega **CSV operativos** + este scorecard JSON como señales de coherencia inmediata. Ver [REPORTING — QA](../../docs/REPORTING.md#m-eprep-leads-qa).
 

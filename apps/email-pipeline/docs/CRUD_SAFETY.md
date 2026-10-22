@@ -6,9 +6,9 @@ Last reviewed: 2026-04-25
 
 **Purpose:** Rules for **Create / Read / Update / Delete** style operations and anything that **mutates** data (SQLite, Postgres, Gmail, or filesystem outputs). This is **policy documentation**; behavior remains in code and in [`RUNBOOK.md`](RUNBOOK.md).
 
-**Companion:** [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md), [`SCRIPT_MAP.md`](SCRIPT_MAP.md) (break-glass and `--apply`), [`SCRIPT_INVENTORY.md`](SCRIPT_INVENTORY.md), [`QUALITY_AND_REFACTOR_STRATEGY.md`](QUALITY_AND_REFACTOR_STRATEGY.md) (import conventions: **new** code should prefer `core.*` re-exports; no mass rewrites), [`AGENTS.md`](../AGENTS.md) (agent hard rules), [`reports/out/active/current/manageability_improvement_plan_20260518.md`](../reports/out/active/current/manageability_improvement_plan_20260518.md) (proposed standard mutation CLI contract: `--dry-run` default, `--apply`, `--operator`, `--source-artifact`, `--reason`).
+**Companion:** [`REPRODUCIBILITY.md`](REPRODUCIBILITY.md), [`SCRIPT_MAP.md`](SCRIPT_MAP.md) (break-glass and `--apply`), [`SCRIPT_INVENTORY.md`](SCRIPT_INVENTORY.md), [`QUALITY_AND_REFACTOR_STRATEGY.md`](QUALITY_AND_REFACTOR_STRATEGY.md) (import conventions: **new** code should prefer `core.*` re-exports; no mass rewrites), [`AGENTS.md`](../AGENTS.md) (agent hard rules), `reports/out/active/current/manageability_improvement_plan_20260518.md` (local report `reports/out/active/current/manageability_improvement_plan_20260518.md`, not in the repo) (proposed standard mutation CLI contract: `--dry-run` default, `--apply`, `--operator`, `--source-artifact`, `--reason`).
 
-**Read-only status before mutations:** `uv run python scripts/qa/operator_status.py` (see [`manifest.json`](../reports/out/active/current/manifest.json)).
+**Read-only status before mutations:** `uv run python scripts/qa/operator_status.py` (see `manifest.json` (local report `reports/out/active/current/manifest.json`, not in the repo)).
 
 ---
 

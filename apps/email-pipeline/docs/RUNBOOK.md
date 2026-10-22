@@ -23,7 +23,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 | **Which status command?** | [Operator health matrix](#m-eprun-operator-health-matrix) | `make doctor` vs `make audit` vs health report vs API |
 | **`reports/out` cleanup** | [`reports/out` cleanup flow](#m-eprun-reports-out-cleanup) | Plan → archive moves → hygiene check |
 
-**Parked index:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · **Tatiana/lab boundary:** [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). **Dashboard UX design (future CLI modes):** [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md).
+**Parked index:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · **Tatiana/lab boundary:** [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). **Dashboard UX design (future CLI modes):** `dashboard_stack_simplification_design_20260519.md` (local report, not in the repo).
 
 <a id="m-eprun-daily-outbound"></a>
 ## Daily outbound — two lanes
@@ -182,7 +182,7 @@ Use the manual builders for file-based replays and legacy workflows; they do not
 
 - Excludes consumables-heavy tenders (e.g. `1497-6-LE26`, `1497-3-LE26`, `1657-8-LE26`, `1511-30-LP26`) unless a row is explicit capital equipment.
 - Public tenders: **`contact_status=no_verified_buyer_email`** — use **Mercado Público** (`mercado_publico_bid` / `mercado_publico_question`) or **supplier_quote_request**; do not cold-email invented addresses.
-- Private-lab email outreach remains a **separate lane** (ingest Sent → `mark_outreach_state` → refresh safety memory). See [`reports/out/active/current/README_ACTIVE_CURRENT.md`](../reports/out/active/current/README_ACTIVE_CURRENT.md).
+- Private-lab email outreach remains a **separate lane** (ingest Sent → `mark_outreach_state` → refresh safety memory). See `reports/out/active/current/README_ACTIVE_CURRENT.md` (local report `reports/out/active/current/README_ACTIVE_CURRENT.md`, not in the repo).
 
 Scripts: [`SCRIPT_MAP.md`](SCRIPT_MAP.md) (`build_equipment_first_*`). Handoff: `equipment_first_operator_queue_*.md`, `caution_cleanup_*.md`.
 
@@ -314,7 +314,7 @@ Example URL form: `postgresql+psycopg://user:pass@host:5432/dbname`. Template li
 <a id="m-eprun-dashboard-optional"></a>
 ## Optional dashboard preview stack (parked)
 
-**Do not use for daily outbound or equipment-first work.** This stack is **EXPERIMENTAL_PARKED** ([`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md)): Postgres mirror + FastAPI + React read models. **`refresh_operational_dashboard_stack.py` remains dashboard-only and experimental** until [mode-based CLI redesign](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md) is implemented — today it can run mart + safety + mirror by default; prefer explicit step-by-step commands below until that changes.
+**Do not use for daily outbound or equipment-first work.** This stack is **EXPERIMENTAL_PARKED** ([`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md)): Postgres mirror + FastAPI + React read models. **`refresh_operational_dashboard_stack.py` remains dashboard-only and experimental** until mode-based CLI redesign (local report, not in the repo) is implemented — today it can run mart + safety + mirror by default; prefer explicit step-by-step commands below until that changes.
 
 <a id="m-eprun-dashboard-gmail-to-react"></a>
 ### Dashboard refresh: from Gmail to React
@@ -409,7 +409,7 @@ uv run origenlab mirror-dashboard --apply
 
 **Mirror sync notes:** loads outbound sidecars, mart (archive + canonical), `reporting.dashboard_sync_run`, `reporting.email_classification_canonical`, `commercial.purchase_*`. Options: `--only outbound|mart|canonical`, `--skip-outbound`, `--skip-mart`, `--json-out path`. **Fail-closed:** sync aborts if canonical Gmail exists but mart tables are empty — run step C first; break-glass only: `--allow-empty-mart`.
 
-**Experimental wrapper (current behavior — prefer explicit steps above):** [`refresh_operational_dashboard_stack.py`](../scripts/ops/refresh_operational_dashboard_stack.py) runs mart + safety + mirror by default; Gmail ingest is **off** unless `--run-gmail-inbox` / `--run-gmail-sent`; `--dry-run` prints only. **Planned:** `--mode sqlite-status|postgres-mirror|full-dashboard` per [design doc](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md).
+**Experimental wrapper (current behavior — prefer explicit steps above):** [`refresh_operational_dashboard_stack.py`](../scripts/ops/refresh_operational_dashboard_stack.py) runs mart + safety + mirror by default; Gmail ingest is **off** unless `--run-gmail-inbox` / `--run-gmail-sent`; `--dry-run` prints only. **Planned:** `--mode sqlite-status|postgres-mirror|full-dashboard` per design doc (local report, not in the repo).
 
 ##### Promote confirmed purchase order email to commercial event
 
@@ -435,7 +435,7 @@ uv sync --group dev
 uv run uvicorn origenlab_api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-Mirror reporting routes live under **`/mirror/*`** (read-only GET). OpenAPI: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs). The old email-pipeline mirror HTTP server was **removed in API-3 Phase 6** — see [`apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md`](../../api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
+Mirror reporting routes live under **`/mirror/*`** (read-only GET). OpenAPI: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs). The old email-pipeline mirror HTTP server was **removed in API-3 Phase 6** — see `apps/api/AGENTS.md` (Active API rule).
 
 **6. Run React (terminal 2):**
 
@@ -542,7 +542,7 @@ DASHBOARD_FAST=1 RUN_GMAIL_INGEST=1 RUN_COMMERCIAL_DEAL_MIRROR=1 RUN_CATALOG_MIR
   bash apps/email-pipeline/scripts/ops/refresh_render_dashboard_once.sh
 ```
 
-**References:** [`OPERATOR_CHEAT_SHEET.md`](OPERATOR_CHEAT_SHEET.md#m-opsheet-dashboard-gmail-to-react) · [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md)
+**References:** [`OPERATOR_CHEAT_SHEET.md`](OPERATOR_CHEAT_SHEET.md#m-opsheet-dashboard-gmail-to-react) · `dashboard_stack_simplification_design_20260519.md` (local report, not in the repo)
 
 ---
 
@@ -1119,7 +1119,7 @@ uv run python scripts/qa/check_evidence_links.py
 | Script | Reads (typical) | Writes | Exit `1` when |
 |--------|-----------------|--------|----------------|
 | [`verify_client_pack_consistency.py`](../scripts/qa/verify_client_pack_consistency.py) | Pack `summary.json`, SQLite `lead_master`, top20 CSV, hunt + ready/needs CSVs (for **top20** cross-checks only) | stdout only | Any **critical** check fails (pack vs DB totals/fit buckets, top20 vs readiness/hunt/DB — **not** hunt/readiness cohort partition; that runs in audit only) |
-| [`audit_operational_trust.py`](../scripts/qa/audit_operational_trust.py) | Same `active/` paths + [`docs/generated/CONTACT_READINESS_AUDIT.md`](generated/CONTACT_READINESS_AUDIT.md) for DB path line | [`reports/out/active/operational_trust_scorecard.json`](../reports/out/README.md), [`docs/generated/operational_trust_scorecard.md`](generated/operational_trust_scorecard.md) | Any **critical** check fails (**cohort partition**, readiness nulls, taxonomy, stale pack, merged vs current hunt IDs, etc.) |
+| [`audit_operational_trust.py`](../scripts/qa/audit_operational_trust.py) | Same `active/` paths + `docs/generated/CONTACT_READINESS_AUDIT.md` (gitignored) for DB path line | [`reports/out/active/operational_trust_scorecard.json`](../reports/out/README.md), `docs/generated/operational_trust_scorecard.md` (gitignored) | Any **critical** check fails (**cohort partition**, readiness nulls, taxonomy, stale pack, merged vs current hunt IDs, etc.) |
 | [`check_evidence_links.py`](../scripts/qa/check_evidence_links.py) | URL columns in top20 + hunt CSVs | stdout only | Invalid `http(s)` URL strings and/or HTTP probe failures beyond [`--max-failures` / `--max-fail-ratio`](../scripts/qa/check_evidence_links.py) |
 
 ### When something fails

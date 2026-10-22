@@ -12,7 +12,7 @@ made). This is the wide, concept-by-concept companion to
 [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../architecture/CURRENT_SYSTEM_TRUTH.md)'s
 durable/rebuildable table — if the two ever disagree, `CURRENT_SYSTEM_TRUTH.md`
 wins. This file builds on and updates the domain matrix in
-[`docs/architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`](../architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md)
+`COMMERCIAL_OPERATING_SYSTEM_AUDIT.md` (deleted 2026-10-22; see git history)
 (historical, point-in-time, 2026-08-29) — several of that audit's findings
 (CRM-4A writer, customer-quote existence) are now superseded by shipped work;
 this file reflects current state and should be kept current going forward,
@@ -65,7 +65,7 @@ where that audit should not be (git history is its record).
 |---|---|---|---|---|---|---|---|---|
 | Procurement tender signal | `commercial_procurement_signal` (SQLite) | — | ChileCompra acquisition | acquisition pipeline | candidate planner | **Yes** | No | Stable |
 | Tender evidence (annexes) | `commercial_procurement_evidence` (SQLite) | file-backed W1/T1 read models on API disk (no Postgres table) | anexo extraction | anexo acquisition | planner, annex preview/import route | **Yes** | No | Stable — largest single contributor to SQLite footprint |
-| Tender ↔ opportunity link | Denormalized `codigo_licitacion` label on the PR3/`sales_opportunity` object — **not a first-class FK, no dedicated tender-opportunity table** | — | — | — | — | — | Partially durable (the label persists once promoted) | **Known gap, not fixed**: if a promoted opportunity's source tender later changes (new close date, addendum), nothing re-notifies or re-links the durable `sales_opportunity` — documented in `COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`, not resolved since |
+| Tender ↔ opportunity link | Denormalized `codigo_licitacion` label on the PR3/`sales_opportunity` object — **not a first-class FK, no dedicated tender-opportunity table** | — | — | — | — | — | Partially durable (the label persists once promoted) | **Known gap, not fixed**: if a promoted opportunity's source tender later changes (new close date, addendum), nothing re-notifies or re-links the durable `sales_opportunity` — documented in historical COMMERCIAL_OPERATING_SYSTEM_AUDIT.md (deleted 2026-10-22), not resolved since |
 
 ## Catalog concepts
 

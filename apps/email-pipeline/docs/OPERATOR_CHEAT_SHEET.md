@@ -14,7 +14,7 @@ Short answers for day-to-day work. **Canonical procedures and tables:** [`SCRIPT
 |--|--|
 | **Run** | `uv run python scripts/qa/operator_status.py` or `make doctor` |
 | **Produces** | Verdict **READY / CAUTION / BLOCKED**; SQLite/Sent/DNR freshness; `campaign_mode` + operator focus from manifest |
-| **Index** | [`reports/out/active/current/manifest.json`](../reports/out/active/current/manifest.json) · [`AGENTS.md`](../AGENTS.md) |
+| **Index** | `reports/out/active/current/manifest.json` (local report `reports/out/active/current/manifest.json`, not in the repo) · [`AGENTS.md`](../AGENTS.md) |
 
 **Daily runtime truth (default):** **SQLite** + ingested **Gmail Sent** + anti-repeat CSVs (`do_not_repeat_master`, `outreach_contacted_all`) — not Postgres, not the React dashboard, not API mirrors. **Opportunity workflow:** equipment-first queues (`equipment_first_operator_queue_*`, `buyer_opportunity_ab_queue_*`). See [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) for what is optional.
 
@@ -141,7 +141,7 @@ More detail: [`SCRIPT_INVENTORY.md`](SCRIPT_INVENTORY.md#workspace-prep-which-sc
 **Single source of truth for commands** (no duplicate chain here):
 
 - **Full refresh chain:** [`RUNBOOK.md` — Optional dashboard preview stack](RUNBOOK.md#m-eprun-dashboard-optional) · anchor [`#m-eprun-dashboard-gmail-to-react`](RUNBOOK.md#m-eprun-dashboard-gmail-to-react)
-- **Future CLI modes (design only):** [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md)
+- **Future CLI modes (design only):** `dashboard_stack_simplification_design_20260519.md` (local report `reports/out/active/current/dashboard_stack_simplification_design_20260519.md`, not in the repo)
 - **Panel README:** [`apps/dashboard/README.md`](../../dashboard/README.md)
 
 **Experimental wrapper (dashboard-only until redesign):** `scripts/ops/refresh_operational_dashboard_stack.py` — prefer explicit RUNBOOK steps today; Gmail off by default; `--dry-run` prints only ([`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md)).
@@ -152,7 +152,7 @@ More detail: [`SCRIPT_INVENTORY.md`](SCRIPT_INVENTORY.md#workspace-prep-which-sc
 
 ## 9. Equipment-first tender opportunities (**current opportunity workflow**)
 
-Default `campaign_mode` in [`manifest.json`](../reports/out/active/current/manifest.json): **`equipment_first`**.
+Default `campaign_mode` in `manifest.json` (local report `reports/out/active/current/manifest.json`, not in the repo): **`equipment_first`**.
 
 | Step | Script | Output |
 |------|--------|--------|
@@ -161,7 +161,7 @@ Default `campaign_mode` in [`manifest.json`](../reports/out/active/current/manif
 
 **Makefile (offline/manual replay):** `make equipment-queue` or `make equipment-queue DATE_SUFFIX=YYYYMMDD`.
 
-**Rules:** equipment-first only; consumables SEREMI/hospital codes excluded; **no invented buyer emails**; active tenders via **Mercado Público** / supplier quotes — **not** cold send-ready. See [`RUNBOOK.md`](RUNBOOK.md#m-eprun-equipment-first-opportunities) and [`reports/out/active/current/README_ACTIVE_CURRENT.md`](../reports/out/active/current/README_ACTIVE_CURRENT.md).
+**Rules:** equipment-first only; consumables SEREMI/hospital codes excluded; **no invented buyer emails**; active tenders via **Mercado Público** / supplier quotes — **not** cold send-ready. See [`RUNBOOK.md`](RUNBOOK.md#m-eprun-equipment-first-opportunities) and `reports/out/active/current/README_ACTIVE_CURRENT.md` (local report `reports/out/active/current/README_ACTIVE_CURRENT.md`, not in the repo).
 
 **Stale:** `buyer_opportunity_crosscheck_*.csv` — not for export after manual sends until regenerated.
 
@@ -183,4 +183,4 @@ Default `campaign_mode` in [`manifest.json`](../reports/out/active/current/manif
 2. Do **not** guess between two similarly named scripts — e.g. workspace prep: [`SCRIPT_INVENTORY.md`](SCRIPT_INVENTORY.md#workspace-prep-which-script) (stable anchor).
 3. Do **not** bypass **DNR**, **export gate**, or **Sent-history** checks — they are intentional fail-closed safety.
 
-**Postgres / API / React:** optional — [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md). Simplification audit: [`reports/out/active/current/code_quality_simplification_audit_20260519.md`](../reports/out/active/current/code_quality_simplification_audit_20260519.md).
+**Postgres / API / React:** optional — [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md). Simplification audit: `reports/out/active/current/code_quality_simplification_audit_20260519.md` (local report `reports/out/active/current/code_quality_simplification_audit_20260519.md`, not in the repo).

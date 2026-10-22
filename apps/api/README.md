@@ -1,14 +1,12 @@
 # OrigenLab API (`apps/api`)
 
 > **Operator handoff (v1 freeze):** [../dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md](../dashboard/docs/V1_FREEZE_OPERATOR_HANDOFF.md)
->
-> **Portfolio demo guide:** [docs/PORTFOLIO_DEMO_GUIDE.md](docs/PORTFOLIO_DEMO_GUIDE.md)
 
 **Operator API** over SQLite, Postgres, and `reports/out/active/current`: read routes for the dashboard, read-only `/mirror/*` reporting, and the **durable commercial CRM commands under `POST /operations/*`** (trusted operator identity, Idempotency-Key, optimistic concurrency, append-only events). This app is separated from `apps/email-pipeline` so daily ingest, DNR refresh, and outbound CLIs stay unchanged. Canonical architecture: [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](../../docs/architecture/CURRENT_SYSTEM_TRUTH.md).
 
 ## Package layout
 
-This app owns **`apps/api/src/origenlab_api`** (operator routes + `/mirror/*` Postgres reporting). The legacy email-pipeline FastAPI tree on port **8000** was **removed in API-3 Phase 6** — see [docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md](docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
+This app owns **`apps/api/src/origenlab_api`** (operator routes + `/mirror/*` Postgres reporting). The legacy email-pipeline FastAPI tree on port **8000** was **removed in API-3 Phase 6** (enforcement gate: `scripts/api3_phase6_grep_gate.sh`).
 
 **Always run tests and uvicorn from `apps/api`:**
 
@@ -623,7 +621,7 @@ Dashboard HTTP smokes: `npm run smoke:contacts`, `EXPECT_BACKEND=postgres npm ru
 
 ## API-3 mirror relocation (Phase 6 complete)
 
-Postgres mirror reporting lives under **`GET /mirror/*`** on this app. Legacy email-pipeline `:8000` API **removed** — [docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md](docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
+Postgres mirror reporting lives under **`GET /mirror/*`** on this app. Legacy email-pipeline `:8000` API **removed** (API-3 Phase 6).
 
 Mirror reporting smoke (GET only; requires this app on :8001 + disposable `ORIGENLAB_POSTGRES_URL`):
 
@@ -638,7 +636,7 @@ cd apps/api
 uv run python scripts/mirror_parity_smoke.py --mirror-base http://127.0.0.1:8001
 ```
 
-Report (historical): [docs/archive/api3/API-3_PHASE3B_LIVE_PARITY_REPORT.md](docs/archive/api3/API-3_PHASE3B_LIVE_PARITY_REPORT.md).
+Report (historical): archived in git history (commit ff213a53 and earlier — API-3 archive removed in docs cleanup 2026-10-22).
 
 ```bash
 cd apps/api

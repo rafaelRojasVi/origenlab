@@ -24,7 +24,7 @@ captured. Label removals and other label changes are not tracked.
 
 Exit 0 done or nothing to do · 1 failed · 2 Gmail authorization · 3 configuration. Setup, pause,
 rotation and recovery: [`docs/OPERATIONS.md`](../../docs/OPERATIONS.md) §8. State:
-[`docs/STATUS.md`](../../docs/STATUS.md) §2.7.49.
+[`docs/STATUS.md`](../../docs/STATUS.md) §2.7 (row §2.7.49).
 
 **Drive filing**, right after each capture in the same cron:
 

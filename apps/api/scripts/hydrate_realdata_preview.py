@@ -8,7 +8,7 @@ to run against any other host. It is deterministic and idempotent: re-running
 it against the same real SQLite and the same preview database produces the
 same rows (ON CONFLICT DO NOTHING / DO UPDATE, no random IDs on repeat runs).
 
-Full rationale: docs/architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md.
+Full rationale: historical audit (COMMERCIAL_OPERATING_SYSTEM_AUDIT.md, deleted 2026-10-22; see git history).
 
 Selection criterion (documented, not arbitrary): of the 9,577 real PR3
 opportunity rows in SQLite `commercial_opportunity`, exactly one

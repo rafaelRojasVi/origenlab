@@ -857,15 +857,15 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 53-table foundation
+## 7. Table inventory — the reviewed 60-table foundation
 
-Seven private schemas. **51 application tables** — 33 reviewed after the
+Seven private schemas. **60 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
 §7.3, the four of §7.4, the five of §7.5 and the one of §7.6 — the current
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
-nothing needs it, and every change is recorded here. Numbers are stable
+nothing needs it, and every change is recorded here. Current verified count: 60 per `supabase/scripts/verify_chain.sh` `EXPECT_TABLES`. Numbers are stable
 identifiers, so the two D0.3 additions are appended as 31 and 32, and the
 Slice 0 / M10c reply table as 33, the commercial case as 34–36, the
 campaign safety block as 37, the shared sign-in tables as 38–41 and the
