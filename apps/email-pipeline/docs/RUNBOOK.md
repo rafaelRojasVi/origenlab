@@ -23,7 +23,7 @@ Single entrypoint for **how to run** the email pipeline. **Daily core contract (
 | **Which status command?** | [Operator health matrix](#m-eprun-operator-health-matrix) | `make doctor` vs `make audit` vs health report vs API |
 | **`reports/out` cleanup** | [`reports/out` cleanup flow](#m-eprun-reports-out-cleanup) | Plan → archive moves → hygiene check |
 
-**Parked index:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · **Tatiana/lab boundary:** [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). **Dashboard UX design (future CLI modes):** [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md).
+**Parked index:** [`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md) · **Tatiana/lab boundary:** [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md). **Dashboard UX design (future CLI modes):** `dashboard_stack_simplification_design_20260519.md` (local report, not in the repo).
 
 <a id="m-eprun-daily-outbound"></a>
 ## Daily outbound — two lanes
@@ -314,7 +314,7 @@ Example URL form: `postgresql+psycopg://user:pass@host:5432/dbname`. Template li
 <a id="m-eprun-dashboard-optional"></a>
 ## Optional dashboard preview stack (parked)
 
-**Do not use for daily outbound or equipment-first work.** This stack is **EXPERIMENTAL_PARKED** ([`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md)): Postgres mirror + FastAPI + React read models. **`refresh_operational_dashboard_stack.py` remains dashboard-only and experimental** until [mode-based CLI redesign](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md) is implemented — today it can run mart + safety + mirror by default; prefer explicit step-by-step commands below until that changes.
+**Do not use for daily outbound or equipment-first work.** This stack is **EXPERIMENTAL_PARKED** ([`EXPERIMENTAL_PARKED.md`](EXPERIMENTAL_PARKED.md)): Postgres mirror + FastAPI + React read models. **`refresh_operational_dashboard_stack.py` remains dashboard-only and experimental** until mode-based CLI redesign (local report, not in the repo) is implemented — today it can run mart + safety + mirror by default; prefer explicit step-by-step commands below until that changes.
 
 <a id="m-eprun-dashboard-gmail-to-react"></a>
 ### Dashboard refresh: from Gmail to React
@@ -409,7 +409,7 @@ uv run origenlab mirror-dashboard --apply
 
 **Mirror sync notes:** loads outbound sidecars, mart (archive + canonical), `reporting.dashboard_sync_run`, `reporting.email_classification_canonical`, `commercial.purchase_*`. Options: `--only outbound|mart|canonical`, `--skip-outbound`, `--skip-mart`, `--json-out path`. **Fail-closed:** sync aborts if canonical Gmail exists but mart tables are empty — run step C first; break-glass only: `--allow-empty-mart`.
 
-**Experimental wrapper (current behavior — prefer explicit steps above):** [`refresh_operational_dashboard_stack.py`](../scripts/ops/refresh_operational_dashboard_stack.py) runs mart + safety + mirror by default; Gmail ingest is **off** unless `--run-gmail-inbox` / `--run-gmail-sent`; `--dry-run` prints only. **Planned:** `--mode sqlite-status|postgres-mirror|full-dashboard` per [design doc](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md).
+**Experimental wrapper (current behavior — prefer explicit steps above):** [`refresh_operational_dashboard_stack.py`](../scripts/ops/refresh_operational_dashboard_stack.py) runs mart + safety + mirror by default; Gmail ingest is **off** unless `--run-gmail-inbox` / `--run-gmail-sent`; `--dry-run` prints only. **Planned:** `--mode sqlite-status|postgres-mirror|full-dashboard` per design doc (local report, not in the repo).
 
 ##### Promote confirmed purchase order email to commercial event
 
@@ -542,7 +542,7 @@ DASHBOARD_FAST=1 RUN_GMAIL_INGEST=1 RUN_COMMERCIAL_DEAL_MIRROR=1 RUN_CATALOG_MIR
   bash apps/email-pipeline/scripts/ops/refresh_render_dashboard_once.sh
 ```
 
-**References:** [`OPERATOR_CHEAT_SHEET.md`](OPERATOR_CHEAT_SHEET.md#m-opsheet-dashboard-gmail-to-react) · [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md)
+**References:** [`OPERATOR_CHEAT_SHEET.md`](OPERATOR_CHEAT_SHEET.md#m-opsheet-dashboard-gmail-to-react) · `dashboard_stack_simplification_design_20260519.md` (local report, not in the repo)
 
 ---
 
