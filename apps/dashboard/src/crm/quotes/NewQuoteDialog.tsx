@@ -621,7 +621,7 @@ function InstitutionField({
   const listId = `${ids}-instituciones`;
   const hint = (
     <p className="text-[12.5px] text-ink-muted">
-      Opcional, pero sin institución la cotización no se puede aprobar. Se asocia también a la persona y al caso.
+      Opcional: déjala vacía si es una persona natural (particular). Se asocia también a la persona y al caso.
     </p>
   );
 

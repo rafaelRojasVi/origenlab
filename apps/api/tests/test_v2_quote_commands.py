@@ -24,6 +24,7 @@ from origenlab_api.v2.quotes.commands import (
     ApprovalFacts,
     V2QuoteRepository,
     check_approvable,
+    party_snapshot,
 )
 from origenlab_api.v2.quotes.draft import QUOTE_BODIES, DraftFxOverride, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
@@ -610,7 +611,8 @@ def test_check_approvable_passes_a_complete_quote() -> None:
     ({"expense_count": 1}, [("principal_missing", "Hay gastos de importación pero ningún equipo los lleva; marca «Lleva gastos» en uno.")]),
     ({"missing_fx": ("EUR", "USD")}, [("fx_missing", "Falta el tipo de cambio de EUR."),
                                       ("fx_missing", "Falta el tipo de cambio de USD.")]),
-    ({"has_institution": False}, [("no_institution", "El caso no tiene institución.")]),
+    ({"has_institution": False, "recipient_required": False},
+     [("no_institution", "La licitación no tiene institución compradora.")]),
     ({"has_recipient": False}, [("no_recipient", "Elige a quién va dirigida.")]),
     ({"printed": (("Garantía", "[GARANTÍA]"), ("Forma de pago", None), ("Capacitación", "Ver [detalle] aquí"))},
      [("placeholder_left", "Completa «Garantía»: aún tiene un texto entre corchetes."),
@@ -618,6 +620,23 @@ def test_check_approvable_passes_a_complete_quote() -> None:
 ])
 def test_check_approvable_refusals(over, expected) -> None:
     assert check_approvable(_facts(**over)) == expected
+
+
+def test_check_approvable_lets_a_persona_natural_through_without_institution() -> None:
+    assert check_approvable(_facts(has_institution=False)) == []
+
+
+@pytest.mark.parametrize(("typed", "expected"), [
+    (None, None),
+    ({"rut": "12.345.678-5"}, {"id": None, "name": None, "rut": "12.345.678-5"}),
+])
+def test_a_persona_natural_snapshot_has_no_institution_unless_typed(typed, expected) -> None:
+    day = date(2026, 10, 22)
+    snap = party_snapshot(institution=None, recipient={"participant_id": "p", "name": "Ana Pérez", "email": "ana@gmail.com"},
+                          terms=QuoteDraft().terms, validity_days=30, quote_number="Q", label="Q",
+                          approved_by="op", approved_on=day, valid_until=day, client_details=typed)
+    assert snap["institution"] == expected
+    assert snap["recipient"]["name"] == "Ana Pérez"
 
 
 def test_check_approvable_ignores_empty_brackets_and_lists_every_refusal_in_order() -> None:

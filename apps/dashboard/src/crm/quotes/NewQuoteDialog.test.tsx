@@ -702,7 +702,7 @@ describe("«Institución» of a person or an address without one", () => {
     const { onCreated } = renderDialog();
     await search("Beto");
     await pick(/persona · Beto Ejemplo/);
-    expect(screen.getByText(/sin institución la cotización no se puede aprobar/)).toBeInTheDocument();
+    expect(screen.getByText(/déjala vacía si es una persona natural/)).toBeInTheDocument();
     await searchInstitution("Clín");
     const list = await screen.findByRole("listbox", { name: "Instituciones" });
     expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual([
