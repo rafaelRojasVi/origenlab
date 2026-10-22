@@ -137,17 +137,20 @@ select is(
     where ic.relowner <> 'origenlab_owner'::regrole),
   0, 'every covering index is owned by origenlab_owner');
 
--- (g) No redundant index: two indexes on one table may not have identical key columns, predicate
---     and uniqueness. This is what stops a later pass from "fixing" a finding that is already met.
+-- (g) No redundant index: two indexes on one table with the same access method may not have
+--     identical key columns, predicate and uniqueness. Access method is included in the grouping
+--     key because a B-tree and a GIN index on the same column are not redundant — they serve
+--     different query shapes (equality/range vs. trigram pattern matching).
 select is(
   (select count(*)::int from (
-     select i.indrelid, i.indkey::text, coalesce(pg_get_expr(i.indpred, i.indrelid), ''), i.indisunique
+     select i.indrelid, ic.relam, i.indkey::text, coalesce(pg_get_expr(i.indpred, i.indrelid), ''), i.indisunique
        from pg_index i
-       join pg_class c on c.oid = i.indrelid
+       join pg_class c  on c.oid  = i.indrelid
+       join pg_class ic on ic.oid = i.indexrelid
        join pg_namespace n on n.oid = c.relnamespace
       where n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
-      group by 1, 2, 3, 4 having count(*) > 1) d),
-  0, 'no two indexes on one table share key columns, predicate and uniqueness');
+      group by 1, 2, 3, 4, 5 having count(*) > 1) d),
+  0, 'no two indexes with the same access method on one table share key columns, predicate and uniqueness');
 
 select * from finish();
 rollback;
