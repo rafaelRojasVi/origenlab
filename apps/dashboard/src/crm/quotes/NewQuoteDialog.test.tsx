@@ -702,7 +702,7 @@ describe("«Institución» of a person or an address without one", () => {
     const { onCreated } = renderDialog();
     await search("Beto");
     await pick(/persona · Beto Ejemplo/);
-    expect(screen.getByText(/déjala vacía si es una persona natural/)).toBeInTheDocument();
+    expect(screen.getByText(/Una persona natural queda como su propio cliente/)).toBeInTheDocument();
     await searchInstitution("Clín");
     const list = await screen.findByRole("listbox", { name: "Instituciones" });
     expect(within(list).getAllByRole("option").map((o) => o.textContent)).toEqual([
@@ -715,6 +715,23 @@ describe("«Institución» of a person or an address without one", () => {
     await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
     expect(api.creates()[0].body).toEqual({ client: { person_id: LONE_PERSON, institution: { organization_id: CLINIC } }, new_case: true });
     expect(onCreated).toHaveBeenCalledWith(NEW_QUOTE, { label: "CN00042", client: "Clínica Ejemplo", status: "draft" });
+  });
+
+  it("«Es persona natural» makes the person their own client record (kind individual)", async () => {
+    const api = stub({ clients: () => json(people) });
+    const { onCreated } = renderDialog();
+    await search("Beto");
+    await pick(/persona · Beto Ejemplo/);
+    fireEvent.click(screen.getByRole("button", { name: "Es persona natural (particular)" }));
+    expect(screen.getByLabelText("Nombre de la persona natural")).toHaveValue("Beto Ejemplo");
+    fireEvent.click(screen.getByRole("button", { name: "Usar como persona natural" }));
+    expect(screen.getByText(/persona natural$/)).toBeInTheDocument();
+    fireEvent.click(createButton());
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    expect(api.creates()[0].body).toEqual({
+      client: { person_id: LONE_PERSON, institution: { new_organization: { name: "Beto Ejemplo", kind: "individual" } } },
+      new_case: true,
+    });
   });
 
   it("an address with no person may name a new institution, with its kind", async () => {

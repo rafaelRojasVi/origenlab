@@ -10,11 +10,12 @@
  * pick stays «Otro correo…» even when it matches a contact, and «no válido» waits until the field
  * has content and loses the focus.
  */
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { DraftProblem } from "./draftEditor";
 import { setClientDetail, setRecipient } from "./draftEditor";
 import type { QuoteClientDetails, QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
 import { AssignInstitution } from "../pages/AssignInstitution";
+import { addCaseOrganization, caseRefusalText, newCaseCommandKey } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
 
 const OTHER = "other";
@@ -79,6 +80,10 @@ export function ClientSection({
   const [typing, setTyping] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addProblem, setAddProblem] = useState<string | null>(null);
+  const [personaOpen, setPersonaOpen] = useState(false);
+  const [personaText, setPersonaText] = useState("");
+  const [personaBusy, setPersonaBusy] = useState(false);
+  const personaKey = useRef(newCaseCommandKey());
   // The case's institution, named here without the trip to the case (a persona natural needs none).
   const mayAdd = !institution && !disabled && !workspace.case.closed && workspace.case.version != null && !!onInstitutionAdded;
   const [emailLeft, setEmailLeft] = useState(false);
@@ -104,6 +109,9 @@ export function ClientSection({
   // A persona natural (owner, 2026-10-22): no institution and not a tender — the person is the
   // client and the quote is approved as is (#816). What «Datos del cliente» types prints over it.
   const persona = !institution && !workspace.tender;
+  // A persona natural made a client record of their own (kind «individual»): a case can then reach
+  // «Enviada» and every rule reads it as any client (owner, 2026-10-22).
+  const personaRecord = institution?.kind === "individual";
   const typedInstitution = draft.client?.institution_name?.trim() || null;
   const typedRut = draft.client?.rut?.trim() || null;
   const personName = draft.client?.contact_name?.trim() || pickedContact || recipient?.email || null;
@@ -147,6 +155,33 @@ export function ClientSection({
     if (c) edit((d) => setRecipient(d, pickOf(c)));
   }
 
+  /** «Es persona natural»: the person becomes the case's client record (kind «individual»), reused if one of that name exists. */
+  async function savePersona() {
+    const name = personaText.trim();
+    if (!name || personaBusy || workspace.case.version == null) return;
+    setPersonaBusy(true);
+    setAddProblem(null);
+    try {
+      await addCaseOrganization(
+        {
+          opportunity_id: workspace.case.id,
+          opportunity_version: workspace.case.version,
+          new_organization: { name: name.slice(0, 500), kind: "individual" },
+          role: "requesting_institution",
+          note: "Persona natural (particular): la cotización va a su nombre.",
+        },
+        personaKey.current,
+      );
+      setPersonaOpen(false);
+      await onInstitutionAdded?.();
+    } catch (err) {
+      personaKey.current = newCaseCommandKey();
+      setAddProblem(caseRefusalText(err));
+    } finally {
+      setPersonaBusy(false);
+    }
+  }
+
   function typeAddress(email: string, name: string) {
     changed();
     const e = email.trim() ? email : "";
@@ -160,7 +195,14 @@ export function ClientSection({
     >
       <div className="flex min-w-0 flex-col gap-1">
         <span className="text-xs text-ink-muted">Cliente</span>
-        {persona ? (
+        {personaRecord ? (
+          <>
+            <span className="truncate text-[15px] font-semibold text-ink">{institution?.name}</span>
+            <span className="text-[13px] text-ink-muted">
+              Persona natural (particular){institution?.rut ? ` · RUT ${institution.rut}` : ""}
+            </span>
+          </>
+        ) : persona ? (
           <>
             <span className="truncate text-[15px] font-semibold text-ink">{typedInstitution ?? "Persona natural (particular)"}</span>
             {personName ? <span className="truncate text-[13px] text-ink">{personName}</span> : null}
@@ -173,7 +215,59 @@ export function ClientSection({
             <span className="text-[13px] text-ink-muted">{institution?.rut ? `RUT ${institution.rut}` : "RUT pendiente"}</span>
           </>
         )}
-        {mayAdd && !adding ? (
+        {mayAdd && persona && !adding && !personaOpen ? (
+          <button
+            type="button"
+            onClick={() => {
+              setAddProblem(null);
+              setPersonaText(typedInstitution ?? (personName && !personName.includes("@") ? personName : ""));
+              setPersonaOpen(true);
+            }}
+            className="mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"
+          >
+            Es persona natural
+          </button>
+        ) : null}
+        {mayAdd && persona && personaOpen ? (
+          <form
+            className="mt-1 flex flex-col gap-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void savePersona();
+            }}
+          >
+            <label htmlFor={`${ids}-persona`} className="text-[12.5px] text-ink-muted">
+              Nombre de la persona (queda como su cliente en el CRM)
+            </label>
+            <input
+              id={`${ids}-persona`}
+              type="text"
+              value={personaText}
+              maxLength={500}
+              disabled={personaBusy}
+              onChange={(e) => setPersonaText(e.target.value)}
+              className={FIELD_CLS}
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={personaBusy || !personaText.trim()}
+                className="inline-flex min-h-[40px] items-center rounded-md bg-brand-700 px-3 text-[13px] font-semibold text-white disabled:opacity-50"
+              >
+                Guardar
+              </button>
+              <button
+                type="button"
+                disabled={personaBusy}
+                onClick={() => setPersonaOpen(false)}
+                className="inline-flex min-h-[40px] items-center px-2 text-[13px] text-ink-muted"
+              >
+                Cancelar
+              </button>
+            </div>
+          </form>
+        ) : null}
+        {mayAdd && !adding && !personaOpen ? (
           <button
             type="button"
             onClick={() => {

@@ -1,8 +1,9 @@
 /** «Cliente / Para / Lo que pidió». Every value is invented. */
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as caseCommands from "../caseCommands";
 import { ClientSection } from "./ClientSection";
 import { draftProblems } from "./draftEditor";
 import type { QuoteDraft, QuoteWorkspace } from "./quoteApi";
@@ -221,5 +222,37 @@ describe("«Agregar institución»", () => {
   it("locks «Datos del cliente» when the draft cannot be edited", () => {
     setup(ws(), draftFixture(), true);
     expect(screen.getByLabelText("Nombre del contacto")).toBeDisabled();
+  });
+});
+
+describe("«Es persona natural»", () => {
+  const noop = () => undefined;
+  it("a case whose client record is a persona natural shows the person and says so", () => {
+    render(
+      <ClientSection workspace={ws({ institution: { id: "i-9", name: "Ana Particular", rut: null, kind: "individual" }, version: 3 })}
+        draft={draftFixture()} invalid={[]} disabled={false} edit={noop} />,
+    );
+    expect(screen.getByText("Ana Particular")).toBeInTheDocument();
+    expect(screen.getByText("Persona natural (particular)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Es persona natural" })).toBeNull();
+  });
+
+  it("makes the person the case's client record (kind individual), then reloads", async () => {
+    const add = vi.spyOn(caseCommands, "addCaseOrganization").mockResolvedValue({} as never);
+    const reload = vi.fn();
+    const draft = { ...draftFixture(), client: { contact_name: "Ana Particular" } };
+    render(
+      <ClientSection workspace={ws({ institution: null, version: 3 })} draft={draft} invalid={[]} disabled={false}
+        edit={noop} onInstitutionAdded={reload} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Es persona natural" }));
+    expect(screen.getByLabelText(/Nombre de la persona/)).toHaveValue("Ana Particular");
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(add.mock.calls[0][0]).toMatchObject({
+      opportunity_version: 3, role: "requesting_institution",
+      new_organization: { name: "Ana Particular", kind: "individual" },
+    });
+    add.mockRestore();
   });
 });

@@ -576,7 +576,12 @@ authored draft is approved directly.
   principal; elige uno.» (any expense above zero, a manual one included); `fx_missing` «Falta el
   tipo de cambio de X.»; `no_institution` «La licitación no tiene institución compradora.» (tenders
   only: a quote for a persona natural — a particular with no institution — is approved with its
-  recipient as the client, printing the name and RUT typed in «Datos del cliente», if any);
+  recipient as the client, printing the name and RUT typed in «Datos del cliente», if any; such a
+  case cannot pass «Calificada» — `opportunity_organization_required_from_qualified` — so it never
+  reaches «Enviada»: the operator makes the person their own client record instead, «Es persona
+  natural» on the quote or in «Nueva cotización» — an organization of kind `individual`, named after
+  the person, found by name only and given no email domain, set as the requesting institution
+  (owner, 2026-10-22));
   `no_recipient` «Elige a quién va dirigida.» (the recipient must still be a current participant of the case);
   `placeholder_left` «Completa «campo»: aún tiene un texto entre corchetes.» — checked on the
   printed conditions, the extra conditions and the line notes, **not** on product descriptions (a

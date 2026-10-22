@@ -2182,6 +2182,28 @@ def test_an_address_and_a_new_institution_open_a_case_of_that_institution(world)
 
 
 @needs_db
+def test_a_persona_natural_is_their_own_client_record_and_claims_no_domain(world) -> None:
+    dsn, tag = world["dsn"], uuid.uuid4().hex[:8]
+    address = f"ana.{tag}@empresa-{tag}.test"
+    out = _run(world, "create-quote", {"client": {"email": address, "institution": {"new_organization": {
+        "name": f"Ana Particular {tag}", "kind": "individual"}}}})
+    org, case = out["organization_id"], out["opportunity_id"]
+    [made] = _rows(dsn, "select name, kind from crm.organization where id = %s", (org,))
+    assert made == {"name": f"Ana Particular {tag}", "kind": "individual"}
+    # A particular writing from a company's address is not that company: no domain is taken.
+    assert _owner(dsn, "select count(*) from crm.organization_domain where organization_id = %s", (org,)) == [(0,)]
+    assert _case_row(dsn, case)["organization_id"] == org
+    # Their next quote goes on the same case, found by their address (the case's recipient).
+    again = _run(world, "create-quote", {"client": {"email": address}})
+    assert (again["opportunity_id"], again["case_created"]) == (case, False)
+    # A new client record of that kind directly, with a company address, takes no domain either.
+    direct = _run(world, "create-quote", {"client": {"new_organization": {
+        "name": f"Beto Particular {tag}", "kind": "individual", "email": f"beto@otra-{tag}.test"}}})
+    assert _owner(dsn, "select count(*) from crm.organization_domain where organization_id = %s",
+                  (direct["organization_id"],)) == [(0,)]
+
+
+@needs_db
 def test_a_person_and_an_existing_institution_get_an_affiliation(world) -> None:
     dsn, operator = world["dsn"], world["operator"]
     clinic = _org(dsn, "institution", "Clínica Conectada")

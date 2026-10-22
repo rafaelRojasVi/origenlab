@@ -13,6 +13,7 @@ export const KIND_OPTIONS = [
   { value: "public_institution", label: "Institución pública" },
   { value: "hospital", label: "Hospital / clínica" },
   { value: "laboratory", label: "Laboratorio" },
+  { value: "individual", label: "Persona natural (particular)" },
   { value: "other", label: "Otro" },
 ];
 

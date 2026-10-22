@@ -387,7 +387,10 @@ def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: Oper
     lock_new_organization_name(cur, name)
     if email is not None:
         _client_lock(cur, f"email:{email}")
-    found = same_name_or_domain_organization(cur, name, email)
+    # A persona natural is found by name only and takes no domain: a particular writing from a
+    # company's address is not that company (owner, 2026-10-22).
+    persona = new.get("kind") == PERSONA_NATURAL
+    found = same_name_or_domain_organization(cur, name, None if persona else email)
     existing = found["id"] if found is not None else None
     pick = DraftRecipient(email=email) if email is not None else None
     if existing is not None:
@@ -399,8 +402,13 @@ def _new_organization_client(self: "V2QuoteRepository", cur: Any, operator: Oper
         return _Client(organization_id=organization_id, organization_name=organization_name, pick=pick)
     made = register_customer_organization(self, cur, operator, receipt_id, name=name,
                                           kind=new.get("kind") or "company",
-                                          domain=email.rpartition("@")[2] if email is not None else None, note=note)
+                                          domain=email.rpartition("@")[2] if email is not None and not persona else None,
+                                          note=note)
     return _Client(organization_id=made, organization_name=name, pick=pick, organization_created=True)
+
+
+#: The client record of a particular, a persona natural (owner, 2026-10-22): named after the person, no domain.
+PERSONA_NATURAL = "individual"
 
 
 def _client_has_institution(client: _Client) -> CommandRefused:
@@ -445,7 +453,8 @@ def _connect_institution(self: "V2QuoteRepository", cur: Any, operator: Operator
         assert institution.new_organization is not None  # noqa: S101 - only a new one is not found
         organization_id = register_customer_organization(
             self, cur, operator, receipt_id, name=name, kind=institution.new_organization.kind,
-            domain=_domain_for_new_institution(cur, client), note=note)
+            domain=(None if institution.new_organization.kind == PERSONA_NATURAL
+                    else _domain_for_new_institution(cur, client)), note=note)
         client.organization_created = True
     else:
         _client_lock(cur, f"organization:{organization_id}")
