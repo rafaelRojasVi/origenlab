@@ -209,7 +209,7 @@ class RealReleaseDatabase(unittest.TestCase):
         self.sql(f'CREATE DATABASE {recovery}')
         try:
             env = dict(self.env, PGDATABASE=recovery)
-            self.sql("CREATE SCHEMA extensions; CREATE EXTENSION btree_gist WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", env)
+            self.sql("CREATE SCHEMA extensions; CREATE EXTENSION btree_gist WITH SCHEMA extensions; CREATE EXTENSION pg_trgm WITH SCHEMA extensions; GRANT USAGE ON SCHEMA extensions TO origenlab_owner, origenlab_api, origenlab_worker", env)
             backup.execute(["pg_restore", "--exit-on-error", "--dbname", recovery, str(dump)], env)
             schemas = ",".join(repr(x) for x in backup.SCHEMAS)
             counts = f"select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname in ({schemas}) and c.relkind='r'; select count(*) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname in ({schemas})"
