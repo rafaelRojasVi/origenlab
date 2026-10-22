@@ -96,6 +96,8 @@ export interface QuoteDraft {
   recipient?: QuoteRecipientPick | null;
   /** The client as this quote prints it; a blank field prints what the CRM knows. */
   client?: QuoteClientDetails | null;
+  /** «Sin IVA»: priced and printed at a tax rate of 0. */
+  without_iva?: boolean;
 }
 
 /** «Datos del cliente» typed in the Cotizador, frozen into the PDF at approval. */

@@ -7,6 +7,7 @@ value the column cannot hold is a 422 here, never a 500 at the insert.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
@@ -147,6 +148,8 @@ class QuoteDraft(_Model):
     recipient_participant_id: UUID | None = None  # the older form of recipient={participant_id}
     recipient: DraftRecipient | None = None
     client: DraftClientDetails | None = None
+    # «Sin IVA» (owner 2026-10-21): the revision is priced and printed at a tax rate of 0.
+    without_iva: bool = False
 
     @model_validator(mode="after")
     def _consistent(self) -> "QuoteDraft":
@@ -284,3 +287,15 @@ QUOTE_BODIES = {
     "void-quote-revision": VoidQuoteBody,
     "create-quote-revision": NewQuoteRevisionBody,
 }
+
+
+def draft_tax_rate(draft: QuoteDraft, stored: Decimal | None, params: Mapping[str, Decimal | str]) -> Decimal:
+    """The IVA rate a draft is priced at: 0 «Sin IVA», else the revision's own rate (set at
+    creation), or the `iva_rate` parameter (0.19 without one) when there is no revision or its rate
+    is 0 from an earlier «Sin IVA»."""
+    if draft.without_iva:
+        return Decimal(0)
+    if stored is not None and Decimal(stored) > 0:
+        return Decimal(stored)
+    value = params.get("iva_rate")
+    return value if isinstance(value, Decimal) and 0 < value < 1 else Decimal("0.19")

@@ -72,7 +72,8 @@ from origenlab_api.v2.case_command_repository import (
 from origenlab_api.v2.commands import CommandRefused, normalize_email
 from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_link_person_organization
 from origenlab_api.v2.identity import OperatorIdentity
-from origenlab_api.v2.quotes.draft import ClientInstitution, DraftRecipient, DraftTerms, QuoteClient, QuoteDraft
+from origenlab_api.v2.quotes.draft import (ClientInstitution, DraftRecipient, DraftTerms, QuoteClient, QuoteDraft,
+                                          draft_tax_rate)
 from origenlab_api.v2.quotes.inputs import (
     FxResolver,
     Resolved,
@@ -927,8 +928,11 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
     today = santiago_today(self._clock())
     recipient = _recipient(self, cur, operator, receipt_id, draft, revision, today,
                            case_closed=case["closed_at"] is not None)
-    # The revision's own tax rate (set at creation) prices its IVA, so tax_total agrees with tax_rate.
-    params = {**load_parameters(cur), "iva_rate": Decimal(revision["tax_rate"])}
+    # The revision's own tax rate (set at creation) prices its IVA, so tax_total agrees with tax_rate;
+    # «Sin IVA» stores 0, and unticking it restores the rate.
+    params = load_parameters(cur)
+    tax_rate = draft_tax_rate(draft, revision["tax_rate"], params)
+    params = {**params, "iva_rate": tax_rate}
     try:
         resolved = resolve_draft(cur, draft, params, self._fx_resolver, today)
         result = compute(resolved.engine_input)
@@ -950,7 +954,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
                expense_method = %(expense_method)s, expense_allocation_mode = %(allocation_mode)s,
                principal_rule = %(principal_rule)s, fx_override_reasons = %(fx_override_reasons)s::jsonb,
                recipient_participant_id = coalesce(%(recipient)s::uuid, recipient_participant_id),
-               client_details = %(client_details)s::jsonb,
+               client_details = %(client_details)s::jsonb, tax_rate = %(tax_rate)s::numeric,
                subtotal = %(net)s, discount_total = 0, tax_base = %(net)s, tax_total = %(iva)s,
                grand_total = %(total)s, totals_computed_at = now(), version = version + 1, updated_at = now()
          where id = %(id)s::uuid and version = %(version)s
@@ -967,7 +971,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
          "recipient": recipient, "net": result.net, "iva": result.iva, "total": result.total,
          "client_details": (json.dumps(stored, ensure_ascii=False)
                             if draft.client and (stored := draft.client.stored()) else None),
-         "id": revision_id, "version": expected_version},
+         "tax_rate": tax_rate, "id": revision_id, "version": expected_version},
     )
     updated = _one(cur)
     if updated is None:  # pragma: no cover - the row is locked; kept as the compare-and-set's other half

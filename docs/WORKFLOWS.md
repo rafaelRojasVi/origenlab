@@ -395,7 +395,7 @@ earlier one.
 #### W3a — Quotation arithmetic
 
 - **Customer-facing currency lives on the revision**: `quote_currency`,
-  `price_decimals` (0 for CLP, 2 for USD/EUR), `tax_rate` (IVA, default 0.19),
+  `price_decimals` (0 for CLP, 2 for USD/EUR), `tax_rate` (IVA, default 0.19; 0 when the draft is saved «Sin IVA», `without_iva`, and the IVA parameter again when unticked),
   `rounding_rule = half_up`, and stored `subtotal`, `discount_total`,
   `tax_base`, `tax_total`, `grand_total`, `totals_computed_at`.
 - **Commercial terms live on the revision too**: `payment_terms`,

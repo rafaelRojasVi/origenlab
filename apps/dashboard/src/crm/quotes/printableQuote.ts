@@ -57,6 +57,11 @@ export interface PrintableQuote {
 const ISSUED = new Set(["approved", "sent"]);
 
 /** Whether «Vista previa PDF» applies to this revision: a draft, or an approved or sent one. */
+/** «Sin IVA» (owner, 2026-10-21): a quote at a tax rate of 0 prints no IVA row nor IVA columns. */
+export function isWithoutIva(taxRate: string | null | undefined): boolean {
+  return taxRate != null && taxRate !== "" && Number(taxRate) === 0;
+}
+
 export function isPrintable(workspace: QuoteWorkspace): boolean {
   const cur = workspace.current;
   if (!cur) return false;
@@ -200,7 +205,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       institution: snap?.institution ?? caseInstitution,
       recipient: snap?.recipient ?? null,
       client: snap?.client ?? clientLines(null),
-      lines: tender ? withIva(lines, cur.tax_rate ?? "0.19", cur.subtotal, cur.tax_total) : lines,
+      lines: tender && !isWithoutIva(cur.tax_rate) ? withIva(lines, cur.tax_rate ?? "0.19", cur.subtotal, cur.tax_total) : lines,
       tender,
       totals: { net: cur.subtotal, iva: cur.tax_total, total: cur.grand_total },
       taxRate: cur.tax_rate,
@@ -227,6 +232,8 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       total: priced?.line_total ?? null,
     };
   });
+  // The draft's rate: 0 «Sin IVA»; a revision stored at 0 and unticked prices at the usual rate again.
+  const draftRate = cur.tax_rate != null && Number(cur.tax_rate) > 0 ? cur.tax_rate : "0.19";
   const unpriced = !computed || lines.some((l) => l.unitPrice == null || l.total == null);
   const notReady = live?.stale ? "Actualizando los precios…" : unpriced ? "Faltan precios: completa el borrador para imprimirlo." : null;
   const terms = draft.terms as unknown as Record<string, unknown>;
@@ -246,10 +253,10 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
     institution,
     recipient: recipient && text(typed.contact_name) ? { ...recipient, name: text(typed.contact_name) } : recipient,
     client: clientLines(typed),
-    lines: tender ? withIva(lines, cur.tax_rate ?? "0.19", computed?.totals.net ?? null, computed?.totals.iva ?? null) : lines,
+    lines: tender && !draft.without_iva ? withIva(lines, draftRate, computed?.totals.net ?? null, computed?.totals.iva ?? null) : lines,
     tender,
     totals: computed ? { net: computed.totals.net, iva: computed.totals.iva, total: computed.totals.total } : { net: null, iva: null, total: null },
-    taxRate: cur.tax_rate,
+    taxRate: draft.without_iva ? "0" : draftRate,
     terms: termsOf(terms, validity ?? null),
     clientNote: text(draft.terms.client_notes_es),
     approvedBy: null,
