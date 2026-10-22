@@ -99,6 +99,7 @@ export function unproxyImageUrl(raw: string): string | null {
 
 /** A link target that could run code: `javascript:`, `vbscript:`, or any `data:` URL (an SVG or HTML payload). */
 function isScriptUrl(raw: string): boolean {
+  // eslint-disable-next-line no-control-regex -- removing control chars from URLs is intentional
   const cleaned = raw.replace(/[\u0000- ]/g, "").toLowerCase();
   return cleaned.startsWith("javascript:") || cleaned.startsWith("vbscript:") || cleaned.startsWith("data:");
 }

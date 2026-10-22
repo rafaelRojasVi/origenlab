@@ -119,8 +119,8 @@ export function normalizeHistory(
   const sin = Math.sin(rad);
 
   for (let i = 0; i < out.length; i += 2) {
-    let x = out[i] * scale * stretchX;
-    let y = out[i + 1] * scale * stretchY;
+    const x = out[i] * scale * stretchX;
+    const y = out[i + 1] * scale * stretchY;
     out[i] = x * cos - y * sin;
     out[i + 1] = x * sin + y * cos;
   }

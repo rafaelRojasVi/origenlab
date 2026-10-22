@@ -362,7 +362,6 @@ export function useQuoteDraft(workspace: QuoteWorkspace, options: { api?: Partia
         flush: () => flush().then((r) => r.ok),
       }),
     // `unsaved` reads refs only: any render's copy answers the same.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [quoteId, flush],
   );
 
