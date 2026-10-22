@@ -54,7 +54,7 @@ test-proxy:
 	cd apps/dashboard-proxy && npm run validate && npm run typecheck
 
 test-web:
-	cd apps/web && npm run check && npm run validate:catalog && npm run build
+	cd apps/web && npm run check && npm run validate:catalog && npm run build && npm run validate:dist
 
 # The database-free half of the Supabase CI job. The other half resets a local Supabase stack
 # (`supabase db reset`), which would wipe a developer's local data, so it runs only in CI. So does
