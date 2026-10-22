@@ -68,5 +68,5 @@ If operational artifacts are needed for an incident, share them through private 
 ## Related docs
 
 - Public-repo safety: [`SECURITY.md`](../SECURITY.md) · [`SECURITY_PUBLIC_REPO.md`](./SECURITY_PUBLIC_REPO.md)
-- Documentation placement: [`DOCUMENTATION_MAP.md`](./DOCUMENTATION_MAP.md)
+- Documentation placement: [`docs/README.md`](./README.md#m-docmap-entry)
 - Operator API remote checks: [`apps/api/README.md`](../apps/api/README.md)

@@ -31,7 +31,7 @@ Postgres mirror reporting and Dashboard operator routes are served by **[`apps/a
 
 ## Setup and navigation
 
-- Monorepo context: [`PROJECT_CONTEXT.md`](../../../docs/PROJECT_CONTEXT.md#m-proj-start) · map: [`DOCUMENTATION_MAP.md`](../../../docs/DOCUMENTATION_MAP.md#m-docmap-entry)
+- Monorepo context: [`PROJECT_CONTEXT.md`](../../../docs/PROJECT_CONTEXT.md#m-proj-start)
 - Project run/setup entrypoint: [`../README.md`](../README.md)
 - **Operator script map:** [`SCRIPT_MAP.md`](SCRIPT_MAP.md)
 - Script folder index (thin): [`../scripts/README.md`](../scripts/README.md)

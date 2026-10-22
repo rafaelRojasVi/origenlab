@@ -7,7 +7,7 @@ Part of: [`REFOUNDATION_PLAN.md`](REFOUNDATION_PLAN.md)
 
 Per-app and per-internal-module business responsibility, data owned vs.
 read-only, side effects, and lifecycle status. This complements
-[`../DOCUMENTATION_MAP.md`](../DOCUMENTATION_MAP.md) (which app owns which
+[`../README.md`](../README.md#m-docmap-entry) (which app owns which
 doc) and [`../data/DATA_AUTHORITY_MAP.md`](../data/DATA_AUTHORITY_MAP.md)
 (which system owns which business fact) with a module-level "what does this
 package actually do" view. Status vocabulary: **active**, **transitional**,

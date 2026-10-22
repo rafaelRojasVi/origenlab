@@ -36,7 +36,7 @@ A documentation-only checkpoint, no code/migration/data changes:
 | System inventory (per app/module) | [`SYSTEM_INVENTORY.md`](SYSTEM_INVENTORY.md) |
 | Non-technical workflow template + 3 worked examples | [`../templates/WORKFLOW_TEMPLATE.md`](../templates/WORKFLOW_TEMPLATE.md), [`../workflows/`](../workflows/) |
 | This plan / decision register | this file |
-| Documentation authority map, amended | [`../DOCUMENTATION_MAP.md`](../DOCUMENTATION_MAP.md) |
+| Documentation authority map, amended | [`../README.md`](../README.md#m-docmap-entry) |
 | Root router, amended | [`../../CLAUDE.md`](../../CLAUDE.md) |
 | Current-truth doc, corrected drift | [`../architecture/CURRENT_SYSTEM_TRUTH.md`](../architecture/CURRENT_SYSTEM_TRUTH.md) |
 
@@ -189,7 +189,7 @@ In priority order, each independently startable:
    operational/audit/generated docs (the ~70 files under
    `apps/email-pipeline/docs/` not yet covered, `apps/web/docs/audits/`,
    etc.) into the KEEP/RENAME/AMEND/MERGE/SUPERSEDE framework already
-   established in `../DOCUMENTATION_MAP.md`. Low risk, mechanical, high
+   established in [`../README.md`](../README.md#m-docmap-entry). Low risk, mechanical, high
    value for anyone who has to find something later.
 2. **Resolve decision-register items #1–#3 and #8** — these are
    documentation/ownership decisions, not implementation work; each needs a
