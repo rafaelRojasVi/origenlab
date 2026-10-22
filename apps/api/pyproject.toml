@@ -24,6 +24,7 @@ dev = [
     "httpx>=0.27",
     "pytest-xdist>=3.6",
     "pytest-timeout>=2.3",
+    "pyright>=1.1.414",
     { include-group = "postgres" },
 ]
 postgres = ["psycopg[binary,pool]>=3.2"]
@@ -59,3 +60,8 @@ timeout = 60
 # scripts/run_pytest.sh runs these alone, after the parallel phase.
 markers = ["serial_db: uses database state every worker shares (cluster roles, a fixed database); runs alone"]
 pythonpath = ["src"]
+
+[tool.pyright]
+include = ["src/origenlab_api/v2"]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"

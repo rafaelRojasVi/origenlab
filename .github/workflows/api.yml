@@ -55,3 +55,7 @@ jobs:
       - name: Remove the databases
         if: always()
         run: scripts/test_db.sh down "$RUNNER_TEMP/test-db.env"
+      - name: Type-check v2 (non-blocking)
+        working-directory: apps/api
+        run: uv run pyright
+        continue-on-error: true

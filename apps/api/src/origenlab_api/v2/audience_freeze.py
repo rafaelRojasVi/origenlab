@@ -732,7 +732,7 @@ class V2AudienceFreezeRepository(CommandTransaction):
                 conn.commit()
 
     def _freeze(self, cur: Any, operator: OperatorIdentity, f: dict[str, Any], receipt_id: str) -> dict[str, Any]:
-        from origenlab_api.v2.crm_workspace import read_marketing_audience_inputs
+        from origenlab_api.v2.marketing_audience import read_marketing_audience_inputs
 
         cur.execute(
             """

@@ -16,6 +16,7 @@ _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
 
 
+
 def test_current_system_truth_notes_legacy_removed() -> None:
     text = _CURRENT_SYSTEM_TRUTH.read_text(encoding="utf-8")
     assert "8001" in text

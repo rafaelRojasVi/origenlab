@@ -621,7 +621,7 @@ Dashboard HTTP smokes: `npm run smoke:contacts`, `EXPECT_BACKEND=postgres npm ru
 
 ## API-3 mirror relocation (Phase 6 complete)
 
-Postgres mirror reporting lives under **`GET /mirror/*`** on this app. Legacy email-pipeline `:8000` API **removed** (API-3 Phase 6). **Strict gate:** `scripts/api3_phase6_grep_gate.sh`.
+Postgres mirror reporting lives under **`GET /mirror/*`** on this app. Legacy email-pipeline `:8000` API **removed** (API-3 Phase 6).
 
 Mirror reporting smoke (GET only; requires this app on :8001 + disposable `ORIGENLAB_POSTGRES_URL`):
 
@@ -632,7 +632,8 @@ cd apps/dashboard && npm run smoke:mirror
 **Live mirror smoke** (disposable Postgres on `:5433`; `:8001` only):
 
 ```bash
-apps/api/scripts/run_mirror_dual_server_parity.sh
+cd apps/api
+uv run python scripts/mirror_parity_smoke.py --mirror-base http://127.0.0.1:8001
 ```
 
 Report (historical): archived in git history (commit ff213a53 and earlier — API-3 archive removed in docs cleanup 2026-10-22).

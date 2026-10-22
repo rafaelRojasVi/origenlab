@@ -208,7 +208,8 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     )
     app.include_router(v2_router)
     app.include_router(cockpit_router)
-    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository, load_drive_ledgers
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+    from origenlab_api.v2.drive_ledgers import load_drive_ledgers
     from origenlab_api.v2.crm_workspace_routes import build_fx_rates, workspace_router
 
     ledgers = [p.strip() for p in (settings.v2_drive_archive_ledgers or "").split(",") if p.strip()]
