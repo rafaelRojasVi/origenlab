@@ -20,7 +20,7 @@ select ok(
   'quote_revision_sent_message_key unique constraint exists');
 
 select is(
-  (select array_agg(a.attname order by k.ord)
+  (select array_agg(a.attname::text order by k.ord)
      from pg_constraint c
      join pg_class r on r.oid = c.conrelid
      join pg_namespace n on n.oid = r.relnamespace
