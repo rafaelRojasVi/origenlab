@@ -169,6 +169,13 @@ def create_request_from_forward(repo: Any, cur: Any, operator: OperatorIdentity,
             "supplier_exception_reason": None, "note": note}, receipt_id)
         version = int(added["opportunity_version"])
 
+    # Add the customer as a participant so client_open_cases finds this case when the operator
+    # later opens «+ Nueva» for that same person. (owner, 2026-10-22)
+    customer_email = str(p.get("original_email") or "").strip().lower()
+    if customer_email and "@" in customer_email:
+        repo._add_case_sender_participant(cur, operator, receipt_id,
+                                          email=customer_email, case_id=case_id, note=note)
+
     links = _link_our_copies(repo, cur, operator, case_id, version, members, note, receipt_id)
     _customer_note(repo, cur, operator, case_id, p, members, receipt_id)
     _mark(cur, [m["id"] for m in members], "promoted")

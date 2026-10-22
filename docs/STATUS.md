@@ -3517,3 +3517,21 @@ natural» on the quote's Cliente card (name prefilled from «Datos del cliente»
 the requesting institution; the card then shows the person and «Persona natural (particular)». A
 persona natural is found by name only and takes no email domain, so a particular writing from a
 company's address never claims that company's domain. No migration (`kind` is free text).
+
+### 2.7.151 Request cases opened by R7/R11 add the sender as a participant; «+ Nueva» no longer duplicates them, 2026-10-22 — built, deploys on merge
+
+When a customer emails contacto@ asking for a quote, R7 opens a
+`lead`/`qualified` request case but wrote zero rows to
+`crm.opportunity_participant`. `client_open_cases` (the read that «+ Nueva»
+uses before opening a new case) searches open cases by organization, person,
+or contact_point_id through `crm.opportunity_participant`; with no participant
+row it could not find the request case and opened a duplicate instead.
+
+| What | Where |
+|---|---|
+| New helper | `V2CaseCommandRepository._add_case_sender_participant` (resolvies or creates the `crm.contact_point`, then inserts a `quote_recipient` participant, idempotent; reuses `_create_contact_point`) |
+| R7 (both paths) | `mail_rules.py` emits `ADD_CASE_SENDER_PARTICIPANT` after `open_commercial_case`; `mail_rules_repository.py` dispatches it |
+| R11 (forwarded) | `forwarded_requests.create_request_from_forward` calls the helper after opening the case |
+| Pipeline display | `_SQL_PIPELINE_PARTICIPANTS` in `crm_workspace.py` changed to INNER JOIN on `crm.person` so a bare contact-point participant does not replace the web-form contact on the pipeline card |
+
+API only; no migration, proxy, or dashboard change.

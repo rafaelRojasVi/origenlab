@@ -59,6 +59,7 @@ from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2 import forwarded_requests
 from origenlab_api.v2.mail_rules import (
+    ADD_CASE_SENDER_PARTICIPANT,
     ATTACH_FORWARD,
     AUTO,
     CONFIRM_ORGANIZATION_RECORD,
@@ -925,12 +926,24 @@ class MailRulesRepository(V2CaseCommandRepository):
             ATTACH_FORWARD: forwarded_requests.attach_forward_to_case,
             CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
             RECORD_AUTHORED_QUOTE_SENT: record_authored_quote_sent,
+            ADD_CASE_SENDER_PARTICIPANT: MailRulesRepository._add_case_sender_participant_step,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
         return local[command](self, cur, operator, dict(inputs), receipt_id)
 
     # ------------------------------------------------------------------ the three new handlers
+
+    def _add_case_sender_participant_step(self, cur: Any, operator: OperatorIdentity,
+                                           fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
+        """R7 step: wire the sender as a ``quote_recipient`` participant of the new request case.
+        (owner, 2026-10-22)"""
+        return self._add_case_sender_participant(
+            cur, operator, receipt_id,
+            email=str(fields.get("email") or ""),
+            case_id=str(fields["opportunity_id"]),
+            note=str(fields.get("note") or ""),
+        )
 
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:

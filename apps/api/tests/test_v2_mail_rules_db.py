@@ -1059,3 +1059,70 @@ def test_cap_seed_counts_only_form_mails_captured_in_the_last_24_hours(db) -> No
     caps = WebQuoteFormCaps()
     caps.seed_from_timestamps(stamps)
     assert len(caps.global_deque) == min(len(stamps), caps.GLOBAL_LIMIT)
+
+
+# ── fix: request cases must have the sender as a participant (owner, 2026-10-22) ──
+#
+# client_open_cases looks up open cases by contact_point_id; if no participant row exists for the
+# sender the lookup misses and create-quote opens a duplicate.  These three tests verify the fix.
+
+
+def test_r7_known_institution_request_adds_sender_as_participant_and_client_open_cases_finds_it(db, world) -> None:
+    """R7 (known institution path) adds the sender's email as a quote_recipient participant so
+    client_open_cases can locate the request case when the operator later opens «+ Nueva»."""
+    import psycopg
+    from origenlab_api.v2.quotes.reads import client_open_cases
+
+    sender_email = f"investigadora2-{world['tag']}@{world['client_domain']}"
+    with _owner(db) as conn:
+        request = _mail(
+            conn, thread=f"t-rfq-part-{world['tag']}", direction_hint=None,
+            sender=sender_email, recipients="contacto@origenlab.cl",
+            subject="Solicitud de cotización de instrumentos",
+        )
+    r7 = _apply_only(db, world, request)
+    assert r7["rule_id"] == "R7"
+    case_id = r7["case_id"]
+
+    # A quote_recipient participant row with the sender's address must be present.
+    cp_id, role, is_primary = _one(
+        db,
+        "select cp.id::text, p.role, p.is_primary "
+        "from crm.opportunity_participant p "
+        "join crm.contact_point cp on cp.id = p.contact_point_id "
+        "where p.opportunity_id = %s and cp.value_norm = %s and p.valid_to is null",
+        case_id, sender_email,
+    )
+    assert role == "quote_recipient" and is_primary is True
+
+    # client_open_cases must find the case by contact_point, the path create-quote uses.
+    with psycopg.connect(runtime_dsn(db), autocommit=True) as conn:
+        conn.execute("set role origenlab_api")
+        with conn.cursor() as cur:
+            cases = client_open_cases(cur, contact_point_id=cp_id)
+    assert any(c["id"] == case_id for c in cases), (
+        f"case {case_id!r} not in {[c['id'] for c in cases]}")
+
+
+def test_r7_free_mail_request_adds_sender_as_participant(db, world) -> None:
+    """R7 (free-mail / unknown-domain path) also adds the sender as a participant."""
+    sender_email = "elena@gmail.com"
+    with _owner(db) as conn:
+        request = _mail(
+            conn, thread=f"t-free-rfq-part-{world['tag']}", direction_hint=None,
+            sender=f"Elena Ficticia <{sender_email}>", recipients="contacto@origenlab.cl",
+            subject="Solicitud de cotización de equipos de laboratorio",
+        )
+        _requester_check(conn, request)
+    r7 = _apply_only(db, world, request)
+    assert r7["rule_id"] == "R7"
+    case_id = r7["case_id"]
+
+    count = _one(
+        db,
+        "select count(*) from crm.opportunity_participant p "
+        "join crm.contact_point cp on cp.id = p.contact_point_id "
+        "where p.opportunity_id = %s and cp.value_norm = %s and p.valid_to is null",
+        case_id, sender_email,
+    )[0]
+    assert count == 1
