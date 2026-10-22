@@ -14,7 +14,7 @@
 
 | Rule                    | Detail                                                                                                                                                                   |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Active API**          | This app on port **8001** only. Legacy email-pipeline FastAPI on **:8000** was **removed** (API-3 Phase 6).                                                              |
+| **Active API**          | This app on port **8001** only. Legacy email-pipeline FastAPI on **:8000** was **removed** (API-3 Phase 6). Removal enforcement: `apps/api/scripts/api3_phase6_grep_gate.sh` (run in CI). |
 | **Narrow write surface** | GET-only except the explicitly allowlisted `POST /operations/*` durable CRM commands and the tender annex preview/import (see `CURRENT_SYSTEM_TRUTH.md`). No send/ingest/migrate endpoints — ever. |
 | **Production auth**     | `ORIGENLAB_API_AUTH_TOKEN` required when `ORIGENLAB_ENV=production`; public routes: `/health` + `OPTIONS` only — see [docs/PRODUCTION_AUTH.md](docs/PRODUCTION_AUTH.md). |
 | **No pipeline writes**  | Do not import or invoke Gmail ingest, DNR refresh, mirror sync, or send scripts from this package.                                                                       |

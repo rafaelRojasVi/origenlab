@@ -25,7 +25,7 @@ Optional **OrigenLab / Labdelivery** commercial-email support: retrieval over cu
 ## Agent start path
 
 0. Monorepo factual entry (when unsure which app): [`../../../docs/PROJECT_CONTEXT.md`](../../../docs/PROJECT_CONTEXT.md#m-proj-start)
-0b. **Agent policy (hard rules):** [`../AGENTS.md`](../AGENTS.md) · **active/current manifest:** [`../reports/out/active/current/manifest.json`](../reports/out/active/current/manifest.json) · **status:** `uv run python scripts/qa/operator_status.py`
+0b. **Agent policy (hard rules):** [`../AGENTS.md`](../AGENTS.md) · **active/current manifest:** `../reports/out/active/current/manifest.json` (local report `reports/out/active/current/manifest.json`, not in the repo) · **status:** `uv run python scripts/qa/operator_status.py`
 1. Operational procedures → [`RUNBOOK.md`](RUNBOOK.md#m-eprun-path)
 2. Technical design and data flow → [`ARCHITECTURE.md`](ARCHITECTURE.md#m-eparch-flow)
 3. Business/reporting intent → [`BUSINESS_CONTEXT.md`](BUSINESS_CONTEXT.md#m-epbiz-reporting)

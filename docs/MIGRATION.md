@@ -319,12 +319,12 @@ proposal, grouped by category, to be executed under the gates in §9.
 | Group | Paths | Proposal |
 |---|---|---|
 | Architecture truth and direction | `docs/architecture/CURRENT_SYSTEM_TRUTH.md`, `TARGET_COMMERCIAL_ARCHITECTURE.md` | superseded by [`ARCHITECTURE.md`](ARCHITECTURE.md) + [`DATA.md`](DATA.md); delete after slice 8 |
-| Point-in-time audits and ledgers | `docs/architecture/COMMERCIAL_OPERATING_SYSTEM_AUDIT.md`, `COMMERCIAL_RESET_LEDGER.md`, `docs/SECURITY_AUDIT_RENDER_DASHBOARD.md`, `docs/catalog/PRODUCT_CATALOG_SCHEMA_AUDIT_V1.md` | historical; git history is the archive; delete after slice 8 |
+| Point-in-time audits and ledgers | `docs/SECURITY_AUDIT_RENDER_DASHBOARD.md`, `docs/catalog/PRODUCT_CATALOG_SCHEMA_AUDIT_V1.md` | historical; git history is the archive; delete after slice 8. `COMMERCIAL_OPERATING_SYSTEM_AUDIT.md` and `COMMERCIAL_RESET_LEDGER.md` deleted 2026-10-22 |
 | Design-only schema documents | `docs/commercial/COMMERCIAL_DEAL_LEDGER_SCHEMA_V1.md` | never fully built; superseded by [`DOMAIN.md`](DOMAIN.md); delete after slice 8 |
 | Business rules | `docs/business/BUSINESS_RULES_QUOTES_AND_SUPPLIERS.md` | content absorbed into [`DOMAIN.md`](DOMAIN.md) §4 and [`WORKFLOWS.md`](WORKFLOWS.md) §W3/W8; delete after slice 3 |
 | Re-foundation pass output | `docs/refoundation/REFOUNDATION_PLAN.md`, `SYSTEM_INVENTORY.md`, `docs/data/DATA_AUTHORITY_MAP.md`, `docs/data/SQLITE_REGISTER.md` | **retain until slice 8** — they are the V1 inventory this migration reads; delete once the archive manifests are verified |
 | Workflow examples and template | `docs/workflows/*.md`, `docs/templates/WORKFLOW_TEMPLATE.md` | superseded by [`WORKFLOWS.md`](WORKFLOWS.md); delete after slice 5 |
-| Documentation meta | `docs/DOCUMENTATION_MAP.md`, `docs/PROJECT_CONTEXT.md` | superseded by [`README.md`](README.md); delete after slice 8, together with the last legacy file it indexes |
+| Documentation meta | `docs/PROJECT_CONTEXT.md` | superseded by [`README.md`](README.md); delete after slice 8, together with the last legacy file it indexes. `docs/DOCUMENTATION_MAP.md` already deleted (housekeeping 2026-10-22) |
 | Proxy and access security | `docs/CLOUDFLARE_ACCESS_DASHBOARD_SECURITY.md` | rewritten 2026-10-03 to cover the API application only; delete with the Worker |
 | Release and publication | `docs/RELEASE_PROCESS.md`, `docs/PUBLIC_RELEASE_CHECKLIST.md`, `docs/SECURITY_PUBLIC_REPO.md`, `docs/dashboard/PRODUCTION_DASHBOARD_SMOKE_CHECKLIST.md` | superseded by [`OPERATIONS.md`](OPERATIONS.md); delete after slice 8 |
 | App documentation trees | `apps/email-pipeline/docs/**` (~89 files), `apps/api/docs/**` (~20), `apps/web/docs/**` (~31), `apps/dashboard/docs/**` (~5) | delete with the code they document, slice by slice; `apps/web/docs/**` is **retained** because `apps/web` is retained |

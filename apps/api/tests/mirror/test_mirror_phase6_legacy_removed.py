@@ -12,19 +12,10 @@ from parity_routes import REQUIRED_MIRROR_OPENAPI_PATHS
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
-_PHASE6_DOC = _REPO_ROOT / "apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md"
 _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
 _DASHBOARD_PKG = _REPO_ROOT / "apps/dashboard/package.json"
 _LEGACY_SMOKE = _REPO_ROOT / "apps/dashboard/scripts/legacy-smoke.mjs"
-
-
-def test_phase6_legacy_removal_doc_exists() -> None:
-    assert _PHASE6_DOC.is_file()
-    text = _PHASE6_DOC.read_text(encoding="utf-8")
-    assert "Phase 6" in text
-    assert "origenlab_api" in text
-    assert "smoke:legacy" in text
 
 
 def test_legacy_email_pipeline_tree_removed() -> None:

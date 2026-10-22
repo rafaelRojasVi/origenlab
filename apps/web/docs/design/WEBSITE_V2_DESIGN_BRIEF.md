@@ -168,7 +168,7 @@ Other measured facts: 7 `<img>` tags without `width`/`height` (CLS risk; list in
 Present: unique titles and descriptions per page, canonical URLs, OG/Twitter tags, `robots.txt`, hand-maintained `sitemap.xml` (16 URLs, no `lastmod`), product `metaTitle`/`metaDescription`.
 Absent: any Schema.org structured data, a 404 page, a raster OG image, PNG touch icons, `theme-color`, breadcrumbs, `noindex` on `/logo-lab`, sitemap generation from routes, hreflang (not needed, single locale).
 
-### 1.10 Prior decisions on record (2026-05-16 audit series, `docs/audits/`)
+### 1.10 Prior decisions on record (2026-05-16 audit series, commit ff213a53)
 
 Kept: Tidio as the chat channel (FloatingChat removed), SERVA and Ortoalresa at equal visual level, five Ortoalresa centrifuges as the editorial family, Bioprocen 22 R withdrawn but its image archived, conservative commercial copy (no exclusivity, no stock, no lead times). Deferred: SERVA detail pages, header categories dropdown, PNG OG image, Tidio replacement. Open TODO: written permission to reproduce Ortoalresa and SERVA logos and product images on origenlab.cl (`docs/product-assets.md`).
 

@@ -114,20 +114,3 @@ def test_parity_route_pair_count_matches_phase2_checklist() -> None:
     assert len(LEGACY_TO_MIRROR_ROUTE_PAIRS) == 15
 
 
-def test_phase6_legacy_removal_doc_exists() -> None:
-    doc = Path(__file__).resolve().parents[2] / "docs" / "API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md"
-    assert doc.is_file()
-
-
-def test_mirror_parity_checklist_doc_exists() -> None:
-    doc = (
-        Path(__file__).resolve().parents[2]
-        / "docs"
-        / "archive"
-        / "api3"
-        / "API-3_PHASE2_PARITY_CHECKLIST.md"
-    )
-    assert doc.is_file()
-    text = doc.read_text(encoding="utf-8")
-    for _legacy, mirror, _note in LEGACY_TO_MIRROR_ROUTE_PAIRS:
-        assert mirror in text, f"doc missing mirror path {mirror}"

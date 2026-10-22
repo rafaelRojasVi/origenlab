@@ -14,11 +14,6 @@ _LEGACY_DASHBOARD_ROOT = _REPO_ROOT / "apps/dashboard/src/legacy"
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
 _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
-_PHASE6_DOC = _REPO_ROOT / "apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md"
-
-
-def test_phase6_legacy_removal_doc_exists() -> None:
-    assert _PHASE6_DOC.is_file()
 
 
 def test_current_system_truth_notes_legacy_removed() -> None:

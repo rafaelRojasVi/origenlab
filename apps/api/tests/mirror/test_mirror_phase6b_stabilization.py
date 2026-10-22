@@ -12,8 +12,6 @@ from parity_routes import REQUIRED_MIRROR_OPENAPI_PATHS
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
-_PHASE6B_DOC = _REPO_ROOT / "apps/api/docs/API-3_PHASE6B_STABILIZATION.md"
-_ARCHIVE_INDEX = _REPO_ROOT / "apps/api/docs/archive/api3/README.md"
 _GATE_SCRIPT = _REPO_ROOT / "apps/api/scripts/api3_phase6_grep_gate.sh"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
 _DASHBOARD_PKG = _REPO_ROOT / "apps/dashboard/package.json"
@@ -34,21 +32,6 @@ _LIVE_LEGACY_RUN_PATTERNS = (
     re.compile(r"--port\s+8000\b"),
     re.compile(r"smoke:legacy"),
 )
-
-
-def test_phase6b_stabilization_doc_exists() -> None:
-    assert _PHASE6B_DOC.is_file()
-    text = _PHASE6B_DOC.read_text(encoding="utf-8")
-    assert "apps/api" in text
-    assert "fastapi package" in text.lower()
-    assert "/operator/" in text or "dashboard routes" in text.lower()
-
-
-def test_api3_archive_index_exists() -> None:
-    assert _ARCHIVE_INDEX.is_file()
-    text = _ARCHIVE_INDEX.read_text(encoding="utf-8")
-    assert "historical" in text.lower()
-    assert "API-3_PHASE2_PARITY_CHECKLIST.md" in text
 
 
 def test_legacy_email_pipeline_tree_must_not_exist() -> None:

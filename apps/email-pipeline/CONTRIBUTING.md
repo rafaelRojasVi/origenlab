@@ -14,9 +14,15 @@ uv sync --group dev
 
 ### Running checks
 
+From the **repo root** (canonical — same as CI):
+
 ```bash
-uv run pytest
+make setup      # once: installs all dependencies and pre-commit hooks
+make db-up      # once per session: starts disposable test databases
+make check      # only the suites your change needs, in parallel
 ```
+
+See [root `AGENTS.md` → *Testing*](../../AGENTS.md) for the full reference.
 
 ### Data safety
 

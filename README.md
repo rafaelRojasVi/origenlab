@@ -132,6 +132,8 @@ cd apps/email-pipeline && uv sync && uv run origenlab operator-automation-status
 
 Do not run `--apply`, send, purge, or mirror workflows from this README. See app runbooks for operator procedures.
 
+**Testing:** `make setup` (once), `make db-up` (once per session), then `make check` — see [AGENTS.md → Testing](AGENTS.md).
+
 ## Security
 
 This repository is **public**. Do not commit `.env`, SQLite databases, mail archives, `reports/out`, keys, or client collateral.
@@ -152,7 +154,7 @@ This repository is **public**. Do not commit `.env`, SQLite databases, mail arch
 | Canonical V1 system truth | [`docs/architecture/CURRENT_SYSTEM_TRUTH.md`](docs/architecture/CURRENT_SYSTEM_TRUTH.md) |
 | V1 target commercial architecture | [`docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md`](docs/architecture/TARGET_COMMERCIAL_ARCHITECTURE.md) |
 | Monorepo architecture (V1 reference) | [`docs/PROJECT_CONTEXT.md`](docs/PROJECT_CONTEXT.md) |
-| Documentation map | [`docs/DOCUMENTATION_MAP.md`](docs/DOCUMENTATION_MAP.md) |
+| Documentation map | [`docs/README.md`](docs/README.md#m-docmap-entry) |
 | Release process | [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) |
 | Email pipeline | [`apps/email-pipeline/docs/README.md`](apps/email-pipeline/docs/README.md) |
 | Operator API | [`apps/api/README.md`](apps/api/README.md) |
