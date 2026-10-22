@@ -3496,3 +3496,11 @@ saved, the revision's `tax_rate` is 0, so IVA is 0 and the total is the net; unt
 `iva_rate` parameter again. A draft reloads ticked when its rate is 0, and approval re-prices with
 the stored rate as before (no migration: `tax_rate` already allowed 0). The PDF then prints only
 «Total CLP sin IVA» (no Neto/IVA rows, and a tender offer no per-line IVA columns).
+
+### 2.7.149 A particular's quote reads «Persona natural» on the Cotizador, 2026-10-22 — built, deploys on merge
+
+Since #816 a quote with no institution (not a tender) is approved, the recipient being the client;
+the Cliente card still said «Sin institución · RUT pendiente» with «Agregar institución» as its only
+action, so the owner could not tell (#818). It now reads «Persona natural (particular)», the person
+from «Para» or what «Datos del cliente» typed (name, institution name, RUT), and that the quote is
+issued in the person's name; adding an institution is a secondary link. Dashboard only.
