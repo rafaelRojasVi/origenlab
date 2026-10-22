@@ -21,16 +21,13 @@ imported and is genuinely empty.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import getaddresses
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from origenlab_api.v2.audience_freeze import SEND_TIME_REFUSAL_LABEL
@@ -45,9 +42,24 @@ from origenlab_api.v2.campaign_history import (
     read_totals,
     replies_state,
 )
+from origenlab_api.v2.campaign_state import (  # noqa: F401 - re-exported from here
+    _campaign_content_list_state,
+    _compute_campaign_content_state,
+)
 from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
+from origenlab_api.v2.drive_ledgers import (  # noqa: F401 - DriveLink, load_drive_ledgers: this module's API
+    DRIVE_FILE_URL,
+    DRIVE_FOLDER_URL,
+    DriveLink,
+    DriveLedgerError,
+    load_drive_ledgers,
+)
 from origenlab_api.v2.mail_rules import OWN_DOMAINS, WEB_FORM_REPLY_TO_SQL, mail_direction, web_form_enquirer
-from origenlab_api.v2.marketing_audience import address_ref, addresses_in
+from origenlab_api.v2.marketing_audience import (
+    address_ref,
+    addresses_in,
+    read_marketing_audience_inputs,  # noqa: F401 - re-exported from here
+)
 from origenlab_api.v2.person_suggestions import safe_person_suggestions
 from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_contents: this module's API
     IVA_RATE,
@@ -84,8 +96,6 @@ def _cross_thread_addresses(sender: str | None, recipients: str | None) -> set[s
 
 
 GMAIL_MESSAGE_URL = "https://mail.google.com/mail/u/0/#all/{}"
-DRIVE_FOLDER_URL = "https://drive.google.com/drive/folders/{}"
-DRIVE_FILE_URL = "https://drive.google.com/file/d/{}/view"
 
 #: The one mailbox Phase 4a captures, and when its capture counts as late (OPERATIONS.md §8).
 MAIL_SYNC_MAILBOX = "contacto@origenlab.cl"
@@ -403,93 +413,6 @@ ATTENTION_LABELS_ES: dict[str, str] = {
 }
 
 
-# ─────────────────────────────────────────────────────────── Drive ledgers ──
-
-
-@dataclass(frozen=True)
-class DriveLink:
-    document_sha256: str
-    file_id: str
-    file_url: str
-    folder_id: str | None
-    case_key: str | None
-    quote_number: str | None
-    revision: int | None
-    original_filename: str | None
-    archive_status: str | None
-    ledger_crm_status: str | None
-    lifecycle: str | None
-    gmail_message_id: str | None
-    ledger: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "source": "archive_ledger",
-            "ledger": self.ledger,
-            "document_sha256": self.document_sha256,
-            "file_id": self.file_id,
-            "file_url": self.file_url,
-            "folder_id": self.folder_id,
-            "folder_url": DRIVE_FOLDER_URL.format(self.folder_id) if self.folder_id else None,
-            "case_key": self.case_key,
-            "quote_number": self.quote_number,
-            "revision": self.revision,
-            "original_filename": self.original_filename,
-            "archive_status": self.archive_status,
-        }
-
-
-class DriveLedgerError(ValueError):
-    """An archive ledger is missing or malformed. Raised at startup, never per request."""
-
-
-def _upload_report_links(p: Path) -> list[DriveLink]:
-    """The first case upload (``drive_case_upload_report.json``) predates ``archive_links.jsonl``.
-    Only a report whose every upload was verified is accepted, and only verified uploads."""
-    try:
-        report = json.loads(p.read_text(encoding="utf-8"))
-        uploads = report["uploads"]
-    except (ValueError, KeyError) as exc:
-        raise DriveLedgerError(f"{p}: not a case upload report") from exc
-    if report.get("mode") != "upload" or report.get("all_verified") is not True:
-        raise DriveLedgerError(f"{p}: upload report is not a verified upload run")
-    links = []
-    for u in uploads:
-        f, folder = u.get("file") or {}, u.get("folder") or {}
-        props = f.get("appProperties") or {}
-        sha = str(f.get("sha256Checksum") or props.get("origenlab_document_sha256") or "").lower()
-        if not (sha and f.get("id") and u.get("downloaded_sha256_matches") is True):
-            continue
-        rev = props.get("origenlab_revision")
-        links.append(
-            DriveLink(
-                document_sha256=sha,
-                file_id=f["id"],
-                file_url=DRIVE_FILE_URL.format(f["id"]),
-                folder_id=folder.get("id"),
-                case_key=u.get("case_key"),
-                quote_number=u.get("quote_number"),
-                revision=int(rev) if rev and str(rev).isdigit() else None,
-                original_filename=f.get("name"),
-                archive_status="archived_verified",
-                ledger_crm_status=None,
-                lifecycle=None,
-                gmail_message_id=props.get("origenlab_gmail_message_id"),
-                ledger=p.parent.name,
-            )
-        )
-    return links
-
-
-def _add(index: dict[str, DriveLink], link: DriveLink, where: str) -> None:
-    prior = index.get(link.document_sha256)
-    if prior is not None and prior.file_id != link.file_id:
-        raise DriveLedgerError(
-            f"{where}: document {link.document_sha256[:12]} is archived as two different Drive files"
-        )
-    index.setdefault(link.document_sha256, link)
-
-
 def live_drive_overview(
     revisions: set[str], live_drive_shas: set[str], ledgers: Mapping[str, DriveLink],
 ) -> dict[str, int | bool]:
@@ -559,50 +482,6 @@ def drive_links_from_records(revisions: Iterable[Mapping[str, Any]],
             ledger="crm",
         )
     return out
-
-
-def load_drive_ledgers(paths: Iterable[str | Path]) -> dict[str, DriveLink]:
-    """Index every ledger row by document SHA-256. A later ledger never silently overrides an
-    earlier one with a different Drive file: two ledgers disagreeing about one document refuses.
-
-    Accepts ``archive_links.jsonl`` ledgers and verified ``drive_case_upload_report.json`` runs."""
-    index: dict[str, DriveLink] = {}
-    for raw in paths:
-        p = Path(raw)
-        if not p.is_file():
-            raise DriveLedgerError(f"archive ledger not found: {p}")
-        ledger = p.parent.name
-        if p.suffix == ".json":
-            for link in _upload_report_links(p):
-                _add(index, link, str(p))
-            continue
-        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-                sha = str(row["document_sha256"]).lower()
-                file_id = str(row["drive_file_id"])
-            except (ValueError, KeyError) as exc:
-                raise DriveLedgerError(f"{p}:{n}: malformed ledger row") from exc
-            link = DriveLink(
-                document_sha256=sha,
-                file_id=file_id,
-                file_url=row.get("drive_web_view_link") or DRIVE_FILE_URL.format(file_id),
-                folder_id=row.get("drive_folder_id"),
-                case_key=row.get("case_key"),
-                quote_number=row.get("quote_number"),
-                revision=row.get("revision"),
-                original_filename=row.get("original_filename"),
-                archive_status=row.get("archive_status"),
-                ledger_crm_status=row.get("crm_status"),
-                lifecycle=row.get("lifecycle"),
-                gmail_message_id=row.get("gmail_message_id"),
-                ledger=ledger,
-            )
-            _add(index, link, f"{p}:{n}")
-    return index
-
 
 # ────────────────────────────────────────────────────────── pure composition ──
 
@@ -2871,9 +2750,19 @@ class CrmWorkspaceRepository:
     # -- review queue: what the CRM itself cannot show
 
     def review(self) -> dict[str, Any]:
+        # Collect only the sha256 values we actually need to check (the ones present in the
+        # Drive ledgers), then look them up with a targeted any(%s) instead of fetching every
+        # revision's hash unconditionally. Empty ledger → no query needed.
+        drive_shas = [link.document_sha256 for link in self._drive.values() if link.document_sha256]
         with self._read() as cur:
-            cur.execute("select pdf_sha256 from crm.quote_revision where pdf_sha256 is not null")
-            in_crm = {str(r[0]).lower() for r in cur.fetchall()}
+            if drive_shas:
+                cur.execute(
+                    "select pdf_sha256 from crm.quote_revision where pdf_sha256 = any(%s)",
+                    (drive_shas,),
+                )
+                in_crm = {str(r[0]).lower() for r in cur.fetchall()}
+            else:
+                in_crm: set[str] = set()
             cur.execute(
                 """
                 select a.kind, a.resolution, count(*) from evidence.assertion a
@@ -2940,155 +2829,6 @@ _LINE_NAMES: dict[str, str] = {
 }
 
 
-def _compute_campaign_content_state(
-    cur: Any,
-    campaign_id: str,
-    campaign_row: Mapping[str, Any],
-) -> tuple[str, str | None, list[dict], dict | None]:
-    """Return (html_state, html, contents[], recovery) for a campaign that has no body_html.
-
-    Reads ``outbound.campaign_content`` and ``outbound.campaign_content_message``.  The
-    caller must own the read-only cursor and must have already confirmed ``body_html`` is
-    ``None`` on the campaign row.  This helper must not be called when ``body_html`` is set
-    (the fingerprint path handles that case in ``campaign_archive``).
-    """
-    # Content rows for this campaign (immutable; SELECT-only)
-    cur.execute(
-        """
-        select cc.id::text, cc.content_kind, cc.variant_no, cc.subject, cc.preheader,
-               cc.body_html, cc.body_html_sha256, cc.body_html_normalized_sha256,
-               cc.message_count, cc.first_sent_at::text, cc.last_sent_at::text,
-               cc.attribution_method, cc.attribution_confidence, cc.attribution_policy_version,
-               cc.unmatched_attempt_count,
-               (select count(*)::int from outbound.campaign_content_message ccm
-                 where ccm.campaign_content_id = cc.id
-                   and ccm.send_attempt_id is not null) as linked_attempts
-          from outbound.campaign_content cc
-         where cc.campaign_id = %s
-         order by cc.content_kind, cc.variant_no
-        """,
-        (campaign_id,),
-    )
-    cols = [d[0] for d in cur.description]
-    raw_contents = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
-
-    # Verify each content row: sha256(body_html) == body_html_sha256.
-    # Build a separate contents list (body_html excluded) and keep a parallel map of
-    # body_html by id so the html-state logic can still read it without touching raw_contents.
-    html_by_id: dict[str, str | None] = {}
-    contents: list[dict[str, Any]] = []
-    for row in raw_contents:
-        body = row.get("body_html") or ""
-        actual = hashlib.sha256(body.encode()).hexdigest()
-        verified = actual == row["body_html_sha256"]
-        html_by_id[row["id"]] = row["body_html"] if verified else None
-        content_row = dict(row)
-        # The variant's HTML travels only when its stored hash recomputes; a mismatch ships null.
-        content_row["body_html"] = row["body_html"] if verified else None
-        content_row["hash_verified"] = verified
-        contents.append(content_row)
-
-    # Recovery metadata: from the origin source_record of any content row for this campaign
-    recovery: dict[str, Any] | None = None
-    if raw_contents:
-        cur.execute(
-            """
-            select distinct on (sr.id)
-                   cc.attribution_policy_version as policy_version,
-                   sum(cc.message_count) over () as matched_messages,
-                   max(cc.unmatched_attempt_count) over () as unmatched_attempts,
-                   sr.payload_sha256 as manifest_sha256
-              from outbound.campaign_content cc
-              join evidence.source_record sr on sr.id = cc.origin_source_record_id
-             where cc.campaign_id = %s
-             order by sr.id
-             limit 1
-            """,
-            (campaign_id,),
-        )
-        rec_row = cur.fetchone()
-        if rec_row:
-            recovery = {
-                "policy_version": rec_row[0],
-                "matched_messages": int(rec_row[1]) if rec_row[1] is not None else 0,
-                "unmatched_attempts": int(rec_row[2]) if rec_row[2] is not None else 0,
-                "manifest_sha256": rec_row[3],
-            }
-
-    sent_html_rows = [c for c in contents if c["content_kind"] == "sent_html"]
-    draft_rows = [c for c in contents if c["content_kind"] == "historical_draft"]
-
-    if sent_html_rows:
-        # Use variant 1; html is None when hash does not verify.
-        v1 = next((c for c in sent_html_rows if c["variant_no"] == 1), sent_html_rows[0])
-        html_state = "sent_html_archived" if v1["hash_verified"] else "fingerprint_mismatch"
-        html = html_by_id.get(v1["id"]) if v1["hash_verified"] else None
-        return html_state, html, contents, recovery
-
-    if draft_rows:
-        v1_draft = next((c for c in draft_rows if c["variant_no"] == 1), draft_rows[0])
-        v1_raw = next((r for r in raw_contents if r["id"] == v1_draft["id"]), None)
-        html_state = "historical_draft"
-        html = v1_raw["body_html"] if v1_raw else None
-        return html_state, html, contents, recovery
-
-    # No content rows — check for an ambiguous attribution source record
-    v1_id = campaign_row.get("v1_campaign_id")
-    if v1_id:
-        cur.execute(
-            """
-            select 1 from evidence.source_record sr
-             where sr.kind = 'migration_manifest'
-               and sr.dedupe_key like %s
-               and sr.payload->>'decision' = 'ambiguous'
-             limit 1
-            """,
-            (f"migration_manifest:campaign-content-recovery:{v1_id}:%",),
-        )
-        if cur.fetchone():
-            return "ambiguous_attribution", None, contents, recovery
-
-    # Archived imported campaign with no content → not_recovered; native → not_archived
-    origin = campaign_row.get("origin", "")
-    status = campaign_row.get("status", "")
-    if origin == "imported_v1" and status == "archived":
-        return "not_recovered", None, contents, recovery
-
-    return ("not_frozen" if status == "draft" else "not_archived"), None, contents, recovery
-
-
-def _campaign_content_list_state(
-    cur: Any,
-    campaign_ids: list[str],
-) -> dict[str, tuple[bool, str]]:
-    """Bulk-compute (has_html_from_content, html_state_stub) for the marketing list.
-
-    Returns a dict keyed by campaign_id. ``has_html`` is True when there is at least one
-    ``sent_html`` content row. ``html_state_stub`` is ``'sent_html_archived'`` or
-    ``'historical_draft'`` when content exists; callers must fall back to the campaign-row
-    logic for campaigns with no content rows.
-    """
-    if not campaign_ids:
-        return {}
-    cur.execute(
-        """
-        select campaign_id::text,
-               bool_or(content_kind = 'sent_html') as has_sent_html,
-               bool_or(content_kind = 'historical_draft') as has_draft
-          from outbound.campaign_content
-         where campaign_id = any(%s::uuid[])
-         group by 1
-        """,
-        (campaign_ids,),
-    )
-    result: dict[str, tuple[bool, str]] = {}
-    for cid, has_sent, has_draft in cur.fetchall():
-        if has_sent:
-            result[cid] = (True, "sent_html_archived")
-        elif has_draft:
-            result[cid] = (False, "historical_draft")
-    return result
-
 
 def _attach_interests(
     rows: list[dict[str, Any]], address_by_id: dict[str, str], inputs: "AudienceInputs"
@@ -3109,230 +2849,3 @@ def _attach_interests(
         r["interests"] = by_address.get(address_by_id.get(r["recipient_id"], ""), [])
 
 
-def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
-    """Everything `marketing_audience.compose` reads, on the caller's cursor.
-
-    The workspace calls it in a read-only transaction; `freeze-campaign-audience` calls it
-    inside its own repeatable-read write transaction, so the audience it freezes is the one
-    it evaluated.
-    """
-    from origenlab_api.v2.marketing_audience import AudienceInputs, CaseFacts, EligibilityFacts
-
-    _rows = CrmWorkspaceRepository._rows
-    cur.execute(
-        """
-        select o.id::text as opportunity_id, o.title, o.stage, o.created_at, o.closed_at,
-               org.id::text as organization_id, org.name as organization_name,
-               (select min(qr.sent_at) from crm.quote q
-                  join crm.quote_revision qr on qr.quote_id = q.id
-                 where q.opportunity_id = o.id and qr.sent_at is not null) as first_sent_at,
-               coalesce((select array_agg(distinct q.quote_number order by q.quote_number)
-                           from crm.quote q where q.opportunity_id = o.id), '{}') as quote_numbers
-          from crm.opportunity o
-          left join crm.organization org on org.id = coalesce(
-                o.organization_id,
-                (select oo.organization_id from crm.opportunity_organization oo
-                  where oo.opportunity_id = o.id and oo.role = 'requesting_institution'
-                    and (oo.valid_to is null or oo.valid_to > current_date)
-                  order by oo.valid_from desc limit 1))
-        """
-    )
-    cases = {r["opportunity_id"]: CaseFacts(**r) for r in _rows(cur)}
-
-    cur.execute(
-        """
-        select i.id::text as interest_id, i.opportunity_id::text as opportunity_id,
-               i.confirmation, i.created_at, i.origin_source_record_id::text as origin_source_record_id,
-               array_remove(array[i.model_text, i.description, p.name, p.model_number,
-                                  mo.name], null) as texts
-          from crm.opportunity_interest i
-          left join catalog.product p on p.id = i.product_id
-          left join crm.organization mo
-                 on mo.id = coalesce(i.manufacturer_organization_id, p.manufacturer_organization_id)
-         where i.withdrawn_at is null
-        """
-    )
-    interests = _rows(cur)
-    cur.execute(
-        """
-        select op.opportunity_id::text as opportunity_id, cp.value_norm as address
-          from crm.opportunity_participant op
-          join crm.contact_point cp
-            on cp.id = op.contact_point_id
-            or (op.contact_point_id is null and cp.person_id = op.person_id and cp.kind = 'email')
-         where cp.kind = 'email' and (op.valid_to is null or op.valid_to > current_date)
-        """
-    )
-    participants: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for r in _rows(cur):
-        participants[r["opportunity_id"]].append({"address": r["address"]})
-    for row in interests:
-        row["participants"] = participants.get(row["opportunity_id"], [])
-
-    # A sent quotation's Gmail message, reached through the revision recorded from it or
-    # through an evidence link on the case.
-    # Only live evidence: a link a person removed, or a record rejected or quarantined, is not interest.
-    cur.execute(
-        """
-        select distinct on (s.id, link.opportunity_id)
-               s.id::text as source_record_id, link.opportunity_id::text as opportunity_id,
-               s.payload->>'subject_raw' as subject,
-               array(select d->>'filename'
-                       from jsonb_array_elements(case when jsonb_typeof(s.payload->'documents') = 'array'
-                                                      then s.payload->'documents' else '[]'::jsonb end) d
-                      where d->>'filename' is not null) as filenames,
-               coalesce(link.sent_at::text, s.payload->>'sent_at') as sent_at,
-               s.payload->>'recipients' as recipients
-          from evidence.source_record s
-          join (
-                select qr.origin_source_record_id as source_record_id, q.opportunity_id, qr.sent_at
-                  from crm.quote_revision qr join crm.quote q on q.id = qr.quote_id
-                 where qr.origin_source_record_id is not null
-                union all
-                select e.source_record_id, e.opportunity_id, null::timestamptz
-                  from crm.opportunity_evidence e
-                 where e.source_record_id is not null and e.unlinked_at is null
-               ) link on link.source_record_id = s.id
-         where s.kind = 'gmail_message'
-           and s.review_status <> 'rejected'
-           and not s.is_quarantined
-         order by s.id, link.opportunity_id, link.sent_at nulls last
-        """
-    )
-    evidence = _rows(cur)
-
-    facts = EligibilityFacts()
-    cur.execute(
-        """
-        select cp.id::text as id, cp.value_norm as address, cp.usage,
-               cp.person_id::text as person_id, cp.organization_id::text as organization_id,
-               pe.display_name as person_name
-          from crm.contact_point cp
-          left join crm.person pe on pe.id = cp.person_id
-         where cp.kind = 'email'
-        """
-    )
-    facts.contact_points = {r["address"]: r for r in _rows(cur)}
-    # An address block is an unsubscribe when its reason says so or when a «BAJA» was linked to
-    # it (W10): the same rule as outbound.marketing_contact_refusals, the send-time contract.
-    cur.execute(
-        """
-        select c.scope, c.value_norm, c.kind,
-               c.kind = 'block' and c.scope = 'address' and (c.reason = 'unsubscribe' or exists (
-                 select 1 from evidence.assertion a
-                  where a.kind = 'unsubscribe_request' and a.resolved_kind = 'contact_control'
-                    and a.resolved_id = c.id)) as unsubscribe
-          from outbound.contact_control c
-         where c.kind = 'prior_contact'
-            or (c.kind = 'block' and c.purpose in ('all', 'marketing'))
-            or (c.kind = 'cooldown' and c.until_at > now())
-        """
-    )
-    for scope, value, kind, unsubscribe in cur.fetchall():
-        if kind == "block" and unsubscribe:
-            facts.unsubscribed_addresses.add(value)
-        elif kind == "block":
-            (facts.blocked_addresses if scope == "address" else facts.blocked_domains).add(value)
-        elif kind == "cooldown":
-            facts.cooldown_addresses.add(value)
-        else:
-            facts.prior_contact_addresses.add(value)
-    # A «BAJA» held for review (W10): the same exact-address hold as the send-time contract.
-    cur.execute(
-        """
-        select distinct value_norm from evidence.assertion
-         where kind = 'unsubscribe_request' and resolution = 'unresolved'
-        """
-    )
-    facts.unsubscribe_pending_addresses = {r[0] for r in cur.fetchall()}
-    # W12: what a recontact reviewer is shown — the recorded sources of each prior contact, the
-    # last accepted send (date and campaign), or, for an imported V1 recipient with no attempt,
-    # its campaign without a date. Nothing is inferred: an unknown date stays unknown.
-    cur.execute(
-        """
-        select value_norm, source, reason, created_at::text
-          from outbound.contact_control
-         where kind = 'prior_contact' and scope = 'address'
-         order by value_norm, created_at, source
-        """
-    )
-    for value, source, reason, recorded_at in cur.fetchall():
-        facts.prior_contact_details.setdefault(value, {"sources": []})["sources"].append(
-            {"source": source, "reason": reason, "recorded_at": recorded_at})
-    cur.execute(
-        """
-        select distinct on (r.address_norm) r.address_norm, c.id::text, c.name
-          from outbound.campaign_recipient r join outbound.campaign c on c.id = r.campaign_id
-         where r.state in ('sent', 'bounced', 'replied', 'unsubscribed')
-         order by r.address_norm, r.updated_at desc, c.id
-        """
-    )
-    for value, campaign_id, campaign_name in cur.fetchall():
-        if value in facts.prior_contact_details:
-            facts.prior_contact_details[value].update(campaign_id=campaign_id, campaign_name=campaign_name)
-    cur.execute(
-        """
-        select distinct on (a.address_norm) a.address_norm, a.accepted_at::text, c.id::text, c.name
-          from outbound.send_attempt a left join outbound.campaign c on c.id = a.campaign_id
-         where a.submission_state = 'accepted'
-         order by a.address_norm, a.accepted_at desc, a.id
-        """
-    )
-    for value, accepted_at, campaign_id, campaign_name in cur.fetchall():
-        if value in facts.prior_contact_details:
-            facts.prior_contact_details[value].update(
-                last_contact_at=accepted_at, campaign_id=campaign_id, campaign_name=campaign_name)
-    cur.execute(
-        """
-        select address_norm from outbound.send_attempt
-         where error_class = 'invalid_address' or bounce_class = 'hard'
-        union
-        select address_norm from outbound.campaign_recipient
-         where 'invalid_address' = any(exclusion_reasons)
-        """
-    )
-    facts.invalid_addresses = {r[0] for r in cur.fetchall()}
-    cur.execute(
-        """
-        select organization_id::text from crm.organization_relationship
-         where role in ('supplier', 'manufacturer')
-           and (valid_to is null or valid_to > current_date)
-        union
-        select organization_id::text from crm.opportunity_organization
-         where role in ('supplier', 'manufacturer')
-           and (valid_to is null or valid_to > current_date)
-        """
-    )
-    facts.supplier_organization_ids = {r[0] for r in cur.fetchall()}
-    cur.execute(
-        """
-        select d.domain_norm from crm.organization_domain d
-         where d.scope = 'exclusive' and d.organization_id::text = any(%s)
-        """,
-        (list(facts.supplier_organization_ids),),
-    )
-    facts.supplier_domains = {r[0] for r in cur.fetchall()}
-    cur.execute(
-        """
-        select value_norm from evidence.assertion
-         where kind = 'supplier_candidate' and resolution in ('unresolved', 'ambiguous')
-        """
-    )
-    facts.candidate_supplier_domains = {r[0] for r in cur.fetchall()}
-    cur.execute(
-        """
-        select kind || ':' || resolution, count(*) from evidence.assertion
-         where resolution in ('unresolved', 'ambiguous')
-           and kind in ('organization_name', 'contact_address', 'affiliation', 'supplier_candidate')
-         group by 1
-        """
-    )
-    review_queue = {k: int(n) for k, n in cur.fetchall()}
-
-    return AudienceInputs(
-        cases=cases,
-        interests=interests,
-        quotation_evidence=evidence,
-        eligibility=facts,
-        review_queue=review_queue,
-    )

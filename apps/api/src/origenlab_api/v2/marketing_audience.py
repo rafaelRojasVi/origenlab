@@ -578,3 +578,240 @@ def apply_filter(composed: Mapping[str, Any], flt: AudienceFilter) -> dict[str, 
             ],
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Database reader — extracted from crm_workspace so audience_freeze can call
+# it without importing the full workspace module (circular-import avoidance).
+# ---------------------------------------------------------------------------
+
+def _rows(cur: Any) -> list[dict[str, Any]]:
+    """Convert the last cursor result to a list of column-keyed dicts."""
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
+
+
+def read_marketing_audience_inputs(cur: Any) -> "AudienceInputs":
+    """Everything `compose` reads, on the caller's cursor.
+
+    The workspace calls it in a read-only transaction; `freeze-campaign-audience` calls it
+    inside its own repeatable-read write transaction, so the audience it freezes is the one
+    it evaluated.
+    """
+    cur.execute(
+        """
+        select o.id::text as opportunity_id, o.title, o.stage, o.created_at, o.closed_at,
+               org.id::text as organization_id, org.name as organization_name,
+               (select min(qr.sent_at) from crm.quote q
+                  join crm.quote_revision qr on qr.quote_id = q.id
+                 where q.opportunity_id = o.id and qr.sent_at is not null) as first_sent_at,
+               coalesce((select array_agg(distinct q.quote_number order by q.quote_number)
+                           from crm.quote q where q.opportunity_id = o.id), '{}') as quote_numbers
+          from crm.opportunity o
+          left join crm.organization org on org.id = coalesce(
+                o.organization_id,
+                (select oo.organization_id from crm.opportunity_organization oo
+                  where oo.opportunity_id = o.id and oo.role = 'requesting_institution'
+                    and (oo.valid_to is null or oo.valid_to > current_date)
+                  order by oo.valid_from desc limit 1))
+        """
+    )
+    cases = {r["opportunity_id"]: CaseFacts(**r) for r in _rows(cur)}
+
+    cur.execute(
+        """
+        select i.id::text as interest_id, i.opportunity_id::text as opportunity_id,
+               i.confirmation, i.created_at, i.origin_source_record_id::text as origin_source_record_id,
+               array_remove(array[i.model_text, i.description, p.name, p.model_number,
+                                  mo.name], null) as texts
+          from crm.opportunity_interest i
+          left join catalog.product p on p.id = i.product_id
+          left join crm.organization mo
+                 on mo.id = coalesce(i.manufacturer_organization_id, p.manufacturer_organization_id)
+         where i.withdrawn_at is null
+        """
+    )
+    interests = _rows(cur)
+    cur.execute(
+        """
+        select op.opportunity_id::text as opportunity_id, cp.value_norm as address
+          from crm.opportunity_participant op
+          join crm.contact_point cp
+            on cp.id = op.contact_point_id
+            or (op.contact_point_id is null and cp.person_id = op.person_id and cp.kind = 'email')
+         where cp.kind = 'email' and (op.valid_to is null or op.valid_to > current_date)
+        """
+    )
+    participants: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in _rows(cur):
+        participants[r["opportunity_id"]].append({"address": r["address"]})
+    for row in interests:
+        row["participants"] = participants.get(row["opportunity_id"], [])
+
+    # A sent quotation's Gmail message, reached through the revision recorded from it or
+    # through an evidence link on the case.
+    # Only live evidence: a link a person removed, or a record rejected or quarantined, is not interest.
+    cur.execute(
+        """
+        select distinct on (s.id, link.opportunity_id)
+               s.id::text as source_record_id, link.opportunity_id::text as opportunity_id,
+               s.payload->>'subject_raw' as subject,
+               array(select d->>'filename'
+                       from jsonb_array_elements(case when jsonb_typeof(s.payload->'documents') = 'array'
+                                                      then s.payload->'documents' else '[]'::jsonb end) d
+                      where d->>'filename' is not null) as filenames,
+               coalesce(link.sent_at::text, s.payload->>'sent_at') as sent_at,
+               s.payload->>'recipients' as recipients
+          from evidence.source_record s
+          join (
+                select qr.origin_source_record_id as source_record_id, q.opportunity_id, qr.sent_at
+                  from crm.quote_revision qr join crm.quote q on q.id = qr.quote_id
+                 where qr.origin_source_record_id is not null
+                union all
+                select e.source_record_id, e.opportunity_id, null::timestamptz
+                  from crm.opportunity_evidence e
+                 where e.source_record_id is not null and e.unlinked_at is null
+               ) link on link.source_record_id = s.id
+         where s.kind = 'gmail_message'
+           and s.review_status <> 'rejected'
+           and not s.is_quarantined
+         order by s.id, link.opportunity_id, link.sent_at nulls last
+        """
+    )
+    evidence = _rows(cur)
+
+    facts = EligibilityFacts()
+    cur.execute(
+        """
+        select cp.id::text as id, cp.value_norm as address, cp.usage,
+               cp.person_id::text as person_id, cp.organization_id::text as organization_id,
+               pe.display_name as person_name
+          from crm.contact_point cp
+          left join crm.person pe on pe.id = cp.person_id
+         where cp.kind = 'email'
+        """
+    )
+    facts.contact_points = {r["address"]: r for r in _rows(cur)}
+    # An address block is an unsubscribe when its reason says so or when a «BAJA» was linked to
+    # it (W10): the same rule as outbound.marketing_contact_refusals, the send-time contract.
+    cur.execute(
+        """
+        select c.scope, c.value_norm, c.kind,
+               c.kind = 'block' and c.scope = 'address' and (c.reason = 'unsubscribe' or exists (
+                 select 1 from evidence.assertion a
+                  where a.kind = 'unsubscribe_request' and a.resolved_kind = 'contact_control'
+                    and a.resolved_id = c.id)) as unsubscribe
+          from outbound.contact_control c
+         where c.kind = 'prior_contact'
+            or (c.kind = 'block' and c.purpose in ('all', 'marketing'))
+            or (c.kind = 'cooldown' and c.until_at > now())
+        """
+    )
+    for scope, value, kind, unsubscribe in cur.fetchall():
+        if kind == "block" and unsubscribe:
+            facts.unsubscribed_addresses.add(value)
+        elif kind == "block":
+            (facts.blocked_addresses if scope == "address" else facts.blocked_domains).add(value)
+        elif kind == "cooldown":
+            facts.cooldown_addresses.add(value)
+        else:
+            facts.prior_contact_addresses.add(value)
+    # A «BAJA» held for review (W10): the same exact-address hold as the send-time contract.
+    cur.execute(
+        """
+        select distinct value_norm from evidence.assertion
+         where kind = 'unsubscribe_request' and resolution = 'unresolved'
+        """
+    )
+    facts.unsubscribe_pending_addresses = {r[0] for r in cur.fetchall()}
+    # W12: what a recontact reviewer is shown — the recorded sources of each prior contact, the
+    # last accepted send (date and campaign), or, for an imported V1 recipient with no attempt,
+    # its campaign without a date. Nothing is inferred: an unknown date stays unknown.
+    cur.execute(
+        """
+        select value_norm, source, reason, created_at::text
+          from outbound.contact_control
+         where kind = 'prior_contact' and scope = 'address'
+         order by value_norm, created_at, source
+        """
+    )
+    for value, source, reason, recorded_at in cur.fetchall():
+        facts.prior_contact_details.setdefault(value, {"sources": []})["sources"].append(
+            {"source": source, "reason": reason, "recorded_at": recorded_at})
+    cur.execute(
+        """
+        select distinct on (r.address_norm) r.address_norm, c.id::text, c.name
+          from outbound.campaign_recipient r join outbound.campaign c on c.id = r.campaign_id
+         where r.state in ('sent', 'bounced', 'replied', 'unsubscribed')
+         order by r.address_norm, r.updated_at desc, c.id
+        """
+    )
+    for value, campaign_id, campaign_name in cur.fetchall():
+        if value in facts.prior_contact_details:
+            facts.prior_contact_details[value].update(campaign_id=campaign_id, campaign_name=campaign_name)
+    cur.execute(
+        """
+        select distinct on (a.address_norm) a.address_norm, a.accepted_at::text, c.id::text, c.name
+          from outbound.send_attempt a left join outbound.campaign c on c.id = a.campaign_id
+         where a.submission_state = 'accepted'
+         order by a.address_norm, a.accepted_at desc, a.id
+        """
+    )
+    for value, accepted_at, campaign_id, campaign_name in cur.fetchall():
+        if value in facts.prior_contact_details:
+            facts.prior_contact_details[value].update(
+                last_contact_at=accepted_at, campaign_id=campaign_id, campaign_name=campaign_name)
+    cur.execute(
+        """
+        select address_norm from outbound.send_attempt
+         where error_class = 'invalid_address' or bounce_class = 'hard'
+        union
+        select address_norm from outbound.campaign_recipient
+         where 'invalid_address' = any(exclusion_reasons)
+        """
+    )
+    facts.invalid_addresses = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        """
+        select organization_id::text from crm.organization_relationship
+         where role in ('supplier', 'manufacturer')
+           and (valid_to is null or valid_to > current_date)
+        union
+        select organization_id::text from crm.opportunity_organization
+         where role in ('supplier', 'manufacturer')
+           and (valid_to is null or valid_to > current_date)
+        """
+    )
+    facts.supplier_organization_ids = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        """
+        select d.domain_norm from crm.organization_domain d
+         where d.scope = 'exclusive' and d.organization_id::text = any(%s)
+        """,
+        (list(facts.supplier_organization_ids),),
+    )
+    facts.supplier_domains = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        """
+        select value_norm from evidence.assertion
+         where kind = 'supplier_candidate' and resolution in ('unresolved', 'ambiguous')
+        """
+    )
+    facts.candidate_supplier_domains = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        """
+        select kind || ':' || resolution, count(*) from evidence.assertion
+         where resolution in ('unresolved', 'ambiguous')
+           and kind in ('organization_name', 'contact_address', 'affiliation', 'supplier_candidate')
+         group by 1
+        """
+    )
+    review_queue = {k: int(n) for k, n in cur.fetchall()}
+
+    return AudienceInputs(
+        cases=cases,
+        interests=interests,
+        quotation_evidence=evidence,
+        eligibility=facts,
+        review_queue=review_queue,
+    )
