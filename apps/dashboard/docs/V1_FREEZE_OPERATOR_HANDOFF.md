@@ -132,7 +132,7 @@ All Dashboard-2.5 behavior is **in-browser only** on the frozen **Today** page. 
 
 **Code map (2.5):** `src/lib/internalContactFilter.ts`, `src/lib/operatorLabels.ts`, `src/lib/warningEmailLinks.ts`, `src/components/operator/OperatorWarningsList.tsx`, `src/components/operator/TokenLabel.tsx`, updates to `WarmCasesTable`, `EquipmentOpportunitiesTable`, `ContactProfilePanel`, `TodayPage`.
 
-**Legacy API:** email-pipeline FastAPI on **:8000** **removed** (Phase 6). See [API-3 Phase 6 completion](../../api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
+**Legacy API:** email-pipeline FastAPI on **:8000** **removed** (Phase 6). See `apps/api/AGENTS.md` (Active API rule) and `apps/api/scripts/api3_phase6_grep_gate.sh`.
 
 ---
 

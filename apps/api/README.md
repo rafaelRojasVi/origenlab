@@ -8,7 +8,7 @@
 
 ## Package layout
 
-This app owns **`apps/api/src/origenlab_api`** (operator routes + `/mirror/*` Postgres reporting). The legacy email-pipeline FastAPI tree on port **8000** was **removed in API-3 Phase 6** — see [docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md](docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
+This app owns **`apps/api/src/origenlab_api`** (operator routes + `/mirror/*` Postgres reporting). The legacy email-pipeline FastAPI tree on port **8000** was **removed in API-3 Phase 6** (enforcement gate: `scripts/api3_phase6_grep_gate.sh`).
 
 **Always run tests and uvicorn from `apps/api`:**
 
@@ -623,7 +623,7 @@ Dashboard HTTP smokes: `npm run smoke:contacts`, `EXPECT_BACKEND=postgres npm ru
 
 ## API-3 mirror relocation (Phase 6 complete)
 
-Postgres mirror reporting lives under **`GET /mirror/*`** on this app. Legacy email-pipeline `:8000` API **removed** — [docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md](docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md). **Strict gate:** `scripts/api3_phase6_grep_gate.sh`.
+Postgres mirror reporting lives under **`GET /mirror/*`** on this app. Legacy email-pipeline `:8000` API **removed** (API-3 Phase 6). **Strict gate:** `scripts/api3_phase6_grep_gate.sh`.
 
 Mirror reporting smoke (GET only; requires this app on :8001 + disposable `ORIGENLAB_POSTGRES_URL`):
 
@@ -637,7 +637,7 @@ cd apps/dashboard && npm run smoke:mirror
 apps/api/scripts/run_mirror_dual_server_parity.sh
 ```
 
-Report (historical): [docs/archive/api3/API-3_PHASE3B_LIVE_PARITY_REPORT.md](docs/archive/api3/API-3_PHASE3B_LIVE_PARITY_REPORT.md).
+Report (historical): archived in git history (commit ff213a53 and earlier — API-3 archive removed in docs cleanup 2026-10-22).
 
 ```bash
 cd apps/api

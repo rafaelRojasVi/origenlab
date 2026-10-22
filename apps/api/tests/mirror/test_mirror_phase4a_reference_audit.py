@@ -6,8 +6,6 @@ import re
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_PHASE4A = _REPO_ROOT / "apps/api/docs/archive/api3/API-3_PHASE4A_REFERENCE_AUDIT.md"
-_PHASE6 = _REPO_ROOT / "apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md"
 _RUNBOOK = _REPO_ROOT / "apps/email-pipeline/docs/RUNBOOK.md"
 _LEGACY_ROOT = _REPO_ROOT / "apps/email-pipeline/src/origenlab_api"
 _OPERATOR_CLIENT = _REPO_ROOT / "apps/dashboard/src/api/operatorClient.ts"
@@ -21,12 +19,6 @@ _ACTIVE_8000_ALLOWLIST = (
     _REPO_ROOT / "apps/dashboard/src/pages/DashboardApp.today.test.tsx",
     _REPO_ROOT / "apps/dashboard/src/components/operator/DevLegacyPortWarning.tsx",
 )
-
-
-def test_phase4a_and_phase6_docs_exist() -> None:
-    assert _PHASE4A.is_file()
-    assert _PHASE6.is_file()
-    assert "Phase 6" in _PHASE6.read_text(encoding="utf-8")
 
 
 def test_runbook_mirror_only_no_live_8000_curls() -> None:

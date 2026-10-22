@@ -435,7 +435,7 @@ uv sync --group dev
 uv run uvicorn origenlab_api.main:app --host 127.0.0.1 --port 8001 --reload
 ```
 
-Mirror reporting routes live under **`/mirror/*`** (read-only GET). OpenAPI: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs). The old email-pipeline mirror HTTP server was **removed in API-3 Phase 6** — see [`apps/api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md`](../../api/docs/API-3_PHASE6_LEGACY_REMOVAL_COMPLETE.md).
+Mirror reporting routes live under **`/mirror/*`** (read-only GET). OpenAPI: [http://127.0.0.1:8001/docs](http://127.0.0.1:8001/docs). The old email-pipeline mirror HTTP server was **removed in API-3 Phase 6** — see `apps/api/AGENTS.md` (Active API rule).
 
 **6. Run React (terminal 2):**
 

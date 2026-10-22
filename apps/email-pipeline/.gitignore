@@ -67,3 +67,10 @@ id_rsa.pub
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Generated docs (written by scripts/qa/audit_operational_trust.py and similar)
+docs/generated/operational_trust_scorecard.md
+docs/generated/CONTACT_READINESS_AUDIT.md
+docs/generated/DEEP_RESEARCH_RECONCILIATION.md
+docs/generated/READY8_AND_TOP20_REPORTING_PLAN.md
+

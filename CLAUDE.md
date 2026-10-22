@@ -164,8 +164,7 @@ are not required reading for routine code changes.
   a second store. Do not add a third.
 - Prefer extending the existing architecture over a parallel
   implementation. Search callers (imports, scripts, CI, docs) before
-  deleting code — see `docs/architecture/COMMERCIAL_RESET_LEDGER.md` for
-  the evidence standard used in the last cleanup pass.
+  deleting code (standard: search imports, scripts, CI and docs for every callee before any deletion recommendation).
 - Testing: [`AGENTS.md` → *Testing*](AGENTS.md) is canonical (commands, rules, the
   parallel/`serial_db` and database guards). In short — from a worktree, never the
   main checkout: `make setup` once, `make db-up` once per session, then:
