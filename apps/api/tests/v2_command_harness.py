@@ -64,6 +64,10 @@ MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 #: emulation `supabase/scripts/dev_db.sh` performs, and deliberately not part of the chain.
 BOOTSTRAP = """
 create schema if not exists extensions authorization postgres;
+-- All application roles may reference objects in extensions (operator classes etc.); on hosted
+-- Supabase the platform grants this automatically. Add each role as it is created in roles.sql
+-- so a migration that references extensions.gin_trgm_ops or similar will resolve it.
+grant usage on schema extensions to origenlab_owner, origenlab_api, origenlab_worker;
 create extension if not exists btree_gist with schema extensions;
 """
 

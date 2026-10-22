@@ -37,14 +37,13 @@
   ],
   "probes": {
     "migrations.count": {
-      "expect": 66,
+      "expect": 67,
       "why": "every file in supabase/migrations/, applied and recorded in the ledger. This baseline was left at 21 when the 22nd migration landed and at 25 when the 26th did, so the first rebuild after each would have failed here rather than silently: that is the check working. Since 2026-09-30 cleanroom_verify_tests.sh also proves this number equals the files on disk without a database, so the staleness is caught in CI and not at the next rebuild. origenlab_dev carries 20 recorded with the 21st's DDL already present, which is exactly the drift a clean room exists to avoid."
     },
     "migrations.head": {
-      "expect": "20261021200000",
-      "why": "slice7_quote_line_shared_expenses, the newest migration — quote_line_one_principal_per_revision is dropped, so several principal item lines share a quote's import expenses by cost (no table, policy, function or foreign key); before it slice7_quote_sent_message_per_quote — crm.quote_revision.quote_revision_sent_message_key becomes unique (sent_message_id, quote_id), so one email may send several quotes (rule R16; no table, policy, function or foreign key); before it slice7_notice_relevance_review — notice relevance review (DOMAIN.md §7.12): procurement.notice.relevance (#28, nullable jsonb object, rebuildable machine match written by the worker), crm.notice_review (#64, append-only human verdict, platform.reject_mutation, two unconditional FK indexes) and the notice.reviewed domain event; before it slice7_tender_bid_preparation — tender bid preparation (DOMAIN.md §7.11): crm.opportunity.kind and tender_status with the case-kind guard, tender anexos on crm.opportunity_document, crm.bidder_profile (#60), crm.bidder_document (#61) and its retirement guard, evidence.bid_preparation (#62), platform.model_usage (#63), the API's insert on procurement.notice, the worker's read of catalog.product_document and the six bidder/opportunity/notice events; before it slice7_quote_client_details — crm.quote_revision.client_details, the client's details as a Cotizador revision prints them (no table, policy, function or foreign key); before it slice7_catalog_product_model_alias — catalog.product_model_alias (DOMAIN.md §7 #59), the other names a product's model is printed under, its guard and the product.model_alias_added / model_alias_retired events; before it slice7_quote_authoring — the Cotizador's schema: authored quote lines and draft terms on crm.quote_line / crm.quote_revision, the draft-only guard, the API delete grant, the quote default parameters and the two quote_revision events; before it slice7_case_memory — evidence.subject_memory (DOMAIN.md §7 #58), the running machine memory per case, institution and person, written by the triage worker and read by the context matcher and triage model; before it slice4_forwarded_request_kind — evidence.source_record kind forwarded_request, the customer fields the worker reads out of a forward we sent to contacto@."
+      "expect": "20261022100000",
+      "why": "perf_indexes — pg_trgm extension + four performance indexes (comms.message provider_thread_id B-tree, evidence.source_record gmail_thread_id expression, catalog.product model_key GIN trgm, crm.organization lower(name) GIN trgm; no tables, policies or functions); before it slice7_quote_line_shared_expenses, the newest migration — quote_line_one_principal_per_revision is dropped, so several principal item lines share a quote's import expenses by cost (no table, policy, function or foreign key); before it slice7_quote_sent_message_per_quote — crm.quote_revision.quote_revision_sent_message_key becomes unique (sent_message_id, quote_id), so one email may send several quotes (rule R16; no table, policy, function or foreign key); before it slice7_notice_relevance_review — notice relevance review (DOMAIN.md §7.12): procurement.notice.relevance (#28, nullable jsonb object, rebuildable machine match written by the worker), crm.notice_review (#64, append-only human verdict, platform.reject_mutation, two unconditional FK indexes) and the notice.reviewed domain event; before it slice7_tender_bid_preparation — tender bid preparation (DOMAIN.md §7.11): crm.opportunity.kind and tender_status with the case-kind guard, tender anexos on crm.opportunity_document, crm.bidder_profile (#60), crm.bidder_document (#61) and its retirement guard, evidence.bid_preparation (#62), platform.model_usage (#63), the API's insert on procurement.notice, the worker's read of catalog.product_document and the six bidder/opportunity/notice events; before it slice7_quote_client_details — crm.quote_revision.client_details, the client's details as a Cotizador revision prints them (no table, policy, function or foreign key); before it slice7_catalog_product_model_alias — catalog.product_model_alias (DOMAIN.md §7 #59), the other names a product's model is printed under, its guard and the product.model_alias_added / model_alias_retired events; before it slice7_quote_authoring — the Cotizador's schema: authored quote lines and draft terms on crm.quote_line / crm.quote_revision, the draft-only guard, the API delete grant, the quote default parameters and the two quote_revision events; before it slice7_case_memory — evidence.subject_memory (DOMAIN.md §7 #58), the running machine memory per case, institution and person, written by the triage worker and read by the context matcher and triage model; before it slice4_forwarded_request_kind — evidence.source_record kind forwarded_request, the customer fields the worker reads out of a forward we sent to contacto@."
     },
-
     "source_record.total": {
       "expect": 35,
       "why": "the whole evidence intake: 31 staged Gmail messages plus the 4 migration manifests the historical importer records. Asserted alongside its two parts, never instead of them."
@@ -65,7 +64,6 @@
       "expect": 0,
       "why": "dedupe_key like 'pytest-%'. The seven fixture records found in origenlab_dev on 2026-09-22."
     },
-
     "assertion.total": {
       "expect": 11485,
       "why": "the 11,448 of the historical evidence trail plus the 37 from the two Gmail manifests."
@@ -78,9 +76,14 @@
       "expect": 37,
       "why": "staging never resolves anything; resolving is a human decision the command boundary records."
     },
-    "assertion.from_gmail.contact_address": { "expect": 31, "why": "one asserted sender address per message." },
-    "assertion.from_gmail.organization_name": { "expect": 6, "why": "asserted only where the message text names an institution — 4 of the 20 September records, 6 names. R1 added none: no archived message names an institution in its own words, and the sender's domain is a routing hint held in the payload, never a claim." },
-
+    "assertion.from_gmail.contact_address": {
+      "expect": 31,
+      "why": "one asserted sender address per message."
+    },
+    "assertion.from_gmail.organization_name": {
+      "expect": 6,
+      "why": "asserted only where the message text names an institution — 4 of the 20 September records, 6 names. R1 added none: no archived message names an institution in its own words, and the sender's domain is a routing hint held in the payload, never a claim."
+    },
     "crm.organization": {
       "expect": 1812,
       "why": "promote_evidence_into_crm.py, from uniquely-folded organization_name assertions. All kind='unknown', all machine_proposed."
@@ -89,25 +92,54 @@
       "expect": 0,
       "why": "no person is ever created from this evidence: it carries no human name, and deriving one from an address local part is an inference, not evidence."
     },
-    "crm.contact_point": { "expect": 9460, "why": "695 shared_mailbox + 8,765 unattributed, from contacted_address assertions." },
+    "crm.contact_point": {
+      "expect": 9460,
+      "why": "695 shared_mailbox + 8,765 unattributed, from contacted_address assertions."
+    },
     "crm.contact_point.attached": {
       "expect": 0,
       "why": "no contact point carries a person or an organization. A domain is a routing hint, never an identity key (docs/DOMAIN.md §2.2)."
     },
-    "crm.domain_event": { "expect": 22544, "why": "the promotion's audit trail, every row actor_kind='migrator'." },
+    "crm.domain_event": {
+      "expect": 22544,
+      "why": "the promotion's audit trail, every row actor_kind='migrator'."
+    },
     "crm.domain_event.with_command_receipt": {
       "expect": 0,
       "why": "no human command has been executed against this database. The 16 residue events in origenlab_dev are exactly the rows this probe catches."
     },
-    "crm.affiliation": { "expect": 0, "why": "an affiliation is a relationship no message header records." },
-    "crm.organization_domain": { "expect": 0, "why": "no domain has been evidenced as belonging to an institution." },
-    "crm.opportunity": { "expect": 0, "why": "slice 3." },
-    "crm.opportunity_organization": { "expect": 0, "why": "the commercial-case tables ship empty and stay empty until a command writes one. A requesting institution can only be created by an operator, so a non-zero count here in a fresh build means a decision nobody took." },
-    "crm.opportunity_interest": { "expect": 0, "why": "no interest is inferred by the build; the historical load carries none." },
-    "crm.opportunity_evidence": { "expect": 0, "why": "every evidence link names the operator who made it, and the build makes none." },
-    "crm.quote": { "expect": 0, "why": "slice 3." },
-    "crm.task": { "expect": 0, "why": "slice 3." },
-
+    "crm.affiliation": {
+      "expect": 0,
+      "why": "an affiliation is a relationship no message header records."
+    },
+    "crm.organization_domain": {
+      "expect": 0,
+      "why": "no domain has been evidenced as belonging to an institution."
+    },
+    "crm.opportunity": {
+      "expect": 0,
+      "why": "slice 3."
+    },
+    "crm.opportunity_organization": {
+      "expect": 0,
+      "why": "the commercial-case tables ship empty and stay empty until a command writes one. A requesting institution can only be created by an operator, so a non-zero count here in a fresh build means a decision nobody took."
+    },
+    "crm.opportunity_interest": {
+      "expect": 0,
+      "why": "no interest is inferred by the build; the historical load carries none."
+    },
+    "crm.opportunity_evidence": {
+      "expect": 0,
+      "why": "every evidence link names the operator who made it, and the build makes none."
+    },
+    "crm.quote": {
+      "expect": 0,
+      "why": "slice 3."
+    },
+    "crm.task": {
+      "expect": 0,
+      "why": "slice 3."
+    },
     "platform.operator": {
       "expect": 1,
       "why": "one seeded local admin, so the API command boundary can resolve an identity at all. Its auth_user_id belongs to no auth system — Supabase Auth is slice 1."
@@ -120,49 +152,149 @@
       "expect": 0,
       "why": "no command has been executed. The nine receipts in origenlab_dev are fixture residue, and a clean room starts with none."
     },
-
-    "comms.mailbox": { "expect": 1, "why": "the sending mailbox the historical campaigns belong to." },
-    "comms.message": { "expect": 0, "why": "no message body has been imported; slice 4." },
-
-    "outbound.campaign": { "expect": 3, "why": "Wave 1A, Wave 1B and the archived campaign." },
-    "outbound.campaign_recipient": { "expect": 3481, "why": "the three campaigns' audience." },
-    "outbound.send_attempt": { "expect": 3141, "why": "the historical send ledger." },
-    "outbound.contact_control": { "expect": 10588, "why": "the cross-wave safety baseline: prior contacts, address blocks and domain blocks." },
-    "outbound.send_control": { "expect": 1, "why": "the single bootstrap row." },
-    "outbound.send_control.marketing_enabled": { "expect": 0, "why": "false. A clean-room build must never be able to send." },
-    "outbound.send_control.transactional_enabled": { "expect": 0, "why": "false, for the same reason." },
+    "comms.mailbox": {
+      "expect": 1,
+      "why": "the sending mailbox the historical campaigns belong to."
+    },
+    "comms.message": {
+      "expect": 0,
+      "why": "no message body has been imported; slice 4."
+    },
+    "outbound.campaign": {
+      "expect": 3,
+      "why": "Wave 1A, Wave 1B and the archived campaign."
+    },
+    "outbound.campaign_recipient": {
+      "expect": 3481,
+      "why": "the three campaigns' audience."
+    },
+    "outbound.send_attempt": {
+      "expect": 3141,
+      "why": "the historical send ledger."
+    },
+    "outbound.contact_control": {
+      "expect": 10588,
+      "why": "the cross-wave safety baseline: prior contacts, address blocks and domain blocks."
+    },
+    "outbound.send_control": {
+      "expect": 1,
+      "why": "the single bootstrap row."
+    },
+    "outbound.send_control.marketing_enabled": {
+      "expect": 0,
+      "why": "false. A clean-room build must never be able to send."
+    },
+    "outbound.send_control.transactional_enabled": {
+      "expect": 0,
+      "why": "false, for the same reason."
+    },
     "outbound.campaign_block.active": {
       "expect": 1,
       "why": "migration 20260928100000 seeds one active legacy_campaign block for V1 campaign septiembre18-2026-wave2 (reference incident_hold_september_2026, placed by the migrator, never lifted). A fresh build carries exactly that one; zero means the migration did not run, two means something else placed a block."
     },
-
-    "platform.auth_principal": { "expect": 0, "why": "slice 1 sign-in tables ship empty: a principal is provisioned by profile_roster.py per environment, never by a build." },
-    "platform.operator_profile": { "expect": 0, "why": "no profile and no PIN exists in a fresh build; a row here is a credential nobody provisioned." },
-    "platform.auth_session": { "expect": 0, "why": "no session has been opened against a database nothing has signed in to." },
-    "platform.auth_event": { "expect": 0, "why": "no sign-in audit row; the table is append-only and a fresh build has nothing to append." },
-
-    "catalog.product": { "expect": 0, "why": "slice 3." },
-    "catalog.supplier_product": { "expect": 0, "why": "slice 3." },
-    "procurement.notice": { "expect": 0, "why": "not loaded." },
-
-    "outbound.campaign_content": { "expect": 0, "why": "slice 6: the archive table ships empty; content is loaded by a separate import step outside the build." },
-    "outbound.campaign_content_message": { "expect": 0, "why": "slice 6: no message-level archive rows exist in a fresh build." },
-    "crm.note": { "expect": 0, "why": "slice 6: no operator notes exist in a fresh build; notes are operator decisions." },
-    "crm.organization_product_line": { "expect": 0, "why": "slice 6: no product-line links exist in a fresh build; they are operator decisions." },
-    "catalog.product_image": { "expect": 0, "why": "slice 7: no product photo exists in a fresh build; images are uploaded or proposed and then confirmed by an operator." },
-    "catalog.supplier_terms": { "expect": 0, "why": "slice 7: no supplier terms exist in a fresh build; they are operator decisions." },
-    "catalog.fx_rate": { "expect": 0, "why": "slice 7: no exchange rate exists in a fresh build; rates are fetched from Banco Central or entered by an operator." },
-    "catalog.cost_parameter": { "expect": 5, "why": "slice 7: migration 20261005140628 seeds only the five public/regulatory costing parameters (iva_rate, duty_rate_general, duty_rate_fta, courier_threshold_usd_fob, insurance_pct_of_fob; valid_from 2026-01-01, no operator). The repository is public, so the other eighteen keys are set per environment by an operator. Fewer means the seed did not run; more means something set a parameter during the build." },
-    "evidence.document_line": { "expect": 0, "why": "slice 7: no quote-document line exists in a fresh build; lines are loaded by a separate extraction step outside the build." },
-    "evidence.triage_review": { "expect": 0, "why": "slice 4: no triage verdict exists in a fresh build; verdicts are operator decisions in Revisión." },
-    "crm.opportunity_document": { "expect": 0, "why": "slice 7: no case document exists in a fresh build; a purchase order is attached by an operator." },
-    "catalog.product_document": { "expect": 0, "why": "Catálogo v2: no Drive document is recorded in a fresh build; the documents importer loads them from a private manifest." },
-    "evidence.subject_memory": { "expect": 0, "why": "slice 7: the case memory is a machine projection written by the triage worker during live operation; a fresh build ships with no memories." },
-    "catalog.product_model_alias": { "expect": 0, "why": "Catálogo v2: no model alias exists in a fresh build; the alias importer loads them from a private manifest." },
-    "crm.bidder_profile": { "expect": 0, "why": "Licitaciones: no bidder profile exists in a fresh build; an operator saves it in Preferencias." },
-    "crm.bidder_document": { "expect": 0, "why": "Licitaciones: no bidder document exists in a fresh build; an operator uploads them." },
-    "evidence.bid_preparation": { "expect": 0, "why": "Licitaciones: no bid preparation exists in a fresh build; an operator requests one on a tender case." },
-    "platform.model_usage": { "expect": 0, "why": "Licitaciones: no model call is recorded in a fresh build; the worker records each call it makes." },
-    "crm.notice_review": { "expect": 0, "why": "Licitaciones: no notice verdict exists in a fresh build; an operator records one in «En Mercado Público»." }
+    "platform.auth_principal": {
+      "expect": 0,
+      "why": "slice 1 sign-in tables ship empty: a principal is provisioned by profile_roster.py per environment, never by a build."
+    },
+    "platform.operator_profile": {
+      "expect": 0,
+      "why": "no profile and no PIN exists in a fresh build; a row here is a credential nobody provisioned."
+    },
+    "platform.auth_session": {
+      "expect": 0,
+      "why": "no session has been opened against a database nothing has signed in to."
+    },
+    "platform.auth_event": {
+      "expect": 0,
+      "why": "no sign-in audit row; the table is append-only and a fresh build has nothing to append."
+    },
+    "catalog.product": {
+      "expect": 0,
+      "why": "slice 3."
+    },
+    "catalog.supplier_product": {
+      "expect": 0,
+      "why": "slice 3."
+    },
+    "procurement.notice": {
+      "expect": 0,
+      "why": "not loaded."
+    },
+    "outbound.campaign_content": {
+      "expect": 0,
+      "why": "slice 6: the archive table ships empty; content is loaded by a separate import step outside the build."
+    },
+    "outbound.campaign_content_message": {
+      "expect": 0,
+      "why": "slice 6: no message-level archive rows exist in a fresh build."
+    },
+    "crm.note": {
+      "expect": 0,
+      "why": "slice 6: no operator notes exist in a fresh build; notes are operator decisions."
+    },
+    "crm.organization_product_line": {
+      "expect": 0,
+      "why": "slice 6: no product-line links exist in a fresh build; they are operator decisions."
+    },
+    "catalog.product_image": {
+      "expect": 0,
+      "why": "slice 7: no product photo exists in a fresh build; images are uploaded or proposed and then confirmed by an operator."
+    },
+    "catalog.supplier_terms": {
+      "expect": 0,
+      "why": "slice 7: no supplier terms exist in a fresh build; they are operator decisions."
+    },
+    "catalog.fx_rate": {
+      "expect": 0,
+      "why": "slice 7: no exchange rate exists in a fresh build; rates are fetched from Banco Central or entered by an operator."
+    },
+    "catalog.cost_parameter": {
+      "expect": 5,
+      "why": "slice 7: migration 20261005140628 seeds only the five public/regulatory costing parameters (iva_rate, duty_rate_general, duty_rate_fta, courier_threshold_usd_fob, insurance_pct_of_fob; valid_from 2026-01-01, no operator). The repository is public, so the other eighteen keys are set per environment by an operator. Fewer means the seed did not run; more means something set a parameter during the build."
+    },
+    "evidence.document_line": {
+      "expect": 0,
+      "why": "slice 7: no quote-document line exists in a fresh build; lines are loaded by a separate extraction step outside the build."
+    },
+    "evidence.triage_review": {
+      "expect": 0,
+      "why": "slice 4: no triage verdict exists in a fresh build; verdicts are operator decisions in Revisión."
+    },
+    "crm.opportunity_document": {
+      "expect": 0,
+      "why": "slice 7: no case document exists in a fresh build; a purchase order is attached by an operator."
+    },
+    "catalog.product_document": {
+      "expect": 0,
+      "why": "Catálogo v2: no Drive document is recorded in a fresh build; the documents importer loads them from a private manifest."
+    },
+    "evidence.subject_memory": {
+      "expect": 0,
+      "why": "slice 7: the case memory is a machine projection written by the triage worker during live operation; a fresh build ships with no memories."
+    },
+    "catalog.product_model_alias": {
+      "expect": 0,
+      "why": "Catálogo v2: no model alias exists in a fresh build; the alias importer loads them from a private manifest."
+    },
+    "crm.bidder_profile": {
+      "expect": 0,
+      "why": "Licitaciones: no bidder profile exists in a fresh build; an operator saves it in Preferencias."
+    },
+    "crm.bidder_document": {
+      "expect": 0,
+      "why": "Licitaciones: no bidder document exists in a fresh build; an operator uploads them."
+    },
+    "evidence.bid_preparation": {
+      "expect": 0,
+      "why": "Licitaciones: no bid preparation exists in a fresh build; an operator requests one on a tender case."
+    },
+    "platform.model_usage": {
+      "expect": 0,
+      "why": "Licitaciones: no model call is recorded in a fresh build; the worker records each call it makes."
+    },
+    "crm.notice_review": {
+      "expect": 0,
+      "why": "Licitaciones: no notice verdict exists in a fresh build; an operator records one in «En Mercado Público»."
+    }
   }
 }
