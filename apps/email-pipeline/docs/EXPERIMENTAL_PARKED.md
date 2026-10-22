@@ -6,7 +6,7 @@ Last reviewed: 2026-05-19 (RUNBOOK dedup: [dashboard section](RUNBOOK.md#m-eprun
 
 **Purpose:** Single index for infrastructure and pilots that are **built but not on the daily SQLite outbound path**. Agents and operators should read this **before** touching Postgres, the HTTP dashboard, Tatiana/ML tooling, or old campaign pilots.
 
-**Companion:** [`SCRIPT_MAP.md`](SCRIPT_MAP.md) · [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md) · [`AGENTS.md`](../AGENTS.md) · [`reports/out/active/current/manifest.json`](../reports/out/active/current/manifest.json) (`postgres_status` / `api_status`: `parked`)
+**Companion:** [`SCRIPT_MAP.md`](SCRIPT_MAP.md) · [`TATIANA_LAB_BOUNDARY.md`](TATIANA_LAB_BOUNDARY.md) · [`AGENTS.md`](../AGENTS.md) · `reports/out/active/current/manifest.json` (local report `reports/out/active/current/manifest.json`, not in the repo) (`postgres_status` / `api_status`: `parked`)
 
 ---
 
@@ -61,7 +61,7 @@ Only with **explicit operator approval**. **Daily work** stays in [RUNBOOK — D
 
 **Commands (single chain — do not duplicate in cheat sheet):** [RUNBOOK — Optional dashboard preview stack](RUNBOOK.md#m-eprun-dashboard-optional) · [canonical dashboard refresh chain](RUNBOOK.md#canonical-dashboard-refresh-chain).
 
-**Planned wrapper UX:** [`dashboard_stack_simplification_design_20260519.md`](../reports/out/active/current/dashboard_stack_simplification_design_20260519.md) (`--mode sqlite-status|postgres-mirror|full-dashboard`). **Today:** `refresh_operational_dashboard_stack.py` remains **experimental/dashboard-only** — can mutate SQLite mart + Postgres mirror by default; prefer explicit RUNBOOK steps until modes ship.
+**Planned wrapper UX:** `dashboard_stack_simplification_design_20260519.md` (local report `reports/out/active/current/dashboard_stack_simplification_design_20260519.md`, not in the repo) (`--mode sqlite-status|postgres-mirror|full-dashboard`). **Today:** `refresh_operational_dashboard_stack.py` remains **experimental/dashboard-only** — can mutate SQLite mart + Postgres mirror by default; prefer explicit RUNBOOK steps until modes ship.
 
 Checklist:
 
@@ -75,4 +75,4 @@ Checklist:
 
 ## Related audits
 
-- [`reports/out/active/current/code_quality_simplification_audit_20260519.md`](../reports/out/active/current/code_quality_simplification_audit_20260519.md)
+- `reports/out/active/current/code_quality_simplification_audit_20260519.md` (local report `reports/out/active/current/code_quality_simplification_audit_20260519.md`, not in the repo)

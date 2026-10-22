@@ -187,7 +187,7 @@ VITE_ORIGENLAB_API_BASE_URL=https://dashboard.origenlab.cl/api npm run build
 
 Publish directory: `apps/dashboard/dist` (static files only).
 
-Template: [`apps/dashboard/.env.production.example`](../../dashboard/.env.production.example)
+Template: [`apps/dashboard/.env.example`](../../dashboard/.env.example)
 
 ### Render example
 

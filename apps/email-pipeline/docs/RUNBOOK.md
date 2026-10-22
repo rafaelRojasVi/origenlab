@@ -182,7 +182,7 @@ Use the manual builders for file-based replays and legacy workflows; they do not
 
 - Excludes consumables-heavy tenders (e.g. `1497-6-LE26`, `1497-3-LE26`, `1657-8-LE26`, `1511-30-LP26`) unless a row is explicit capital equipment.
 - Public tenders: **`contact_status=no_verified_buyer_email`** — use **Mercado Público** (`mercado_publico_bid` / `mercado_publico_question`) or **supplier_quote_request**; do not cold-email invented addresses.
-- Private-lab email outreach remains a **separate lane** (ingest Sent → `mark_outreach_state` → refresh safety memory). See [`reports/out/active/current/README_ACTIVE_CURRENT.md`](../reports/out/active/current/README_ACTIVE_CURRENT.md).
+- Private-lab email outreach remains a **separate lane** (ingest Sent → `mark_outreach_state` → refresh safety memory). See `reports/out/active/current/README_ACTIVE_CURRENT.md` (local report `reports/out/active/current/README_ACTIVE_CURRENT.md`, not in the repo).
 
 Scripts: [`SCRIPT_MAP.md`](SCRIPT_MAP.md) (`build_equipment_first_*`). Handoff: `equipment_first_operator_queue_*.md`, `caution_cleanup_*.md`.
 
