@@ -176,8 +176,24 @@ describe("«Agregar institución»", () => {
       <ClientSection workspace={ws({ institution: null, version: 3 })} draft={draftFixture()} invalid={[]} disabled={false}
         edit={noop} onInstitutionAdded={noop} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Agregar institución" }));
+    fireEvent.click(screen.getByRole("button", { name: "¿Es de una institución? Agregarla" }));
     expect(screen.getByLabelText("Buscar institución")).toBeInTheDocument();
+  });
+
+  it("a case with no institution is a persona natural: the person is the client, no «RUT pendiente»", () => {
+    const draft = { ...draftFixture(), recipient: { email: "particular@ejemplo.cl", name: null } };
+    render(<ClientSection workspace={ws({ institution: null, version: 3 })} draft={draft} invalid={[]} disabled={false} edit={noop} />);
+    expect(screen.getByText("Persona natural (particular)")).toBeInTheDocument();
+    expect(screen.getByText("particular@ejemplo.cl", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("Sin institución: se emite a nombre de la persona de «Para».")).toBeInTheDocument();
+    expect(screen.queryByText("RUT pendiente")).toBeNull();
+  });
+
+  it("a persona natural shows what «Datos del cliente» typed", () => {
+    const draft = { ...draftFixture(), client: { contact_name: "Ana Particular", rut: "11.111.111-1" } };
+    render(<ClientSection workspace={ws({ institution: null, version: 3 })} draft={draft} invalid={[]} disabled={false} edit={noop} />);
+    expect(screen.getByText("Ana Particular", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText("RUT 11.111.111-1")).toBeInTheDocument();
   });
 
   it("is not offered when the case already has one, or the draft is frozen", () => {
@@ -188,7 +204,7 @@ describe("«Agregar institución»", () => {
     rerender(
       <ClientSection workspace={ws({ institution: null, version: 3 })} draft={draftFixture()} invalid={[]} disabled edit={noop} onInstitutionAdded={noop} />,
     );
-    expect(screen.queryByRole("button", { name: "Agregar institución" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Agregar/ })).toBeNull();
   });
   it("edits «Datos del cliente» on the draft, with what the CRM knows as the placeholder", () => {
     const latest = setup(ws(), { ...draftFixture(), recipient: { participant_id: "pa-1" } });

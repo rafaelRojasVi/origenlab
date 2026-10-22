@@ -79,7 +79,7 @@ export function ClientSection({
   const [typing, setTyping] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addProblem, setAddProblem] = useState<string | null>(null);
-  // A quote is approved only with the case's institution: name it here, without the trip to the case.
+  // The case's institution, named here without the trip to the case (a persona natural needs none).
   const mayAdd = !institution && !disabled && !workspace.case.closed && workspace.case.version != null && !!onInstitutionAdded;
   const [emailLeft, setEmailLeft] = useState(false);
   // A reload (new workspace) drops what was half-typed here.
@@ -101,6 +101,12 @@ export function ClientSection({
     // A contact known only by address has its address as its name: that is no name to print.
     return c?.name && c.name !== c.email ? c.name : (recipient?.name ?? null);
   })();
+  // A persona natural (owner, 2026-10-22): no institution and not a tender — the person is the
+  // client and the quote is approved as is (#816). What «Datos del cliente» types prints over it.
+  const persona = !institution && !workspace.tender;
+  const typedInstitution = draft.client?.institution_name?.trim() || null;
+  const typedRut = draft.client?.rut?.trim() || null;
+  const personName = draft.client?.contact_name?.trim() || pickedContact || recipient?.email || null;
   const fromCrm: Partial<Record<keyof QuoteClientDetails, string | null>> = {
     contact_name: pickedContact,
     institution_name: institution?.name ?? null,
@@ -154,8 +160,19 @@ export function ClientSection({
     >
       <div className="flex min-w-0 flex-col gap-1">
         <span className="text-xs text-ink-muted">Cliente</span>
-        <span className="truncate text-[15px] font-semibold text-ink">{institution?.name ?? "Sin institución"}</span>
-        <span className="text-[13px] text-ink-muted">{institution?.rut ? `RUT ${institution.rut}` : "RUT pendiente"}</span>
+        {persona ? (
+          <>
+            <span className="truncate text-[15px] font-semibold text-ink">{typedInstitution ?? "Persona natural (particular)"}</span>
+            {personName ? <span className="truncate text-[13px] text-ink">{personName}</span> : null}
+            {typedRut ? <span className="text-[13px] text-ink-muted">RUT {typedRut}</span> : null}
+            <span className="text-[12.5px] text-ink-muted">Sin institución: se emite a nombre de la persona de «Para».</span>
+          </>
+        ) : (
+          <>
+            <span className="truncate text-[15px] font-semibold text-ink">{institution?.name ?? "Sin institución"}</span>
+            <span className="text-[13px] text-ink-muted">{institution?.rut ? `RUT ${institution.rut}` : "RUT pendiente"}</span>
+          </>
+        )}
         {mayAdd && !adding ? (
           <button
             type="button"
@@ -163,9 +180,13 @@ export function ClientSection({
               setAddProblem(null);
               setAdding(true);
             }}
-            className="mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"
+            className={
+              persona
+                ? "mt-1 inline-flex min-h-[36px] items-center self-start text-[12.5px] font-medium text-brand-700 underline-offset-2 hover:underline"
+                : "mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"
+            }
           >
-            Agregar institución
+            {persona ? "¿Es de una institución? Agregarla" : "Agregar institución"}
           </button>
         ) : null}
         {addProblem ? <p role="alert" className="text-[12.5px] text-danger-700">{addProblem}</p> : null}
