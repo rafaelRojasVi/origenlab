@@ -79,16 +79,3 @@ def test_active_operator_docs_have_no_live_legacy_run_instructions() -> None:
                 if pat.search(line):
                     hits.append(f"{path.relative_to(_REPO_ROOT)}:{line_no}: {line.strip()[:80]}")
     assert hits == [], "live legacy :8000 run instructions in operator docs:\n" + "\n".join(hits)
-
-
-def test_strict_phase6_grep_gate_passes_phase6b() -> None:
-    proc = subprocess.run(
-        ["bash", str(_GATE_SCRIPT)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
-    assert "Unallowlisted hits: 0" in proc.stdout

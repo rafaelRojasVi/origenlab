@@ -461,8 +461,8 @@ curl -sS 'http://127.0.0.1:8001/mirror/dashboard/summary?scope=archive' | jq .  
 Optional live mirror smoke (disposable Postgres, :8001 only):
 
 ```bash
-cd ../api
-./scripts/run_mirror_dual_server_parity.sh
+cd apps/api
+uv run python scripts/mirror_parity_smoke.py --mirror-base http://127.0.0.1:8001
 ```
 
 Dashboard parked smoke: `cd ../dashboard && npm run smoke:mirror` (GET `/mirror/*` on :8001 only).

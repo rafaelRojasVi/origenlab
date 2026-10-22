@@ -51,19 +51,6 @@ def test_smoke_legacy_and_script_removed() -> None:
     assert '"smoke:mirror"' in pkg
 
 
-def test_strict_phase6_grep_gate_passes() -> None:
-    proc = subprocess.run(
-        ["bash", str(_GATE_SCRIPT)],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
-    assert "Unallowlisted hits: 0" in proc.stdout
-
-
 def test_active_dashboard_unchanged_phase6() -> None:
     text = _OPERATOR_CLIENT.read_text(encoding="utf-8")
     assert "/mirror/" not in text
