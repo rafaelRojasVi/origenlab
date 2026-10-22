@@ -29,6 +29,23 @@ changes design, rules or targets does not touch it.
 
 Last verified: **2026-10-22** against main `e3db0940`.
 
+## 0. Production now
+
+What runs today. §1–§4 below keep the measured history behind it; where an older row there
+says "frozen", "not deployed" or "not created", this section is the current state.
+
+| Item | State (2026-10-22) |
+|---|---|
+| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Migration head `20261021200000` (66 files in `supabase/migrations/`), applied by the release automation |
+| Release | `OL_RELEASE_AUTOMATION_ENABLED=true` since 2026-10-13: a merge to `main`, once CI passes, runs `production-db-migrations` end to end — encrypted backup → migrations → worker → API → dashboard at the merge SHA → postflight. Render auto-deploy stays off |
+| API | Render web service `origenlab` (`render.yaml` calls it `origenlab-api`), Python runtime, root `apps/api`, Starter, Oregon |
+| Worker | Render Background Worker `origenlab-mail-triage`, starter, root `apps/worker`: a supervisor with triage, capture (every minute: gmail-sync → drive-file → quote-read) and tender children. 279–362 MB since 2026-10-21 (#813) |
+| Legacy cron | `origenlab-gmail-sync` **suspended, not deleted**, kept for rollback ([`runbooks/MAIL_WORKER_CUTOVER.md`](runbooks/MAIL_WORKER_CUTOVER.md)) |
+| Switches on Render | `ORIGENLAB_V2_COMMANDS_ENABLED`, `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` and `ORIGENLAB_V2_QUOTING_ENABLED` on |
+| Dashboard | `dashboard.origenlab.cl` behind the `dashboard-proxy` Worker; `hosted-smoke` checks every proxied GET every 30 minutes |
+| Website | `origenlab.cl` on cPanel, deployed by `web-deploy` on merge |
+| Open gate | Data API (PostgREST) still enabled on `origenlab-v2` with no exposed schema — the Postgres log shows `schema "pg_pgrst_no_exposed_schemas" does not exist` every ~32 s. Disabling it in the Supabase dashboard closes `t01`/`d01` ([`OPERATIONS.md`](OPERATIONS.md) §1.2) |
+
 ## 1. Eras
 
 | Era | State |
@@ -645,9 +662,12 @@ prose is in git history (see commit referenced by the PR). Entries are in build 
 | 2026-10-14–18 | §2.7.109–§2.7.133: «Operaciones», Cotizador (full module), catalog v2, Forwarded requests, margins |
 | 2026-10-19–22 | §2.7.134–§2.7.151: Web quote form, Licitaciones, Cotizador expenses/sin IVA/persona natural |
 
-### 2.8 Hosted phase — frozen 2026-09-21
+### 2.8 Hosted phase — frozen 2026-09-21 (history)
 
-**State: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
+**Superseded.** The hosted phase reopened in October 2026 and `origenlab-v2` is production —
+see §0. The table below is the state as measured at the freeze.
+
+**State then: frozen.** The operator closed the hosted phase on 2026-09-21 and moved all V2 work
 to local PostgreSQL 17. The decision, its scope and the conditions for reopening are owned by
 [`OPERATIONS.md`](OPERATIONS.md) §1.1 — this section only reports what is measured.
 
