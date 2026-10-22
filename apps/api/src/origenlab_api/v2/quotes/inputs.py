@@ -359,7 +359,8 @@ def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> Qu
                       recipient=(DraftRecipient(participant_id=revision["recipient_participant_id"])
                                  if revision["recipient_participant_id"] is not None else None),
                       client=(DraftClientDetails(**revision["client_details"])
-                              if revision.get("client_details") else None))
+                              if revision.get("client_details") else None),
+                      without_iva=revision.get("tax_rate") is not None and Decimal(revision["tax_rate"]) == 0)
 
 
 def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]],

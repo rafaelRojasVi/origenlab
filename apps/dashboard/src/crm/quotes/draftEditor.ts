@@ -391,6 +391,11 @@ export function setTerm<K extends TermKey>(draft: QuoteDraft, key: K, value: Quo
   return { ...draft, terms: { ...draft.terms, [key]: value } };
 }
 
+/** «Sin IVA» (owner, 2026-10-21): the quote is priced and printed without IVA. */
+export function setWithoutIva(draft: QuoteDraft, on: boolean): QuoteDraft {
+  return { ...draft, without_iva: on };
+}
+
 export function setRecipient(draft: QuoteDraft, pick: QuoteRecipientPick | null): QuoteDraft {
   return { ...draft, recipient: pick };
 }

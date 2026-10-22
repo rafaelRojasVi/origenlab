@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { formatMoney } from "../money";
-import type { PrintableQuote } from "./printableQuote";
+import { isWithoutIva, type PrintableQuote } from "./printableQuote";
 import "./quotePrint.css";
 
 /** Who signs and how OrigenLab is reached, printed on every quote. */
@@ -71,6 +71,8 @@ export function QuotePrintView({
   const [models, setModels] = useState<Map<string, string>>(() => new Map());
   const printRef = useRef<HTMLButtonElement>(null);
   const title = printTitle(quote);
+  const noIva = isWithoutIva(quote.taxRate);
+  const ivaColumns = !!quote.tender && !noIva;
 
   useEffect(() => {
     const before = document.title;
@@ -195,7 +197,7 @@ export function QuotePrintView({
               <th scope="col">Descripción</th>
               <th scope="col" className="qp-num">Cant.</th>
               <th scope="col" className="qp-num">Precio unit.</th>
-              {quote.tender ? (
+              {ivaColumns ? (
                 <>
                   <th scope="col" className="qp-num">Neto</th>
                   <th scope="col" className="qp-num">{taxLabel(quote.taxRate)}</th>
@@ -220,7 +222,7 @@ export function QuotePrintView({
                   </td>
                   <td className="qp-num qp-mono">{qty(l.quantity)}</td>
                   <td className="qp-num qp-mono">{money(l.unitPrice)}</td>
-                  {quote.tender ? (
+                  {ivaColumns ? (
                     <>
                       <td className="qp-num qp-mono">{money(l.total)}</td>
                       <td className="qp-num qp-mono">{money(l.iva ?? null)}</td>
@@ -236,16 +238,20 @@ export function QuotePrintView({
         </table>
 
         <dl className="qp-totals" aria-label="Totales">
-          <div>
-            <dt>Neto</dt>
-            <dd className="qp-mono">{money(quote.totals.net)}</dd>
-          </div>
-          <div>
-            <dt>{taxLabel(quote.taxRate)}</dt>
-            <dd className="qp-mono">{money(quote.totals.iva)}</dd>
-          </div>
+          {noIva ? null : (
+            <>
+              <div>
+                <dt>Neto</dt>
+                <dd className="qp-mono">{money(quote.totals.net)}</dd>
+              </div>
+              <div>
+                <dt>{taxLabel(quote.taxRate)}</dt>
+                <dd className="qp-mono">{money(quote.totals.iva)}</dd>
+              </div>
+            </>
+          )}
           <div className="qp-total">
-            <dt>Total {quote.currency}</dt>
+            <dt>Total {quote.currency}{noIva ? " sin IVA" : ""}</dt>
             <dd className="qp-mono">{money(quote.totals.total)}</dd>
           </div>
         </dl>

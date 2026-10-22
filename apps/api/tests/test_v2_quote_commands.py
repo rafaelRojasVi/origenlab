@@ -274,6 +274,21 @@ def test_save_prices_a_catalog_line_with_profile_expenses(world) -> None:
 
 
 @needs_db
+def test_sin_iva_stores_a_zero_rate_and_unticking_restores_it(world) -> None:
+    dsn = world["dsn"]
+    created = _new_quote(world)
+    out = _save(world, created, {"items": [_catalog_item(world)], "without_iva": True})
+    rev = _revision(dsn, created["revision_id"])
+    assert rev["tax_rate"] == 0 and rev["tax_total"] == 0 and rev["grand_total"] == rev["subtotal"]
+    assert out["computed"]["totals"]["iva"] == "0"
+    assert draft_from_rows(rev, _lines(dsn, created["revision_id"])).without_iva is True
+    _save(world, created, {"items": [_catalog_item(world)]}, version=out["version"])
+    rev = _revision(dsn, created["revision_id"])
+    assert rev["tax_rate"] == Decimal("0.19") and rev["tax_total"] == peso(rev["subtotal"] * Decimal("0.19"))
+    assert draft_from_rows(rev, _lines(dsn, created["revision_id"])).without_iva is False
+
+
+@needs_db
 def test_save_with_stale_version_writes_nothing(world) -> None:
     dsn = world["dsn"]
     created = _new_quote(world)
