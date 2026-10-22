@@ -62,8 +62,8 @@ Supabase project, by an operator or by any tool in this repository:
 §5.2 is weakened, satisfied or deferred by it, and in particular **the backup gate stands
 unchanged**. The open items recorded against the hosted project stay open and stay counted.
 
-**The two manual security controls were offered and deliberately not taken.** The owner
-disabled the Data API on 2026-10-22 (closes `t01`/`d01`, [`STATUS.md`](STATUS.md) §0); disabling
+**The two manual security controls were first offered and deliberately not taken.** The owner
+has since disabled the Data API on 2026-10-22 (closes `t01`/`d01`, [`STATUS.md`](STATUS.md) §0); disabling
 the legacy JWT keys on `origenlab-v2` remains an **open gate item** (the exposed-JWT-secret
 blocker of [`STATUS.md`](STATUS.md) §2.5). They are
 Supabase Dashboard actions: this repository has no dashboard access, and under the freeze it
