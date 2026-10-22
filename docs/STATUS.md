@@ -36,7 +36,7 @@ says "frozen", "not deployed" or "not created", this section is the current stat
 
 | Item | State (2026-10-22) |
 |---|---|
-| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Migration head `20261021200000` (66 files in `supabase/migrations/`), applied by the release automation |
+| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Migration head `20261022100000` (67 files in `supabase/migrations/`), applied by the release automation |
 | Release | `OL_RELEASE_AUTOMATION_ENABLED=true` since 2026-10-13: a merge to `main`, once CI passes, runs `production-db-migrations` end to end — encrypted backup → migrations → worker → API → dashboard at the merge SHA → postflight. Render auto-deploy stays off |
 | API | Render web service `origenlab` (`render.yaml` calls it `origenlab-api`), Python runtime, root `apps/api`, Starter, Oregon |
 | Worker | Render Background Worker `origenlab-mail-triage`, starter, root `apps/worker`: a supervisor with triage, capture (every minute: gmail-sync → drive-file → quote-read) and tender children. 279–362 MB since 2026-10-21 (#813) |
@@ -645,6 +645,7 @@ prose is in git history (see commit referenced by the PR). Entries are in build 
 | §2.7.149 | 2026-10-22 | #816 #818 | A particular's quote reads «Persona natural» on the Cotizador |
 | §2.7.150 | 2026-10-22 | #816 | A persona natural is their own client record |
 | §2.7.151 | 2026-10-22 |  | Request cases opened by R7/R11 add the sender as a participant; «+ Nueva» no longer… |
+| §2.7.152 | 2026-10-22 | #826 | `20261022100000`: indexes on `comms.message(provider_thread_id)`, Gmail thread id, catalog `model_key` (pg_trgm); worker case cards capped at 300 |
 
 **Key milestones (highlighted in the table above):**
 

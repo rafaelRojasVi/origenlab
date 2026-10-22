@@ -64,6 +64,10 @@ MIGRATIONS = REPO_ROOT / "supabase" / "migrations"
 #: emulation `supabase/scripts/dev_db.sh` performs, and deliberately not part of the chain.
 BOOTSTRAP = """
 create schema if not exists extensions authorization postgres;
+-- origenlab_owner must be able to reference operator classes and other objects in the extensions
+-- schema (e.g. extensions.gin_trgm_ops in CREATE INDEX). On hosted Supabase the platform grants
+-- this automatically; disposable databases do not, so we emulate it here.
+grant usage on schema extensions to origenlab_owner;
 create extension if not exists btree_gist with schema extensions;
 """
 

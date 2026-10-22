@@ -82,7 +82,7 @@ Support OrigenLab's commercial operation by:
 
 **Last:**
 
-5. Historical, archive, and generated snapshots (`Status: historical` / [`generated/`](../apps/email-pipeline/docs/generated/) / dated audits)
+5. Historical, archive, and generated snapshots (`Status: historical` / generated reports (not in the repo; regenerate with their scripts) / dated audits)
 
 <a id="m-proj-trust"></a>
 ## What not to trust as current truth

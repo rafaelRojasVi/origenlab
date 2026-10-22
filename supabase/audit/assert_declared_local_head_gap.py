@@ -127,13 +127,13 @@ POST_SLICE0_FUNCTIONS = {
     "outbound.archived_campaign_immutable",
     # 20260928180000_slice1_shared_workspace_operator_profiles.sql — the three
     # INVOKER trigger functions that bump a row's version on every
-    # security-relevant change (pgTAP: 073_shared_workspace_profiles.sql).
+    # security-relevant change (pgTAP: 079_shared_workspace_profiles.sql).
     "platform.operator_security_version",
     "platform.auth_principal_security_version",
     "platform.operator_profile_security_version",
     # 20260928191000_slice1_revocable_profile_sessions.sql — the INVOKER trigger
     # function that keeps a session's identity fixed, never extends it and makes a
-    # revocation final (pgTAP: 074_revocable_profile_sessions.sql).
+    # revocation final (pgTAP: 081_revocable_profile_sessions.sql).
     "platform.auth_session_guard",
     # 20260928193000_slice1_lockout_clear_audit.sql — the INVOKER trigger function
     # that refuses a lockout.cleared audit event from the runtime role (pgTAP 073).

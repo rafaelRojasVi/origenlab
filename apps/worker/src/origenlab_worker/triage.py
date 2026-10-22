@@ -215,6 +215,7 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
    and o.close_reason is distinct from 'discarded_by_correction'
    and o.kind = 'sale'  -- case_kind.py: a tender is never a matcher candidate
  order by o.created_at desc
+ limit 300
 """
 _KNOWN_QUOTE_NUMBERS = "select quote_number from crm.quote"
 _RECIPIENTS = """
