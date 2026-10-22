@@ -22,7 +22,7 @@
 # `origenlab_test_<8 hex>`. --json prints the measured report to stdout; without it a human
 # summary goes to stderr. Exit status is non-zero on any mismatch.
 #
-# Expectations: docs/DOMAIN.md §7, §7.1–§7.3 (the 41-table inventory), docs/STATUS.md §2.1 (measured),
+# Expectations: docs/DOMAIN.md §7, §7.1–§7.3 (the 60-table inventory), docs/STATUS.md §2.1 (measured),
 # docs/MIGRATION.md §5.2 (the privilege proofs). Procedure: docs/OPERATIONS.md §4.1.
 
 set -euo pipefail
