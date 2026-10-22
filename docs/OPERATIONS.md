@@ -62,9 +62,10 @@ Supabase project, by an operator or by any tool in this repository:
 §5.2 is weakened, satisfied or deferred by it, and in particular **the backup gate stands
 unchanged**. The open items recorded against the hosted project stay open and stay counted.
 
-**The two manual security controls were offered and deliberately not taken.** Disabling the
-Data API and disabling the legacy JWT keys on `origenlab-v2` both remain **open gate items**
-(`t01`/`d01` and the exposed-JWT-secret blocker of [`STATUS.md`](STATUS.md) §2.5). They are
+**The two manual security controls were offered and deliberately not taken.** The owner
+disabled the Data API on 2026-10-22 (closes `t01`/`d01`, [`STATUS.md`](STATUS.md) §0); disabling
+the legacy JWT keys on `origenlab-v2` remains an **open gate item** (the exposed-JWT-secret
+blocker of [`STATUS.md`](STATUS.md) §2.5). They are
 Supabase Dashboard actions: this repository has no dashboard access, and under the freeze it
 may not open the connection that would verify either one. They are therefore recorded as
 open, not as attested, and not as satisfied.
@@ -116,7 +117,7 @@ cannot both be completed, the cutover stops here.
 
 Both still open (§1.1, [`STATUS.md`](STATUS.md) §2.8), both Supabase Dashboard actions:
 
-- disable the Data API — closes `t01` and `d01`;
+- disable the Data API — closes `t01` and `d01` (**done 2026-10-22**);
 - disable the legacy JWT keys, and rotate the exposed JWT secret.
 
 #### Step 4 — rerun the hosted Slice 0 audit
