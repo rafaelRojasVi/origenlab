@@ -52,6 +52,13 @@ do $$ begin reset role; end $$;
 
 create extension if not exists pg_trgm with schema extensions;
 
+-- On hosted Supabase the platform grants all roles USAGE on the extensions schema, so
+-- operator classes and functions installed there (e.g. extensions.gin_trgm_ops,
+-- extensions.word_similarity) resolve without search_path tricks. Disposable test
+-- clusters (disposable_test_cluster.sh) and local worktrees apply migrations without
+-- that platform pre-grant, so we emit it here. The grant is idempotent.
+grant usage on schema extensions to origenlab_owner, origenlab_api, origenlab_worker;
+
 set role origenlab_owner;
 
 -- 1. comms.message: partial B-tree on provider_thread_id alone (for the triage queries that
