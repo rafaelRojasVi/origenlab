@@ -44,7 +44,8 @@ says "frozen", "not deployed" or "not created", this section is the current stat
 | Switches on Render | `ORIGENLAB_V2_COMMANDS_ENABLED`, `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` and `ORIGENLAB_V2_QUOTING_ENABLED` on |
 | Dashboard | `dashboard.origenlab.cl` behind the `dashboard-proxy` Worker; `hosted-smoke` checks every proxied GET every 30 minutes |
 | Website | `origenlab.cl` on cPanel, deployed by `web-deploy` on merge |
-| Open gate | Data API (PostgREST) still enabled on `origenlab-v2` with no exposed schema — the Postgres log shows `schema "pg_pgrst_no_exposed_schemas" does not exist` every ~32 s. Disabling it in the Supabase dashboard closes `t01`/`d01` ([`OPERATIONS.md`](OPERATIONS.md) §1.2) |
+| Data API | **Disabled** on `origenlab-v2` by the owner on 2026-10-22 (Supabase dashboard → Integrations → Data API) — closes `t01`/`d01`. Supabase keeps PostgREST polling with no exposed schema, so the Postgres log may still show `schema "pg_pgrst_no_exposed_schemas" does not exist` every ~32 s: platform noise, no schema reachable |
+| Open gate | Legacy JWT keys on `origenlab-v2` not yet disabled; the exposed JWT secret not yet rotated ([`OPERATIONS.md`](OPERATIONS.md) §1.2, §2.5 below) |
 
 ## 1. Eras
 
