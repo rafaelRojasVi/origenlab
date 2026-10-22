@@ -91,7 +91,7 @@ select throws_ok($$ insert into crm.quote_line
     (quote_revision_id, line_no, line_kind, description, quantity, is_principal)
   values
     ('a2000000-0000-4000-a200-000000000040', 3, 'logistics', 'Flete', 1, true) $$,
-  '23514',
+  '23514', null,
   'a logistics line cannot be marked principal (quote_line_principal_is_item still enforced)');
 
 -- ── sent-message uniqueness: one message may send several quotes ─────────────────────────────
@@ -135,7 +135,7 @@ select throws_ok($$ insert into crm.quote_revision
      '{"sold_to": {}}'::jsonb, 1, now(), 'a2000000-0000-4000-a200-000000000001',
      'a2000000-0000-4000-a200-00000000f001', now(),
      'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc') $$,
-  '23505',
+  '23505', null,
   'same message cannot be sending evidence for the same quote twice');
 
 select * from finish();
