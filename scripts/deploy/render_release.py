@@ -31,7 +31,9 @@ IN_PROGRESS = {"created", "queued", "build_in_progress", "update_in_progress", "
 LEGACY_CRON = ("gmail-sync", "crn-db1tk02jnfac73eir6fg")
 ALL_SERVICES = (*SERVICES, LEGACY_CRON)
 WORKER_COMMAND = "uv run --no-sync origenlab-worker mail-worker"
-WORKER_COMMANDS = {WORKER_COMMAND, "uv run --no-sync origenlab-worker triage-worker"}
+# 2026-10-22: the worker starts from its virtualenv without `uv run` (memory); same consolidated entrypoint.
+WORKER_COMMANDS = {WORKER_COMMAND, "uv run --no-sync origenlab-worker triage-worker",
+                   ".venv/bin/origenlab-worker mail-worker"}
 
 
 class Refused(RuntimeError):
