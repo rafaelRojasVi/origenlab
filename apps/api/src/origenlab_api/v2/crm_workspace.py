@@ -54,7 +54,13 @@ from origenlab_api.v2.drive_ledgers import (  # noqa: F401 - DriveLink, load_dri
     DriveLedgerError,
     load_drive_ledgers,
 )
-from origenlab_api.v2.mail_rules import OWN_DOMAINS, WEB_FORM_REPLY_TO_SQL, mail_direction, web_form_enquirer
+from origenlab_api.v2.mail_rules import (
+    FREE_MAIL_DOMAINS,
+    OWN_DOMAINS,
+    WEB_FORM_REPLY_TO_SQL,
+    mail_direction,
+    web_form_enquirer,
+)
 from origenlab_api.v2.marketing_audience import (
     address_ref,
     addresses_in,
@@ -378,7 +384,12 @@ _SQL_PIPELINE_CONTACT = """
            (select cm.direction from comms.message cm
              where cm.provider_message_id = sr.payload->>'gmail_message_id'
              order by cm.created_at limit 1) as comms_direction,
-           """ + WEB_FORM_REPLY_TO_SQL + """ as web_form_reply_to
+           """ + WEB_FORM_REPLY_TO_SQL + """ as web_form_reply_to,
+           -- The institution the triage's model read in the email (its signature, its text):
+           -- a suggestion for «Asignar institución», never a CRM fact.
+           (select a.value->'reading'->>'requester_organization' from evidence.assertion a
+             where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value ? 'reading'
+             order by a.created_at desc limit 1) as requester_read
       from case_threads ct
       join evidence.source_record sr
         on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
@@ -619,15 +630,29 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
     # The visitor of the case's newest web-form submission: still the case's contact when a later
     # email (their own reply, ours) is the newest one either way.
     enquirers: dict[str, tuple[datetime, str]] = {}
+    # The newest institution the model read in a client's email, and the newest institutional
+    # domain a client wrote from: «Asignar institución»'s suggestion (private, stripped like _enquirer).
+    reads: dict[str, tuple[datetime, str]] = {}
+    domains: dict[str, tuple[datetime, str]] = {}
     for row in rows:
         at = _aware(row.get("sent_at"))
         if at is None:
             continue
+        oid = row["opportunity_id"]
         enquirer = web_form_enquirer(row.get("sender"), row.get("web_form_reply_to"))
-        if enquirer and (row["opportunity_id"] not in enquirers or enquirers[row["opportunity_id"]][0] < at):
-            enquirers[row["opportunity_id"]] = (at, enquirer)
+        if enquirer and (oid not in enquirers or enquirers[oid][0] < at):
+            enquirers[oid] = (at, enquirer)
         direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"),
                                    row.get("web_form_reply_to"))
+        if direction == "inbound":
+            read = (row.get("requester_read") or "").strip()
+            if read and (oid not in reads or reads[oid][0] < at):
+                reads[oid] = (at, read[:200])
+            writer = enquirer or next((addr for _, addr in getaddresses([row.get("sender") or ""]) if "@" in addr), None)
+            domain = writer.rsplit("@", 1)[1].strip().lower() if writer else None
+            if domain and domain not in FREE_MAIL_DOMAINS and domain not in OWN_DOMAINS \
+                    and (oid not in domains or domains[oid][0] < at):
+                domains[oid] = (at, domain)
         key = (row["opportunity_id"], direction)
         if key in best and best[key] >= at:
             continue
@@ -649,6 +674,11 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
     for oid, (_, enquirer) in enquirers.items():
         # Private to `compose_pipeline` (the card's contact); stripped from the card's last_contact.
         out[oid]["inbound"]["_enquirer"] = enquirer
+    for oid in set(reads) | set(domains):
+        inbound = out.get(oid, {}).get("inbound")
+        if inbound is not None:
+            inbound["_requester_read"] = reads[oid][1] if oid in reads else None
+            inbound["_requester_domain"] = domains[oid][1] if oid in domains else None
     return out
 
 
@@ -792,8 +822,13 @@ def compose_pipeline(
                 "confirmation": requesting[0].get("confirmation"),
                 "version": requesting[0].get("organization_version"),
             }
+        suggestion: dict[str, Any] | None = None
         if organization is None:
             attention.append("no_requesting_institution")
+            inbound_seen = ((contacts or {}).get(oid) or {}).get("inbound") or {}
+            read, domain = inbound_seen.get("_requester_read"), inbound_seen.get("_requester_domain")
+            if read or domain:
+                suggestion = {"name": read, "domain": domain}
         if not quote_cards:
             attention.append("no_quote")
 
@@ -862,6 +897,9 @@ def compose_pipeline(
                 ),
                 # Machines may suggest "mentioned", not a requesting institution.
                 # The exact row ID permits a separate, human-reviewed role decision.
+                # What the model read in the client's email and the domain they wrote from: a
+                # suggestion «Asignar institución» opens with, never an institution by itself.
+                "requester_suggestion": suggestion,
                 "pending_institution_mentions": [
                     {
                         "opportunity_organization_id": o["opportunity_organization_id"],

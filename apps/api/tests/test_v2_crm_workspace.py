@@ -336,6 +336,9 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
          "sender": "persona@ejemplo.invalid", "direction_hint": None, "comms_direction": None},
     ]
     out = last_contacts(rows)
+    # The «Asignar institución» suggestion rides on inbound as private keys (stripped from the card).
+    assert out["o1"]["inbound"].pop("_requester_domain") == "ejemplo.invalid"
+    assert out["o1"]["inbound"].pop("_requester_read") is None
     assert out["o1"] == {
         "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
                      "url": "https://mail.google.com/mail/u/0/#all/m3"},
@@ -875,3 +878,54 @@ def test_the_visitor_stays_the_contact_when_they_later_reply_by_email() -> None:
                             [], [], [], {}, [], {}, out)[0]
     assert (card["contact"]["source"], card["contact"]["address"]) == ("web_form", "ana@lab-ficticio.example.test")
     assert set(card["last_contact"]["inbound"]) == {"at", "subject", "url", "sender_name"}
+
+
+# ── «Asignar institución»: what the AI read in the client's email (owner 2026-10-23) ─────────
+
+_CLIENT_ROW = {"opportunity_id": "o9", "sent_at": "2026-10-23T09:30:00-03:00", "subject": "Solicitud de cotización",
+               "gmail_message_id": "mc", "sender": "Bárbara Ficticia <bficticia@centro-ficticio.example.test>",
+               "comms_direction": "inbound", "web_form_reply_to": None,
+               "requester_read": "Centro Ficticio de Análisis de Laboratorio"}
+
+
+def _card(rows, **opp):
+    out = last_contacts(rows)
+    base = {"stage": "lead", "organization_id": None, "organization_name": None, **opp}
+    return compose_pipeline([_opp("o9", **base)], [], [], [], {}, [], {}, out)[0]
+
+
+def test_a_case_without_institution_suggests_what_the_ai_read_and_the_sender_domain() -> None:
+    card = _card([_CLIENT_ROW])
+    assert card["requester_suggestion"] == {"name": "Centro Ficticio de Análisis de Laboratorio",
+                                            "domain": "centro-ficticio.example.test"}
+    assert set(card["last_contact"]["inbound"]) <= {"at", "subject", "url", "sender_name"}
+
+
+def test_a_free_mail_sender_suggests_the_name_only() -> None:
+    card = _card([{**_CLIENT_ROW, "sender": "Ana <ana.ficticia@gmail.com>"}])
+    assert card["requester_suggestion"] == {"name": "Centro Ficticio de Análisis de Laboratorio", "domain": None}
+
+
+def test_no_reading_still_suggests_the_institutional_domain() -> None:
+    card = _card([{**_CLIENT_ROW, "requester_read": None}])
+    assert card["requester_suggestion"] == {"name": None, "domain": "centro-ficticio.example.test"}
+
+
+def test_nothing_to_suggest_from_free_mail_without_a_reading() -> None:
+    card = _card([{**_CLIENT_ROW, "requester_read": None, "sender": "ana.ficticia@gmail.com"}])
+    assert card["requester_suggestion"] is None
+
+
+def test_a_case_with_an_institution_suggests_nothing() -> None:
+    card = _card([_CLIENT_ROW], organization_id="org1", organization_name="Instituto Ficticio")
+    assert card["requester_suggestion"] is None
+
+
+def test_our_own_mail_never_suggests() -> None:
+    ours = {**_CLIENT_ROW, "sender": "Tatiana <contacto@origenlab.cl>", "comms_direction": "outbound"}
+    assert _card([ours])["requester_suggestion"] is None
+
+
+def test_the_web_form_visitor_domain_is_suggested() -> None:
+    card = _card([{**_WEB_FORM_ROW, "opportunity_id": "o9", "requester_read": None}])
+    assert card["requester_suggestion"] == {"name": None, "domain": "lab-ficticio.example.test"}

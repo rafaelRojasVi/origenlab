@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { fetchV2Organizations } from "../../api/v2Client";
 import { envelopeOfError } from "../../api/refusalEnvelope";
 import { confirmOrganizationRecord, fetchOrganizationAuthoring } from "../authoring/crmAuthoringApi";
@@ -34,7 +34,8 @@ export function AssignInstitution({
     refetch: boolean,
   ) => void;
 }) {
-  const [query, setQuery] = useState("");
+  const suggestion = card.requester_suggestion ?? null;
+  const [query, setQuery] = useState(suggestion?.name ?? "");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState("");
   const [pendingConfirmation, setPendingConfirmation] = useState<{
@@ -55,9 +56,64 @@ export function AssignInstitution({
   const confirmKeyRef = useRef(newCaseCommandKey());
   const createKeyRef = useRef(newCaseCommandKey());
 
+  // Opened from a case whose client email names an institution: the search for it is already run.
+  useEffect(() => {
+    if (suggestion?.name) void runSearch(suggestion.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on open
+  }, []);
+
+  /** «Crear y asignar» from the suggestion: the name read, a kind guessed from it, the sender's
+   *  domain, and the reason said for the person. The API reuses an institution of that name or domain. */
+  async function createFromSuggestion() {
+    if (!suggestion?.name || busy || card.version == null) return;
+    setBusy(true);
+    setError(null);
+    const name = suggestion.name.trim();
+    try {
+      const receipt = await addCaseOrganization(
+        {
+          opportunity_id: card.opportunity_id,
+          opportunity_version: card.version,
+          new_organization: {
+            name: name.slice(0, 500),
+            kind: kindFromName(name),
+            ...(suggestion.domain ? { domain: suggestion.domain } : {}),
+          },
+          role: "requesting_institution",
+          note: suggestion.domain
+            ? `Leído en el correo del cliente (${suggestion.domain}).`
+            : "Leído en el correo del cliente.",
+        },
+        createKeyRef.current,
+      );
+      const used = typeof receipt.organization_name === "string" ? receipt.organization_name : name;
+      onDone(
+        {
+          tone: "good",
+          lines: [
+            receipt.organization_created === false
+              ? `Se usó la institución existente «${used}»: quedó como solicitante del caso.`
+              : `Institución «${used}» creada y asociada al caso como solicitante.`,
+          ],
+        },
+        true,
+      );
+    } catch (err) {
+      createKeyRef.current = newCaseCommandKey();
+      setError(caseRefusalText(err));
+      if (isStaleRefusal(err)) onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function search(e: FormEvent) {
     e.preventDefault();
-    if (!query.trim()) return;
+    await runSearch(query);
+  }
+
+  async function runSearch(text: string) {
+    if (!text.trim()) return;
 
     setBusy(true);
     setError(null);
@@ -70,7 +126,7 @@ export function AssignInstitution({
 
     try {
       const result = await fetchV2Organizations({
-        q: query.trim(),
+        q: text.trim(),
         limit: 50,
       });
       setCandidates(
@@ -79,7 +135,7 @@ export function AssignInstitution({
           name: o.name,
         })),
       );
-      setSearched(query.trim());
+      setSearched(text.trim());
     } catch (err) {
       setError(caseRefusalText(err));
     } finally {
@@ -225,6 +281,26 @@ export function AssignInstitution({
       className="space-y-3 rounded-md border border-line p-3"
       aria-label="Asignar institución solicitante"
     >
+      {suggestion && (suggestion.name || suggestion.domain) ? (
+        <div
+          role="region"
+          aria-label="Sugerencia del correo"
+          className="space-y-2 rounded-md border border-brand-600/30 bg-brand-50 p-3"
+        >
+          <p className="text-[13px] text-ink">
+            En el correo del cliente dice:{" "}
+            {suggestion.name ? <strong>{suggestion.name}</strong> : <span className="text-ink-muted">sin nombre</span>}
+            {suggestion.domain ? <span className="text-ink-muted"> · {suggestion.domain}</span> : null}
+          </p>
+          {suggestion.name ? (
+            <Button variant="primary" busy={busy} disabled={busy || card.version == null} onClick={() => void createFromSuggestion()}>
+              {`Crear y asignar «${suggestion.name}»`}
+            </Button>
+          ) : (
+            <p className="text-xs text-ink-muted">Busca la institución por su nombre o créala abajo.</p>
+          )}
+        </div>
+      ) : null}
       {(card.pending_institution_mentions?.length ?? 0) > 0 ? (
         <ReviewMentionedInstitution card={card} onDone={onDone} />
       ) : null}
@@ -483,4 +559,14 @@ function ReviewMentionedInstitution({
       {error ? <p role="alert">{error}</p> : null}
     </form>
   );
+}
+
+/** The kind an institution's name suggests; the person can change it later in its record. */
+function kindFromName(name: string): NewKind {
+  const n = name.toLowerCase();
+  if (n.includes("universidad")) return "university";
+  if (n.includes("hospital") || n.includes("clínica") || n.includes("clinica")) return "hospital";
+  if (n.includes("laboratorio") || /\blab\b/.test(n)) return "laboratory";
+  if (n.includes("ministerio") || n.includes("servicio") || n.includes("instituto de salud")) return "public_institution";
+  return "company";
 }
