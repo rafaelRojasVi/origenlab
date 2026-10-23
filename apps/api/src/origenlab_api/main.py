@@ -695,12 +695,17 @@ def _mount_v2_command_boundary(
     app.include_router(tender_read_router)
     app.include_router(bidder_read_router)
     # «Prospectos» (spec 2026-10-23): machine-found prospects, classified at read time.
+    from origenlab_api.v2.prospect_findings.commands import V2ProspectCommandRepository
     from origenlab_api.v2.prospect_findings.reads import ProspectFindingReadRepository
-    from origenlab_api.v2.prospect_findings.routes import prospect_read_router
+    from origenlab_api.v2.prospect_findings.routes import prospect_command_router, prospect_read_router
 
     app.state.v2_prospect_read_repository = ProspectFindingReadRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    app.state.v2_prospect_command_repository = V2ProspectCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(prospect_command_router)
     app.include_router(prospect_read_router)
     # A case's documents (its purchase order): the private `crm-documents` bucket, and the
     # worker's `mail` bucket read to copy an email attachment. Without Storage configured the
