@@ -25,32 +25,6 @@ class Classification(TypedDict):
     organization_candidates: list[dict[str, str]]
 
 
-_BLOCK = """
-select scope, reason from outbound.contact_control
- where kind = 'block' and (until_at is null or until_at > now())
-   and ((scope = 'address' and value_norm = %(email)s) or (scope = 'domain' and value_norm = %(domain)s))
- limit 1
-"""
-_KNOWN = """
-select exists (select 1 from crm.contact_point where kind = 'email' and value_norm = %(email)s) as in_crm,
-       (select count(*) from comms.message_participant where address_norm = %(email)s)::int as mails,
-       exists (select 1 from outbound.contact_control
-                where scope = 'address' and value_norm = %(email)s and kind = 'prior_contact') as prior
-"""
-#: Live institutions holding a domain: the domain row not removed, the institution neither merged nor archived.
-_BY_DOMAIN = """
-select o.id::text as id, o.name from crm.organization o
-  join crm.organization_domain d on d.organization_id = o.id
- where d.domain_norm = %(domain)s and d.removed_at is null
-   and o.merged_into_organization_id is null and o.status <> 'archived'
- order by o.name, o.id
-"""
-_BY_NAME = """
-select o.id::text as id, o.name from crm.organization o
- where o.merged_into_organization_id is null and o.status <> 'archived'
-   and lower(regexp_replace(btrim(o.name), '\\s+', ' ', 'g')) = %(name)s
- order by o.name, o.id
-"""
 #: Second-level public suffixes: walking up a host never stops on one of these (`sag.gob.cl` ≠ `gob.cl`).
 _PUBLIC_SECOND_LEVEL: frozenset[str] = frozenset({"gob.cl", "mil.cl", "co.cl", "com.ar", "com.br", "co.uk", "ac.uk"})
 
@@ -107,56 +81,123 @@ def _walk_up(domain: str) -> list[str]:
     return out
 
 
-def organization_candidates(cur: Any, *, email: str | None, organization_name: str,
-                            website: str | None) -> list[dict[str, str]]:
-    """The most specific domain that names a live institution wins (the email's before the website's,
-    a subdomain before its parent); institutions with the same normalised name are added."""
-    found: list[dict[str, str]] = []
-    for base in institution_domains(email, website):
-        for domain in _walk_up(base):
-            cur.execute(_BY_DOMAIN, {"domain": domain})
-            found = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
-            if found:
-                break
-        if found:
-            break
-    cur.execute(_BY_NAME, {"name": normalize_organization_name(organization_name)})
-    for r in cur.fetchall():
-        if all(c["id"] != r[0] for c in found):
-            found.append({"id": r[0], "name": r[1]})
-    return found
+_MANY_BLOCKS = """
+select scope, value_norm, reason from outbound.contact_control
+ where kind = 'block' and (until_at is null or until_at > now())
+   and ((scope = 'address' and value_norm = any(%(emails)s)) or (scope = 'domain' and value_norm = any(%(domains)s)))
+"""
+_MANY_CRM = "select value_norm from crm.contact_point where kind = 'email' and value_norm = any(%(emails)s)"
+_MANY_MAILS = """
+select address_norm, count(*)::int from comms.message_participant
+ where address_norm = any(%(emails)s) group by address_norm
+"""
+_MANY_PRIOR = """
+select value_norm from outbound.contact_control
+ where scope = 'address' and kind = 'prior_contact' and value_norm = any(%(emails)s)
+"""
+_MANY_BY_DOMAIN = """
+select d.domain_norm, o.id::text, o.name from crm.organization o
+  join crm.organization_domain d on d.organization_id = o.id
+ where d.domain_norm = any(%(domains)s) and d.removed_at is null
+   and o.merged_into_organization_id is null and o.status <> 'archived'
+ order by o.name, o.id
+"""
+_MANY_BY_NAME = """
+select lower(regexp_replace(btrim(o.name), '\\s+', ' ', 'g')) as norm, o.id::text, o.name from crm.organization o
+ where o.merged_into_organization_id is null and o.status <> 'archived'
+   and lower(regexp_replace(btrim(o.name), '\\s+', ' ', 'g')) = any(%(names)s)
+ order by o.name, o.id
+"""
+
+
+class Subject(TypedDict):
+    email: str | None
+    organization_name: str
+    website: str | None
+    block_only: bool
+
+
+def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
+    """Classify every subject with a fixed number of statements (six at most), whatever their count.
+
+    Same rules and order as one at a time: blocked → known → new; the most specific live domain
+    names the institution (the email's before the website's, a subdomain before its parent), then
+    institutions with the same normalised name."""
+    emails = [normalize_email(s["email"]) if s["email"] else None for s in subjects]
+    own_domain = [domain_of(e, None) for e in emails]
+    ladders = [[level for base in institution_domains(e, s["website"]) for level in _walk_up(base)]
+               for e, s in zip(emails, subjects, strict=True)]
+    names = [normalize_organization_name(s["organization_name"]) for s in subjects]
+    all_emails = sorted({e for e in emails if e})
+    all_domains = sorted({d for d in own_domain if d})
+    cur.execute(_MANY_BLOCKS, {"emails": all_emails, "domains": all_domains})
+    blocks: dict[tuple[str, str], str] = {(r[0], r[1]): r[2] for r in cur.fetchall()}
+    open_ = [i for i, s in enumerate(subjects)
+             if not s["block_only"] and ("address", emails[i]) not in blocks and ("domain", own_domain[i]) not in blocks]
+    in_crm: set[str] = set()
+    mails: dict[str, int] = {}
+    prior: set[str] = set()
+    by_domain: dict[str, list[dict[str, str]]] = {}
+    by_name: dict[str, list[dict[str, str]]] = {}
+    open_emails = sorted({emails[i] for i in open_ if emails[i]})
+    if open_emails:
+        cur.execute(_MANY_CRM, {"emails": open_emails})
+        in_crm = {r[0] for r in cur.fetchall()}
+        cur.execute(_MANY_MAILS, {"emails": open_emails})
+        mails = {r[0]: r[1] for r in cur.fetchall()}
+        cur.execute(_MANY_PRIOR, {"emails": open_emails})
+        prior = {r[0] for r in cur.fetchall()}
+    open_domains = sorted({d for i in open_ for d in ladders[i]})
+    if open_domains:
+        cur.execute(_MANY_BY_DOMAIN, {"domains": open_domains})
+        for d, oid, name in cur.fetchall():
+            by_domain.setdefault(d, []).append({"id": oid, "name": name})
+    open_names = sorted({names[i] for i in open_})
+    if open_names:
+        cur.execute(_MANY_BY_NAME, {"names": open_names})
+        for norm, oid, name in cur.fetchall():
+            by_name.setdefault(norm, []).append({"id": oid, "name": name})
+
+    out: list[Classification] = []
+    for i, s in enumerate(subjects):
+        e, d = emails[i], own_domain[i]
+        reason = blocks.get(("address", e)) if e else None
+        if reason is None and d:
+            reason = blocks.get(("domain", d))
+        if reason is not None:
+            out.append({"state": "blocked", "reasons": ["En Bajas: " + str(reason)], "organization_candidates": []})
+            continue
+        if s["block_only"]:
+            out.append({"state": "new", "reasons": [], "organization_candidates": []})
+            continue
+        reasons: list[str] = []
+        state: State = "new"
+        if e:
+            n = mails.get(e, 0)
+            if e in in_crm:
+                reasons.append("El correo ya está en el CRM")
+            if n:
+                reasons.append(f"Ya nos escribimos ({n} {'correo' if n == 1 else 'correos'})")
+            if e in prior:
+                reasons.append("Ya fue contactado en una campaña")
+            if e in in_crm or n or e in prior:
+                state = "known"
+        candidates = next((list(by_domain[level]) for level in ladders[i] if by_domain.get(level)), [])
+        for c in by_name.get(names[i], []):
+            if all(x["id"] != c["id"] for x in candidates):
+                candidates.append(c)
+        if len(candidates) == 1:
+            reasons.append("Institución conocida: " + candidates[0]["name"])
+        elif len(candidates) > 1:
+            reasons.append("Posible duplicado de institución")
+        if state == "new" and not candidates:
+            reasons.insert(0, "No está en el CRM ni en nuestros correos")
+        out.append({"state": state, "reasons": reasons, "organization_candidates": candidates})
+    return out
 
 
 def classify(cur: Any, *, email: str | None, organization_name: str, website: str | None,
              block_only: bool = False) -> Classification:
-    """`block_only`: a decided finding (contacted, discarded) needs only the Bajas check."""
-    email = normalize_email(email) if email else None
-    domain = domain_of(email, None)
-    params = {"email": email, "domain": domain}
-    reasons: list[str] = []
-    cur.execute(_BLOCK, params)
-    row = cur.fetchone()
-    if row is not None:
-        return {"state": "blocked", "reasons": ["En Bajas: " + str(row[1])], "organization_candidates": []}
-    if block_only:
-        return {"state": "new", "reasons": [], "organization_candidates": []}
-    state: State = "new"
-    if email:
-        cur.execute(_KNOWN, params)
-        in_crm, mails, prior = cur.fetchone()
-        if in_crm:
-            reasons.append("El correo ya está en el CRM")
-        if mails:
-            reasons.append(f"Ya nos escribimos ({mails} {'correo' if mails == 1 else 'correos'})")
-        if prior:
-            reasons.append("Ya fue contactado en una campaña")
-        if in_crm or mails or prior:
-            state = "known"
-    candidates = organization_candidates(cur, email=email, organization_name=organization_name, website=website)
-    if len(candidates) == 1:
-        reasons.append("Institución conocida: " + candidates[0]["name"])
-    elif len(candidates) > 1:
-        reasons.append("Posible duplicado de institución")
-    if state == "new" and not candidates:
-        reasons.insert(0, "No está en el CRM ni en nuestros correos")
-    return {"state": state, "reasons": reasons, "organization_candidates": candidates}
+    """One finding (the `contact-prospect` re-check under its lock): `classify_many` of one."""
+    return classify_many(cur, [{"email": email, "organization_name": organization_name, "website": website,
+                                "block_only": block_only}])[0]

@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from origenlab_api.v2.prospect_findings.classify import classify
+from origenlab_api.v2.prospect_findings.classify import classify_many
 
 SANTIAGO = ZoneInfo("America/Santiago")
 View = Literal["nuevos", "conocidos", "mas_tarde", "contactados", "descartados"]
@@ -146,13 +146,14 @@ class ProspectFindingReadRepository:
 
     def _classified(self, cur: Any, extra_sql: str = "", params: Any = None) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         today = datetime.now(SANTIAGO).date()
-        out = []
-        for row in self._rows(cur, _FINDINGS + extra_sql, params):
-            p = row["payload"] or {}
-            c = classify(cur, email=p.get("email"), organization_name=p.get("organization_name") or "",
-                         website=p.get("website"), block_only=row["verdict"] in {"contactar", "descartar"})
-            out.append((row, _item(row, c, today)))
-        return out
+        rows = self._rows(cur, _FINDINGS + extra_sql, params)
+        found = classify_many(cur, [{
+            "email": (r["payload"] or {}).get("email"),
+            "organization_name": (r["payload"] or {}).get("organization_name") or "",
+            "website": (r["payload"] or {}).get("website"),
+            "block_only": r["verdict"] in {"contactar", "descartar"},
+        } for r in rows])
+        return [(row, _item(row, c, today)) for row, c in zip(rows, found, strict=True)]
 
     def list(self, view: str, *, limit: int = PAGE, offset: int = 0, now: datetime | None = None) -> dict[str, Any]:
         now = now or datetime.now(UTC)
