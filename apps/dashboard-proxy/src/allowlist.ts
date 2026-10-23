@@ -134,6 +134,12 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/tenders\/discovered$/,
   // One notice of it: every date, every item, the head's facts (a UUID-shaped segment, no tail).
   /^\/v2\/tenders\/discovered\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  // «Prospectos» (spec 2026-10-23): machine-found prospects classified at read time, one finding's
+  // full profile and its logo (bytes the worker stored; never the organization's own site). GET-only,
+  // any signed-in operator; a UUID-shaped segment, no other tail.
+  /^\/v2\/prospect-findings$/,
+  /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/logo$/,
   // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
   // document's signed link. GET-only; a `viewer` is 403 `role_may_not_view_bidder` upstream.
   /^\/v2\/bidder$/,
@@ -374,6 +380,10 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/create-tender-offer-quote$/,
   // «Nos interesa» / «No es nuestro» on a notice of «En Mercado Público».
   /^\/v2\/commands\/review-notice$/,
+  // «Prospectos» (spec 2026-10-23): «Más tarde» / «Descartar» / «Deshacer» on a prospect, and
+  // «Contactar» — its promotion into the CRM. Same session, role, key and size guard as the tenders.
+  /^\/v2\/commands\/review-prospect$/,
+  /^\/v2\/commands\/contact-prospect$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */
