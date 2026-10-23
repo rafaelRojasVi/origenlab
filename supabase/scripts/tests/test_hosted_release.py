@@ -376,6 +376,16 @@ class ProductionGates(unittest.TestCase):
         with self.assertRaisesRegex(render.Refused,"consolidated"):
             render.verify_service(obj,render.SERVICES[0][1])
 
+    def test_worker_started_from_its_venv_is_approved(self):
+        # 2026-10-22 the worker's start command dropped `uv run` (memory, MALLOC_ARENA_MAX) — the same
+        # consolidated mail worker, started from the image's virtualenv.
+        obj=approved_service(render.SERVICES[0][1])
+        obj["serviceDetails"]["envSpecificDetails"]["startCommand"]=".venv/bin/origenlab-worker mail-worker"
+        render.verify_service(obj,render.SERVICES[0][1])
+        obj["serviceDetails"]["envSpecificDetails"]["startCommand"]=".venv/bin/origenlab-worker unknown-worker"
+        with self.assertRaisesRegex(render.Refused,"consolidated"):
+            render.verify_service(obj,render.SERVICES[0][1])
+
     def test_render_refuses_auto_deploy_before_any_deployment(self):
         sha = "a" * 40
         calls = []
