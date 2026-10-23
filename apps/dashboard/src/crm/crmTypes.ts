@@ -233,6 +233,9 @@ export interface OpportunityCardData {
   /** Machine-suggested 'mentioned' relationships, not a confirmed requester.
    * Each row ID allows an operator to make a recorded case-role decision.
    */
+  /** What the AI read in the client's email (the institution named in it) and the domain they
+   *  wrote from, while the case has no institution. A suggestion, never an institution by itself. */
+  requester_suggestion?: { name: string | null; domain: string | null } | null;
   pending_institution_mentions?: {
     opportunity_organization_id: string;
     organization_id: string;

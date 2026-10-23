@@ -135,3 +135,51 @@ describe("«+ Crear institución»", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Esta institución figura como proveedor.");
   });
 });
+
+describe("what the AI read in the client's email (owner 2026-10-23)", () => {
+  const suggested = (suggestion: unknown) =>
+    ({ ...card, requester_suggestion: suggestion }) as unknown as OpportunityCardData;
+
+  it("offers «Crear y asignar» with the name read, its kind and the sender's domain, in one click", async () => {
+    const api = stub(() => receipt({ organization_id: "o-7", organization_name: "Centro Ficticio de Análisis de Laboratorio", organization_created: true }));
+    const onDone = vi.fn();
+    render(<AssignInstitution card={suggested({ name: "Centro Ficticio de Análisis de Laboratorio", domain: "centro-ficticio.example.test" })} onCancel={vi.fn()} onDone={onDone} />);
+    const box = screen.getByRole("region", { name: "Sugerencia del correo" });
+    expect(box).toHaveTextContent("Centro Ficticio de Análisis de Laboratorio");
+    expect(box).toHaveTextContent("centro-ficticio.example.test");
+    const quick = within(box).getByRole("button", { name: "Crear y asignar «Centro Ficticio de Análisis de Laboratorio»" });
+    await waitFor(() => expect(quick).toBeEnabled()); // the search run on opening has finished
+    fireEvent.click(quick);
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(api.posts()[0].body).toEqual({
+      opportunity_id: CASE, opportunity_version: 7, role: "requesting_institution",
+      note: "Leído en el correo del cliente (centro-ficticio.example.test).",
+      new_organization: { name: "Centro Ficticio de Análisis de Laboratorio", kind: "laboratory", domain: "centro-ficticio.example.test" },
+    });
+  });
+
+  it("opens with the search already run for the name read", async () => {
+    const api = stub(() => receipt({}), [
+      { organization_id: "o-3", name: "Centro Ficticio de Análisis de Laboratorio", confirmation: "confirmed", relationship_roles: [] },
+    ]);
+    render(<AssignInstitution card={suggested({ name: "Centro Ficticio de Análisis de Laboratorio", domain: null })} onCancel={vi.fn()} onDone={vi.fn()} />);
+    expect(screen.getByPlaceholderText("Nombre de la institución")).toHaveValue("Centro Ficticio de Análisis de Laboratorio");
+    expect(await screen.findByRole("combobox", { name: "Institución solicitante" })).toBeInTheDocument();
+    expect(api.calls.some((c) => c.path === "/v2/organizations")).toBe(true);
+  });
+
+  it("with only a domain, says so and creates nothing by itself", async () => {
+    stub(() => receipt({}));
+    render(<AssignInstitution card={suggested({ name: null, domain: "centro-ficticio.example.test" })} onCancel={vi.fn()} onDone={vi.fn()} />);
+    const box = screen.getByRole("region", { name: "Sugerencia del correo" });
+    expect(box).toHaveTextContent("centro-ficticio.example.test");
+    expect(within(box).queryByRole("button", { name: /Crear y asignar/ })).toBeNull();
+  });
+
+  it("without a suggestion, nothing changes", () => {
+    stub(() => receipt({}));
+    renderIt();
+    expect(screen.queryByRole("region", { name: "Sugerencia del correo" })).toBeNull();
+    expect(screen.getByPlaceholderText("Nombre de la institución")).toHaveValue("");
+  });
+});
