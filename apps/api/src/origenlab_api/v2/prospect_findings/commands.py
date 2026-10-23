@@ -45,7 +45,7 @@ from origenlab_api.v2 import crm_authoring as authoring
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
-from origenlab_api.v2.prospect_findings.classify import FREE_MAIL_DOMAINS, classify, domain_of
+from origenlab_api.v2.prospect_findings.classify import classify, institution_domains
 
 REVIEW_PROSPECT = "review-prospect"
 CONTACT_PROSPECT = "contact-prospect"
@@ -151,15 +151,18 @@ def _organization(repo: Any, cur: Any, operator: OperatorIdentity, receipt_id: s
     if len(candidates) > 1 and not fields["create_new_organization"]:
         raise CommandRefused(409, "organization_ambiguous", "¿Cuál de estas instituciones es?",
                              details={"candidates": candidates})
-    domain = domain_of(payload.get("email"), payload.get("website"))
-    taken = False
-    if domain and domain not in FREE_MAIL_DOMAINS:
-        cur.execute("select 1 from crm.organization_domain where domain_norm = %s limit 1", (domain,))
-        taken = cur.fetchone() is not None
+    # The institution's own domain: the email's (not free mail), else the website's — unless a live
+    # institution already holds it (then it is not this one's to claim).
+    domains = institution_domains(payload.get("email"), payload.get("website"))
+    domain = domains[0] if domains else None
+    if domain:
+        cur.execute("select 1 from crm.organization_domain where domain_norm = %s and removed_at is null limit 1",
+                    (domain,))
+        if cur.fetchone() is not None:
+            domain = None
     created = authoring._handle_register_organization(repo, cur, operator, {
         "name": payload["organization_name"], "legal_name": None, "kind": _kind_for(payload),
-        "classification": "prospect", "product_lines": [], "note": _NOTE,
-        "domain": domain if domain and domain not in FREE_MAIL_DOMAINS and not taken else None,
+        "classification": "prospect", "product_lines": [], "note": _NOTE, "domain": domain,
     }, receipt_id)
     return created["organization_id"], True
 
@@ -202,6 +205,25 @@ def _person(repo: Any, cur: Any, operator: OperatorIdentity, receipt_id: str, pa
     return created["person_id"], created.get("email_contact_point_id"), True
 
 
+def _institution_mailbox(repo: Any, cur: Any, operator: OperatorIdentity, receipt_id: str,
+                         payload: dict[str, Any], org_id: str) -> tuple[str | None, bool]:
+    """The lab's published address as the institution's shared mailbox; an address the CRM already
+    holds is linked as it is. Returns the contact point and whether it was created here."""
+    email = payload.get("email")
+    if not email:
+        return None, False
+    cur.execute("select id::text from crm.contact_point where kind = 'email' and value_norm = %s", (email,))
+    row = cur.fetchone()
+    if row is not None:
+        return row[0], False
+    cur.execute("select version from crm.organization where id = %s::uuid", (org_id,))
+    (version,) = cur.fetchone()
+    made = authoring._handle_add_contact_point(repo, cur, operator, {
+        "organization_id": org_id, "expected_version": version, "kind": "email", "value": email,
+        "usage": "shared_mailbox", "note": _NOTE}, receipt_id)
+    return made["contact_point_id"], True
+
+
 def _resolve_assertions(cur: Any, operator: OperatorIdentity, finding_id: str, targets: dict[str, tuple[str, str, bool]]) -> None:
     for kind, (resolved_kind, resolved_id, created) in targets.items():
         cur.execute(
@@ -227,15 +249,22 @@ def contact_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: di
     org_id, org_created = _organization(repo, cur, operator, receipt_id, fields, payload, c["organization_candidates"])
     if not org_created:
         _ensure_prospect_role(repo, cur, operator, receipt_id, org_id)
-    person_id, contact_point_id, person_created = _person(repo, cur, operator, receipt_id, payload, org_id)
-    cur.execute("select id::text from crm.affiliation where person_id = %s::uuid and organization_id = %s::uuid "
-                "order by created_at desc limit 1", (person_id, org_id))
-    affiliation = cur.fetchone()
+    affiliation = None
+    if payload.get("person_name"):
+        person_id, contact_point_id, person_created = _person(repo, cur, operator, receipt_id, payload, org_id)
+        cur.execute("select id::text from crm.affiliation where person_id = %s::uuid and organization_id = %s::uuid "
+                    "order by created_at desc limit 1", (person_id, org_id))
+        affiliation = cur.fetchone()
+    else:
+        # A lab with no named person: no person is invented; its address is the institution's mailbox.
+        person_id, person_created = None, False
+        contact_point_id, mailbox_created = _institution_mailbox(repo, cur, operator, receipt_id, payload, org_id)
     targets: dict[str, tuple[str, str, bool]] = {"organization_name": ("organization", org_id, org_created)}
     if affiliation:
         targets["affiliation"] = ("affiliation", affiliation[0], person_created)
     if contact_point_id:
-        targets["contact_address"] = ("contact_point", contact_point_id, person_created)
+        made = person_created if payload.get("person_name") else mailbox_created
+        targets["contact_address"] = ("contact_point", contact_point_id, made)
     _resolve_assertions(cur, operator, finding["id"], targets)
     source = payload.get("email_source_url") or next((url for _, url in payload.get("sources") or []), None)
     review_id, event_id = _record_verdict(repo, cur, operator, receipt_id, finding_id=finding["id"],

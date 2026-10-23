@@ -7,6 +7,7 @@ invented (public repository).
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, datetime, timedelta
 
@@ -292,3 +293,80 @@ def test_contacted_finding_moves_to_contactados(client, db, operators):
                       headers={OPERATOR_EMAIL_HEADER: operators["sales"].email_norm}).json()
     assert rid in [i["id"] for i in body["items"]]
     assert date.fromisoformat(body["items"][0]["latest_verdict"]["reviewed_at"][:10])
+
+
+# ── institution matching (final review #2, #3) ───────────────────────────────────────────────
+
+def test_contact_links_org_by_website_when_email_is_free_mail(client, db, operators):
+    oid = organization(db, "Universidad Ficticia Web", "ufweb.example.test")
+    rid = finding(db, email="investigador.web@gmail.com", org="U. Ficticia Web", website="https://www.ufweb.example.test")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert r.json()["organization_id"] == oid
+
+
+def test_contact_links_org_by_parent_domain_of_faculty_subdomain(client, db, operators):
+    oid = organization(db, "Universidad Ficticia Madre", "umadre.example.test")
+    rid = finding(db, email="docente@quimica.umadre.example.test", org="Facultad de Química Ficticia")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert r.json()["organization_id"] == oid
+
+
+def test_most_specific_domain_wins_over_its_parent(client, db, operators):
+    organization(db, "Universidad Ficticia Grande", "ugrande.example.test")
+    faculty = organization(db, "Facultad Ficticia de Ciencias", "ciencias.ugrande.example.test")
+    rid = finding(db, email="p@ciencias.ugrande.example.test", org="Facultad de Ciencias")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert r.json()["organization_id"] == faculty
+
+
+def test_removed_domain_does_not_match(client, db, operators):
+    oid = organization(db, "Instituto Ficticio Mudado", "mudado.invalid")
+    with _owner(db) as conn:
+        conn.execute("update crm.organization_domain set removed_at = now(), remove_reason = 'ya no es suyo', "
+                     "removed_by_operator_id = %s where organization_id = %s", (operators["sales"].operator_id, oid))
+    rid = finding(db, email="alguien@mudado.invalid", org="Otro Instituto Ficticio")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert r.json()["organization_id"] != oid
+
+
+def test_new_org_from_free_mail_registers_the_website_domain(client, db, operators):
+    rid = finding(db, email="labx@gmail.com", org="Laboratorio Ficticio Equis", website="https://www.labequis.invalid/contacto")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert _count(db, "select count(*) from crm.organization_domain where organization_id = %s and domain_norm = %s",
+                  (r.json()["organization_id"], "labequis.invalid")) == 1
+
+
+# ── a finding with no person (final review #4) ───────────────────────────────────────────────
+
+def test_contact_without_person_promotes_only_the_institution(client, db, operators):
+    with _owner(db) as conn:
+        rid = conn.execute(
+            "insert into evidence.source_record (kind, dedupe_key, payload, source_uri, review_status) values "
+            "('prospect_finding', 'prospect:manual:sin-persona:lab', %s::jsonb, 'https://example.test/r', 'pending') "
+            "returning id::text",
+            (json.dumps({"source": "industria_sag", "external_id": "sin-persona", "person_name": None,
+                         "organization_name": "Laboratorio Ficticio Sin Persona", "why_now": "Registro SAG",
+                         "email": "contacto@lsp.example.test", "email_source_url": "https://example.test/r",
+                         "sources": [["registro", "https://example.test/r"]]}),)).fetchone()[0]
+    people = _count(db, "select count(*) from crm.person")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert r.json()["person_id"] is None
+    assert _count(db, "select count(*) from crm.person") == people
+    assert _count(db, "select count(*) from crm.person where display_name = 'Laboratorio Ficticio Sin Persona'") == 0
+    assert _one(db, "select organization_id::text, person_id from crm.contact_point where value_norm = 'contacto@lsp.example.test'") == (
+        r.json()["organization_id"], None)
+
+
+def test_hosting_platform_parent_is_never_the_institution(client, db, operators):
+    organization(db, "Proveedor de Sitios Ficticio", "wixsite.com")
+    rid = finding(db, email="lab@gmail.com", org="Laboratorio Ficticio Alojado", website="https://labalojado.wixsite.com/inicio")
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert _one(db, "select name from crm.organization where id = %s", (r.json()["organization_id"],)) == (
+        "Laboratorio Ficticio Alojado",)

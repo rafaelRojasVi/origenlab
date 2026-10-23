@@ -322,3 +322,24 @@ def test_viewer_may_read(client, db, operators):
 def test_unknown_view_is_422(client, operators):
     r = client.get("/v2/prospect-findings", params={"view": "todo"}, headers=_headers(operators))
     assert r.status_code == 422
+
+
+def test_viewer_sees_masked_contact_addresses(client, db, operators):
+    from origenlab_api.v2.contact_redaction import EMAIL_MASK, REDACTION_HEADER
+
+    rid = finding(db, email="enmascarar@example.test")
+    r = client.get("/v2/prospect-findings", params={"limit": 200}, headers=_headers(operators, "viewer"))
+    assert r.status_code == 200
+    assert REDACTION_HEADER.lower() in {k.lower() for k in r.headers}
+    item = next(i for i in r.json()["items"] if i["id"] == rid)
+    assert item["email"] == f"{EMAIL_MASK}@example.test"
+    detail = client.get(f"/v2/prospect-findings/{rid}", headers=_headers(operators, "viewer")).json()
+    assert detail["email"] == f"{EMAIL_MASK}@example.test"
+    sales = client.get(f"/v2/prospect-findings/{rid}", headers=_headers(operators)).json()
+    assert sales["email"] == "enmascarar@example.test"
+
+
+def test_logo_still_served_through_the_redacting_route(client, db, operators):
+    rid = finding(db, email="logo.visor@example.test", logo=True)
+    r = client.get(f"/v2/prospect-findings/{rid}/logo", headers=_headers(operators, "viewer"))
+    assert r.status_code == 200 and r.content == PNG

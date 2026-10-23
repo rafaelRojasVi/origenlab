@@ -22,6 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
+from origenlab_api.v2.contact_redaction import ContactRedactingRoute
 from origenlab_api.v2.commands import CommandRefused, request_digest, require_idempotency_key
 from origenlab_api.v2.prospect_findings.commands import (
     CONTACT_PROSPECT,
@@ -34,7 +35,8 @@ from origenlab_api.v2.prospect_findings.commands import (
 )
 from origenlab_api.v2.prospect_findings.reads import PAGE, ProspectFindingReadRepository
 
-prospect_read_router = APIRouter(prefix="/v2/prospect-findings", tags=["v2-prospects"])
+# Contact addresses are masked for an operator without the role (OPERATIONS §2), like every /v2 read.
+prospect_read_router = APIRouter(prefix="/v2/prospect-findings", tags=["v2-prospects"], route_class=ContactRedactingRoute)
 prospect_command_router = APIRouter(prefix="/v2/commands", tags=["v2-prospects"])
 
 _NOT_FOUND = {"code": "prospect_not_found", "message": "Ese prospecto no existe."}
