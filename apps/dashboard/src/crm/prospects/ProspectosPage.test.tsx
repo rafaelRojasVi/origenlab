@@ -53,7 +53,7 @@ function stubApi(onPost: (path: string, body: Record<string, unknown>) => Respon
     if (method === "POST") return Promise.resolve(onPost(u.pathname, body ?? {}));
     if (u.pathname === "/v2/prospect-findings") {
       const offset = Number(u.searchParams.get("offset") ?? "0");
-      return Promise.resolve(json(offset > 0 ? { counts: COUNTS, items: [item({ id: "33333333-3333-4333-8333-333333333333", person_name: "Carla Tercera" })], has_more: false } : LIST));
+      return Promise.resolve(json(offset > 0 ? { counts: COUNTS, items: [item({ id: "33333333-3333-4333-8333-333333333333", person_name: "Clara Tercera" })], has_more: false } : LIST));
     }
     return Promise.resolve(json({}, 404));
   }));
@@ -92,7 +92,7 @@ describe("ProspectosPage", () => {
     expect(screen.getByText("Gente nueva que podría comprarnos. Revisa, contacta o descarta.")).toBeInTheDocument();
     expect(screen.getByText("3 omitidos por bajas")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ver más" }));
-    await screen.findByText("Carla Tercera");
+    await screen.findByText("Clara Tercera");
     // The next page starts after the two the server sent.
     expect(calls.some((c) => c.path.includes("offset=2"))).toBe(true);
   });

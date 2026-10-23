@@ -337,6 +337,22 @@ unresolved contact point. It may not reach `qualified`, and no quote may
 exist, without an organization. Participants are the only record of who is
 involved; the opportunity row names no person and no channel.
 
+#### W2a — «Prospectos»: a machine-found prospect → the CRM (2026-10-23)
+
+A prospect the machine found (a grant winner, a lab) is evidence of kind `prospect_finding`
+([`DOMAIN.md`](DOMAIN.md) §5, §7.13), written only by the worker. Whether it is new is read at
+request time: **blocked** (a `block` contact control on the address or its domain — never listed,
+only counted), **known** (a CRM contact point, mail we exchanged, or a `prior_contact` control) or
+**new**. A known institution does not make a person known.
+
+| Step | Actor · command | Preconditions | State change | Durable evidence | Failure |
+|---|---|---|---|---|---|
+| 1 | worker · `prospects-load` | an email only with the page or paper that published it; LinkedIn links only on linkedin.com | `source_record(prospect_finding)` + `contact_address` / `organization_name` / `affiliation` assertions, `pending` | the record | a refused line is reported, never written; a rerun writes nothing |
+| 2 | operator · `review-prospect(mas_tarde\|descartar\|reabrir)` | `mas_tarde` needs a date after today (Santiago); `descartar` a reason; `reabrir` a discarded or postponed finding | a `crm.prospect_review` row (the latest is current) | event `source_record.prospect_reviewed` | refused with the failing rule |
+| 3 | operator · `contact-prospect` | not blocked at the moment of the click; not already contacted | institution linked (one match or the one chosen) or registered with `prospect`; a linked one gains `prospect` unless already `customer`/`prospect`; the email's owner linked or a new person created (claiming an ownerless contact point) and affiliated; assertions resolved; record `promoted`; a `contactar` verdict naming the data source | events of each CRM write + `source_record.prospect_reviewed` | two or more institutions and none chosen → `organization_ambiguous` with the candidates, nothing written |
+
+Contacting does not open an opportunity; one opens on a reply, through W2.
+
 #### W2b — the commercial case, as six commands (2026-09-22)
 
 The commercial-case tables ([`DOMAIN.md`](DOMAIN.md) §3.6) and their commands
