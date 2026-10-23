@@ -2710,3 +2710,25 @@ production-data restoration, protection/secrets gates and explicit rollout appro
 The architecture closes the cron commit race in code; it does not prove shared-resource
 capacity, real recovery or a successful production rollout. The detailed audit/state
 machine remain in the [production release runbook](runbooks/PRODUCTION_DB_MIGRATIONS.md).
+
+## 16. Prospectos: loading findings
+
+The «Prospectos» module (spec 2026-10-23, [`WORKFLOWS.md`](WORKFLOWS.md) W2a) shows what the worker
+has stored as `prospect_finding` evidence. Until the daily search exists, findings are loaded from a
+JSON-lines file with the worker's one-off command, on the Render worker shell (the same way as
+`quote-refs-backfill`), with the worker's own database settings:
+
+1. Put the file on the worker (one JSON object per line: `source`, `external_id`, `person_name`,
+   `organization_name`, `why_now`, `email` + `email_source_url`, links, `equipment`, `sources`,
+   `confidence`, `score` — `apps/worker/src/origenlab_worker/prospects/finding.py` is the contract).
+   The file holds personal contact data: never commit it.
+2. Dry run: `origenlab-worker prospects-load --file <file>` → one JSON line with `valid`,
+   `would_insert` and every `refused` line and its reason. Fix or drop refused lines.
+3. Apply: `origenlab-worker prospects-load --file <file> --apply` (add `--no-logos` to skip fetching
+   organization logos) → `inserted`, `unchanged`. Rerunning the same file inserts nothing.
+4. Open «Prospectos» in the dashboard: new people under «Nuevos», contacts we already have under
+   «Ya conocidos con motivo nuevo», anyone in Bajas omitted and counted.
+
+Before contacting anyone at scale: the legitimate-interest basis and the first email's wording are
+an owner/lawyer item (Ley 21.719 in full force 2026-12-01); every commercial email identifies
+OrigenLab and offers the opt-out (Ley 19.496 art. 28 B).

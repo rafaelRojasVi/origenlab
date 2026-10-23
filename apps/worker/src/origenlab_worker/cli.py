@@ -290,6 +290,10 @@ def _parser() -> argparse.ArgumentParser:
     refs.add_argument("--since-days", type=int, default=30, help="look back this many days")
     refs.add_argument("--limit", type=int, default=2000, help="at most this many messages")
     refs.add_argument("--apply", action="store_true", help="write the readings (default: read and count only)")
+    load = commands.add_parser("prospects-load", help="load a JSON-lines file of prospect findings into evidence")
+    load.add_argument("--file", required=True, help="the findings, one JSON object per line")
+    load.add_argument("--apply", action="store_true", help="write the findings (default: validate and count only)")
+    load.add_argument("--no-logos", action="store_true", help="do not fetch organization logos")
     mem = commands.add_parser("memory-backfill",
                               help="write first memory for past HUMAN_CLASSES emails matched to a case")
     mem.add_argument("--since-days", type=int, default=60, help="look back this many days")
@@ -441,6 +445,10 @@ def main(
         return run_quote_refs_backfill(args, env, started)
     if args.command == "memory-backfill":
         return run_memory_backfill(args, env, started)
+    if args.command == "prospects-load":
+        from origenlab_worker.prospects.cli import run_prospects_load
+
+        return run_prospects_load(args, env, started)
     if args.command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         return run_triage_worker(env, started)
     if args.command == "tender-child":

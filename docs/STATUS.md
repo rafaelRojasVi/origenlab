@@ -490,7 +490,7 @@ root, which no repository path references and no `.gitignore` exemption covers.
 
 ### 2.7 Feature and fix history
 
-Compact index of the 150 build increments. Each entry was a measured or merged change; full
+Compact index of the 153 build increments. Each entry was a measured or merged change; full
 prose is in git history (see commit referenced by the PR). Entries are in build order; §2.7.5
 (local V2 reconciled picture) was committed out of order between §2.7.25 and §2.7.26.
 
@@ -647,6 +647,7 @@ prose is in git history (see commit referenced by the PR). Entries are in build 
 | §2.7.150 | 2026-10-22 | #816 | A persona natural is their own client record |
 | §2.7.151 | 2026-10-22 |  | Request cases opened by R7/R11 add the sender as a participant; «+ Nueva» no longer… |
 | §2.7.152 | 2026-10-22 | #826 | `20261022100000`: indexes on `comms.message(provider_thread_id)`, Gmail thread id, catalog `model_key` (pg_trgm); worker case cards capped at 300 |
+| §2.7.153 | 2026-10-23 | — | `20261023100000`: «Prospectos» fase 1 — `prospect_finding` evidence kind, `crm.prospect_review` (#65, append-only), worker `prospects-load`, `/v2/prospect-findings` reads with read-time dedupe, `review-prospect` / `contact-prospect`, dashboard module; nothing loaded yet |
 
 **Key milestones (highlighted in the table above):**
 

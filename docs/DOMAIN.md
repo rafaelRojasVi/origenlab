@@ -857,7 +857,7 @@ list is decided, these rows are reclassified by the migration that introduces it
 | 13 | A case at `lead` has had no activity for eleven months | it is still `lead`. The dashboard shows *sin actividad hace 334 días*, computed at read time. Closing it is `abandon_opportunity(case, reason)` by an operator; without that act no row changes and no event exists (§3.4) |
 | 14 | A distributor that supplies OrigenLab asks to buy a unit for its own laboratory | the distributor's `supplier` relationship is untouched. `set_requesting_institution` is refused until the operator supplies a justification; with it, one `opportunity_organization(distributor, role=requesting_institution, confirmation=confirmed, confirmed_by=O)` carries `supplier_exception_reason`, and the triple can never be rewritten. The case card shows *proveedor registrado* **and** *solicitante — excepción justificada*. No marketing permission and no `prospect` relationship follow |
 
-## 7. Table inventory — the reviewed 60-table foundation
+## 7. Table inventory — the reviewed 61-table foundation
 
 Seven private schemas. **60 application tables** — 33 reviewed after the
 external CRM benchmark, the three of §7.1, the one of §7.2, the four of
@@ -865,7 +865,7 @@ external CRM benchmark, the three of §7.1, the one of §7.2, the four of
 reviewed foundation
 ([`ARCHITECTURE.md`](ARCHITECTURE.md) §13), not a permanent budget: a table
 is added only when a relational invariant proves it necessary, removed when
-nothing needs it, and every change is recorded here. Current verified count: 60 per `supabase/scripts/verify_chain.sh` `EXPECT_TABLES`. Numbers are stable
+nothing needs it, and every change is recorded here. Current verified count: 61 per `supabase/scripts/verify_chain.sh` `EXPECT_TABLES`. Numbers are stable
 identifiers, so the two D0.3 additions are appended as 31 and 32, and the
 Slice 0 / M10c reply table as 33, the commercial case as 34–36, the
 campaign safety block as 37, the shared sign-in tables as 38–41 and the
@@ -1269,8 +1269,24 @@ Migration `20261020180000_slice7_notice_relevance_review.sql`.
 
 Domain event added: `notice.reviewed` (aggregate `notice`, already present since §7.11).
 
-Counts by schema: `crm` 25, `comms` 4, `outbound` 9, `evidence` 6,
-`catalog` 8, `procurement` 1, `platform` 7 — **60**.
+### 7.13 Prospectos: hallazgos y revisión — built 2026-10-23
+
+Migration `20261023100000_slice7_prospect_findings.sql`.
+
+- **`evidence.source_record`** (#24) gains the kind `prospect_finding`: a prospect the worker
+  found (a grant winner, a lab), with everything gathered about it in `payload` and its
+  `contact_address`, `organization_name` and `affiliation` assertions. Written only by the
+  worker; it reaches `crm.*` only through the operator's `contact-prospect` promotion (§5).
+  Whether a finding is new, known or blocked is read at request time, never stored.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 65 | `crm.prospect_review` | an operator's verdict on a prospect finding: `contactar`, `mas_tarde`, `descartar` or `reabrir` | `verdict ∈ {contactar, mas_tarde, descartar, reabrir}`; `remind_on` set exactly when `mas_tarde`; `reason` 1–500 characters (blank rejected); **append-only** via `platform.reject_mutation` — the latest row is the current verdict; `origenlab_api` select/insert, `origenlab_worker` select |
+
+Domain event added: `source_record.prospect_reviewed` (aggregate `source_record`).
+
+Counts by schema: `crm` 26, `comms` 4, `outbound` 9, `evidence` 6,
+`catalog` 8, `procurement` 1, `platform` 7 — **61**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

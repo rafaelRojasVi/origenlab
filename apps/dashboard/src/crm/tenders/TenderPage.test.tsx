@@ -594,7 +594,7 @@ describe("TenderPage — announcing and small steps", () => {
   it("announces «Lectura lista.» when the read finishes", async () => {
     const ready = page({ preparations: { read: prep("read", { result: READ_RESULT }), fill: null } });
     stubApi([queuedRead(), ready]);
-    renderPage("sales", 20);
+    renderPage("sales", 300); // long enough to see the reading line first (see the fill test below)
     await screen.findByText("Leyendo los anexos… (unos minutos)");
     const live = await screen.findByText("Lectura lista.");
     expect(live.closest("[aria-live]")).toHaveAttribute("aria-live", "polite");
@@ -605,7 +605,10 @@ describe("TenderPage — announcing and small steps", () => {
     const running = page({ preparations: { ...base, fill: prep("fill", { status: "running" }) } });
     const failed = page({ preparations: { ...base, fill: prep("fill", { status: "failed", failure_code: "package_too_large" }) } });
     stubApi([running, failed]);
-    renderPage("sales", 20);
+    // 300 ms, not 20: the running line must stay on screen long enough to be seen before the next
+    // read replaces it (at 20 ms a busy parallel run swapped it out first). Still well inside
+    // waitFor's one second for the failure line.
+    renderPage("sales", 300);
     await screen.findByText("Llenando los formularios… (unos minutos)");
     const status = screen.getByText("Llenando los formularios… (unos minutos)").closest("[aria-live]") as HTMLElement;
     await waitFor(() => expect(within(status).getByText("El paquete es demasiado grande (más de 45 MB).")).toBeInTheDocument());

@@ -286,6 +286,8 @@ export interface ToastItem {
   id: number;
   tone: "good" | "warn" | "bad";
   text: string;
+  /** One follow-up the person may take while the line shows («Deshacer»). */
+  action?: { label: string; onClick: () => void };
 }
 
 let toastItems: ToastItem[] = [];
@@ -301,11 +303,11 @@ export function dismissToast(id: number): void {
   emitToasts(toastItems.filter((t) => t.id !== id));
 }
 
-/** A short line saying what just happened. It disappears on its own after a few seconds. */
-export function toast(text: string, tone: ToastItem["tone"] = "good"): void {
+/** A short line saying what just happened. It disappears on its own after a few seconds (longer with an action). */
+export function toast(text: string, tone: ToastItem["tone"] = "good", options: { action?: ToastItem["action"] } = {}): void {
   const id = ++toastSeq;
-  emitToasts([...toastItems.slice(-3), { id, tone, text }]);
-  setTimeout(() => dismissToast(id), tone === "bad" ? 8000 : 4000);
+  emitToasts([...toastItems.slice(-3), { id, tone, text, action: options.action }]);
+  setTimeout(() => dismissToast(id), tone === "bad" || options.action ? 8000 : 4000);
 }
 
 function subscribeToasts(listener: () => void) {
@@ -332,6 +334,18 @@ export function Toaster() {
           }`}
         >
           <span className="min-w-0 flex-1 break-words">{t.text}</span>
+          {t.action ? (
+            <button
+              type="button"
+              onClick={() => {
+                dismissToast(t.id);
+                t.action?.onClick();
+              }}
+              className="shrink-0 font-semibold underline underline-offset-2 hover:no-underline"
+            >
+              {t.action.label}
+            </button>
+          ) : null}
           <button type="button" onClick={() => dismissToast(t.id)} aria-label="Cerrar aviso" className="shrink-0 opacity-70 hover:opacity-100">
             ✕
           </button>

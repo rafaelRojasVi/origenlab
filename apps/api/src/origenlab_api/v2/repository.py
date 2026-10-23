@@ -1383,7 +1383,7 @@ class V2Repository(OperatorLookup):
         "workbook_import", "chilecompra_notice", "migration_manifest",
         "v1_parse_failure", "v1_evidence_edge", "v1_supplier_candidate",
         "v1_historical_quote_candidate", "gmail_message", "drive_file", "quote_document",
-        "forwarded_request",
+        "forwarded_request", "prospect_finding",
     )
 
     #: `evidence.assertion.kind` values whose `value_norm` is a contact or postal address.
