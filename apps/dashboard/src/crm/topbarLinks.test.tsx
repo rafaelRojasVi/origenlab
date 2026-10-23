@@ -72,7 +72,8 @@ describe("the Cotizador section", () => {
     const names = menu.getAllByRole("link").map((a) => a.textContent);
     expect(names.indexOf("Cotizador")).toBe(names.indexOf("Oportunidades") + 1);
     expect(names.indexOf("Licitaciones")).toBe(names.indexOf("Cotizador") + 1);
-    expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Licitaciones") + 1);
+    expect(names.indexOf("Prospectos")).toBe(names.indexOf("Licitaciones") + 1);
+    expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Prospectos") + 1);
     expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/crm/licitaciones");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("aria-current", "page");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/crm/cotizador");
