@@ -369,3 +369,61 @@ def test_same_person_without_email_matches_by_name_and_institution(client, db, o
     b = finding(db, email=None, person="persona  repetida ficticia", org="Instituto Ficticio Repetido", score=20)
     ids = _ids(_items(client, operators))
     assert b in ids and a not in ids
+
+
+# ── speed (owner 2026-10-23: «Prospectos» slow) ──────────────────────────────────────────────
+
+class _CountingCursor:
+    def __init__(self, cur, counter) -> None:
+        self._cur, self._counter = cur, counter
+
+    def execute(self, *args, **kwargs):
+        self._counter.statements += 1
+        return self._cur.execute(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+    def __enter__(self):
+        self._cur.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._cur.__exit__(*exc)
+
+
+class _CountingConnection:
+    def __init__(self, conn, counter) -> None:
+        self._conn, self._counter = conn, counter
+
+    def cursor(self, *args, **kwargs):
+        return _CountingCursor(self._conn.cursor(*args, **kwargs), self._counter)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._conn.__exit__(*exc)
+
+
+class _CountingConnect:
+    """psycopg.connect, counting every statement the read runs."""
+
+    def __init__(self) -> None:
+        self.statements = 0
+
+    def __call__(self, *args, **kwargs):
+        return _CountingConnection(psycopg.connect(*args, **kwargs), self)
+
+
+def test_list_runs_a_fixed_number_of_statements_however_many_findings(db):
+    for n in range(30):
+        finding(db, email=f"muchos{n}@facultad{n}.uvarios.example.test", website=f"https://lab{n}.example.test")
+    counting = _CountingConnect()
+    repo = ProspectFindingReadRepository(counting, runtime_dsn(db))
+    repo.list("nuevos")
+    assert counting.statements <= 12, counting.statements  # was 243 before batching (2026-10-23)
