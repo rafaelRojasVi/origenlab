@@ -6,6 +6,8 @@ and its counts are computed from that one pass."""
 from __future__ import annotations
 
 import base64
+import re
+import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -20,7 +22,8 @@ VIEWS: tuple[str, ...] = ("nuevos", "conocidos", "mas_tarde", "contactados", "de
 PAGE = 25
 
 _FINDINGS = """
-select s.id::text as id, s.payload, s.acquired_at,
+select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and s.payload->'logo' <> 'null'::jsonb) as has_logo,
+       s.acquired_at,
        r.verdict, r.reason, r.remind_on, r.reviewed_at
   from evidence.source_record s
   left join lateral (
@@ -55,7 +58,7 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
         "fund_label": p.get("fund_label"), "amount_label": p.get("amount_label"), "awarded_on": p.get("awarded_on"),
         "why_now": p.get("why_now"), "equipment": list(p.get("equipment") or []), "email": p.get("email"),
         "email_source_url": p.get("email_source_url"), "email_source_year": p.get("email_source_year"),
-        "phone": p.get("phone"), "links": {k: p.get(k) for k in _LINKS}, "has_logo": bool(p.get("logo")),
+        "phone": p.get("phone"), "links": {k: p.get(k) for k in _LINKS}, "has_logo": bool(row.get("has_logo")),
         "confidence": p.get("confidence"), "score": int(p.get("score") or 0), "state": c["state"],
         "reasons": c["reasons"], "organization_candidates": c["organization_candidates"],
         "latest_verdict": None if verdict is None else {
@@ -68,8 +71,10 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
 
 def view_of(item: dict[str, Any]) -> str | None:
     """Which list a classified finding belongs to; `None` for a blocked one (never listed)."""
-    if item["state"] == "blocked":
+    if item["state"] == "blocked" or item.get("folded_into"):
         return None
+    if item.get("discarded_elsewhere"):
+        return "descartados"
     verdict = (item["latest_verdict"] or {}).get("verdict")
     if verdict == "contactar":
         return "contactados"
@@ -78,6 +83,38 @@ def view_of(item: dict[str, Any]) -> str | None:
     if verdict == "mas_tarde" and not item["returns_today"]:
         return "mas_tarde"
     return "conocidos" if item["state"] == "known" else "nuevos"
+
+
+def _identity(item: dict[str, Any]) -> str:
+    """The same person across sources: the email, else the person's and institution's folded names."""
+    if item["email"]:
+        return "email:" + item["email"].strip().lower()
+    fold = lambda t: re.sub(r"\s+", " ", unicodedata.normalize("NFKD", t or "").encode("ascii", "ignore").decode()).strip().lower()  # noqa: E731
+    return f"name:{fold(item['person_name'] or '')}|{fold(item['organization_name'])}"
+
+
+def merge_same_person(items: list[dict[str, Any]]) -> None:
+    """Spec §6.3: one person found by two sources is one card. A discard of any of them discards the
+    rest; among the ones still to review only the best is listed, the others are folded into it."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        if item["state"] != "blocked":
+            groups.setdefault(_identity(item), []).append(item)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        verdicts = {(i["latest_verdict"] or {}).get("verdict") for i in group}
+        open_ones = [i for i in group if view_of(i) in {"nuevos", "conocidos"}]
+        if "descartar" in verdicts:
+            for i in open_ones:
+                i["discarded_elsewhere"] = True
+            continue
+        if len(open_ones) > 1:
+            best = sorted(open_ones, key=_order)[0]
+            others = [i for i in open_ones if i is not best]
+            for i in others:
+                i["folded_into"] = best["id"]
+            best["reasons"] = [*best["reasons"], f"También en {len(others)} fuente{'s' if len(others) > 1 else ''} más"]
 
 
 def _order(item: dict[str, Any]) -> tuple[Any, ...]:
@@ -113,7 +150,7 @@ class ProspectFindingReadRepository:
         for row in self._rows(cur, _FINDINGS + extra_sql, params):
             p = row["payload"] or {}
             c = classify(cur, email=p.get("email"), organization_name=p.get("organization_name") or "",
-                         website=p.get("website"))
+                         website=p.get("website"), block_only=row["verdict"] in {"contactar", "descartar"})
             out.append((row, _item(row, c, today)))
         return out
 
@@ -122,9 +159,12 @@ class ProspectFindingReadRepository:
         month_start = now.astimezone(SANTIAGO).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         with self._read() as cur:
             items = [item for _, item in self._classified(cur)]
+        merge_same_person(items)
         by_view: dict[str | None, list[dict[str, Any]]] = {}
         for item in items:
             by_view.setdefault(view_of(item), []).append(item)
+        by_view.pop(None, None)
+        blocked = sum(1 for i in items if i["state"] == "blocked")
         nuevos = by_view.get("nuevos", [])
         counts = {
             "nuevos": sum(1 for i in nuevos if datetime.fromisoformat(i["acquired_at"]) > now - timedelta(days=1)),
@@ -132,7 +172,7 @@ class ProspectFindingReadRepository:
             "contactados_mes": sum(1 for i in by_view.get("contactados", [])
                                    if datetime.fromisoformat(i["latest_verdict"]["reviewed_at"]) >= month_start),
             "vuelven_hoy": sum(1 for i in nuevos + by_view.get("conocidos", []) if i["returns_today"]),
-            "omitidos_bajas": len(by_view.get(None, [])),
+            "omitidos_bajas": blocked,
         }
         shown = sorted(by_view.get(view, []), key=_order)
         page = shown[offset:offset + limit]

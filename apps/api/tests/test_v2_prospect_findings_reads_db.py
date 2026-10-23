@@ -343,3 +343,29 @@ def test_logo_still_served_through_the_redacting_route(client, db, operators):
     rid = finding(db, email="logo.visor@example.test", logo=True)
     r = client.get(f"/v2/prospect-findings/{rid}/logo", headers=_headers(operators, "viewer"))
     assert r.status_code == 200 and r.content == PNG
+
+
+# ── the same person from two sources (final review #5) ───────────────────────────────────────
+
+def test_same_person_from_two_sources_shows_once(client, db, operators):
+    a = finding(db, email="dos.fuentes@example.test", score=70)
+    b = finding(db, email="dos.fuentes@example.test", score=90)
+    ids = _ids(_items(client, operators))
+    assert b in ids and a not in ids
+    item = next(i for i in _items(client, operators)["items"] if i["id"] == b)
+    assert "También en 1 fuente más" in item["reasons"]
+
+
+def test_discarding_one_source_discards_the_other(client, db, operators):
+    a = finding(db, email="descartada.una@example.test")
+    b = finding(db, email="descartada.una@example.test")
+    verdict(db, operators, a, "descartar", reason="No es nuestro rubro")
+    assert b not in _ids(_items(client, operators))
+    assert b in _ids(_items(client, operators, "descartados"))
+
+
+def test_same_person_without_email_matches_by_name_and_institution(client, db, operators):
+    a = finding(db, email=None, person="Persona Repetida Ficticia", org="Instituto Ficticio Repetido", score=10)
+    b = finding(db, email=None, person="persona  repetida ficticia", org="Instituto Ficticio Repetido", score=20)
+    ids = _ids(_items(client, operators))
+    assert b in ids and a not in ids

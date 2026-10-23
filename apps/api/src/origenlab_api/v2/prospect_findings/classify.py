@@ -127,7 +127,9 @@ def organization_candidates(cur: Any, *, email: str | None, organization_name: s
     return found
 
 
-def classify(cur: Any, *, email: str | None, organization_name: str, website: str | None) -> Classification:
+def classify(cur: Any, *, email: str | None, organization_name: str, website: str | None,
+             block_only: bool = False) -> Classification:
+    """`block_only`: a decided finding (contacted, discarded) needs only the Bajas check."""
     email = normalize_email(email) if email else None
     domain = domain_of(email, None)
     params = {"email": email, "domain": domain}
@@ -136,6 +138,8 @@ def classify(cur: Any, *, email: str | None, organization_name: str, website: st
     row = cur.fetchone()
     if row is not None:
         return {"state": "blocked", "reasons": ["En Bajas: " + str(row[1])], "organization_candidates": []}
+    if block_only:
+        return {"state": "new", "reasons": [], "organization_candidates": []}
     state: State = "new"
     if email:
         cur.execute(_KNOWN, params)
