@@ -91,8 +91,11 @@ export interface QuoteLine {
 export interface QuoteContents {
   currency: string | null;
   net_total: string | null;
-  /** «document»: printed on the PDF; «lines»: the sum of its non-optional lines; «none»: unknown. */
-  net_source: "document" | "lines" | "none";
+  /**
+   * «document»: printed on the PDF; «lines»: the sum of its non-optional lines; «none»: unknown;
+   * «cotizador»: the Cotizador's own totals (its lines are in the Cotizador, `lines` is empty).
+   */
+  net_source: "document" | "lines" | "none" | "cotizador";
   /** The printed neto adds the optional lines in (quote reader v2): shown as printed, with a note. */
   net_includes_optional?: boolean;
   /** IVA and total: only for CLP. */

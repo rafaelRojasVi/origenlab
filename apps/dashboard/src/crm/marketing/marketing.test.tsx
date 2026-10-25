@@ -417,7 +417,7 @@ function freezeRow(key: string, address: string, extra: Partial<FreezeRow> = {})
 }
 
 const BLOCKERS = [
-  { code: "unsubscribe_sync_not_automatic", label: "BAJA sin sincronización automática", detail: "Las respuestas de Gmail no se sincronizan automáticamente todavía." },
+  { code: "unsubscribe_sync_not_automatic", label: "BAJA sin sincronización automática", detail: "Las respuestas de Gmail no se sincronizan automáticamente." },
   { code: "no_send_path", label: "Sin ruta de envío", detail: "Sin cliente de Gmail." },
 ];
 
@@ -735,7 +735,7 @@ const SUPPRESSIONS = {
   frozen_campaigns: [{ campaign_id: DRAFT.campaign_id, name: "Borrador IKA", status: "audience_frozen", unsubscribed_since_freeze: 1,
     pending_review_since_freeze: 0, refused_since_freeze: 1, included_at_freeze: 12 }],
   blocks_by_purpose: [{ kind: "block", purpose: "marketing", count: 2 }],
-  gmail_sync: { automatic: false, label: "Las respuestas de Gmail no se sincronizan automáticamente todavía. Una BAJA queda registrada sólo cuando un operador aplica un lote de respuestas ya descargadas." },
+  gmail_sync: { automatic: false, label: "Las respuestas de Gmail no se sincronizan automáticamente. Una BAJA queda registrada sólo cuando se aplica un lote de respuestas ya descargadas con un script del servidor: no hay botón para eso aquí." },
   grammar: { version: "baja-reply/2026-09-27.v2", accepted: ["BAJA", "BAJA.", "REMOVER", "REMOVER."],
     rule: "Sólo una respuesta cuyo texto propio es exactamente «BAJA» o «REMOVER»." },
   sender_policy: { version: "unsubscribe-sender/2026-09-27.v2", rule: "Si no se puede comprobar, la BAJA queda en revisión." },

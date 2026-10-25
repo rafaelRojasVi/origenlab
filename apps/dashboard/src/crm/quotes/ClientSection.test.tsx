@@ -50,10 +50,12 @@ function setup(workspace = ws(), initial: QuoteDraft = draftFixture(), disabled 
 }
 
 describe("ClientSection", () => {
-  it("shows the institution and says when its RUT is missing", () => {
+  it("shows the institution and, when its RUT is missing, links to where it is added", () => {
     setup();
     expect(screen.getByText("Institución de prueba")).toBeInTheDocument();
-    expect(screen.getByText("RUT pendiente")).toBeInTheDocument();
+    const link = screen.getByTestId("client-add-rut");
+    expect(link).toHaveTextContent("RUT pendiente · agrégalo en la institución");
+    expect(link.getAttribute("href")).toContain("i-1");
   });
 
   it("shows the RUT when the institution has one", () => {

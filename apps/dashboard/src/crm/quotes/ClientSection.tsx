@@ -15,6 +15,7 @@ import type { DraftProblem } from "./draftEditor";
 import { setClientDetail, setRecipient } from "./draftEditor";
 import type { QuoteClientDetails, QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
 import { AssignInstitution } from "../pages/AssignInstitution";
+import { crmHash } from "../crmRoute";
 import { addCaseOrganization, caseRefusalText, newCaseCommandKey } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
 
@@ -212,7 +213,16 @@ export function ClientSection({
         ) : (
           <>
             <span className="truncate text-[15px] font-semibold text-ink">{institution?.name ?? "Sin institución"}</span>
-            <span className="text-[13px] text-ink-muted">{institution?.rut ? `RUT ${institution.rut}` : "RUT pendiente"}</span>
+            {institution?.rut ? (
+              <span className="text-[13px] text-ink-muted">RUT {institution.rut}</span>
+            ) : institution ? (
+              // The RUT is the institution's, added on its CRM page («Agregar identificador»).
+              <a href={crmHash("organizaciones", institution.id)} className="text-[13px] text-accent hover:underline" data-testid="client-add-rut">
+                RUT pendiente · agrégalo en la institución
+              </a>
+            ) : (
+              <span className="text-[13px] text-ink-muted">RUT pendiente</span>
+            )}
           </>
         )}
         {mayAdd && persona && !adding && !personaOpen ? (

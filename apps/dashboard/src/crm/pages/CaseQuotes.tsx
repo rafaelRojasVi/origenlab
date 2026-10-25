@@ -197,7 +197,9 @@ function Contents({ c }: { c: QuoteContents }) {
           ))}
         </ul>
       ) : (
-        <p className="py-1.5 text-xs text-ink-muted">El PDF se leyó, pero no tiene líneas registradas.</p>
+        <p className="py-1.5 text-xs text-ink-muted">
+          {c.net_source === "cotizador" ? "Los ítems están en el Cotizador." : "El PDF se leyó, pero no tiene líneas registradas."}
+        </p>
       )}
       {c.lines.length > shown.length ? (
         <button type="button" className="mt-1 text-xs font-medium text-accent hover:underline" onClick={() => setAll(!all)}>

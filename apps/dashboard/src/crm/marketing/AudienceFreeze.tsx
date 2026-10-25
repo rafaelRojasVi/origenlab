@@ -71,7 +71,7 @@ const UNSUBSCRIBE_BLOCKER: SendBlocker = {
   code: "unsubscribe_sync_not_automatic",
   label: "BAJA sin sincronización automática",
   detail:
-    "Una BAJA se registra como supresión permanente sólo cuando un operador aplica un lote de respuestas ya descargadas. Las respuestas de Gmail no se sincronizan automáticamente todavía, así que ningún correo que ofrezca «responda BAJA» puede enviarse.",
+    "Una BAJA se registra como supresión permanente sólo cuando se aplica un lote de respuestas ya descargadas con un script del servidor: no hay botón para eso en el panel. Las respuestas de Gmail no se sincronizan automáticamente, así que ningún correo que ofrezca «responda BAJA» puede enviarse.",
 };
 
 const NOTE_LABEL: Record<string, string> = {
@@ -383,7 +383,7 @@ function FreezeFlow({
               <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} data-testid="freeze-ack" />
               <span>
                 Entiendo que congelar <b>no envía nada</b>, que la audiencia congelada <b>no se puede modificar</b> y que el envío sigue
-                bloqueado mientras las respuestas BAJA no se sincronicen automáticamente.
+                bloqueado por todas las razones indicadas arriba.
               </span>
             </label>
           </div>
