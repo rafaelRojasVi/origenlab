@@ -298,7 +298,15 @@ _SQL_PIPELINE_REVISIONS = f"""
            -- for it, for the Gmail link and for whether the archiver can file its PDF.
            sm.provider_message_id as sent_gmail_message_id,
            sm.provider_thread_id as sent_gmail_thread_id, sm.subject as sent_subject,
-           (sm.eml_storage_path is not null) as sent_has_eml,
+           -- What the archiver needs to file it (drive_filing._CANDIDATES_SQL): the stored `.eml`
+           -- and the message's capture record, which a bulk send or an unparsed message lacks.
+           (sm.eml_storage_path is not null and exists (
+               select 1 from evidence.source_record s
+                where s.kind = 'gmail_message' and s.dedupe_key = 'gmail_message:' || sm.provider_message_id
+           )) as sent_has_eml,
+           -- The Cotizador's own amounts, written at approval: its PDF is never read.
+           qr.quote_currency, qr.tax_base::text as authored_net, qr.tax_total::text as authored_tax,
+           qr.grand_total::text as authored_gross,
            {QUOTE_DOCUMENT_COLUMNS}
       from crm.quote_revision qr
       left join evidence.source_record d
@@ -442,7 +450,7 @@ ATTENTION_LABELS_ES: dict[str, str] = {
     "document_pending_drive": "PDF pendiente de archivar en Drive (lo archiva la próxima pasada)",
     "no_gmail_evidence": "Sin correo de Gmail vinculado a la última revisión",
     "no_quote": "Caso sin cotización registrada",
-    "no_crm_contact": "Sin persona de contacto en el CRM (sólo el destinatario del correo)",
+    "no_crm_contact": "Sin persona de contacto guardada en el CRM",
 }
 
 
@@ -464,13 +472,39 @@ def live_drive_overview(
     }
 
 
+def delivered(rev: Mapping[str, Any]) -> bool:
+    """The revision reached the client: sent, or imported from the history of sent quotes. A
+    Cotizador draft, one in review or approved but not yet sent has no email, no PDF filed and no
+    reply to answer — it is the work in progress, never a quote that is missing something."""
+    return rev.get("status") != "void" and (rev.get("status") == "sent" or rev.get("origin") == "historical_import")
+
+
+def authored_contents(rev: Mapping[str, Any]) -> dict[str, Any] | None:
+    """A Cotizador revision's amounts, from its own totals (written at approval) — the quote reader
+    reads only PDFs that came in by email, so `quote_contents` never has one. The lines are in the
+    Cotizador; None before approval."""
+    if rev.get("origin") != "authored" or rev.get("authored_net") is None:
+        return None
+    currency = rev.get("quote_currency")
+    net, tax, gross = (_money(rev.get(k)) for k in ("authored_net", "authored_tax", "authored_gross"))
+    return {
+        "currency": currency,
+        "net_total": _money_text(net, currency),
+        "net_source": "cotizador",
+        "net_includes_optional": False,
+        "tax_total": _money_text(tax, currency) if tax else None,
+        "gross_total": _money_text(gross, currency) if tax else None,
+        "lines": [],
+    }
+
+
 def case_money(revisions: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The case's amount for the card, the board column and the panel header: the neto of the
     LAST SENT vigente revision (owner 2026-10-12), not a sum — a later quotation usually replaces
     an earlier one for the same request. One entry, or none for a case without a vigente revision.
     Its currency is "unread" (net_total "1") when that revision's PDF was never read; it also
     names the quotation and when it was sent, and how many vigente quotations the case has."""
-    live = [r for r in revisions if r.get("is_active")]
+    live = [r for r in revisions if r.get("is_active") and delivered(r)]
     if not live:
         return []
     last = max(live, key=_sort_key_sent)
@@ -770,7 +804,10 @@ def compose_pipeline(
         all_revs: list[dict[str, Any]] = []
         for q in sorted(quotes_by_opp.get(oid, []), key=lambda r: r["quote_number"]):
             revs = sorted(revs_by_quote.get(q["quote_id"], []), key=lambda r: r["revision_no"])
-            active = [r for r in revs if r["status"] != "void" and r.get("superseded_by_revision_no") is None]
+            # A Cotizador draft (or one in review) is not a second vigente revision: approving it
+            # is what replaces the earlier one (`_supersede_current`).
+            active = [r for r in revs if r["status"] not in ("void", "draft", "in_review")
+                      and r.get("superseded_by_revision_no") is None]
             if len(active) > 1:
                 attention.append("canonical_undetermined")
             if len(opps_by_number.get(q["quote_number"], ())) > 1:
@@ -821,7 +858,7 @@ def compose_pipeline(
                     "drive_pending": (link is None and bool(src.get("has_eml") or r.get("sent_has_eml"))
                                       and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
-                    "contents": quote_contents(r),
+                    "contents": quote_contents(r) or authored_contents(r),
                     "_recipients": src.get("recipients"),
                 }
                 rev_cards.append(rc)
@@ -896,9 +933,8 @@ def compose_pipeline(
                 break
         # Drive and Gmail are asked of the newest revision that reached the client: a Cotizador
         # draft (or one in review) has no email and nothing to file yet, and is not missing either.
-        delivered = [rc for rc in all_revs if rc["status"] != "void"
-                     and (rc["status"] == "sent" or rc.get("origin") == "historical_import")]
-        last_out = max(delivered, key=_sort_key_sent) if delivered else None
+        out = [rc for rc in all_revs if delivered(rc)]
+        last_out = max(out, key=_sort_key_sent) if out else None
         if last_out is not None:
             if last_out["drive"] is None:
                 attention.append("document_pending_drive" if last_out.get("drive_pending") else "document_not_in_drive")
@@ -1019,6 +1055,10 @@ def suggest_next_action(
         text = "Caso cerrado — sin acción"
     elif latest is None:
         text = "Registrar la cotización del caso"
+    elif not delivered(latest):
+        # The newest revision is still in the Cotizador: finishing it is the next step, not a reply.
+        verb = "Enviar" if latest.get("status") == "approved" else "Terminar y enviar"
+        text = f"{verb} la cotización {latest['quote_number']}"
     elif opp.get("stage") in ("quoting", "negotiating"):
         touch, by = _last_touch(latest.get("sent_at"), last_contact)
         if by == "client":

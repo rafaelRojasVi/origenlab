@@ -41,7 +41,7 @@ type Origin = "todos" | "fondos" | "laboratorios";
 type Reach = "todos" | "con_correo" | "sin_correo";
 
 const EMPTY: Record<ProspectView, string> = {
-  nuevos: "Hoy no hay nuevos. La búsqueda diaria llega pronto; mientras tanto revisa Más tarde.",
+  nuevos: "No hay nuevos. Los próximos llegan cuando se cargue una nueva búsqueda; mientras tanto revisa Más tarde.",
   mas_tarde: "Nada guardado para más tarde.",
   conocidos: "Ningún contacto conocido con una novedad.",
   contactados: "Todavía no has contactado a nadie desde aquí.",
@@ -221,7 +221,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
                 <Tile label="Nuevos hoy" value={counts.nuevos} />
                 <Tile label="Por revisar" value={counts.por_revisar} />
                 <Tile label="Contactados este mes" value={counts.contactados_mes} />
-                <Tile label="Respondieron" value="—" title="Disponible pronto" />
+                <Tile label="Respondieron" value="—" title="Aún no se mide: las respuestas no se cuentan aquí" />
               </div>
               {counts.omitidos_bajas > 0 ? (
                 <p className="text-xs text-ink-muted">{counts.omitidos_bajas} omitidos por bajas</p>

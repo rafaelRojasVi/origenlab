@@ -16,7 +16,7 @@ import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { awaitsQuote, endOfDay, isFollowUpTask } from "../today";
-import { contactLine, systemNotes } from "../caseDisplay";
+import { contactLine, isDelivered, systemNotes } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
   HISTORICAL_STAGE_LABEL,
@@ -470,6 +470,10 @@ export function OpportunityCard({
         </dd>
         <dt className="text-ink-faint">Evidencia</dt>
         <dd className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+          {latest && !isDelivered(latest) ? (
+            <span className="text-ink-faint">En el Cotizador, sin enviar</span>
+          ) : (
+            <>
           {card.drive_folder ? (
             <a
               href={card.drive_folder.url}
@@ -482,8 +486,8 @@ export function OpportunityCard({
               <Dot ok /> Drive <span className="text-[9px] font-semibold uppercase text-ink-faint">local</span>
             </a>
           ) : (
-            <span className="inline-flex items-center gap-1 font-medium text-warn">
-              <Dot ok={false} /> Drive: falta
+            <span className="inline-flex items-center gap-1 text-ink-faint">
+              <Dot ok={false} /> sin Drive
             </span>
           )}
           {latest?.gmail ? (
@@ -497,9 +501,11 @@ export function OpportunityCard({
               <Dot ok /> Gmail
             </a>
           ) : (
-            <span className="inline-flex items-center gap-1 font-medium text-warn">
-              <Dot ok={false} /> Gmail: falta
+            <span className="inline-flex items-center gap-1 text-ink-faint">
+              <Dot ok={false} /> sin Gmail
             </span>
+          )}
+            </>
           )}
         </dd>
       </dl>

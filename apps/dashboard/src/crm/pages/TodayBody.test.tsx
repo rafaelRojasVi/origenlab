@@ -627,6 +627,19 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     expect(calls.filter((x) => x.method === "POST").map((x) => x.path)).toEqual(["/v2/commands/create-quote"]);
   });
 
+  it("a first quote still a draft at «Cotizando» is «Cotizar», never «Responder» to the request", async () => {
+    const draftRev = { ...rev("2026-10-05T12:00:00Z"), revision_id: "r-draft2", status: "draft", origin: "authored", sent_at: null, quote_number: "00043-26" };
+    const c = card({
+      stage: "quoting", latest_revision: draftRev, quote_numbers: ["00043-26"],
+      quotes: [{ quote_id: "77777777-7777-4777-8777-777777777777", quote_number: "00043-26", number_origin: "minted", revisions: [draftRev] }],
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: "Solicitud de equipo", url: null } },
+    });
+    const { buildParaTiQueue } = await import("../today");
+    const { conversation } = await import("../caseDisplay");
+    expect(buildParaTiQueue([c], NOW, null).map((q) => q.kind)).toEqual(["cotizar"]);
+    expect(conversation(c, NOW)).toMatchObject({ kind: "none", text: "Cotización en preparación" });
+  });
+
   it("a case whose quote is still a draft stays in «Cotizar»: «Continuar cotización» opens the draft, no POST", async () => {
     const draftRev = { ...rev("2026-10-05T12:00:00Z"), revision_id: "r-draft", status: "draft", origin: "authored", sent_at: null, quote_number: "00042-26" };
     const c = card({

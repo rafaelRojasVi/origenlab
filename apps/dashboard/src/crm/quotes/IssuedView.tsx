@@ -167,7 +167,8 @@ export function IssuedView({ workspace }: { workspace: QuoteWorkspace }) {
               <div>
                 <dt className="text-[12.5px] text-ink-muted">Institución</dt>
                 <dd className="font-medium text-ink">{institution.name ?? "—"}</dd>
-                <dd className="text-[12.5px] text-ink-muted">{institution.rut ?? "RUT pendiente"}</dd>
+                {/* What the issued quote says: a RUT added to the CRM later does not change it. */}
+                <dd className="text-[12.5px] text-ink-muted">{institution.rut ?? "Sin RUT en esta cotización"}</dd>
               </div>
             ) : null}
             {snapshot?.recipient ? (

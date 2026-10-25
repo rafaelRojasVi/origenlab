@@ -338,7 +338,8 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   //    Cotizar takes priority over Responder: a new request that still needs a quote goes here.
   for (const card of items) {
     if (!isOpenCase(card)) continue;
-    if (!PRE_QUOTE_STAGES.has(card.stage)) continue;
+    // A first quote still in the Cotizador is «Cotizar» at any stage: finishing it is the job.
+    if (!PRE_QUOTE_STAGES.has(card.stage) && card.latest_revision === null) continue;
     if (!awaitsQuote(card)) continue;
     if (pausedUntil(card, now) !== null) continue;
     if (card.attention.some((a) => a.blocking)) continue;

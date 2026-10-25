@@ -49,7 +49,9 @@ export function EnteredExpensesCard({ lines, importCostsClp }: { lines: QuoteSto
             <dt className="font-semibold text-ink">Total</dt>
             <dd className="text-right font-mono font-semibold tabular-nums">{totalClp == null ? "—" : clp(totalClp)}</dd>
           </dl>
-          {totalClp == null ? <p className="text-[12.5px] text-warn">Falta el tipo de cambio de un gasto: no hay total.</p> : null}
+          {totalClp == null ? (
+            <p className="text-[12.5px] text-ink-muted">Un gasto no tiene tipo de cambio guardado, así que no hay total.</p>
+          ) : null}
           {mismatch ? <p className="text-[12.5px] text-warn">El total no cuadra con «Gastos de importación» de la Economía.</p> : null}
         </>
       )}

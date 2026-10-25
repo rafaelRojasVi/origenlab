@@ -4,7 +4,7 @@
  * model printed in the quote's file name, what the quote is for, the days since the quote went out and where the
  * conversation stands («respondió», «seguimiento», «sin respuesta»).
  */
-import type { Attention, OpportunityCardData } from "./crmTypes";
+import type { Attention, OpportunityCardData, RevisionCard } from "./crmTypes";
 import type { Tone } from "./ui";
 
 /** «CN01238- Juan Germany G - AGAR DEL PACIFICO S.A-MB120.pdf» → company and model. */
@@ -63,6 +63,15 @@ const DOMAIN = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
  * the import named after a domain («exactachile.cl») or a slug («Labclinicoarauco») is shown by
  * the name the quote's title or file prints, with the CRM name kept as `sub`.
  */
+/**
+ * The revision reached the client: sent, or imported from the history of sent quotes (`delivered`
+ * in the API). A Cotizador draft, one in review or approved but not sent is work in progress: it has
+ * no email, no PDF in Drive and no reply to answer yet.
+ */
+export function isDelivered(r: RevisionCard | null | undefined): boolean {
+  return !!r && r.status !== "void" && (r.status === "sent" || r.origin === "historical_import");
+}
+
 /**
  * The notes on a case nobody has to act on: the worker clears `system` ones by itself, `info` ones
  * are facts about the record. What a person must do is a blocker or the case's next step instead.
@@ -127,6 +136,8 @@ export function ageTone(days: number | null): Tone {
  * a «Seguimiento …» task. Record edits (`updated_at`) are not a touch either.
  */
 export function lastTouch(card: OpportunityCardData): { by: "client" | "us" | "quote" | "none"; at: string | null; url: string | null } {
+  // The first quote is still in the Cotizador: no clock yet — finishing it is the next step.
+  if (card.latest_revision && !isDelivered(card.latest_revision)) return { by: "none", at: null, url: null };
   const sent = card.latest_revision?.sent_at ?? null;
   const inbound = card.last_contact?.inbound ?? null;
   const outbound = card.last_contact?.outbound ?? null;
@@ -159,7 +170,10 @@ export function conversation(
     const d = days ?? 0;
     return { kind: "followed_up", text: d === 0 ? "Seguimiento hoy" : `Seguimiento ${short(touch.at)} · ${d} d sin respuesta`, at: touch.at, url: touch.url, days };
   }
-  if (touch.by === "none") return { kind: "none", text: "Sin cotización", at: null, url: null, days: null };
+  if (touch.by === "none") {
+    const text = card.latest_revision ? "Cotización en preparación" : "Sin cotización";
+    return { kind: "none", text, at: null, url: null, days: null };
+  }
   const d = days ?? 0;
   return { kind: "silent", text: d === 0 ? "Enviada hoy" : `Sin respuesta · ${d} d`, at: null, url: null, days };
 }

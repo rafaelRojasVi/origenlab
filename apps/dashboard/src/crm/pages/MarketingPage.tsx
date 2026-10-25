@@ -113,7 +113,7 @@ export function MarketingPage() {
     <div className="space-y-4">
       <PageHeader
         title="Marketing"
-        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras las respuestas BAJA no se sincronicen automáticamente desde Gmail."
+        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: este panel no envía campañas."
         actions={
           mayAuthor && tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong">

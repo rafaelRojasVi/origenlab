@@ -147,9 +147,10 @@ SEND_BLOCKERS: tuple[dict[str, str], ...] = (
     {
         "code": "unsubscribe_sync_not_automatic",
         "label": "BAJA sin sincronización automática",
-        "detail": "Una BAJA se registra como supresión permanente sólo cuando un operador aplica un lote de "
-                  "respuestas ya descargadas (W10). Las respuestas de Gmail no se sincronizan automáticamente "
-                  "todavía, así que ningún correo que ofrezca «responda BAJA» puede enviarse.",
+        "detail": "Una BAJA se registra como supresión permanente sólo cuando se aplica un lote de respuestas "
+                  "ya descargadas con un script del servidor (W10): no hay botón para eso en el panel. Las "
+                  "respuestas de Gmail no se sincronizan automáticamente, así que ningún correo que ofrezca "
+                  "«responda BAJA» puede enviarse.",
     },
     {
         "code": "no_send_path",

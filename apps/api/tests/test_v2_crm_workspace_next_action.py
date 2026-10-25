@@ -6,7 +6,7 @@ import pytest
 
 from origenlab_api.v2.crm_workspace import suggest_next_action
 
-LATEST = {"quote_number": "012092A-26", "sent_at": "2026-05-08T12:00:00+00:00"}
+LATEST = {"quote_number": "012092A-26", "status": "sent", "sent_at": "2026-05-08T12:00:00+00:00"}
 OPP = {"stage": "negotiating", "closed_at": None}
 
 

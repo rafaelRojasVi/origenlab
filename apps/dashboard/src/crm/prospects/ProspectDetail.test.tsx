@@ -58,6 +58,6 @@ describe("ProspectDetail", () => {
     expect(within(drawer).getByText("Un proyecto ficticio")).toBeInTheDocument();
     expect(within(drawer).getByRole("link", { name: /ORCID/ })).toHaveAttribute("href", "https://orcid.org/0000-0000-0000-0000");
     expect(within(drawer).getByRole("link", { name: /example.test\/fondo2/ })).toBeInTheDocument();
-    expect(screen.getByText("Hoy no hay nuevos. La búsqueda diaria llega pronto; mientras tanto revisa Más tarde.")).toBeInTheDocument();
+    expect(screen.getByText("No hay nuevos. Los próximos llegan cuando se cargue una nueva búsqueda; mientras tanto revisa Más tarde.")).toBeInTheDocument();
   });
 });

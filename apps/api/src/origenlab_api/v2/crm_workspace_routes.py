@@ -449,8 +449,8 @@ def get_marketing_campaign_audit(campaign_id: UUID, _: Operator, repo: Repo) -> 
 
 #: Shown wherever the suppression state is: nothing reads a mailbox on its own.
 GMAIL_SYNC_NOTICE = (
-    "Las respuestas de Gmail no se sincronizan automáticamente todavía. Una BAJA queda registrada "
-    "sólo cuando un operador aplica un lote de respuestas ya descargadas."
+    "Las respuestas de Gmail no se sincronizan automáticamente. Una BAJA queda registrada sólo cuando "
+    "se aplica un lote de respuestas ya descargadas con un script del servidor: no hay botón para eso aquí."
 )
 
 

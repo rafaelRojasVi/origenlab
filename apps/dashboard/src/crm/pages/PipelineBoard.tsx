@@ -17,7 +17,7 @@
 import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "react";
 import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
-import { ageTone, contactLine, conversation, displayName, quoteProduct } from "../caseDisplay";
+import { ageTone, contactLine, conversation, displayName, isDelivered, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate } from "../ui";
 import { formatMoney } from "../money";
@@ -396,12 +396,12 @@ export function BoardCard({
               <DriveIcon />
               Drive
             </a>
-          ) : (
+          ) : isDelivered(latest) ? (
             <span className="inline-flex h-6 items-center gap-1 whitespace-nowrap px-1.5 text-ink-faint" title="El PDF todavía no está archivado en Drive">
               <DriveIcon />
               sin Drive
             </span>
-          )}
+          ) : null}
           {gmailUrl ? (
             <a
               href={gmailUrl}

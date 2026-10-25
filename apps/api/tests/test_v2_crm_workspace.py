@@ -470,6 +470,54 @@ def test_a_sent_cotizador_revision_links_the_email_it_went_in_and_waits_for_the_
     assert "document_pending_drive" in codes and card["status"] == "ok"
 
 
+def test_a_new_cotizador_revision_in_progress_does_not_block_the_case() -> None:
+    """Approving a revision is what replaces the earlier one: until then the draft is the work in
+    progress, not a second vigente revision (it used to block the case as «canonical_undetermined»)."""
+    revs = [_rev("r1", "q1", 1, SHA_A),
+            _rev("r2", "q1", 2, None, src=None, origin="authored", status="draft", sent_at=None)]
+    card = _cotizador_card_with(revs)
+    assert card["status"] != "blocked"
+    assert "canonical_undetermined" not in [a["code"] for a in card["attention"]]
+    assert [r["is_active"] for r in card["quotes"][0]["revisions"]] == [True, False]
+
+
+def _cotizador_card_with(revs: list[dict], **opp: object) -> dict:
+    return compose_pipeline(
+        [_opp("o1", **opp)], [],
+        [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "01300-26", "number_origin": "minted"}],
+        revs, SOURCES, [], {},
+    )[0]
+
+
+def test_a_sent_cotizador_revision_shows_its_own_amounts_and_a_draft_none() -> None:
+    sent = _rev("r1", "q1", 1, SHA_A, src=None, origin="authored", quote_currency="CLP",
+                authored_net="1000000", authored_tax="190000", authored_gross="1190000")
+    card = _cotizador_card_with([sent])
+    assert card["money"][0]["currency"] == "CLP" and card["money"][0]["net_total"] == "1000000"
+    c = card["quotes"][0]["revisions"][0]["contents"]
+    assert c["net_source"] == "cotizador" and c["tax_total"] == "190000" and c["gross_total"] == "1190000"
+
+    sin_iva = _rev("r1", "q1", 1, SHA_A, src=None, origin="authored", quote_currency="CLP",
+                   authored_net="500", authored_tax="0", authored_gross="500")
+    c = _cotizador_card_with([sin_iva])["quotes"][0]["revisions"][0]["contents"]
+    assert c["tax_total"] is None and c["gross_total"] is None
+
+    draft = _rev("r1", "q1", 1, None, src=None, origin="authored", status="draft", sent_at=None)
+    assert _cotizador_card_with([draft])["money"] == []
+
+
+def test_a_first_quote_still_in_the_cotizador_is_the_next_step_not_a_reply() -> None:
+    contacts = {"o1": {"inbound": {"at": "2026-10-20T10:00:00Z"}, "outbound": None}}
+    for status, verb in (("draft", "Terminar y enviar"), ("approved", "Enviar")):
+        rev = _rev("r1", "q1", 1, None, src=None, origin="authored", status=status, sent_at=None)
+        card = compose_pipeline(
+            [_opp("o1")], [],
+            [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "01300-26", "number_origin": "minted"}],
+            [rev], {}, [], {}, contacts,
+        )[0]
+        assert card["next_action"]["text"] == f"{verb} la cotización 01300-26"
+
+
 def test_a_closed_case_carries_no_notes() -> None:
     """Decision 2026-10-09: a closed case never blocks. Owner 2026-10-12: nor does it show notes —
     «whatever, it's already closed»: a won, lost or abandoned case is «al día» with no attention."""
@@ -790,11 +838,11 @@ def test_case_money_is_the_last_sent_vigente_quotation_not_a_sum() -> None:
 
     assert quote_contents({"doc_currency": None, "doc_net_total": None, "doc_lines": None}) is None
     revs = [
-        {"quote_number": "00001-26", "revision_no": 1, "sent_at": "2026-09-07 10:00:00+00", "is_active": True,
+        {"status": "sent", "quote_number": "00001-26", "revision_no": 1, "sent_at": "2026-09-07 10:00:00+00", "is_active": True,
          "contents": {"currency": "CLP", "net_total": "1000"}},
-        {"quote_number": "00003-26", "revision_no": 1, "sent_at": "2026-09-22 15:30:00+00", "is_active": True,
+        {"status": "sent", "quote_number": "00003-26", "revision_no": 1, "sent_at": "2026-09-22 15:30:00+00", "is_active": True,
          "contents": {"currency": "CLP", "net_total": "250"}},
-        {"quote_number": "00002-26", "revision_no": 2, "sent_at": "2026-09-30 09:00:00+00", "is_active": False,
+        {"status": "sent", "quote_number": "00002-26", "revision_no": 2, "sent_at": "2026-09-30 09:00:00+00", "is_active": False,
          "contents": {"currency": "CLP", "net_total": "999999"}},  # superseded: never the case's amount
     ]
     assert case_money(revs) == [{"currency": "CLP", "net_total": "250", "quote_number": "00003-26",
@@ -805,9 +853,9 @@ def test_case_money_says_unread_when_the_last_sent_quotation_was_never_read() ->
     from origenlab_api.v2.crm_workspace import case_money
 
     revs = [
-        {"quote_number": "00001-26", "revision_no": 1, "sent_at": "2026-09-07 10:00:00+00", "is_active": True,
+        {"status": "sent", "quote_number": "00001-26", "revision_no": 1, "sent_at": "2026-09-07 10:00:00+00", "is_active": True,
          "contents": {"currency": "USD", "net_total": "10.50"}},
-        {"quote_number": "00004-26", "revision_no": 1, "sent_at": "2026-10-01 10:00:00+00", "is_active": True,
+        {"status": "sent", "quote_number": "00004-26", "revision_no": 1, "sent_at": "2026-10-01 10:00:00+00", "is_active": True,
          "contents": None},
     ]
     assert case_money(revs) == [{"currency": "unread", "net_total": "1", "quote_number": "00004-26",
