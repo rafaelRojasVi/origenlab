@@ -188,9 +188,12 @@ def _fake_fit(fit_score: int) -> FitResult:
     )
 
 
-# ── module-scoped disposable database ────────────────────────────────────────
+# ── function-scoped disposable database ──────────────────────────────────────
+# Each test gets its own fresh database: findings accumulate in the shared
+# evidence schema, so a module-scoped DB would carry visible findings between
+# tests and affect the `unreviewed` count used by run_search.
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def dsn():
     yield from build_disposable_database()
 
@@ -348,7 +351,8 @@ def test_budget_reached_ends_run_failed(dsn, tmp_path, monkeypatch):
     enrich_result, epmc_sess = _fake_epmc("eficticia@ficticio.invalid")
 
     def _budget_fit(conn: Any, ctx: str, mdl: str, search_run_id: str | None) -> FitResult:
-        raise BudgetReached("monthly cap exceeded")
+        from decimal import Decimal
+        raise BudgetReached(Decimal("9.99"), Decimal("10.00"))
 
     monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit", _budget_fit)
     monkeypatch.setattr("origenlab_worker.prospects.daily.search_epmc",

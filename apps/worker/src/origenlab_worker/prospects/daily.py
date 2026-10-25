@@ -274,7 +274,8 @@ def run_search(conn: Any, run_id: str, model: str, *,
                 # hidden ones are stored but must not consume a slot meant for a visible prospect.
                 if not hidden:
                     added += 1
-                counts["added"] = counts.get("added", 0) + 1
+                    counts["added"] = added
+                # (counts["low_fit"] already tracks hidden insertions above)
             else:
                 counts["skipped"] = counts.get("skipped", 0) + 1
                 continue
