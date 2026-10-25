@@ -24,7 +24,10 @@ from origenlab_api.v2.campaign_planning import PLANNING_TIME_ZONE
 from origenlab_api.v2.campaign_test_send import SENDER_ADDRESS, TEST_SENDS_PER_DAY, TEST_SENDS_PER_HOUR
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
-from origenlab_api.v2.contact_redaction import ContactRedactingRoute
+from origenlab_api.v2.case_documents import mail_storage_key
+from origenlab_api.v2.case_mail import MAX_EML_BYTES, read_message, valid_message_id
+from origenlab_api.v2.catalog.storage import StorageUnavailable
+from origenlab_api.v2.contact_redaction import ContactRedactingRoute, sees_contact_addresses
 from origenlab_api.v2.crm_merge_preview import merge_preview
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 from origenlab_api.v2.equipment_interests import interest_index, supplier_directory
@@ -184,6 +187,35 @@ def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo) -> An
     if body is None:
         raise HTTPException(status_code=404, detail="no such case")
     return body
+
+
+@workspace_router.get("/opportunities/{opportunity_id}/messages/{message_id}")
+def get_opportunity_message(opportunity_id: UUID, message_id: str, operator: Operator, repo: Repo,
+                            request: Request) -> Any:
+    """One email of the case, as plain text, for the dashboard's reader (`case_mail`). Only for the
+    roles that read contact addresses: a body carries them. 404 when the email is not on one of
+    the case's threads; 409 when only a staged record exists (open it in Gmail)."""
+    if not sees_contact_addresses(operator.role):
+        raise HTTPException(status_code=403, detail="reading an email is for sales and admin")
+    if not valid_message_id(message_id):
+        raise HTTPException(status_code=404, detail="no such email on this case")
+    source = repo.opportunity_message_source(str(opportunity_id), message_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="no such email on this case")
+    not_stored = HTTPException(status_code=409, detail={"code": "message_not_stored",
+                                                        "message": "this email's original is not stored"})
+    if not source.get("eml_storage_path"):
+        raise not_stored
+    mail = getattr(request.app.state, "mail_storage", None)
+    if mail is None:
+        raise HTTPException(status_code=503, detail="mail storage is unavailable")
+    try:
+        raw = mail.get(mail_storage_key(source["eml_storage_path"]), MAX_EML_BYTES)
+    except (KeyError, ValueError):
+        raise not_stored from None
+    except StorageUnavailable:
+        raise HTTPException(status_code=503, detail="mail storage is unavailable") from None
+    return {"message_id": message_id, **read_message(raw)}
 
 
 @workspace_router.get("/cases/{opportunity_id}/memory")

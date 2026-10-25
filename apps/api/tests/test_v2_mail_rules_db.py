@@ -985,6 +985,10 @@ def test_a_web_form_case_reads_the_visitor_as_its_contact(db, world) -> None:
 
     [thread] = workspace.opportunity_threads(case_id)["threads"]
     assert thread["kind"] == "cliente" and thread["messages"][0]["direction"] == "inbound"
+    # The reader opens an email of the case's threads, and nothing else.
+    message_id = thread["messages"][0]["message_id"]
+    assert workspace.opportunity_message_source(case_id, message_id) is not None
+    assert workspace.opportunity_message_source(case_id, "no-such-message") is None
 
     with _owner(db) as conn, conn.cursor(row_factory=dict_row) as cur:
         cur.execute(_CASE_PEOPLE_SQL, {"case": case_id})

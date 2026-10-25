@@ -409,6 +409,24 @@ _SQL_PIPELINE_CONTACT = """
         on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
      where not sr.is_quarantined and sr.review_status <> 'rejected'
 """
+# The Gmail threads of one case (`%(o)s`): any thread with an email linked to it, plus the threads
+# its quote revisions came from — «Correos del caso» and the email reader read the same set.
+_SQL_CASE_THREADS = """
+                with threads as (
+                    select sr.payload->>'gmail_thread_id' as thread_id
+                      from crm.opportunity_evidence oe
+                      join evidence.source_record sr on sr.id = oe.source_record_id
+                     where oe.opportunity_id = %(o)s::uuid and oe.unlinked_at is null
+                       and sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
+                    union
+                    select sr.payload->>'gmail_thread_id'
+                      from crm.quote_revision qr
+                      join crm.quote q on q.id = qr.quote_id
+                      join evidence.source_record sr on sr.id = qr.origin_source_record_id
+                     where q.opportunity_id = %(o)s::uuid and sr.kind = 'gmail_message'
+                       and sr.payload->>'gmail_thread_id' is not null
+                )
+"""
 _SQL_PIPELINE_PARTICIPANTS = """
     select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, p.person_id::text as person_id
       from crm.opportunity_participant p
@@ -2405,21 +2423,7 @@ class CrmWorkspaceRepository:
             if cur.fetchone() is None:
                 return None
             cur.execute(
-                """
-                with threads as (
-                    select sr.payload->>'gmail_thread_id' as thread_id
-                      from crm.opportunity_evidence oe
-                      join evidence.source_record sr on sr.id = oe.source_record_id
-                     where oe.opportunity_id = %(o)s::uuid and oe.unlinked_at is null
-                       and sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' is not null
-                    union
-                    select sr.payload->>'gmail_thread_id'
-                      from crm.quote_revision qr
-                      join crm.quote q on q.id = qr.quote_id
-                      join evidence.source_record sr on sr.id = qr.origin_source_record_id
-                     where q.opportunity_id = %(o)s::uuid and sr.kind = 'gmail_message'
-                       and sr.payload->>'gmail_thread_id' is not null
-                )
+                _SQL_CASE_THREADS + """
                 select distinct on (sr.payload->>'gmail_message_id')
                        sr.payload->>'gmail_thread_id' as thread_id,
                        sr.payload->>'gmail_message_id' as message_id,
@@ -2456,6 +2460,30 @@ class CrmWorkspaceRepository:
             )
             suppliers = [r[0] for r in cur.fetchall()]
         return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
+
+    def opportunity_message_source(self, opportunity_id: str, message_id: str) -> dict[str, Any] | None:
+        """Where one email of the case is stored (`comms.message.eml_storage_path`, null when only a
+        staged record exists), for the reader (`case_mail.read_message`). `None` when the message
+        is not on one of the case's threads — the reader opens nothing outside the case."""
+        with self._read() as cur:
+            cur.execute(
+                _SQL_CASE_THREADS + """
+                select (select cm.eml_storage_path from comms.message cm
+                         where cm.provider_message_id = sr.payload->>'gmail_message_id'
+                           and cm.eml_storage_path is not null
+                         order by cm.created_at limit 1) as eml_storage_path,
+                       sr.payload->>'gmail_message_id' as message_id
+                  from threads t
+                  join evidence.source_record sr
+                    on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = t.thread_id
+                 where sr.payload->>'gmail_message_id' = %(m)s
+                   and not sr.is_quarantined and sr.review_status <> 'rejected'
+                 limit 1
+                """,
+                {"o": opportunity_id, "m": message_id},
+            )
+            rows = self._rows(cur)
+            return rows[0] if rows else None
 
     def quote_readings(self, limit: int = 100) -> dict[str, Any]:
         """The quote PDFs the reader refused, newest first, one row per PDF — its newest refusal, of

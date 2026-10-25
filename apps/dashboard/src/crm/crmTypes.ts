@@ -601,6 +601,24 @@ export interface CaseThreadsResponse {
   threads: CaseThread[];
 }
 
+/**
+ * `GET /v2/workspace/opportunities/{id}/messages/{message_id}`: one case email as plain text.
+ * People by display name, else domain; `quoted` is the earlier conversation the email carries.
+ */
+export interface CaseMessage {
+  message_id: string;
+  subject: string | null;
+  from: string | null;
+  to: string[];
+  cc: string[];
+  sent_at: string | null;
+  text: string;
+  quoted: string | null;
+  /** The body was longer than the reader shows: the rest is in Gmail. */
+  truncated: boolean;
+  attachments: { filename: string; size: number | null }[];
+}
+
 /** `GET /v2/workspace/quote-readings`: the quote PDFs the quote reader refused. */
 export interface QuoteReading {
   quote_number: string | null;

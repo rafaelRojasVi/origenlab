@@ -38,7 +38,7 @@ import {
   useMayRunCaseCommands,
 } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
-import { composeInSharedMailbox, inSharedMailbox } from "../gmailLinks";
+import { composeInSharedMailbox, gmailMessageId, inSharedMailbox } from "../gmailLinks";
 import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { crmHash, type CrmSection, type DatosTab } from "../crmRoute";
@@ -66,6 +66,7 @@ import type { ResourceState } from "../useResource";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseMoveForm } from "./CaseMove";
+import { MailReaderDrawer, useMayReadMail } from "./MailMessage";
 import { AutomaticActionsPanel, newsRows, type AutomaticAction } from "./AutomaticActionsPanel";
 import type { ForwardedRequest } from "./ForwardedRequestsPanel";
 
@@ -578,6 +579,10 @@ function ReplyQueueRow({
   const menuRef = useRef<HTMLDivElement>(null);
   const blocking = card.attention.find((a) => a.blocking) ?? null;
   const won = wroteAfterWinning(card);
+  // «Responder» opens the client's email here; Gmail is one click away inside (owner 2026-10-25).
+  const mayRead = useMayReadMail();
+  const messageId = gmailMessageId(reply.url);
+  const [reading, setReading] = useState(false);
   const canMove = !blocking && mayDecide && card.stage === "quoting" && typeof card.version === "number";
   const product = quoteProduct(card);
 
@@ -686,6 +691,8 @@ function ReplyQueueRow({
         {/* Primary button */}
         {blocking ? (
           <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Resolver</Button>
+        ) : reply.url && mayRead && messageId ? (
+          <Button variant="primary" onClick={() => setReading(true)}>Responder</Button>
         ) : reply.url ? (
           <a
             href={inSharedMailbox(reply.url) ?? undefined}
@@ -734,6 +741,22 @@ function ReplyQueueRow({
           </div>
         ) : null}
       </div>
+      {reading && messageId ? (
+        <MailReaderDrawer
+          open
+          onClose={() => setReading(false)}
+          title={name}
+          subject={card.last_contact?.inbound?.subject ?? null}
+          opportunityId={card.opportunity_id}
+          messageId={messageId}
+          gmailUrl={inSharedMailbox(reply.url)}
+          extra={
+            <Button variant="secondary" onClick={() => { setReading(false); navigate("oportunidades", card.opportunity_id); }}>
+              Abrir caso
+            </Button>
+          }
+        />
+      ) : null}
     </li>
   );
 }

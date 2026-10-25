@@ -15,6 +15,12 @@ export function inSharedMailbox(url: string | null | undefined): string | null {
   return `https://mail.google.com/mail/?authuser=${encodeURIComponent(SHARED_MAILBOX)}${m[1] ?? ""}`;
 }
 
+/** The Gmail message id a message link names (`…#all/<id>`, `#inbox/<id>`), or null. */
+export function gmailMessageId(url: string | null | undefined): string | null {
+  const m = (url ?? "").match(/#[a-z]+\/([0-9A-Za-z_-]{6,64})$/);
+  return m ? m[1] : null;
+}
+
 /** A new email from the shared mailbox, addressed and titled; for a case with no thread to reply on. */
 export function composeInSharedMailbox(to: string | null, subject: string): string {
   const q = new URLSearchParams({ authuser: SHARED_MAILBOX, view: "cm", fs: "1", su: subject });
