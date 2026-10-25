@@ -145,11 +145,13 @@ function DailySearchHeader({ canDecide }: { canDecide: boolean }) {
   const running = status?.running ?? false;
   const finishedAt = run?.finished_at ? run.finished_at.slice(0, 10) : null;
   const added = run?.counts?.added ?? null;
+  const poolLeft = run?.counts?.pool_left ?? null;
 
   let subtitle = "Búsqueda diaria 06:00 (Santiago)";
   if (running) subtitle += " · En ejecución…";
   else if (finishedAt) subtitle += ` · última: ${finishedAt}${added != null ? `, ${added} nuevos` : ""}`;
   if (status != null) subtitle += ` · quedan ~${status.unreviewed} por revisar`;
+  if (poolLeft != null) subtitle += ` · quedan ~${poolLeft} por revisar en ANID 2025`;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-line bg-canvas-raised px-4 py-3">

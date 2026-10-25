@@ -40,6 +40,7 @@ select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and 
           from crm.prospect_edit x left join platform.operator op on op.id = x.edited_by_operator_id
          where x.source_record_id = s.id) e on true
  where s.kind = 'prospect_finding' and not s.is_quarantined and s.superseded_by_source_record_id is null
+   and (s.payload->>'hidden_reason') is null
 """
 _HISTORY = """
 select x.verdict, x.reason, x.remind_on, x.reviewed_at, op.display_name as reviewed_by

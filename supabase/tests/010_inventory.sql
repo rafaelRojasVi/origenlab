@@ -48,9 +48,10 @@ select set_eq(
     'evidence.triage_review', 'crm.opportunity_document', 'catalog.product_document',
     'evidence.subject_memory', 'catalog.product_model_alias',
     'crm.bidder_profile', 'crm.bidder_document', 'evidence.bid_preparation', 'platform.model_usage',
-    'crm.notice_review', 'crm.prospect_review', 'crm.prospect_edit'
+    'crm.notice_review', 'crm.prospect_review', 'crm.prospect_edit',
+    'evidence.prospect_search_run'
   ],
-  'exactly the reviewed 62 application tables exist');
+  'exactly the reviewed 63 application tables exist');
 
 select results_eq(
   $$ select n.nspname::text collate "default", count(*)::int
@@ -58,8 +59,8 @@ select results_eq(
       where c.relkind = 'r'
         and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       group by 1 order by 1 $$,
-  $$ values ('catalog', 8), ('comms', 4), ('crm', 27), ('evidence', 6), ('outbound', 9), ('platform', 7), ('procurement', 1) $$,
-  'counts by schema: crm 24, comms 4, outbound 9, evidence 6, catalog 8, procurement 1, platform 7');
+  $$ values ('catalog', 8), ('comms', 4), ('crm', 27), ('evidence', 7), ('outbound', 9), ('platform', 7), ('procurement', 1) $$,
+  'counts by schema: crm 27, comms 4, outbound 9, evidence 7, catalog 8, procurement 1, platform 7');
 
 -- No views, materialized views, partitions or foreign tables in Slice 0.
 select is(
