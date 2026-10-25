@@ -57,6 +57,8 @@ export interface ProspectItem {
   acquired_at: string;
   /** Who last corrected the card, and when; null when nobody has. */
   edited?: { at: string; by: string | null } | null;
+  /** The last Gmail draft prepared for this prospect, if any. */
+  email_draft?: { draft_id: string; drafted_at: string } | null;
 }
 
 export interface ProspectCounts {
@@ -187,3 +189,36 @@ export const fetchSearchStatus = () =>
 export const requestProspectSearch = (
   idempotencyKey: string = newProspectCommandKey(),
 ) => post("/v2/commands/request-prospect-search", {}, idempotencyKey) as Promise<{ queued: boolean; run_id?: string; reason?: string }>;
+
+export interface ProspectEmailPreview {
+  finding_id: string;
+  to: string | null;
+  subject: string;
+  text: string;
+  html: string;
+  person_name: string | null;
+  fund_label: string | null;
+}
+
+export interface PrepareProspectEmailResult {
+  command: string;
+  finding_id: string;
+  draft_id: string;
+  to: string;
+  subject: string;
+  signature: boolean;
+  event_ids: string[];
+  idempotency_key: string;
+  command_receipt_id: string;
+  replayed: boolean;
+}
+
+/** «Preparar correo»: preview the intro email (no Gmail fetch, signature placeholder shown). */
+export const fetchEmailPreview = (id: string) =>
+  fetchJsonGet<ProspectEmailPreview>(operatorApiUrl(`/v2/prospect-findings/${encodeURIComponent(id)}/email-preview`));
+
+/** «Preparar correo»: create a Gmail draft, never send it. */
+export const prepareProspectEmail = (
+  body: { finding_id: string },
+  idempotencyKey: string = newProspectCommandKey(),
+) => post("/v2/commands/prepare-prospect-email", body, idempotencyKey) as unknown as Promise<PrepareProspectEmailResult>;

@@ -35,6 +35,7 @@ export function ProspectCard({
   onLater,
   onDiscard,
   onEdit,
+  onPrepareEmail,
 }: {
   item: ProspectItem;
   now: Date;
@@ -48,6 +49,8 @@ export function ProspectCard({
   onDiscard: () => void;
   /** «Editar»: correct any field of the card (owner 2026-10-25). */
   onEdit?: () => void;
+  /** «Preparar correo»: open the Gmail draft drawer. Only shown when the finding has an email. */
+  onPrepareEmail?: () => void;
 }) {
   const name = displayName(item);
   const ago = awardedAgo(item.awarded_on, now);
@@ -167,7 +170,19 @@ export function ProspectCard({
               Editar
             </button>
           ) : null}
-          <button type="button" onClick={onOpen} className={`${onEdit ? "" : "ml-auto "}text-xs font-medium text-accent hover:underline`}>
+          {onPrepareEmail && item.email ? (
+            <button type="button" onClick={onPrepareEmail} disabled={busy}
+              aria-label={`Preparar correo para ${name}`}
+              title={item.email_draft ? "Borrador ya creado — preparar otro" : "Preparar correo de presentación"}
+              className={`${onEdit ? "" : "ml-auto "}inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium hover:bg-canvas-sunken disabled:opacity-50 ${item.email_draft ? "text-brand-600 hover:text-brand-700" : "text-ink-muted hover:text-ink"}`}>
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M2 4h12v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" />
+                <path d="M2 4l6 5 6-5" />
+              </svg>
+              {item.email_draft ? "Correo (✓)" : "Preparar correo"}
+            </button>
+          ) : null}
+          <button type="button" onClick={onOpen} className={`${onEdit || (onPrepareEmail && item.email) ? "" : "ml-auto "}text-xs font-medium text-accent hover:underline`}>
             Ver todo
           </button>
         </div>

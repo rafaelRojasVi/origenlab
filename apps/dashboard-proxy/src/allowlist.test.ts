@@ -551,7 +551,7 @@ describe("V2 durable read boundary allowlist", () => {
       isAllowedUpstreamPath,
       marketingCommandMaxBytes,
     } = await import("./allowlist");
-    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(12);
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(13);
     expect(isAllowedTenderCommandPostPath("/v2/commands/review-notice")).toBe(true);
     expect(isAllowedTenderCommandPostPath("/v2/commands/review-notice/")).toBe(false);
     expect(isAllowedPostPath("/v2/commands/review-notice")).toBe(true);
@@ -1321,8 +1321,10 @@ describe("«Prospectos» (spec 2026-10-23)", () => {
     expect(isAllowedUpstreamPath("/v2/prospect-findings")).toBe(true);
     expect(isAllowedUpstreamPath(`/v2/prospect-findings/${ID}`)).toBe(true);
     expect(isAllowedUpstreamPath(`/v2/prospect-findings/${ID}/logo`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/prospect-findings/${ID}/email-preview`)).toBe(true);
     expect(isAllowedUpstreamPath("/v2/prospect-findings/search-status")).toBe(true);
     expect(isAllowedUpstreamPath("/v2/prospect-findings/not-a-uuid/logo")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/prospect-findings/not-a-uuid/email-preview")).toBe(false);
     expect(isAllowedUpstreamPath(`/v2/prospect-findings/${ID}/logo/x`)).toBe(false);
     expect(isAllowedUpstreamPath(`/v2/prospect-findings/${ID}/`)).toBe(false);
     expect(isAllowedUpstreamPath("/v2/prospect-findings/")).toBe(false);
@@ -1332,7 +1334,8 @@ describe("«Prospectos» (spec 2026-10-23)", () => {
     const { isAllowedPostPath, isAllowedTenderCommandPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } =
       await import("./allowlist");
     for (const path of ["/v2/commands/review-prospect", "/v2/commands/contact-prospect",
-      "/v2/commands/edit-prospect", "/v2/commands/request-prospect-search"]) {
+      "/v2/commands/edit-prospect", "/v2/commands/request-prospect-search",
+      "/v2/commands/prepare-prospect-email"]) {
       expect(isAllowedTenderCommandPostPath(path)).toBe(true);
       expect(isAllowedPostPath(path)).toBe(true);
       expect(isAllowedUpstreamPath(path)).toBe(false);

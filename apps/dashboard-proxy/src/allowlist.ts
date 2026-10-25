@@ -146,6 +146,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/prospect-findings\/search-status$/,
   /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/logo$/,
+  // «Preparar correo» email preview: read-only, any signed-in operator.
+  /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/email-preview$/,
   // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
   // document's signed link. GET-only; a `viewer` is 403 `role_may_not_view_bidder` upstream.
   /^\/v2\/bidder$/,
@@ -397,6 +399,8 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/edit-prospect$/,
   // «Buscar ahora» (phase 2 2026-10-26): enqueue a manual daily prospect search run.
   /^\/v2\/commands\/request-prospect-search$/,
+  // «Preparar correo» (phase 2 2026-10-26): create a Gmail draft for a prospect, never send it.
+  /^\/v2\/commands\/prepare-prospect-email$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */

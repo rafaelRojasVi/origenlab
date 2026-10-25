@@ -6,6 +6,7 @@ import { useResource } from "../useResource";
 import { ContactarDialog } from "./ContactarDialog";
 import { DescartarDialog, MasTardeDialog } from "./DecisionDialogs";
 import { EditProspectDrawer } from "./EditProspectDrawer";
+import { EmailDraftDrawer } from "./EmailDraftDrawer";
 import { ProspectCard, displayName } from "./ProspectCard";
 import { ProspectDetail } from "./ProspectDetail";
 import { SystemSearch } from "./SystemSearch";
@@ -180,6 +181,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   const [busyId, setBusyId] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState<ProspectItem[] | null>(null);
   const [editing, setEditing] = useState<ProspectItem | null>(null);
+  const [preparingEmail, setPreparingEmail] = useState<ProspectItem | null>(null);
   const [postponing, setPostponing] = useState<ProspectItem[] | null>(null);
   const [choosing, setChoosing] = useState<{ item: ProspectItem; candidates: OrganizationCandidate[] } | null>(null);
   const [openId, setOpenId] = useState<string | null>(id);
@@ -345,6 +347,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
                       onLater={() => setPostponing([item])}
                       onDiscard={() => setDiscarding([item])}
                       onEdit={() => setEditing(item)}
+                      onPrepareEmail={item.email ? () => setPreparingEmail(item) : undefined}
                     />
                   ))}
                 </div>
@@ -376,6 +379,14 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
       {editing ? (
         <EditProspectDrawer item={editing} onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload(); }} />
+      ) : null}
+      {preparingEmail ? (
+        <EmailDraftDrawer
+          findingId={preparingEmail.id}
+          existingDraftId={preparingEmail.email_draft?.draft_id}
+          onClose={() => setPreparingEmail(null)}
+          onDrafted={() => { setPreparingEmail(null); reload(); }}
+        />
       ) : null}
     </div>
   );
