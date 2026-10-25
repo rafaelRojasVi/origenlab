@@ -421,6 +421,55 @@ def test_a_pending_archive_alone_does_not_make_a_case_pending() -> None:
     assert "document_pending_drive" in [a["code"] for a in card["attention"]]
     assert others == [] and card["status"] == "ok"
 
+def test_each_note_says_who_clears_it_and_only_a_persons_note_makes_a_case_pending() -> None:
+    """Owner 2026-10-25: a «pendiente» with no button to fix it is noise. Only notes a person
+    clears (`owner == "person"`) make a case «Pendiente»; the worker's and plain facts do not."""
+    card = _one_quote_card({"src-1": {**SOURCES["src-1"], "has_eml": True}})
+    owners = {a["code"]: a["owner"] for a in card["attention"]}
+    assert owners == {"no_crm_contact": "info", "document_pending_drive": "system"}
+    assert card["status"] == "ok"
+
+    no_quote = compose_pipeline([_opp("o1")], [], [], [], {}, [], {})[0]
+    assert {a["code"]: a["owner"] for a in no_quote["attention"]}["no_quote"] == "person"
+    assert no_quote["status"] == "pending"
+
+
+def test_a_staged_revision_with_no_email_is_only_a_fact_not_a_pending() -> None:
+    card = _one_quote_card({})
+    owners = {a["code"]: a["owner"] for a in card["attention"]}
+    assert owners == {"no_crm_contact": "info", "document_not_in_drive": "info", "no_gmail_evidence": "info"}
+    assert card["status"] == "ok"
+
+
+def _cotizador_card(rev: dict) -> dict:
+    return compose_pipeline(
+        [_opp("o1")], [],
+        [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "01300-26", "number_origin": "minted"}],
+        [rev], {}, [], {},
+    )[0]
+
+
+def test_a_cotizador_draft_is_not_missing_its_email_or_its_drive_file() -> None:
+    """Nothing has gone to the client yet: there is no email to link and no PDF to file."""
+    draft = _rev("r1", "q1", 1, SHA_A, src=None, origin="authored", status="draft", sent_at=None)
+    card = _cotizador_card(draft)
+    codes = [a["code"] for a in card["attention"]]
+    assert "document_not_in_drive" not in codes and "no_gmail_evidence" not in codes
+
+
+def test_a_sent_cotizador_revision_links_the_email_it_went_in_and_waits_for_the_archiver() -> None:
+    """Rule R16 records the email a Cotizador PDF was sent in; the worker files the PDF from it."""
+    sent = _rev("r1", "q1", 1, SHA_A, src=None, origin="authored", sent_gmail_message_id="gm-9",
+                sent_gmail_thread_id="th-9", sent_subject="Cotización 01300-26", sent_has_eml=True)
+    card = _cotizador_card(sent)
+    [r] = card["quotes"][0]["revisions"]
+    assert r["gmail"]["message_id"] == "gm-9" and r["gmail"]["thread_id"] == "th-9"
+    assert r["drive_pending"] is True
+    codes = [a["code"] for a in card["attention"]]
+    assert "no_gmail_evidence" not in codes and "document_not_in_drive" not in codes
+    assert "document_pending_drive" in codes and card["status"] == "ok"
+
+
 def test_a_closed_case_carries_no_notes() -> None:
     """Decision 2026-10-09: a closed case never blocks. Owner 2026-10-12: nor does it show notes —
     «whatever, it's already closed»: a won, lost or abandoned case is «al día» with no attention."""

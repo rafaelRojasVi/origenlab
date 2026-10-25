@@ -4,7 +4,7 @@
  * model printed in the quote's file name, what the quote is for, the days since the quote went out and where the
  * conversation stands («respondió», «seguimiento», «sin respuesta»).
  */
-import type { OpportunityCardData } from "./crmTypes";
+import type { Attention, OpportunityCardData } from "./crmTypes";
 import type { Tone } from "./ui";
 
 /** «CN01238- Juan Germany G - AGAR DEL PACIFICO S.A-MB120.pdf» → company and model. */
@@ -63,6 +63,14 @@ const DOMAIN = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
  * the import named after a domain («exactachile.cl») or a slug («Labclinicoarauco») is shown by
  * the name the quote's title or file prints, with the CRM name kept as `sub`.
  */
+/**
+ * The notes on a case nobody has to act on: the worker clears `system` ones by itself, `info` ones
+ * are facts about the record. What a person must do is a blocker or the case's next step instead.
+ */
+export function systemNotes(card: OpportunityCardData): Attention[] {
+  return card.attention.filter((a) => !a.blocking && a.owner !== "person" && a.code !== "no_quote");
+}
+
 export function displayName(card: OpportunityCardData): { name: string; sub: string | null } {
   const org = card.organization?.name?.trim() || null;
   const fromTitle = card.title.match(/^Cotizaci[oó]n .*? — (.+)$/)?.[1]?.trim() ?? null;
