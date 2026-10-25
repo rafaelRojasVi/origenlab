@@ -104,6 +104,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // session required, the same UUID-shaped segment and a literal `/threads` tail. Senders come
   // by name or domain only (v2/crm_workspace.py `case_threads`).
   /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/threads$/,
+  // One email of a case, as plain text, for the dashboard's reader: GET-only, operator session
+  // required, the case's UUID-shaped segment, a literal `/messages/` and a Gmail message id
+  // (lowercase hex; the file-key class the smoke test expands). The API checks the id against the
+  // case and refuses any role that does not read addresses.
+  /^\/v2\/workspace\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/messages\/[a-z0-9_-]{1,64}$/,
   // The machine memory for one case (summary, facts, next step) written by the triage worker.
   // GET-only, operator session required; a UUID-shaped segment and the literal `/memory` tail.
   // Returns 200 with case_memory: null when no memory exists yet; 404 when the case itself is gone.

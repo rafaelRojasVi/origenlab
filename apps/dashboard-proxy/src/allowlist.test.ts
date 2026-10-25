@@ -818,6 +818,23 @@ describe("CRM part A: confirm an institution, suggested people", () => {
     }
   });
 
+  it("forwards GET of one case email by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/messages/18f0a1b2c3d4e5f6`)).toBe(true);
+    expect(isAllowedPostPath(`/v2/workspace/opportunities/${uuid}/messages/18f0a1b2c3d4e5f6`)).toBe(false);
+    for (const p of [
+      `/v2/workspace/opportunities/${uuid}/messages/`,
+      `/v2/workspace/opportunities/${uuid}/messages/18F0A1B2C3D4E5F6`,
+      `/v2/workspace/opportunities/${uuid}/messages/18f0a1b2c3d4e5f6/`,
+      `/v2/workspace/opportunities/${uuid}/messages/..%2F..%2Fx`,
+      `/v2/workspace/opportunities/${uuid}/messages/a.b.c.d.e.f`,
+      "/v2/workspace/opportunities/not-a-uuid/messages/18f0a1b2c3d4e5f6",
+    ]) {
+      expect(isAllowedUpstreamPath(p)).toBe(false);
+    }
+  });
+
   it("forwards GET of one case's email cadenas by its exact path, never as a POST", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
     const uuid = "96301691-af05-41ea-82e3-05f5fae40837";

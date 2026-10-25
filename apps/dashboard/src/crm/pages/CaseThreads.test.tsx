@@ -1,7 +1,9 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { CaseThreadsResponse } from "../crmTypes";
+import type { AuthSessionState } from "../../api/authClient";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
+import type { CaseMessage, CaseThreadsResponse } from "../crmTypes";
 
 // Every value below is invented; the repository is public.
 const RESPONSE: CaseThreadsResponse = {
@@ -25,7 +27,25 @@ const RESPONSE: CaseThreadsResponse = {
   ],
 };
 
-vi.mock("../crmApi", () => ({ fetchCaseThreads: vi.fn(async () => RESPONSE) }));
+const MESSAGE: CaseMessage = {
+  message_id: "m4", subject: "Cotización balanza", from: "Ana Ficticia", to: ["Ventas"], cc: [],
+  sent_at: "2026-09-04T12:00:00Z", text: "Gracias, ¿incluye calibración?", truncated: false,
+  quoted: "El jue, 3 sept 2026, Ventas escribió:\n> Adjunto cotización", attachments: [{ filename: "Plano.pdf", size: 10 }],
+};
+const fetchCaseMessage = vi.fn(async (_case: string, _id: string) => MESSAGE);
+
+vi.mock("../crmApi", () => ({
+  fetchCaseThreads: vi.fn(async () => RESPONSE),
+  fetchCaseMessage: (c: string, id: string) => fetchCaseMessage(c, id),
+}));
+
+function session(role: string): AuthSessionState {
+  return {
+    kind: "signed_in", method: "google_profile",
+    operator: { operatorId: "op-1", email: "ventas@example.cl", displayName: "Ventas", role },
+    caseCommandsEnabled: true, crmAuthoringEnabled: true,
+  };
+}
 
 describe("Correos del caso as cadenas", () => {
   it("shows each cadena with its party, count and newest three emails, and opens the rest on request", async () => {
@@ -47,5 +67,40 @@ describe("Correos del caso as cadenas", () => {
     expect(threads[1]).toHaveTextContent("fabricante-ficticio.example");
     // When matters (owner 2026-10-12): each email shows its hour, not only the day.
     expect(threads[1]).toHaveTextContent(/01 sept 2026, \d{2}:\d{2}/);
+  });
+
+  it("opens an email in place, quoted conversation folded, one at a time", async () => {
+    const { CaseThreads } = await import("./CaseThreads");
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <CaseThreads opportunityId="case-1" />
+      </AuthSessionContext.Provider>,
+    );
+    const [client] = await screen.findAllByTestId("case-thread");
+    const line = within(client).getAllByRole("button", { name: /Ana Ficticia/ })[0];
+    expect(line).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(line);
+    const mail = await within(client).findByTestId("mail-message");
+    expect(fetchCaseMessage).toHaveBeenCalledWith("case-1", "m4");
+    expect(mail).toHaveTextContent("Gracias, ¿incluye calibración?");
+    expect(mail).toHaveTextContent("Plano.pdf");
+    expect(mail).not.toHaveTextContent("Adjunto cotización");
+    fireEvent.click(within(mail).getByRole("button", { name: /Ver conversación anterior/ }));
+    expect(mail).toHaveTextContent("Adjunto cotización");
+    expect(within(client).getByRole("link", { name: "Responder en Gmail ↗" }).getAttribute("href")).toContain("#all/m4");
+    fireEvent.click(line);
+    expect(within(client).queryByTestId("mail-message")).toBeNull();
+  });
+
+  it("a role that does not read addresses keeps the Gmail link", async () => {
+    const { CaseThreads } = await import("./CaseThreads");
+    render(
+      <AuthSessionContext.Provider value={{ session: session("viewer"), signOut: async () => true }}>
+        <CaseThreads opportunityId="case-1" />
+      </AuthSessionContext.Provider>,
+    );
+    const [client] = await screen.findAllByTestId("case-thread");
+    expect(within(client).queryAllByRole("button", { name: /Ana Ficticia/ })).toHaveLength(0);
+    expect(within(client).getAllByRole("link").length).toBeGreaterThan(1);
   });
 });

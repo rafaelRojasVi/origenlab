@@ -7,6 +7,9 @@
  * / interno), how many emails and the last date, «Abrir en Gmail»; then one line per email,
  * newest first, the last three shown and «Ver todo» for the rest. Senders come by name or domain
  * only. Read-only (`GET /v2/workspace/opportunities/{id}/threads`).
+ *
+ * An email opens in place (`MailMessage`, owner 2026-10-25), one at a time; a role that does not
+ * read addresses keeps the Gmail link.
  */
 import { useCallback, useState } from "react";
 import { fetchCaseThreads } from "../crmApi";
@@ -14,6 +17,7 @@ import type { CaseThread } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { useResource } from "../useResource";
 import { fmtDateTime, isSafeExternalHref } from "../ui";
+import { MailMessage, useMayReadMail } from "./MailMessage";
 
 const KIND: Record<CaseThread["kind"], { label: string; className: string }> = {
   cliente: { label: "Cliente", className: "bg-brand-50 text-accent-strong border-brand-600/25" },
@@ -23,8 +27,9 @@ const KIND: Record<CaseThread["kind"], { label: string; className: string }> = {
 
 const SHOWN = 3;
 
-function Thread({ t }: { t: CaseThread }) {
+function Thread({ t, opportunityId, mayRead }: { t: CaseThread; opportunityId: string; mayRead: boolean }) {
   const [all, setAll] = useState(false);
+  const [open, setOpen] = useState<string | null>(null);
   const messages = all ? t.messages : t.messages.slice(0, SHOWN);
   const url = inSharedMailbox(t.url);
   const kind = KIND[t.kind] ?? KIND.cliente;
@@ -69,9 +74,40 @@ function Thread({ t }: { t: CaseThread }) {
               <span className="shrink-0 tabular-nums text-ink-faint">{fmtDateTime(m.sent_at)}</span>
             </>
           );
+          const id = m.message_id;
+          const expanded = id !== null && open === id;
           return (
             <li key={m.message_id ?? i} className="border-t border-line/60 first:border-t-0">
-              {href && isSafeExternalHref(href) ? (
+              {mayRead && id ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setOpen(expanded ? null : id)}
+                    aria-expanded={expanded}
+                    title={m.subject ?? undefined}
+                    className={`-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${expanded ? "bg-canvas-sunken/70" : ""}`}
+                  >
+                    {body}
+                  </button>
+                  {expanded ? (
+                    <div className="crm-mail-open mb-1.5 mt-1 rounded-md border border-line bg-canvas px-3 py-2.5">
+                      <MailMessage opportunityId={opportunityId} messageId={id} gmailUrl={href} inline />
+                      {href && isSafeExternalHref(href) ? (
+                        <div className="mt-3 flex justify-end border-t border-line/70 pt-2">
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-md px-1.5 py-0.5 text-xs font-medium text-accent hover:bg-brand-50"
+                          >
+                            Responder en Gmail ↗
+                          </a>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              ) : href && isSafeExternalHref(href) ? (
                 <a
                   href={href}
                   target="_blank"
@@ -104,6 +140,7 @@ function Thread({ t }: { t: CaseThread }) {
 export function CaseThreads({ opportunityId }: { opportunityId: string }) {
   const load = useCallback(() => fetchCaseThreads(opportunityId), [opportunityId]);
   const [state] = useResource(load, [opportunityId]);
+  const mayRead = useMayReadMail();
   if (state.kind === "loading") {
     return <div className="h-16 animate-pulse rounded-lg bg-canvas-sunken/70" aria-label="Cargando correos" />;
   }
@@ -115,7 +152,7 @@ export function CaseThreads({ opportunityId }: { opportunityId: string }) {
   return (
     <div className="space-y-2.5" data-testid="case-threads">
       {threads.map((t) => (
-        <Thread key={t.thread_id} t={t} />
+        <Thread key={t.thread_id} t={t} opportunityId={opportunityId} mayRead={mayRead} />
       ))}
     </div>
   );

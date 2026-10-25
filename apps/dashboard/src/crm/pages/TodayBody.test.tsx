@@ -292,6 +292,30 @@ describe("«Tareas» on the page", () => {
 });
 
 describe("Hoy actions", () => {
+  it("«Responder» opens the client's email in a side panel, Gmail one click away", async () => {
+    const c = card({
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: "Consulta plazo", url: "https://mail.google.com/mail/u/0/#all/18f0a1b2c3d4" } },
+    });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(new URL(url, "http://localhost").pathname);
+      const body = { message_id: "18f0a1b2c3d4", subject: "Consulta plazo", from: "Ana Ficticia", to: ["Ventas"], cc: [],
+        sent_at: "2026-10-05T12:00:00Z", text: "¿Cuál es el plazo de entrega?", quoted: null, truncated: false, attachments: [] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    renderToday([c]);
+    const row = screen.getByTestId(`today-reply-${c.opportunity_id}`);
+    expect(within(row).queryByRole("link", { name: /Responder en Gmail/ })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Responder" }));
+    const panel = await screen.findByRole("dialog");
+    expect(await within(panel).findByText("¿Cuál es el plazo de entrega?")).toBeInTheDocument();
+    expect(calls).toContain(`/v2/workspace/opportunities/${c.opportunity_id}/messages/18f0a1b2c3d4`);
+    expect(within(panel).getByRole("link", { name: "Responder en Gmail ↗" }).getAttribute("href")).toContain("#all/18f0a1b2c3d4");
+    fireEvent.click(within(panel).getByRole("button", { name: "Cerrar" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("never repeats the sidebar's «Datos» link", () => {
     stub();
     renderToday([card()], "admin");

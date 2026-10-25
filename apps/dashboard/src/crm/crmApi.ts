@@ -25,7 +25,7 @@ import type {
 } from "./crmTypes";
 import type { FxResponse } from "./fx";
 import type { NoteRow } from "./authoring/crmAuthoringApi";
-import type { CaseThreadsResponse, QuoteReadingsResponse } from "./crmTypes";
+import type { CaseMessage, CaseThreadsResponse, QuoteReadingsResponse } from "./crmTypes";
 
 export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
@@ -43,6 +43,8 @@ export const WORKSPACE_PATHS = {
   workQueue: "/v2/cockpit/work-queue",
   caseNotes: (opportunityId: string) => `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/notes`,
   caseThreads: (opportunityId: string) => `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/threads`,
+  caseMessage: (opportunityId: string, messageId: string) =>
+    `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/messages/${encodeURIComponent(messageId)}`,
   caseMailDocuments: (opportunityId: string) =>
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/mail-documents`,
   caseQuoteCandidates: (opportunityId: string) =>
@@ -58,6 +60,9 @@ export const fetchPipeline = () => fetchJsonGet<PipelineResponse>(operatorApiUrl
 /** The notes on one case, for the drawer's «Recordarme…». Writing one is `add-note`. */
 export const fetchCaseThreads = (opportunityId: string) =>
   fetchJsonGet<CaseThreadsResponse>(operatorApiUrl(WORKSPACE_PATHS.caseThreads(opportunityId)));
+
+export const fetchCaseMessage = (opportunityId: string, messageId: string) =>
+  fetchJsonGet<CaseMessage>(operatorApiUrl(WORKSPACE_PATHS.caseMessage(opportunityId, messageId)));
 
 export const fetchQuoteReadings = () =>
   fetchJsonGet<QuoteReadingsResponse>(operatorApiUrl(WORKSPACE_PATHS.quoteReadings));
