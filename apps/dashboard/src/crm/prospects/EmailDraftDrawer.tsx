@@ -5,7 +5,7 @@
  *   loading   — preview fetch in flight
  *   preview   — email preview loaded, «Crear borrador» button ready
  *   creating  — draft creation in flight
- *   done      — draft created, shows draft_id and Gmail link
+ *   done      — draft created, shows the Gmail link
  *   error     — any fetch or command error
  */
 import { useCallback, useEffect, useState } from "react";
@@ -28,13 +28,14 @@ type DrawerState =
 
 interface Props {
   findingId: string;
-  existingDraftId?: string | null;
+  /** The finding's last draft, if any: the button then makes another one (`again`). */
+  existingDraft?: { gmail_url: string | null } | null;
   onClose: () => void;
   /** Called after a draft is successfully created (allows the parent to reload the list). */
   onDrafted?: () => void;
 }
 
-export function EmailDraftDrawer({ findingId, existingDraftId, onClose, onDrafted }: Props) {
+export function EmailDraftDrawer({ findingId, existingDraft, onClose, onDrafted }: Props) {
   const [state, setState] = useState<DrawerState>({ kind: "loading" });
 
   // Load preview on mount
@@ -52,17 +53,14 @@ export function EmailDraftDrawer({ findingId, existingDraftId, onClose, onDrafte
     const { idempotencyKey } = state;
     setState({ kind: "creating", data: state.data, idempotencyKey });
     try {
-      const result = await prepareProspectEmail({ finding_id: findingId }, idempotencyKey);
+      const result = await prepareProspectEmail({ finding_id: findingId, again: Boolean(existingDraft) }, idempotencyKey);
       setState({ kind: "done", result });
       onDrafted?.();
     } catch (err: unknown) {
       const refusal = prospectRefusal(err);
       setState({ kind: "error", message: refusal?.message ?? "No se pudo crear el borrador." });
     }
-  }, [state, findingId]);
-
-  const gmailDraftUrl = (draftId: string) =>
-    `https://mail.google.com/mail/u/0/#drafts/${encodeURIComponent(draftId)}`;
+  }, [state, findingId, existingDraft, onDrafted]);
 
   return (
     <div
@@ -86,17 +84,19 @@ export function EmailDraftDrawer({ findingId, existingDraftId, onClose, onDrafte
         </div>
 
         <div className="px-5 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
-          {existingDraftId && state.kind !== "done" ? (
+          {existingDraft && state.kind !== "done" ? (
             <div className="rounded-lg bg-canvas-subtle border border-line px-3 py-2 text-sm text-ink-subtle">
               Ya existe un borrador para este prospecto.{" "}
-              <a
-                href={gmailDraftUrl(existingDraftId)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-brand-600 underline hover:no-underline"
-              >
-                Ver en Gmail
-              </a>
+              {existingDraft.gmail_url ? (
+                <a
+                  href={existingDraft.gmail_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-600 underline hover:no-underline"
+                >
+                  Ver en Gmail
+                </a>
+              ) : null}
             </div>
           ) : null}
 
@@ -115,8 +115,13 @@ export function EmailDraftDrawer({ findingId, existingDraftId, onClose, onDrafte
                   No se pudo leer la firma de Gmail; se usó el bloque de texto alternativo.
                 </p>
               ) : null}
+              {!state.result.labels_applied ? (
+                <p className="text-xs text-amber-600">
+                  No se pudieron poner las etiquetas «Claude» y «Prospecto»: falta autorizar Gmail de nuevo.
+                </p>
+              ) : null}
               <a
-                href={gmailDraftUrl(state.result.draft_id)}
+                href={state.result.gmail_url}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block rounded-lg bg-brand-50 border border-brand-200 px-3 py-2 text-sm text-brand-700 hover:bg-brand-100"
@@ -163,7 +168,7 @@ export function EmailDraftDrawer({ findingId, existingDraftId, onClose, onDrafte
               onClick={handleCreate}
               data-testid="create-draft-btn"
             >
-              {state.kind === "creating" ? "Creando…" : "Crear borrador en Gmail"}
+              {state.kind === "creating" ? "Creando…" : existingDraft ? "Crear otro borrador" : "Crear borrador en Gmail"}
             </Button>
           </div>
         ) : state.kind === "done" ? (

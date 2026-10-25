@@ -30,8 +30,6 @@ SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
 #: gmail.modify: needed to apply labels to a drafted message.
 MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
-#: gmail.settings.basic: needed to read the send-as signature.
-SETTINGS_SCOPE = "https://www.googleapis.com/auth/gmail.settings.basic"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 DRAFT_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
@@ -342,17 +340,6 @@ class GmailSender:
             detail = _http_detail(status, body)
             raise GmailSendError("label_apply_failed", f"Gmail answered {detail}", detail)
 
-    def has_scope(self, scope: str) -> bool:
-        """Check whether the token file declares `scope` in its scope field (best-effort).
-
-        Returns False when the token file has no scope field — the caller should fall
-        back to trying and catching GmailSendError.
-        """
-        stored = getattr(self._token, "scope", None)
-        if stored and isinstance(stored, str):
-            return scope in stored
-        return False
-
     def fetch_send_as_signature(self, address: str = SENDER_ADDRESS) -> str | None:
         """Fetch the HTML send-as signature for `address` from the Gmail settings API.
 
@@ -363,9 +350,9 @@ class GmailSender:
         now = self._clock()
         if self._signature_html is not None and now < self._signature_cached_at + SIGNATURE_CACHE_TTL_SECONDS:
             return self._signature_html if self._signature_html else None
-        token = self._access_token()
         url = SEND_AS_URL_TEMPLATE.format(address=urllib.parse.quote(address, safe=""))
         try:
+            token = self._access_token()
             status, body = self._call("GET", url, {"Authorization": f"Bearer {token}"}, b"")
         except GmailSendError:
             return None

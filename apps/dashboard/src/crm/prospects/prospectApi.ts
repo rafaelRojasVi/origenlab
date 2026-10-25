@@ -58,7 +58,7 @@ export interface ProspectItem {
   /** Who last corrected the card, and when; null when nobody has. */
   edited?: { at: string; by: string | null } | null;
   /** The last Gmail draft prepared for this prospect, if any. */
-  email_draft?: { draft_id: string; drafted_at: string } | null;
+  email_draft?: { draft_id: string; drafted_at: string; gmail_url: string | null } | null;
 }
 
 export interface ProspectCounts {
@@ -204,9 +204,13 @@ export interface PrepareProspectEmailResult {
   command: string;
   finding_id: string;
   draft_id: string;
+  message_id: string;
+  gmail_url: string;
   to: string;
   subject: string;
   signature: boolean;
+  labels_applied: boolean;
+  contacted: boolean;
   event_ids: string[];
   idempotency_key: string;
   command_receipt_id: string;
@@ -219,6 +223,6 @@ export const fetchEmailPreview = (id: string) =>
 
 /** «Preparar correo»: create a Gmail draft, never send it. */
 export const prepareProspectEmail = (
-  body: { finding_id: string },
+  body: { finding_id: string; again?: boolean },
   idempotencyKey: string = newProspectCommandKey(),
 ) => post("/v2/commands/prepare-prospect-email", body, idempotencyKey) as unknown as Promise<PrepareProspectEmailResult>;

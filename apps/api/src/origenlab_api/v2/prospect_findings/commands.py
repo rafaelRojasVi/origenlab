@@ -413,10 +413,11 @@ class PrepareProspectEmailBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     finding_id: str
+    again: bool = False  # a second draft for a finding that already has one
 
     @property
     def finding_uuid(self) -> str:
-        return as_uuid(self.finding_id)
+        return as_uuid(self.finding_id, "finding_id")
 
 
 def prepare_prepare_prospect_email(body: PrepareProspectEmailBody) -> dict[str, Any]:
@@ -451,138 +452,111 @@ class V2ProspectCommandRepository(V2CrmAuthoringRepository):
     ) -> dict[str, Any]:
         """«Preparar correo»: create a Gmail draft for a prospect, never send it.
 
-        Two DB transactions around the Gmail call:
-        1. Claim receipt, lock finding, build MIME bytes — committed;
-        2. Create Gmail draft, apply labels (outside DB tx);
-        3. Write `prospect_email_drafted` event + complete receipt.
+        1. One transaction: claim the receipt, lock the finding, refuse (no email, hidden, Bajas,
+           already drafted without `again`), run «Contactar» if it is still pending, build the
+           message — committed, so the person is in the CRM whatever Gmail answers;
+        2. Gmail, outside any transaction: the draft, then the labels (best-effort);
+        3. One transaction: the `prospect_email_drafted` event and the completed receipt.
 
-        A crash between 2 and 3 leaves the receipt `in_progress`; a retry with the same
-        idempotency key will replay the stored response (409 → already drafted).
+        A Gmail failure finishes the receipt `failed` (502); a retry with a new key drafts again.
         """
         from origenlab_api.v2.gmail_send import GmailSendError
         from origenlab_api.v2.prospect_findings.intro_email import (
-            build_mime_message,
             build_html,
-            build_text,
+            build_mime_message,
             build_subject,
+            build_text,
             load_catalogue_pdf,
         )
 
+        if self._sender is None:
+            raise CommandRefused(503, "gmail_not_configured",
+                                 "Gmail no está conectado en este servidor; no se puede crear el borrador.")
         finding_id = body.finding_uuid
-
-        # ---- Phase 1: claim receipt + eligibility check (committed before Gmail call) ------
-        # Eligibility checks run INSIDE the transaction; if they fail the receipt rolls back
-        # (same pattern as send-campaign-test). `finding` is a plain dict — safe to keep.
-        finding: dict[str, Any] = {}
+        contacted = False
         with self._write() as cur:
             receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key,
                                                      PREPARE_PROSPECT_EMAIL, digest)
             if replay is not None:
                 return replay
             finding = _lock_finding(cur, finding_id)  # 404 rolls back the claim
-            payload_check = finding["payload"]
-            if not payload_check.get("email"):
-                raise CommandRefused(422, "no_email",
-                                     "Este prospecto no tiene correo electrónico; no se puede preparar un borrador.")
-            if payload_check.get("hidden_reason"):
-                raise CommandRefused(422, "prospect_hidden",
-                                     "Este prospecto no calza con el portafolio; no se prepara correo.")
-        # tx committed: receipt is `in_progress`, finding is released
-
-        # _lock_finding already applies edits; the returned payload is the corrected view
-        payload = finding["payload"]
-        email_addr: str = payload.get("email") or ""
-
-        # Fetch Gmail signature (best-effort; fall back to plain text if unavailable)
-        signature_html: str | None = None
-        signature_ok = True
-        if self._sender is not None:
+            payload = finding["payload"]
+            if payload.get("hidden_reason"):
+                raise CommandRefused(404, "prospect_not_found", "Ese prospecto no existe.")
+            if not payload.get("email"):
+                raise CommandRefused(409, "prospect_no_email",
+                                     "Este prospecto no tiene correo; agrégalo con «Editar».")
+            c = classify(cur, email=payload.get("email"), organization_name=payload.get("organization_name") or "",
+                         website=payload.get("website"))
+            if c["state"] == "blocked":
+                raise CommandRefused(409, "prospect_blocked",
+                                     "Esta persona está en Bajas o rebotó; no se le escribe.")
+            cur.execute("select 1 from crm.domain_event where aggregate_kind = 'source_record' "
+                        "and aggregate_id = %s::uuid and event_type = 'source_record.prospect_email_drafted' "
+                        "limit 1", (finding_id,))
+            if cur.fetchone() is not None and not body.again:
+                raise CommandRefused(409, "prospect_email_already_drafted",
+                                     "Ya hay un borrador para este prospecto en Gmail.")
+            if _latest_verdict(cur, finding_id) != "contactar":
+                try:
+                    contact_prospect(self, cur, operator, {"finding_id": finding_id, "organization_id": None,
+                                                           "create_new_organization": False}, receipt_id)
+                except CommandRefused as exc:
+                    if exc.code != "organization_ambiguous":
+                        raise
+                    raise CommandRefused(409, "prospect_contact_first",
+                                         "Hay varias instituciones posibles: usa «Contactar» para elegirla "
+                                         "y luego prepara el correo.") from exc
+                contacted = True
+            email_addr: str = payload["email"]
             signature_html = self._sender.fetch_send_as_signature()
-            if signature_html is None:
-                signature_ok = False
-
-        subject = build_subject(payload.get("fund_label"))
-        text_body = build_text(
-            person_name=payload.get("person_name"),
-            salutation_sex=payload.get("salutation_sex"),
-            project_title=payload.get("project_title"),
-            fund_label=payload.get("fund_label"),
-            equipment=list(payload.get("equipment") or []),
-            email_source_note=payload.get("email_source_note"),
-            email_source_url=payload.get("email_source_url"),
-            email_source_year=payload.get("email_source_year"),
-            gmail_signature_html=signature_html,
-        )
-        html_body = build_html(
-            person_name=payload.get("person_name"),
-            salutation_sex=payload.get("salutation_sex"),
-            project_title=payload.get("project_title"),
-            fund_label=payload.get("fund_label"),
-            equipment=list(payload.get("equipment") or []),
-            email_source_note=payload.get("email_source_note"),
-            email_source_url=payload.get("email_source_url"),
-            email_source_year=payload.get("email_source_year"),
-            gmail_signature_html=signature_html,
-        )
-        try:
-            pdf_bytes = load_catalogue_pdf()
-        except Exception:  # noqa: BLE001
-            pdf_bytes = b""
-        try:
-            raw = build_mime_message(
-                to=email_addr,
-                subject=subject,
-                text_body=text_body,
-                html_body=html_body,
-                pdf_bytes=pdf_bytes,
-            )
-        except ValueError as exc:
-            _finish_receipt(self, receipt_id, 422, {"error": "invalid_recipient"})
-            raise CommandRefused(422, "invalid_recipient", str(exc)) from exc
-
-        # ---- Phase 2: Gmail call (outside DB tx) -----------------------------------
-        if self._sender is None:
-            # Gmail not configured — still produce a record without a real draft id
-            draft_id = "not_configured"
-            message_id = "not_configured"
-        else:
+            fields = {k: payload.get(k) for k in ("person_name", "salutation_sex", "project_title", "fund_label",
+                                                  "email_source_note", "email_source_url", "email_source_year")}
+            fields["equipment"] = list(payload.get("equipment") or [])
+            subject = build_subject(payload.get("fund_label"))
             try:
-                draft_id, message_id = self._sender.create_draft(raw)
-            except GmailSendError as exc:
-                _finish_receipt(self, receipt_id, 502, {"error": exc.kind, "detail": exc.detail})
-                raise CommandRefused(502, exc.kind,
-                                     DRAFT_FAILURE_ES.get(exc.kind, "No se pudo crear el borrador.")) from exc
-            try:
-                self._sender.apply_labels(message_id, _DRAFT_LABELS)
-            except GmailSendError:
-                pass  # labels are best-effort; the draft was created, that's what matters
+                raw = build_mime_message(
+                    to=email_addr, subject=subject,
+                    text_body=build_text(**fields, gmail_signature_html=signature_html),
+                    html_body=build_html(**fields, gmail_signature_html=signature_html),
+                    pdf_bytes=load_catalogue_pdf())
+            except ValueError as exc:  # rolls the claim and the contact back
+                raise CommandRefused(422, "invalid_recipient", "El correo de este prospecto no es válido.") from exc
 
-        # ---- Phase 3: write event + complete receipt --------------------------------
+        try:
+            draft_id, message_id = self._sender.create_draft(raw)
+        except GmailSendError as exc:
+            _finish_receipt(self, receipt_id, 502, {"error": exc.kind, "detail": exc.detail,
+                                                    "contacted": contacted})
+            raise CommandRefused(502, exc.kind,
+                                 DRAFT_FAILURE_ES.get(exc.kind, "No se pudo crear el borrador.")) from exc
+        try:
+            self._sender.apply_labels(message_id, _DRAFT_LABELS)
+            labels_applied = True
+        except GmailSendError:
+            labels_applied = False  # gmail.modify not granted yet: the draft stands without labels
+
         with self._write() as cur:
             event_id = self._append_event(
-                cur,
-                aggregate_kind="source_record",
-                aggregate_id=finding_id,
+                cur, aggregate_kind="source_record", aggregate_id=finding_id,
                 event_type="source_record.prospect_email_drafted",
-                payload={"draft_id": draft_id, "to": email_addr, "subject": subject},
-                operator=operator,
-                receipt_id=receipt_id,
-            )
+                payload={"draft_id": draft_id, "message_id": message_id, "labels_applied": labels_applied,
+                         "signature": signature_html is not None, "subject": subject},
+                operator=operator, receipt_id=receipt_id)
             response: dict[str, Any] = {
-                "command": PREPARE_PROSPECT_EMAIL,
-                "finding_id": finding_id,
-                "draft_id": draft_id,
-                "to": email_addr,
-                "subject": subject,
-                "signature": signature_ok,
-                "event_ids": [event_id],
-                "idempotency_key": idempotency_key,
-                "command_receipt_id": receipt_id,
-                "replayed": False,
+                "command": PREPARE_PROSPECT_EMAIL, "finding_id": finding_id, "draft_id": draft_id,
+                "message_id": message_id, "gmail_url": gmail_draft_url(message_id), "to": email_addr,
+                "subject": subject, "signature": signature_html is not None, "labels_applied": labels_applied,
+                "contacted": contacted, "event_ids": [event_id], "idempotency_key": idempotency_key,
+                "command_receipt_id": receipt_id, "replayed": False,
             }
             self._complete_receipt(cur, receipt_id, response)
         return response
 
+
+def gmail_draft_url(message_id: str) -> str:
+    """The draft open in Gmail's compose window (contacto@ is the first signed-in account)."""
+    return f"https://mail.google.com/mail/u/0/#drafts?compose={message_id}"
 
 def _finish_receipt(repo: V2ProspectCommandRepository, receipt_id: str, status_code: int,
                     response: dict[str, Any]) -> None:

@@ -15,7 +15,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from origenlab_api.v2.prospect_findings.classify import classify_many
-from origenlab_api.v2.prospect_findings.commands import apply_edits
+from origenlab_api.v2.prospect_findings.commands import apply_edits, gmail_draft_url
 
 SANTIAGO = ZoneInfo("America/Santiago")
 View = Literal["nuevos", "conocidos", "mas_tarde", "contactados", "descartados"]
@@ -27,7 +27,7 @@ select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and 
        s.acquired_at,
        r.verdict, r.reason, r.remind_on, r.reviewed_at,
        e.edits, e.edited_at, e.edited_by,
-       d.draft_id, d.drafted_at
+       d.draft_id, d.draft_message_id, d.drafted_at
   from evidence.source_record s
   left join lateral (
         select x.verdict, x.reason, x.remind_on, x.reviewed_at
@@ -42,7 +42,8 @@ select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and 
          where x.source_record_id = s.id) e on true
   -- Last «Preparar correo» event, if any.
   left join lateral (
-        select x.payload->>'draft_id' as draft_id, x.recorded_at as drafted_at
+        select x.payload->>'draft_id' as draft_id, x.payload->>'message_id' as draft_message_id,
+               x.recorded_at as drafted_at
           from crm.domain_event x
          where x.aggregate_kind = 'source_record' and x.aggregate_id = s.id
            and x.event_type = 'source_record.prospect_email_drafted'
@@ -89,7 +90,8 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
             "at": _instant(row["edited_at"]), "by": row.get("edited_by")},
         # Last «Preparar correo» event — the draft_id to link to in Gmail drafts.
         "email_draft": None if row.get("draft_id") is None else {
-            "draft_id": row["draft_id"], "drafted_at": _instant(row["drafted_at"])},
+            "draft_id": row["draft_id"], "drafted_at": _instant(row["drafted_at"]),
+            "gmail_url": gmail_draft_url(row["draft_message_id"]) if row.get("draft_message_id") else None},
     }
 
 

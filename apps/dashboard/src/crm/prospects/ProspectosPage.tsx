@@ -383,9 +383,9 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
       {preparingEmail ? (
         <EmailDraftDrawer
           findingId={preparingEmail.id}
-          existingDraftId={preparingEmail.email_draft?.draft_id}
+          existingDraft={preparingEmail.email_draft}
           onClose={() => setPreparingEmail(null)}
-          onDrafted={() => { setPreparingEmail(null); reload(); }}
+          onDrafted={reload}
         />
       ) : null}
     </div>
