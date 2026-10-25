@@ -133,7 +133,7 @@ export function WebSuggestionsSection({
         <ul className="mt-2 space-y-0.5 text-[11px] text-ink-muted" aria-label="Fuentes">
           {suggestion.sources.map((src) => (
             <li key={src.url}>
-              <a href={src.url} target="_blank" rel="noreferrer noopener" className="font-medium text-brand-700 hover:underline">
+              <a href={src.url} target="_blank" rel="noreferrer noopener" className="font-medium text-accent hover:underline">
                 {host(src.url)}
               </a>
               {src.shows ? ` — ${src.shows}` : ""}
@@ -147,7 +147,7 @@ export function WebSuggestionsSection({
           type="button"
           onClick={() => void applyAll()}
           disabled={busy !== null}
-          className="mt-2 h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50"
+          className="mt-2 h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50"
         >
           {busy === "all" ? "…" : org.confirmation === "confirmed" ? "Aplicar todo" : "Aplicar todo y confirmar"}
         </button>

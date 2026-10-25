@@ -36,7 +36,7 @@ const LINE_TONE: Record<string, string> = {
   warn: "text-warn",
   good: "text-good",
   info: "text-info",
-  brand: "text-brand-700",
+  brand: "text-accent",
   neutral: "text-ink-muted",
 };
 
@@ -374,7 +374,7 @@ export function BoardCard({
       </p>
       {product ? (
         <span
-          className="mt-1.5 inline-block max-w-full truncate rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px align-top text-[10.5px] leading-4 text-brand-700"
+          className="mt-1.5 inline-block max-w-full truncate rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px align-top text-[10.5px] leading-4 text-accent"
           title={`Cotización por: ${product}`}
           data-testid="board-product"
         >
@@ -391,7 +391,7 @@ export function BoardCard({
               href={driveUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-brand-700"
+              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-accent"
               aria-label={`PDF en Drive de ${name}`}
             >
               <DriveIcon />
@@ -408,7 +408,7 @@ export function BoardCard({
               href={gmailUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-brand-700"
+              className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-ink-muted hover:bg-canvas-sunken hover:text-accent"
               aria-label={`Correo de la cotización de ${name}`}
             >
               <MailIcon />

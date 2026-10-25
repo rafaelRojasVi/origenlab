@@ -91,12 +91,12 @@ export function CampaignRecipients({
               title={TOTAL_HINT[k]}
               onClick={() => set({ total: k, reason: k === "excluded" || k === "blocked" ? query.reason : undefined })}
               className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium ${
-                active ? "border-ink bg-ink text-white" : "border-line bg-canvas-raised text-ink-muted hover:border-line-strong hover:text-ink"
+                active ? "border-ink bg-ink text-on-solid" : "border-line bg-canvas-raised text-ink-muted hover:border-line-strong hover:text-ink"
               }`}
               data-testid={`filter-${k}`}
             >
               {TOTAL_LABEL[k]}
-              <span className={`tabular-nums ${active ? "text-white/80" : "text-ink-faint"}`}>
+              <span className={`tabular-nums ${active ? "text-on-solid/80" : "text-ink-faint"}`}>
                 {k === "responses" && repliesNotSynced ? "no sincronizadas" : counts ? fmtInt(counts[k]) : "…"}
               </span>
             </button>
@@ -164,7 +164,7 @@ function Who({ r }: { r: HistoryRecipient }) {
         <>
           <p className="truncate font-medium text-ink">{r.person_name}</p>
           <p className="truncate text-[11px] text-ink-muted">
-            <span className="font-mono">{r.address}</span> · <span className="text-brand-700">Persona del CRM</span>
+            <span className="font-mono">{r.address}</span> · <span className="text-accent">Persona del CRM</span>
           </p>
         </>
       ) : (

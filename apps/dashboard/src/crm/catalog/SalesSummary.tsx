@@ -76,8 +76,8 @@ export function SalesSummary({ history }: { history: PriceHistory }) {
         <dl data-testid="sales-stats" className="grid grid-cols-2 gap-x-4 gap-y-2">
           {s.margin ? (
             <div className="col-span-2 flex items-baseline gap-3 rounded-md bg-brand-50 px-3 py-2">
-              <dt className="text-xs font-medium text-brand-900">Margen bruto</dt>
-              <dd className="text-lg font-semibold tabular-nums text-brand-900">{fmtPct(s.margin.median)}</dd>
+              <dt className="text-xs font-medium text-accent-strong">Margen bruto</dt>
+              <dd className="text-lg font-semibold tabular-nums text-accent-strong">{fmtPct(s.margin.median)}</dd>
               <dd className="ml-auto text-right text-[11px] text-ink-muted">
                 mediana de {s.margin.count} · último {fmtPct(s.margin.last)} · {fmtPct(s.margin.min)} – {fmtPct(s.margin.max)}
               </dd>
@@ -100,7 +100,7 @@ export function SalesSummary({ history }: { history: PriceHistory }) {
       </ul>
       {items.length > ROWS_SHOWN ? (
         <button type="button" onClick={() => setAll(!all)} aria-expanded={all}
-                className="text-xs font-medium text-brand-700 hover:underline">
+                className="text-xs font-medium text-accent hover:underline">
           {all ? "Ver menos" : `Ver las ${items.length} cotizaciones`}
         </button>
       ) : null}
@@ -131,14 +131,14 @@ function QuoteRow({ r }: { r: QuotedPrice }) {
       <span className="font-medium tabular-nums text-ink">{fmtMoney(r.unit_price ?? r.line_total, r.currency)}</span>
       {r.margin && r.cost ? (
         <span title={`Costo ${conversion(r.cost)} · ${costSource(r.cost)}`}
-              className="cursor-help rounded bg-brand-50 px-1 font-medium tabular-nums text-brand-900">
+              className="cursor-help rounded bg-brand-50 px-1 font-medium tabular-nums text-accent-strong">
           {fmtPct(r.margin)}
         </span>
       ) : null}
       {r.qty && Number(r.qty) !== 1 ? <span className="text-ink-faint">× {r.qty}</span> : null}
       {r.check_status === "disputed" ? <Badge tone="warn">En duda</Badge> : null}
       {r.case?.institution ? (
-        <a href={crmHash("oportunidades", r.case.id)} className="truncate text-brand-700 hover:underline">
+        <a href={crmHash("oportunidades", r.case.id)} className="truncate text-accent hover:underline">
           {r.case.institution}
         </a>
       ) : null}
@@ -283,7 +283,7 @@ function Tooltip({ p, left, top, currency }: { p: Point; left: number; top: numb
             <dd className="col-span-2 text-right text-ink-faint">{conversion(r.cost)}</dd>
             <dd className="col-span-2 text-right text-ink-faint">{costSource(r.cost)}</dd>
             <dt className="text-ink-muted">Margen</dt>
-            <dd className="text-right font-semibold text-brand-900">{fmtPct(r.margin)}</dd>
+            <dd className="text-right font-semibold text-accent-strong">{fmtPct(r.margin)}</dd>
           </>
         ) : null}
       </dl>

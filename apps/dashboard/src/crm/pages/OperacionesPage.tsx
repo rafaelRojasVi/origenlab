@@ -166,7 +166,7 @@ function StatusCard({ card }: { card: OpsCard }) {
             aria-expanded={open}
             aria-label={`Ver actividad de ${card.title}`}
             onClick={() => setOpen((v) => !v)}
-            className="rounded-sm text-[11px] font-medium text-brand-700 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+            className="rounded-sm text-[11px] font-medium text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
           >
             {open ? "Ocultar actividad" : "Ver actividad"}
           </button>
@@ -360,7 +360,7 @@ function PorOrdenarSection({ navigate }: { navigate: (s: CrmSection, id?: string
             <div key={c.opportunity_id} className="flex items-center gap-2 px-3 py-2 text-[13px]">
               <div className="flex-1 min-w-0">
                 <button type="button" onClick={() => navigate("oportunidades", c.opportunity_id)}
-                  className="truncate font-medium text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
+                  className="truncate font-medium text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
                   {c.organization?.name ?? c.title}
                 </button>
                 <span className="block truncate text-[11px] text-bad">{c.attention.find((a) => a.blocking)?.label}</span>
@@ -457,7 +457,7 @@ function SentQuotesUnrecordedOnCase({ items, navigate }: {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="flex-1">
                   <span className="tabular-nums">Cotización {q.quote_number}</span> · enviada {fmtDateTime(q.sent_at)} · en{" "}
-                  <button type="button" className="text-brand-700 hover:underline" onClick={() => navigate("oportunidades", q.case_id)}>
+                  <button type="button" className="text-accent hover:underline" onClick={() => navigate("oportunidades", q.case_id)}>
                     {q.case_title}
                   </button>
                 </span>

@@ -102,7 +102,7 @@ export function AutomaticActionsPanel({ navigate, onChanged }: { navigate: Navig
       {rows.length > ROWS_SHOWN ? (
         <div className="px-4 py-2">
           <button type="button" onClick={() => setAll(!all)} aria-expanded={all}
-                  className="text-xs font-medium text-brand-700 hover:underline">
+                  className="text-xs font-medium text-accent hover:underline">
             {all ? "Ver menos" : `Ver ${rows.length - ROWS_SHOWN} más`}
           </button>
         </div>

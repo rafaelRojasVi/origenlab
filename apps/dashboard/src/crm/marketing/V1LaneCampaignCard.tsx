@@ -109,7 +109,7 @@ export function V1LaneCampaignCard({
               <button
                 type="button"
                 onClick={() => setFull((v) => !v)}
-                className="text-xs font-medium text-brand-700 hover:underline"
+                className="text-xs font-medium text-accent hover:underline"
               >
                 {full ? "Ver miniatura" : "Ver correo completo"}
               </button>

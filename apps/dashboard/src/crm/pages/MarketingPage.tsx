@@ -116,7 +116,7 @@ export function MarketingPage() {
         subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: el envío está bloqueado mientras las respuestas BAJA no se sincronicen automáticamente desde Gmail."
         actions={
           mayAuthor && tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
-            <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black">
+            <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong">
               Nueva campaña
             </button>
           ) : null
@@ -194,7 +194,7 @@ export function MarketingPage() {
               setView({ kind: "list" });
               reload();
             }}
-            className="text-xs font-medium text-brand-700 hover:underline"
+            className="text-xs font-medium text-accent hover:underline"
           >
             ← Volver a campañas
           </button>
@@ -219,7 +219,7 @@ export function MarketingPage() {
               setView({ kind: "list" });
               reload();
             }}
-            className="text-xs font-medium text-brand-700 hover:underline"
+            className="text-xs font-medium text-accent hover:underline"
           >
             ← Volver a campañas
           </button>
@@ -291,7 +291,7 @@ function Body({
   const campaigns = showNeverSent ? data.campaigns : data.campaigns.filter((c) => !isNeverSentHistorical(c));
   const revealNeverSent =
     hidden.length > 0 ? (
-      <button type="button" onClick={() => setShowNeverSent((v) => !v)} className="text-xs font-medium text-brand-700 hover:underline">
+      <button type="button" onClick={() => setShowNeverSent((v) => !v)} className="text-xs font-medium text-accent hover:underline">
         {showNeverSent
           ? `Ocultar ${hidden.length === 1 ? "la campaña nunca enviada" : "las campañas nunca enviadas"}`
           : `Mostrar ${hidden.length} ${hidden.length === 1 ? "campaña nunca enviada" : "campañas nunca enviadas"}`}
@@ -511,11 +511,11 @@ function CampaignCard({
                 c.last_sent_at && c.last_sent_at.slice(0, 10) !== c.first_sent_at?.slice(0, 10) ? ` – ${fmtDate(c.last_sent_at)}` : ""
               }`}
         </span>
-        <button type="button" onClick={() => onHistory()} className="shrink-0 font-medium text-brand-700 hover:underline" data-testid="open-history">
+        <button type="button" onClick={() => onHistory()} className="shrink-0 font-medium text-accent hover:underline" data-testid="open-history">
           Historial
         </button>
         {mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? (
-          <button type="button" onClick={onOpen} className="shrink-0 font-medium text-brand-700 hover:underline">
+          <button type="button" onClick={onOpen} className="shrink-0 font-medium text-accent hover:underline">
             {c.status === "draft" ? "Editar" : "Abrir"}
           </button>
         ) : null}

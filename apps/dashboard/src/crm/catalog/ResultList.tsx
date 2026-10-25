@@ -38,7 +38,7 @@ function Code({ model, query }: { model: string; query: string }) {
   return (
     <>
       {model.slice(0, m[0])}
-      <mark className="rounded-sm bg-brand-100 px-px text-brand-900">{model.slice(m[0], m[1])}</mark>
+      <mark className="rounded-sm bg-brand-100 px-px text-accent-strong">{model.slice(m[0], m[1])}</mark>
       {model.slice(m[1])}
     </>
   );
@@ -117,7 +117,7 @@ export function ResultList({ hits, query, active, onOpen, onHover }: {
                 <ProductImage imageId={item.image_id} kind={item.kind} alt="" size="thumb" />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
-                    <span className="font-mono text-xs font-medium text-brand-700">
+                    <span className="font-mono text-xs font-medium text-accent">
                       <Code model={item.model_number} query={query} />
                     </span>
                     <span className="truncate text-xs text-ink">{item.name}</span>
@@ -130,7 +130,7 @@ export function ResultList({ hits, query, active, onOpen, onHover }: {
                 {item.has_datasheet ? (
                   <span
                     aria-label="Tiene ficha técnica"
-                    className="shrink-0 rounded border border-brand-600/40 px-1.5 py-px text-[10px] font-medium text-brand-700"
+                    className="shrink-0 rounded border border-brand-600/40 px-1.5 py-px text-[10px] font-medium text-accent"
                   >
                     Ficha
                   </span>

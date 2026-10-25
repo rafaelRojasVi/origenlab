@@ -92,7 +92,7 @@ function BackLink({ navigate }: { navigate: Navigate }) {
         e.preventDefault();
         navigate("licitaciones");
       }}
-      className="inline-flex min-h-[44px] items-center text-[13px] font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="inline-flex min-h-[44px] items-center text-[13px] font-medium text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
     >
       ← Volver a Licitaciones
     </a>

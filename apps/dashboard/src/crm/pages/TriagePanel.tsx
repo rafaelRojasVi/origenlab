@@ -108,13 +108,13 @@ export function TriagePanel({ cards = [], onCaseChanged }: {
               )}
               {ask.length > PREVIEW ? (
                 <button type="button" onClick={() => setAll(!all)}
-                  className="w-full px-4 py-2 text-left text-[12px] font-medium text-brand-700 hover:underline">
+                  className="w-full px-4 py-2 text-left text-[12px] font-medium text-accent hover:underline">
                   {all ? "Ver menos" : `Ver ${ask.length - PREVIEW} más`}
                 </button>
               ) : null}
               <p className="px-4 py-2 text-[11px] text-ink-faint">
                 {hiddenLine(hidden)}
-                <button type="button" onClick={() => setStatus("reviewed")} className="ml-1 text-brand-700 hover:underline">
+                <button type="button" onClick={() => setStatus("reviewed")} className="ml-1 text-accent hover:underline">
                   Ver revisados
                 </button>
               </p>
@@ -124,7 +124,7 @@ export function TriagePanel({ cards = [], onCaseChanged }: {
       </ResourceGate>
       {status === "reviewed" ? (
         <button type="button" onClick={() => setStatus("pending")}
-          className="w-full px-4 py-2 text-left text-[12px] font-medium text-brand-700 hover:underline">
+          className="w-full px-4 py-2 text-left text-[12px] font-medium text-accent hover:underline">
           ← Volver a los correos sin caso
         </button>
       ) : null}
@@ -507,10 +507,10 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
           {mayDecide ? (
             <span className="flex shrink-0 gap-3">
               {(match?.suggestions.length ?? 0) > 1 ? (
-                <button type="button" className="text-brand-700 hover:underline"
+                <button type="button" className="text-accent hover:underline"
                   onClick={() => setPick((pick + 1) % (match?.suggestions.length ?? 1))}>Otra opción</button>
               ) : null}
-              <button type="button" className="text-brand-700 hover:underline" disabled={busy}
+              <button type="button" className="text-accent hover:underline" disabled={busy}
                 onClick={() => void notThisCase()}>No es de este caso</button>
             </span>
           ) : null}

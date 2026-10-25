@@ -16,7 +16,7 @@ import { useResource } from "../useResource";
 import { fmtDateTime, isSafeExternalHref } from "../ui";
 
 const KIND: Record<CaseThread["kind"], { label: string; className: string }> = {
-  cliente: { label: "Cliente", className: "bg-brand-50 text-brand-900 border-brand-600/25" },
+  cliente: { label: "Cliente", className: "bg-brand-50 text-accent-strong border-brand-600/25" },
   proveedor: { label: "Proveedor", className: "bg-canvas-sunken text-ink border-line-strong" },
   interno: { label: "Interno", className: "bg-canvas-sunken text-ink-muted border-line" },
 };
@@ -45,7 +45,7 @@ function Thread({ t }: { t: CaseThread }) {
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium text-brand-700 hover:bg-brand-50"
+            className="shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium text-accent hover:bg-brand-50"
             aria-label={`Abrir la cadena «${t.subject ?? "sin asunto"}» en Gmail`}
           >
             Abrir ↗
@@ -58,7 +58,7 @@ function Thread({ t }: { t: CaseThread }) {
           const href = inSharedMailbox(m.url);
           const body = (
             <>
-              <span aria-hidden="true" className={`w-3 shrink-0 text-center ${out ? "text-brand-700" : "text-ink-muted"}`}>
+              <span aria-hidden="true" className={`w-3 shrink-0 text-center ${out ? "text-accent" : "text-ink-muted"}`}>
                 {out ? "↗" : "↙"}
               </span>
               <span className="min-w-0 flex-1 truncate text-ink">
@@ -92,7 +92,7 @@ function Thread({ t }: { t: CaseThread }) {
         <button
           type="button"
           onClick={() => setAll(!all)}
-          className="w-full border-t border-line px-3 py-1.5 text-left text-[11px] font-medium text-brand-700 hover:bg-canvas-sunken"
+          className="w-full border-t border-line px-3 py-1.5 text-left text-[11px] font-medium text-accent hover:bg-canvas-sunken"
         >
           {all ? "Ver menos" : `Ver todo (${t.messages.length})`}
         </button>

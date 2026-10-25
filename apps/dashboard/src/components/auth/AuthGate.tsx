@@ -146,8 +146,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
         className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[var(--color-surface)] p-8 text-center"
         data-testid="auth-error"
       >
-        <h1 className="text-lg font-semibold text-slate-900">No se pudo verificar la sesión</h1>
-        <p className="max-w-md text-sm text-slate-600">{session.message}</p>
+        <h1 className="text-lg font-semibold text-ink">No se pudo verificar la sesión</h1>
+        <p className="max-w-md text-sm text-ink-muted">{session.message}</p>
         <button
           type="button"
           onClick={() => void refresh()}

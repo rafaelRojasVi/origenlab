@@ -8,8 +8,8 @@ export function PrivateDashboardPlaceholder() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-3 p-8 text-center">
-      <h1 className="text-xl font-semibold text-slate-900">Private dashboard</h1>
-      <p className="max-w-md text-sm text-slate-600">
+      <h1 className="text-xl font-semibold text-ink">Private dashboard</h1>
+      <p className="max-w-md text-sm text-ink-muted">
         Use the protected OrigenLab dashboard domain.
       </p>
     </main>

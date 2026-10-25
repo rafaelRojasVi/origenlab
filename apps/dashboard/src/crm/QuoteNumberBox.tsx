@@ -88,7 +88,7 @@ export function QuoteNumberBox({ pipeline, compact = false }: {
       <div data-testid="quote-next" className="min-w-0">
         <p className="text-[12px] font-medium text-ink-muted">Siguiente</p>
         <div className="mt-0.5 flex items-center gap-2">
-          <p className={`whitespace-nowrap font-semibold leading-none tracking-tight text-brand-700 tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{serverNext ? `CN${String(serverNext.correlative).padStart(5, "0")}` : exhausted ? "—" : loading ? "…" : next}</p>
+          <p className={`whitespace-nowrap font-semibold leading-none tracking-tight text-accent tabular-nums ${compact ? "text-[18px]" : "text-[20px]"}`}>{serverNext ? `CN${String(serverNext.correlative).padStart(5, "0")}` : exhausted ? "—" : loading ? "…" : next}</p>
           <button
             type="button"
             onClick={copy}

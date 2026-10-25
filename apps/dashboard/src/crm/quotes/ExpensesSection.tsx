@@ -327,7 +327,7 @@ export function ExpensesSection({
                 disabled={stale}
                 aria-describedby={stale ? `${ids}-espera` : undefined}
                 onClick={() => choose("manual")}
-                className="h-11 rounded-md px-3 text-[13.5px] font-semibold text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-11 rounded-md px-3 text-[13.5px] font-semibold text-accent hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Editar montos
               </button>
@@ -380,7 +380,7 @@ export function ExpensesSection({
                 type="button"
                 disabled={draft.manual_expenses.length >= MAX_MANUAL}
                 onClick={() => edit(addManualExpense)}
-                className="min-h-[44px] self-start rounded-md px-1 text-[13.5px] font-semibold text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-[44px] self-start rounded-md px-1 text-[13.5px] font-semibold text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 + Agregar gasto
               </button>

@@ -126,7 +126,7 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
                     <button
                       type="button"
                       onClick={() => setEditId(n.id)}
-                      className="text-[11px] font-medium text-brand-700 hover:underline"
+                      className="text-[11px] font-medium text-accent hover:underline"
                     >
                       Editar
                     </button>

@@ -114,7 +114,7 @@ export function CampaignDetail({
   const editable = summary.status === "draft" || summary.status === "audience_frozen";
   return (
     <div className="space-y-3" data-testid="campaign-detail">
-      <button type="button" onClick={onBack} className="text-xs font-medium text-brand-700 hover:underline">
+      <button type="button" onClick={onBack} className="text-xs font-medium text-accent hover:underline">
         ← Volver
       </button>
       <header className="flex flex-wrap items-start gap-3 rounded-lg border border-line bg-canvas-raised p-4">
@@ -339,7 +339,7 @@ function SentHtml({ archive: a }: { archive: CampaignArchive }) {
                 key={v.id}
                 type="button"
                 onClick={() => setVariantIdx(i)}
-                className={`rounded-md border px-2.5 py-1 text-xs ${i === variantIdx ? "border-brand-600 bg-brand-50 font-semibold text-brand-700" : "border-line text-ink hover:bg-canvas-sunken"}`}
+                className={`rounded-md border px-2.5 py-1 text-xs ${i === variantIdx ? "border-brand-600 bg-brand-50 font-semibold text-accent" : "border-line text-ink hover:bg-canvas-sunken"}`}
                 data-testid={`variant-btn-${i}`}
               >
                 {`Variante ${v.variant_no} · ${fmtInt(v.message_count)} mensajes · ${variantDateRange(v.first_sent_at, v.last_sent_at)}`}
@@ -630,7 +630,7 @@ function PlanningEditor({
             <button
               type="submit"
               disabled={busy || !dirty || !day}
-              className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-40"
+              className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-40"
               data-testid="save-planning"
             >
               Guardar planificación

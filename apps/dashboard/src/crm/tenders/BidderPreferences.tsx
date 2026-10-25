@@ -480,7 +480,7 @@ function DocumentRow({ document: d, onChanged }: { document: BidderDocument; onC
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Abrir ${d.title} ahora`}
-            className="inline-flex min-h-[44px] items-center font-semibold text-brand-600 underline"
+            className="inline-flex min-h-[44px] items-center font-semibold text-accent underline"
           >
             Abrir ahora
           </a>

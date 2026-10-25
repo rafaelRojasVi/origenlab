@@ -338,7 +338,7 @@ export function RevisionSwitcher({
             aria-label={`${label} · ${status}${r.id === workspace.current?.id ? " (actual)" : ""}`}
             onClick={() => onSelect(r.id)}
             className={`inline-flex min-h-[36px] items-center gap-2 rounded-full border px-3 text-[12.5px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
-              selected ? "border-brand-700 bg-brand-700/10 font-semibold text-brand-700" : "border-line bg-canvas-raised text-ink hover:bg-canvas-sunken"
+              selected ? "border-brand-700 bg-brand-700/10 font-semibold text-accent" : "border-line bg-canvas-raised text-ink hover:bg-canvas-sunken"
             }`}
           >
             <span className="font-mono tabular-nums">{label}</span>

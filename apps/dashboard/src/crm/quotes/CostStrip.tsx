@@ -71,7 +71,7 @@ export function CostStrip({ economics, n, stale = false }: { economics: LineEcon
       </span>
       <span className="ml-auto flex items-baseline gap-1.5">
         <span>Le cobro (neto)</span>
-        <span className="font-mono font-semibold tabular-nums text-brand-700">{sale ?? "—"}</span>
+        <span className="font-mono font-semibold tabular-nums text-accent">{sale ?? "—"}</span>
       </span>
     </div>
   );

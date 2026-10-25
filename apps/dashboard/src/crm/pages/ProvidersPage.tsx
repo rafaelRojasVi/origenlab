@@ -36,7 +36,7 @@ export function ProvidersPage() {
             <button
               type="button"
               onClick={() => setShowNewProvider(true)}
-              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong"
             >
               Agregar proveedor
             </button>

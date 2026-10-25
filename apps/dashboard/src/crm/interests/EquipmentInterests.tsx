@@ -114,7 +114,7 @@ function Lines({
             <button
               type="button"
               onClick={() => onSelectLine(line.family_id)}
-              className="inline-flex max-w-full items-center gap-1.5 font-semibold text-ink hover:text-brand-700 hover:underline"
+              className="inline-flex max-w-full items-center gap-1.5 font-semibold text-ink hover:text-accent hover:underline"
               title="Ver contactos e instituciones de esta línea"
             >
               <Dot color={line.color} />

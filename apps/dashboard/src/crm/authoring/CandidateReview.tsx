@@ -88,7 +88,7 @@ export function ConfirmCandidateForm({ assertionId, domain, tradeName, onDone, o
       aria-labelledby="confirm-candidate-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-ink/30" onClick={onCancel} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={onCancel} aria-hidden="true" />
       <div className="relative w-full max-w-lg min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
         <h2 id="confirm-candidate-title" className="mb-1 text-base font-semibold text-ink">
           Confirmar candidato: {tradeName ?? domain}
@@ -186,7 +186,7 @@ export function ConfirmCandidateForm({ assertionId, domain, tradeName, onDone, o
               type="button"
               onClick={submit}
               disabled={!canSubmit}
-              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? "…" : "Confirmar proveedor"}
             </button>
@@ -235,7 +235,7 @@ export function RejectCandidateForm({ assertionId, domain, tradeName, onDone, on
       aria-labelledby="reject-candidate-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-ink/30" onClick={onCancel} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={onCancel} aria-hidden="true" />
       <div className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
         <h2 id="reject-candidate-title" className="mb-1 text-base font-semibold text-ink">
           Rechazar candidato: {tradeName ?? domain}
@@ -263,7 +263,7 @@ export function RejectCandidateForm({ assertionId, domain, tradeName, onDone, on
               type="button"
               onClick={submit}
               disabled={!canSubmit}
-              className="h-8 rounded-md bg-bad px-3 text-xs font-medium text-white hover:bg-bad/90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-8 rounded-md bg-bad px-3 text-xs font-medium text-on-solid hover:bg-bad/90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy ? "…" : "Rechazar"}
             </button>

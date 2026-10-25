@@ -223,7 +223,7 @@ export function ClientSection({
               setPersonaText(typedInstitution ?? (personName && !personName.includes("@") ? personName : ""));
               setPersonaOpen(true);
             }}
-            className="mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"
+            className="mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-accent hover:bg-brand-50"
           >
             Es persona natural
           </button>
@@ -276,8 +276,8 @@ export function ClientSection({
             }}
             className={
               persona
-                ? "mt-1 inline-flex min-h-[36px] items-center self-start text-[12.5px] font-medium text-brand-700 underline-offset-2 hover:underline"
-                : "mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50"
+                ? "mt-1 inline-flex min-h-[36px] items-center self-start text-[12.5px] font-medium text-accent underline-offset-2 hover:underline"
+                : "mt-1 inline-flex min-h-[44px] items-center self-start rounded-md border border-brand-600 px-3 text-[13px] font-semibold text-accent hover:bg-brand-50"
             }
           >
             {persona ? "¿Es de una institución? Agregarla" : "Agregar institución"}
@@ -363,7 +363,7 @@ export function ClientSection({
 
       {lo_que_pidio ? (
         <div className="flex min-w-0 flex-col gap-1 rounded-lg bg-brand-50 px-3 py-2.5">
-          <span className="text-xs font-semibold text-brand-700">Lo que pidió</span>
+          <span className="text-xs font-semibold text-accent">Lo que pidió</span>
           <p className="whitespace-pre-line text-[13px] leading-snug text-ink">{lo_que_pidio}</p>
         </div>
       ) : null}

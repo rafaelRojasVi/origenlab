@@ -81,7 +81,7 @@ function CaseLink({ card, navigate }: { card: OpportunityCardData; navigate: Nav
     <button
       type="button"
       onClick={() => navigate("oportunidades", card.opportunity_id)}
-      className="max-w-full truncate rounded text-left text-[13px] font-medium text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="max-w-full truncate rounded text-left text-[13px] font-medium text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
     >
       {name}
     </button>
@@ -376,7 +376,7 @@ function CotizarQueueRow({
         onClick={() => navigate("oportunidades", card.opportunity_id)}
         className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
       >
-        <p className="truncate text-[14px] font-semibold text-ink group-hover:text-brand-700">{name}</p>
+        <p className="truncate text-[14px] font-semibold text-ink group-hover:text-accent">{name}</p>
         <p className="truncate text-[12px] text-ink-muted">{what}</p>
       </button>
       <div className="flex shrink-0 gap-2">
@@ -661,7 +661,7 @@ function ReplyQueueRow({
         <button
           type="button"
           onClick={() => navigate("oportunidades", card.opportunity_id)}
-          className="block w-full min-w-0 truncate text-left text-[14px] font-semibold text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          className="block w-full min-w-0 truncate text-left text-[14px] font-semibold text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           {name}
         </button>
@@ -672,7 +672,7 @@ function ReplyQueueRow({
             {reply.others.map((o, i) => (
               <span key={o.opportunity_id}>
                 {i ? ", " : ""}
-                <button type="button" className="text-brand-700 hover:underline" onClick={() => navigate("oportunidades", o.opportunity_id)}>
+                <button type="button" className="text-accent hover:underline" onClick={() => navigate("oportunidades", o.opportunity_id)}>
                   {o.title}
                 </button>
               </span>
@@ -962,7 +962,7 @@ function FollowUpQueueRow({
         <button
           type="button"
           onClick={() => navigate("oportunidades", f.card.opportunity_id)}
-          className="block w-full min-w-0 truncate text-left text-[14px] font-semibold text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          className="block w-full min-w-0 truncate text-left text-[14px] font-semibold text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           {name}
         </button>
@@ -1202,12 +1202,12 @@ function HousekeepingLink({ count, navigate }: { count: number; navigate: Naviga
       <button
         type="button"
         onClick={() => navigate("datos", null, "decidir")}
-        className="flex w-full items-center gap-2 text-left text-[13px] text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        className="flex w-full items-center gap-2 text-left text-[13px] text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
       >
         <Badge tone="neutral" glyph={false}>{count}</Badge>
         <span>
           {count === 1 ? "cosa" : "cosas"} por ordenar
-          <span className="ml-1 font-medium text-brand-700">→ Operaciones</span>
+          <span className="ml-1 font-medium text-accent">→ Operaciones</span>
         </span>
       </button>
     </div>
@@ -1237,7 +1237,7 @@ function EmptyState({ followUps, navigate }: { followUps: FollowUp[]; navigate: 
                   <button
                     type="button"
                     onClick={() => navigate("oportunidades", f.card.opportunity_id)}
-                    className="flex-1 truncate text-left text-ink hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                    className="flex-1 truncate text-left text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
                   >
                     {name}
                     {quote ? <span className="ml-1 text-ink-faint">{quote}</span> : null}

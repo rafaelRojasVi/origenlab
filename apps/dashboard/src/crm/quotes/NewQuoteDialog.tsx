@@ -647,7 +647,7 @@ function InstitutionField({
               onKind("company");
               onPick(null);
             }}
-            className="shrink-0 text-[13px] font-semibold text-brand-700 underline"
+            className="shrink-0 text-[13px] font-semibold text-accent underline"
           >
             Cambiar
           </button>
@@ -681,7 +681,7 @@ function InstitutionField({
               onPick({ kind: "new", name: persona.trim().slice(0, NAME_MAX) });
               setPersona(null);
             }}
-            className="text-[13px] font-semibold text-brand-700 underline disabled:opacity-50"
+            className="text-[13px] font-semibold text-accent underline disabled:opacity-50"
           >
             Usar como persona natural
           </button>
@@ -708,7 +708,7 @@ function InstitutionField({
               setText(picked.name);
               onPick(null);
             }}
-            className="shrink-0 text-[13px] font-semibold text-brand-700 underline"
+            className="shrink-0 text-[13px] font-semibold text-accent underline"
           >
             Cambiar institución
           </button>
@@ -761,7 +761,7 @@ function InstitutionField({
         type="button"
         disabled={busy}
         onClick={() => setPersona(personName ?? "")}
-        className="text-[13px] font-semibold text-brand-700 underline"
+        className="text-[13px] font-semibold text-accent underline"
       >
         Es persona natural (particular)
       </button>
@@ -803,7 +803,7 @@ function SuggestionList({
       {failed ? (
         <p role="alert" className="text-[12.5px] text-bad">
           {failedText}{" "}
-          <button type="button" onClick={onRetry} className="font-semibold text-brand-700 underline">
+          <button type="button" onClick={onRetry} className="font-semibold text-accent underline">
             Reintentar
           </button>
         </p>
@@ -820,7 +820,7 @@ function SuggestionList({
             onMouseEnter={() => onHover(i)}
             className={`flex min-h-[44px] cursor-pointer items-center justify-between gap-2.5 px-3 py-2 text-[14px] text-ink ${i ? "border-t border-line" : ""} ${
               i === active ? "bg-brand-50" : ""
-            } ${o.strong ? "font-semibold text-brand-700" : ""}`}
+            } ${o.strong ? "font-semibold text-accent" : ""}`}
           >
             <span className={`min-w-0 truncate ${o.side && o.client.kind === "organization" ? "font-semibold" : ""}`}>{o.main}</span>
             {o.side ? <span className="shrink-0 text-[12.5px] font-normal text-ink-muted">{o.side}</span> : null}

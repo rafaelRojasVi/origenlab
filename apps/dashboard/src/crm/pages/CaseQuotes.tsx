@@ -67,7 +67,7 @@ function LinkButton({ href, children, label, title }: { href: string | null; chi
       rel="noopener noreferrer"
       aria-label={label}
       title={title}
-      className={`${base} border-line bg-canvas-raised text-ink hover:border-brand-600/50 hover:bg-brand-50 hover:text-brand-900 active:translate-y-px`}
+      className={`${base} border-line bg-canvas-raised text-ink hover:border-brand-600/50 hover:bg-brand-50 hover:text-accent-strong active:translate-y-px`}
     >
       {children}
       <span aria-hidden="true" className="text-[10px] text-ink-faint">↗</span>
@@ -200,7 +200,7 @@ function Contents({ c }: { c: QuoteContents }) {
         <p className="py-1.5 text-xs text-ink-muted">El PDF se leyó, pero no tiene líneas registradas.</p>
       )}
       {c.lines.length > shown.length ? (
-        <button type="button" className="mt-1 text-xs font-medium text-brand-700 hover:underline" onClick={() => setAll(!all)}>
+        <button type="button" className="mt-1 text-xs font-medium text-accent hover:underline" onClick={() => setAll(!all)}>
           {all ? "Mostrar menos" : `Ver ${c.lines.length - shown.length} líneas más`}
         </button>
       ) : null}
@@ -230,12 +230,12 @@ function RevisionLinks({ rev }: { rev: RevisionCard }) {
   return (
     <p className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
       {rev.drive && isSafeExternalHref(rev.drive.file_url) ? (
-        <a className="font-medium text-brand-700 hover:underline" href={rev.drive.file_url} target="_blank" rel="noopener noreferrer" title={LOCAL_DRIVE_TITLE} aria-label={`Abrir PDF r${rev.revision_no} en Drive`}>
+        <a className="font-medium text-accent hover:underline" href={rev.drive.file_url} target="_blank" rel="noopener noreferrer" title={LOCAL_DRIVE_TITLE} aria-label={`Abrir PDF r${rev.revision_no} en Drive`}>
           PDF r{rev.revision_no} ↗
         </a>
       ) : null}
       {gmail && isSafeExternalHref(gmail) ? (
-        <a className="font-medium text-brand-700 hover:underline" href={gmail} target="_blank" rel="noopener noreferrer" aria-label={`Abrir correo de r${rev.revision_no} en Gmail`}>
+        <a className="font-medium text-accent hover:underline" href={gmail} target="_blank" rel="noopener noreferrer" aria-label={`Abrir correo de r${rev.revision_no} en Gmail`}>
           Correo r{rev.revision_no} ↗
         </a>
       ) : null}
@@ -303,7 +303,7 @@ function QuoteBlock({ q, defaultOpen, latest, documents = [], mayOpenCotizador =
           <a
             href={crmHash("cotizador", q.quote_id)}
             aria-label={`Abrir en Cotizador la cotización ${q.quote_number}`}
-            className="mt-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            className="mt-1 inline-flex min-h-[32px] items-center gap-1 rounded-md px-1.5 text-xs font-medium text-accent hover:bg-brand-50 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           >
             Abrir en Cotizador
             <span aria-hidden="true">→</span>

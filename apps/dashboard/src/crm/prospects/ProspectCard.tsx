@@ -77,7 +77,7 @@ export function ProspectCard({
             {maybeDuplicate ? <Badge tone="warn">Posible duplicado</Badge> : null}
           </div>
           <h3 className="mt-0.5 text-[15px] font-semibold leading-5 text-ink">
-            <button type="button" onClick={onOpen} className="text-left hover:text-brand-700 hover:underline focus-visible:underline">
+            <button type="button" onClick={onOpen} className="text-left hover:text-accent hover:underline focus-visible:underline">
               {name}
             </button>
           </h3>
@@ -106,7 +106,7 @@ export function ProspectCard({
         {item.equipment.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5" aria-label="Equipos que calzan">
             {item.equipment.map((e) => (
-              <li key={e} className="rounded-full border border-brand-600/25 bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700">
+              <li key={e} className="rounded-full border border-brand-600/25 bg-brand-50 px-2 py-0.5 text-xs font-medium text-accent">
                 {e}
               </li>
             ))}
@@ -148,7 +148,7 @@ export function ProspectCard({
           <Button variant="quiet" onClick={onDiscard} disabled={busy} aria-label={`Descartar a ${name}`} className="min-h-9">
             Descartar
           </Button>
-          <button type="button" onClick={onOpen} className="ml-auto text-xs font-medium text-brand-700 hover:underline">
+          <button type="button" onClick={onOpen} className="ml-auto text-xs font-medium text-accent hover:underline">
             Ver todo
           </button>
         </div>

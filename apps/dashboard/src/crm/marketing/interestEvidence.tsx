@@ -42,7 +42,7 @@ export function EvidenceList({ interests, label }: { interests: AudienceInterest
             Coincidencia «{i.matched_term}» en: {i.source.detail ?? i.source.case_title ?? "—"}
           </p>
           {i.source.opportunity_id ? (
-            <a className="text-[11px] font-medium text-brand-700 underline" href={crmHash("oportunidades", i.source.opportunity_id)}>
+            <a className="text-[11px] font-medium text-accent underline" href={crmHash("oportunidades", i.source.opportunity_id)}>
               Ver caso{i.source.quote_numbers.length ? ` · ${i.source.quote_numbers.join(", ")}` : ""}
             </a>
           ) : null}

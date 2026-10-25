@@ -109,7 +109,7 @@ function DecisionForm({
         <button
           type="submit"
           disabled={busy || !clean || !confirmed}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-40"
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-40"
           data-testid={`${testId}-submit`}
         >
           {submitLabel}

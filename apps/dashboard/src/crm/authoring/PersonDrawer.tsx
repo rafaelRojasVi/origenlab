@@ -356,7 +356,7 @@ function EditPersonForm({
           type="button"
           onClick={submit}
           disabled={busy || !displayName.trim() || !note.trim()}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "…" : "Guardar"}
         </button>
@@ -407,7 +407,7 @@ function RestoreButton({ personId, version, onDone }: { personId: string; versio
                 }
               }}
               disabled={busy || !note.trim()}
-              className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50"
+              className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50"
             >
               {busy ? "…" : "Restaurar"}
             </button>
@@ -586,7 +586,7 @@ function AddAffiliationForm({
           type="button"
           onClick={submit}
           disabled={busy || !orgId.trim() || !note.trim()}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50"
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50"
         >
           {busy ? "…" : "Vincular"}
         </button>
