@@ -1299,7 +1299,7 @@ in order over the payload.
 | 67 | `evidence.prospect_search_run` | one ANID prospect search run — daily (cron 09:00 UTC ≈ 06:00 Santiago) or manual («Buscar ahora»); tracks status from `queued` through `running` to `done`/`failed` | `trigger` ∈ {`daily`,`manual`}; `requested_by_operator_id` is null iff daily (CHECK); partial unique index prevents two active runs; `counts` a jsonb object (added, skipped, no_email, low_fit, pool_left); **append-only** (`platform.reject_mutation`); `origenlab_api` select/insert (manual enqueue), `origenlab_worker` select/insert/update(status, times, counts, error) |
 
 Domain events added: `source_record.prospect_search_requested` (manual «Buscar ahora» command),
-`source_record.prospect_email_drafted` (reserved for part 2 — the intro-email Gmail draft).
+`source_record.prospect_email_drafted` (aggregate `source_record`), payload `{draft_id, to, subject}` — `draft_id` is the Gmail draft id, never the message id; `to` is the recipient address; `subject` is the email subject line.
 Domain event added earlier: `source_record.prospect_edited` (aggregate `source_record`), payload the names of
 the changed fields, never their values.
 

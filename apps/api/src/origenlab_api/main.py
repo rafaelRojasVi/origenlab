@@ -702,8 +702,15 @@ def _mount_v2_command_boundary(
     app.state.v2_prospect_read_repository = ProspectFindingReadRepository(
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
+    _prospect_sender = None
+    if settings.v2_test_send_token_file:
+        try:
+            from origenlab_api.v2.gmail_send import GmailSender as _GS, load_send_token as _lst
+            _prospect_sender = _GS(_lst(settings.v2_test_send_token_file))
+        except ValueError:
+            pass  # token not valid; draft creation will refuse at call time
     app.state.v2_prospect_command_repository = V2ProspectCommandRepository(
-        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+        connect, dsn, sender=_prospect_sender, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(prospect_command_router)
     app.include_router(prospect_read_router)

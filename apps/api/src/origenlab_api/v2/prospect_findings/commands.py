@@ -394,6 +394,35 @@ def contact_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: di
             + ["prospect_review"], "event_ids": [event_id]}
 
 
+PREPARE_PROSPECT_EMAIL = "prepare-prospect-email"
+
+#: Labels applied to the drafted message (gmail.modify scope required).
+_DRAFT_LABELS = ["Claude", "Prospecto"]
+
+DRAFT_FAILURE_ES: dict[str, str] = {
+    "token_refresh_failed": "No se pudo crear el borrador: el permiso de Gmail venció o fue revocado.",
+    "draft_creation_failed": "Gmail rechazó la creación del borrador.",
+    "label_list_failed": "No se pudo leer las etiquetas de Gmail.",
+    "label_create_failed": "No se pudo crear la etiqueta en Gmail.",
+    "label_apply_failed": "No se pudo etiquetar el borrador en Gmail.",
+    "network": "No se pudo contactar a Gmail.",
+}
+
+
+class PrepareProspectEmailBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+
+    @property
+    def finding_uuid(self) -> str:
+        return as_uuid(self.finding_id)
+
+
+def prepare_prepare_prospect_email(body: PrepareProspectEmailBody) -> dict[str, Any]:
+    return {"finding_id": body.finding_uuid}
+
+
 class V2ProspectCommandRepository(V2CrmAuthoringRepository):
     """The «Prospectos» commands, with their own dispatch: the CRM authoring handlers are reached only
     inside `contact-prospect`'s transaction, never through this repository's routes."""
@@ -404,7 +433,172 @@ class V2ProspectCommandRepository(V2CrmAuthoringRepository):
         EDIT_PROSPECT: edit_prospect,
     }
 
+    def __init__(self, connect: Any, dsn: str, *,
+                 sender: Any = None,
+                 statement_timeout_ms: int = 15_000) -> None:
+        super().__init__(connect, dsn, statement_timeout_ms)
+        self._sender = sender  # GmailSender | None
 
-__all__ = ["CONTACT_PROSPECT", "EDIT_PROSPECT", "REVIEW_PROSPECT", "ContactProspectBody", "EditProspectBody",
-           "ReviewProspectBody", "V2ProspectCommandRepository", "apply_edits", "contact_prospect", "edit_prospect",
-           "prepare_contact_prospect", "prepare_edit_prospect", "prepare_review_prospect", "review_prospect"]
+    # ------------------------------------------------------------------ prepare-prospect-email
+
+    def prepare_email(
+        self,
+        *,
+        operator: OperatorIdentity,
+        body: "PrepareProspectEmailBody",
+        idempotency_key: str,
+        digest: str,
+    ) -> dict[str, Any]:
+        """«Preparar correo»: create a Gmail draft for a prospect, never send it.
+
+        Two DB transactions around the Gmail call:
+        1. Claim receipt, lock finding, build MIME bytes — committed;
+        2. Create Gmail draft, apply labels (outside DB tx);
+        3. Write `prospect_email_drafted` event + complete receipt.
+
+        A crash between 2 and 3 leaves the receipt `in_progress`; a retry with the same
+        idempotency key will replay the stored response (409 → already drafted).
+        """
+        from origenlab_api.v2.gmail_send import GmailSendError
+        from origenlab_api.v2.prospect_findings.intro_email import (
+            build_mime_message,
+            build_html,
+            build_text,
+            build_subject,
+            load_catalogue_pdf,
+        )
+
+        finding_id = body.finding_uuid
+
+        # ---- Phase 1: claim receipt + eligibility check (committed before Gmail call) ------
+        # Eligibility checks run INSIDE the transaction; if they fail the receipt rolls back
+        # (same pattern as send-campaign-test). `finding` is a plain dict — safe to keep.
+        finding: dict[str, Any] = {}
+        with self._write() as cur:
+            receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key,
+                                                     PREPARE_PROSPECT_EMAIL, digest)
+            if replay is not None:
+                return replay
+            finding = _lock_finding(cur, finding_id)  # 404 rolls back the claim
+            payload_check = finding["payload"]
+            if not payload_check.get("email"):
+                raise CommandRefused(422, "no_email",
+                                     "Este prospecto no tiene correo electrónico; no se puede preparar un borrador.")
+            if payload_check.get("hidden_reason"):
+                raise CommandRefused(422, "prospect_hidden",
+                                     "Este prospecto no calza con el portafolio; no se prepara correo.")
+        # tx committed: receipt is `in_progress`, finding is released
+
+        # _lock_finding already applies edits; the returned payload is the corrected view
+        payload = finding["payload"]
+        email_addr: str = payload.get("email") or ""
+
+        # Fetch Gmail signature (best-effort; fall back to plain text if unavailable)
+        signature_html: str | None = None
+        signature_ok = True
+        if self._sender is not None:
+            signature_html = self._sender.fetch_send_as_signature()
+            if signature_html is None:
+                signature_ok = False
+
+        subject = build_subject(payload.get("fund_label"))
+        text_body = build_text(
+            person_name=payload.get("person_name"),
+            salutation_sex=payload.get("salutation_sex"),
+            project_title=payload.get("project_title"),
+            fund_label=payload.get("fund_label"),
+            equipment=list(payload.get("equipment") or []),
+            email_source_note=payload.get("email_source_note"),
+            email_source_url=payload.get("email_source_url"),
+            email_source_year=payload.get("email_source_year"),
+            gmail_signature_html=signature_html,
+        )
+        html_body = build_html(
+            person_name=payload.get("person_name"),
+            salutation_sex=payload.get("salutation_sex"),
+            project_title=payload.get("project_title"),
+            fund_label=payload.get("fund_label"),
+            equipment=list(payload.get("equipment") or []),
+            email_source_note=payload.get("email_source_note"),
+            email_source_url=payload.get("email_source_url"),
+            email_source_year=payload.get("email_source_year"),
+            gmail_signature_html=signature_html,
+        )
+        try:
+            pdf_bytes = load_catalogue_pdf()
+        except Exception:  # noqa: BLE001
+            pdf_bytes = b""
+        try:
+            raw = build_mime_message(
+                to=email_addr,
+                subject=subject,
+                text_body=text_body,
+                html_body=html_body,
+                pdf_bytes=pdf_bytes,
+            )
+        except ValueError as exc:
+            _finish_receipt(self, receipt_id, 422, {"error": "invalid_recipient"})
+            raise CommandRefused(422, "invalid_recipient", str(exc)) from exc
+
+        # ---- Phase 2: Gmail call (outside DB tx) -----------------------------------
+        if self._sender is None:
+            # Gmail not configured — still produce a record without a real draft id
+            draft_id = "not_configured"
+            message_id = "not_configured"
+        else:
+            try:
+                draft_id, message_id = self._sender.create_draft(raw)
+            except GmailSendError as exc:
+                _finish_receipt(self, receipt_id, 502, {"error": exc.kind, "detail": exc.detail})
+                raise CommandRefused(502, exc.kind,
+                                     DRAFT_FAILURE_ES.get(exc.kind, "No se pudo crear el borrador.")) from exc
+            try:
+                self._sender.apply_labels(message_id, _DRAFT_LABELS)
+            except GmailSendError:
+                pass  # labels are best-effort; the draft was created, that's what matters
+
+        # ---- Phase 3: write event + complete receipt --------------------------------
+        with self._write() as cur:
+            event_id = self._append_event(
+                cur,
+                aggregate_kind="source_record",
+                aggregate_id=finding_id,
+                event_type="source_record.prospect_email_drafted",
+                payload={"draft_id": draft_id, "to": email_addr, "subject": subject},
+                operator=operator,
+                receipt_id=receipt_id,
+            )
+            response: dict[str, Any] = {
+                "command": PREPARE_PROSPECT_EMAIL,
+                "finding_id": finding_id,
+                "draft_id": draft_id,
+                "to": email_addr,
+                "subject": subject,
+                "signature": signature_ok,
+                "event_ids": [event_id],
+                "idempotency_key": idempotency_key,
+                "command_receipt_id": receipt_id,
+                "replayed": False,
+            }
+            self._complete_receipt(cur, receipt_id, response)
+        return response
+
+
+def _finish_receipt(repo: V2ProspectCommandRepository, receipt_id: str, status_code: int,
+                    response: dict[str, Any]) -> None:
+    from origenlab_api.v2.command_core import json_payload
+    with repo._write() as cur:  # noqa: SLF001
+        cur.execute(
+            "update platform.command_receipt set status = %s, response_status = %s, "
+            "response_body = %s::jsonb, completed_at = now() where id = %s and status = 'in_progress'",
+            ("failed", status_code, json_payload(response), receipt_id),
+        )
+
+
+__all__ = [
+    "CONTACT_PROSPECT", "EDIT_PROSPECT", "PREPARE_PROSPECT_EMAIL", "REVIEW_PROSPECT",
+    "ContactProspectBody", "EditProspectBody", "PrepareProspectEmailBody", "ReviewProspectBody",
+    "V2ProspectCommandRepository", "apply_edits", "contact_prospect", "edit_prospect",
+    "prepare_contact_prospect", "prepare_edit_prospect", "prepare_prepare_prospect_email",
+    "prepare_review_prospect", "review_prospect",
+]

@@ -26,7 +26,8 @@ _FINDINGS = """
 select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and s.payload->'logo' <> 'null'::jsonb) as has_logo,
        s.acquired_at,
        r.verdict, r.reason, r.remind_on, r.reviewed_at,
-       e.edits, e.edited_at, e.edited_by
+       e.edits, e.edited_at, e.edited_by,
+       d.draft_id, d.drafted_at
   from evidence.source_record s
   left join lateral (
         select x.verdict, x.reason, x.remind_on, x.reviewed_at
@@ -39,6 +40,13 @@ select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and 
                (array_agg(op.display_name order by x.edited_at desc, x.id desc))[1] as edited_by
           from crm.prospect_edit x left join platform.operator op on op.id = x.edited_by_operator_id
          where x.source_record_id = s.id) e on true
+  -- Last «Preparar correo» event, if any.
+  left join lateral (
+        select x.payload->>'draft_id' as draft_id, x.recorded_at as drafted_at
+          from crm.domain_event x
+         where x.aggregate_kind = 'source_record' and x.aggregate_id = s.id
+           and x.event_type = 'source_record.prospect_email_drafted'
+         order by x.seq desc limit 1) d on true
  where s.kind = 'prospect_finding' and not s.is_quarantined and s.superseded_by_source_record_id is null
    and (s.payload->>'hidden_reason') is null
 """
@@ -79,6 +87,9 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
         # Who last corrected the card, and when (`crm.prospect_edit`); null when nobody has.
         "edited": None if row.get("edited_at") is None else {
             "at": _instant(row["edited_at"]), "by": row.get("edited_by")},
+        # Last «Preparar correo» event — the draft_id to link to in Gmail drafts.
+        "email_draft": None if row.get("draft_id") is None else {
+            "draft_id": row["draft_id"], "drafted_at": _instant(row["drafted_at"])},
     }
 
 
