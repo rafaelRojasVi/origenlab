@@ -1,4 +1,4 @@
-import { Badge, Button, ExternalLink } from "../ui";
+import { Badge, Button, ExternalLink, fmtDate } from "../ui";
 import { ProspectLinkRow } from "./ProspectLinks";
 import { ProspectLogo } from "./ProspectLogo";
 import type { ProspectItem } from "./prospectApi";
@@ -34,6 +34,7 @@ export function ProspectCard({
   onContact,
   onLater,
   onDiscard,
+  onEdit,
 }: {
   item: ProspectItem;
   now: Date;
@@ -45,6 +46,8 @@ export function ProspectCard({
   onContact: () => void;
   onLater: () => void;
   onDiscard: () => void;
+  /** «Editar»: correct any field of the card (owner 2026-10-25). */
+  onEdit?: () => void;
 }) {
   const name = displayName(item);
   const ago = awardedAgo(item.awarded_on, now);
@@ -124,6 +127,8 @@ export function ProspectCard({
                     {item.email_source_year ? `fuente: paper ${item.email_source_year}` : "fuente"}
                   </ExternalLink>
                 </span>
+              ) : item.email_source_note ? (
+                <span className="text-xs text-ink-muted">fuente: {item.email_source_note}</span>
               ) : null}
             </>
           ) : (
@@ -135,6 +140,11 @@ export function ProspectCard({
           {item.email && item.phone ? <span className="text-ink-muted">· {item.phone}</span> : null}
         </p>
         <ProspectLinkRow links={item.links} />
+        {item.edited ? (
+          <p className="text-[11px] text-ink-faint">
+            Editado{item.edited.by ? ` por ${item.edited.by}` : ""} · {fmtDate(item.edited.at)}
+          </p>
+        ) : null}
       </div>
 
       {canDecide ? (
@@ -148,7 +158,16 @@ export function ProspectCard({
           <Button variant="quiet" onClick={onDiscard} disabled={busy} aria-label={`Descartar a ${name}`} className="min-h-9">
             Descartar
           </Button>
-          <button type="button" onClick={onOpen} className="ml-auto text-xs font-medium text-accent hover:underline">
+          {onEdit ? (
+            <button type="button" onClick={onEdit} disabled={busy} aria-label={`Editar a ${name}`}
+              className="ml-auto inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-ink-muted hover:bg-canvas-sunken hover:text-ink disabled:opacity-50">
+              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M10.5 2.5l3 3L6 13H3v-3l7.5-7.5z" />
+              </svg>
+              Editar
+            </button>
+          ) : null}
+          <button type="button" onClick={onOpen} className={`${onEdit ? "" : "ml-auto "}text-xs font-medium text-accent hover:underline`}>
             Ver todo
           </button>
         </div>

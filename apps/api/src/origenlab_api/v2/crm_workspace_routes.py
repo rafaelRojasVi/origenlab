@@ -189,6 +189,14 @@ def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo) -> An
     return body
 
 
+@workspace_router.get("/lookup")
+def get_lookup(_: Operator, repo: Repo, q: Annotated[str, Query(min_length=1, max_length=200)]) -> Any:
+    """«¿Ya lo tenemos?»: where a correo, a name or a domain already is in OrigenLab — CRM people
+    and institutions, their addresses, the mail we exchanged, Bajas and prospects. A read only;
+    addresses masked for a role that does not read them, like every workspace read."""
+    return repo.lookup(q)
+
+
 @workspace_router.get("/opportunities/{opportunity_id}/messages/{message_id}")
 def get_opportunity_message(opportunity_id: UUID, message_id: str, operator: Operator, repo: Repo,
                             request: Request) -> Any:

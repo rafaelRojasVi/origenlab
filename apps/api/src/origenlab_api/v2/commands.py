@@ -144,7 +144,8 @@ def address_names_a_desk(value_norm: str) -> bool:
     base = re.split(r"[+._-]", local, maxsplit=1)[0]
     return base != local and base in ROLE_LOCAL_PARTS
 
-_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Dot-separated labels that cannot overlap, so a hostile value cannot make it backtrack.
+_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$")
 
 
 class CommandRefused(Exception):
@@ -409,7 +410,7 @@ def normalize_email(raw: str) -> str:
 
 
 def validate_email_shape(value_norm: str) -> str:
-    if not _EMAIL_SHAPE.match(value_norm):
+    if len(value_norm) > 254 or not _EMAIL_SHAPE.match(value_norm):
         raise CommandRefused(
             422,
             "not_an_email_address",

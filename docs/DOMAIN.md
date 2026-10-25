@@ -1288,6 +1288,21 @@ Domain event added: `source_record.prospect_reviewed` (aggregate `source_record`
 Counts by schema: `crm` 26, `comms` 4, `outbound` 9, `evidence` 6,
 `catalog` 8, `procurement` 1, `platform` 7 — **61**.
 
+**Slice 7 — prospect corrections** (`20261025100000`, owner 2026-10-25: «let me edit everything — I
+found the person's email»). A finding stays machine evidence and is never rewritten; a person's
+correction is recorded beside it and every read — and `contact-prospect` — applies the corrections
+in order over the payload.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 66 | `crm.prospect_edit` | a person's correction to a prospect finding: the fields they changed, a null clearing one | `changes` a non-empty JSON object whose keys are the editable finding fields (`prospect_edit_changes_keys`); **append-only** via `platform.reject_mutation` — the later correction wins per field; `origenlab_api` select/insert, `origenlab_worker` select |
+
+Domain event added: `source_record.prospect_edited` (aggregate `source_record`), payload the names of
+the changed fields, never their values.
+
+Counts by schema: `crm` 27, `comms` 4, `outbound` 9, `evidence` 6,
+`catalog` 8, `procurement` 1, `platform` 7 — **62**.
+
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
 suffice); a quote party-snapshot table (a validated snapshot column on the

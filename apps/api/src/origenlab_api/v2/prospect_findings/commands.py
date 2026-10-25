@@ -31,10 +31,22 @@ Refusals:
 
 Event: `source_record.prospect_reviewed` (aggregate `source_record`), payload
 `{verdict, previous_verdict, reason, remind_on}`.
+
+`edit-prospect` (owner 2026-10-25: «let me edit everything — I found the person's email») records a
+person's correction in `crm.prospect_edit` (#66): only the fields that differ from what the card
+shows, a null clearing one. The finding is never rewritten; every read and `contact-prospect` apply
+the corrections in order over its payload (`apply_edits`). A new email needs where it was found
+(`email_source_note` or `email_source_url`) — the legal trail `contact-prospect` writes into its
+verdict. Refused on a contacted finding (its data is in the CRM now): `prospect_already_contacted`;
+with nothing changed: 422 `no_changes`. Event `source_record.prospect_edited`, payload `{fields}` —
+the names of the changed fields, never their values.
 """
 
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Iterable
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
@@ -42,13 +54,37 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, ConfigDict, Field
 
 from origenlab_api.v2 import crm_authoring as authoring
-from origenlab_api.v2.commands import CommandRefused, as_uuid
+from origenlab_api.v2.commands import CommandRefused, as_uuid, normalize_email, validate_email_shape
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.prospect_findings.classify import classify, institution_domains
 
 REVIEW_PROSPECT = "review-prospect"
 CONTACT_PROSPECT = "contact-prospect"
+EDIT_PROSPECT = "edit-prospect"
+
+#: The finding fields a person may correct (the `prospect_edit_changes_keys` CHECK), with their limits.
+TEXT_FIELDS: dict[str, int] = {
+    "person_name": 200, "role": 200, "organization_name": 300, "unit": 300, "phone": 60,
+    "why_now": 1000, "fund_label": 200, "amount_label": 200, "email_source_note": 300,
+}
+URL_FIELDS: tuple[str, ...] = ("email_source_url", "website", "linkedin_person", "linkedin_org", "orcid", "scholar")
+EDITABLE: frozenset[str] = frozenset({*TEXT_FIELDS, *URL_FIELDS, "email", "equipment"})
+_URL = re.compile(r"^https?://[^\s]+$", re.IGNORECASE)
+
+
+def apply_edits(payload: dict[str, Any], edits: Iterable[dict[str, Any]] | None) -> dict[str, Any]:
+    """The finding as a person last left it: every correction applied in order over the payload.
+    A corrected email drops the finding's own record of where its email came from — that source
+    named the old address; the correction carries its own (`email_source_note` / `_url`)."""
+    out = dict(payload)
+    for change in edits or []:
+        if "email" in change:
+            out.pop("email_source_year", None)
+            out.pop("email_source_url", None)
+            out.pop("email_source_note", None)
+        out.update(change)
+    return out
 SANTIAGO = ZoneInfo("America/Santiago")
 _NOTE = "Agregado desde «Prospectos»"
 
@@ -59,6 +95,13 @@ class ReviewProspectBody(BaseModel):
     verdict: Literal["mas_tarde", "descartar", "reabrir"]
     reason: Annotated[str, Field(max_length=500)] | None = None
     remind_on: date | None = None
+
+
+class EditProspectBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    finding_id: str
+    #: Field → new value (null clears it). Unknown fields are refused.
+    changes: dict[str, Any]
 
 
 class ContactProspectBody(BaseModel):
@@ -79,6 +122,48 @@ def prepare_review_prospect(body: ReviewProspectBody, today: date | None = None)
             "remind_on": body.remind_on.isoformat() if body.verdict == "mas_tarde" and body.remind_on else None}
 
 
+def _clean(field: str, value: Any) -> Any:
+    """One edited value in its stored form, or a 422 naming the field."""
+    if value is None:
+        return None
+    if field == "equipment":
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise CommandRefused(422, "invalid_field", "Los equipos son una lista de textos.", details={"field": field})
+        items = [v.strip() for v in value if v.strip()][:20]
+        if any(len(v) > 120 for v in items):
+            raise CommandRefused(422, "invalid_field", "Cada equipo tiene 120 caracteres como máximo.", details={"field": field})
+        return items or None
+    if not isinstance(value, str):
+        raise CommandRefused(422, "invalid_field", "Ese campo es un texto.", details={"field": field})
+    text = re.sub(r"[ \t]+", " ", value).strip()
+    if not text:
+        return None
+    if field == "email":
+        try:
+            return validate_email_shape(normalize_email(text))
+        except CommandRefused:
+            raise CommandRefused(422, "invalid_field", "Ese correo no es válido.", details={"field": field}) from None
+    if field in URL_FIELDS:
+        if field != "email_source_url" and not _URL.match(text):
+            raise CommandRefused(422, "invalid_field", "El enlace debe empezar con https://.", details={"field": field})
+        if len(text) > 500:
+            raise CommandRefused(422, "invalid_field", "El enlace es demasiado largo.", details={"field": field})
+        return text
+    if len(text) > TEXT_FIELDS[field]:
+        raise CommandRefused(422, "invalid_field", f"Máximo {TEXT_FIELDS[field]} caracteres.", details={"field": field})
+    return text
+
+
+def prepare_edit_prospect(body: EditProspectBody) -> dict[str, Any]:
+    unknown = sorted(set(body.changes) - EDITABLE)
+    if unknown:
+        raise CommandRefused(422, "invalid_field", "Ese campo no se puede editar.", details={"field": unknown[0]})
+    changes = {k: _clean(k, v) for k, v in body.changes.items()}
+    if "organization_name" in changes and not changes["organization_name"]:
+        raise CommandRefused(422, "invalid_field", "La institución no puede quedar vacía.", details={"field": "organization_name"})
+    return {"finding_id": as_uuid(body.finding_id, "finding_id"), "changes": changes}
+
+
 def prepare_contact_prospect(body: ContactProspectBody) -> dict[str, Any]:
     return {"finding_id": as_uuid(body.finding_id, "finding_id"),
             "organization_id": as_uuid(body.organization_id, "organization_id") if body.organization_id else None,
@@ -86,12 +171,15 @@ def prepare_contact_prospect(body: ContactProspectBody) -> dict[str, Any]:
 
 
 def _lock_finding(cur: Any, finding_id: str) -> dict[str, Any]:
+    """The finding under a row lock, with every correction applied (`apply_edits`)."""
     cur.execute("select id::text, payload from evidence.source_record "
                 "where id = %s::uuid and kind = 'prospect_finding' for update", (finding_id,))
     row = cur.fetchone()
     if row is None:
         raise CommandRefused(404, "prospect_not_found", "Ese prospecto no existe.")
-    return {"id": row[0], "payload": row[1] or {}}
+    cur.execute("select changes from crm.prospect_edit where source_record_id = %s::uuid "
+                "order by edited_at, id", (finding_id,))
+    return {"id": row[0], "payload": apply_edits(row[1] or {}, [r[0] for r in cur.fetchall()])}
 
 
 def _latest_verdict(cur: Any, finding_id: str) -> str | None:
@@ -235,6 +323,35 @@ def _resolve_assertions(cur: Any, operator: OperatorIdentity, finding_id: str, t
                 (finding_id,))
 
 
+def edit_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                  receipt_id: str) -> dict[str, Any]:
+    finding = _lock_finding(cur, fields["finding_id"])
+    if _latest_verdict(cur, finding["id"]) == "contactar":
+        raise CommandRefused(409, "prospect_already_contacted",
+                             "Este prospecto ya está en el CRM: edítalo allí.")
+    current = finding["payload"]
+    changes = {k: v for k, v in fields["changes"].items() if current.get(k) != v}
+    if not changes:
+        raise CommandRefused(422, "no_changes", "No cambiaste nada.")
+    if changes.get("email") and not (fields["changes"].get("email_source_note")
+                                     or fields["changes"].get("email_source_url")):
+        raise CommandRefused(422, "email_source_required", "Di dónde encontraste el correo.",
+                             details={"field": "email_source_note"})
+    if "email" in changes:  # the new address's source travels with it, even if unchanged in text
+        for k in ("email_source_note", "email_source_url"):
+            if k in fields["changes"]:
+                changes[k] = fields["changes"][k]
+    cur.execute("insert into crm.prospect_edit (source_record_id, changes, edited_by_operator_id) "
+                "values (%s::uuid, %s::jsonb, %s::uuid) returning id::text",
+                (finding["id"], json.dumps(changes, ensure_ascii=False), operator.operator_id))
+    (edit_id,) = cur.fetchone()
+    event_id = repo._append_event(
+        cur, aggregate_kind="source_record", aggregate_id=finding["id"], event_type="source_record.prospect_edited",
+        payload={"fields": sorted(changes)}, operator=operator, receipt_id=receipt_id)
+    return {"command": EDIT_PROSPECT, "finding_id": finding["id"], "edit_id": edit_id,
+            "fields": sorted(changes), "created": ["prospect_edit"], "event_ids": [event_id]}
+
+
 def contact_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                      receipt_id: str) -> dict[str, Any]:
     finding = _lock_finding(cur, fields["finding_id"])
@@ -266,7 +383,8 @@ def contact_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: di
         made = person_created if payload.get("person_name") else mailbox_created
         targets["contact_address"] = ("contact_point", contact_point_id, made)
     _resolve_assertions(cur, operator, finding["id"], targets)
-    source = payload.get("email_source_url") or next((url for _, url in payload.get("sources") or []), None)
+    source = (payload.get("email_source_url") or payload.get("email_source_note")
+              or next((url for _, url in payload.get("sources") or []), None))
     review_id, event_id = _record_verdict(repo, cur, operator, receipt_id, finding_id=finding["id"],
                                           verdict="contactar", previous=previous,
                                           reason=f"fuente: {source}"[:500] if source else None, remind_on=None)
@@ -283,9 +401,10 @@ class V2ProspectCommandRepository(V2CrmAuthoringRepository):
     _HANDLERS = {
         REVIEW_PROSPECT: review_prospect,
         CONTACT_PROSPECT: contact_prospect,
+        EDIT_PROSPECT: edit_prospect,
     }
 
 
-__all__ = ["CONTACT_PROSPECT", "REVIEW_PROSPECT", "ContactProspectBody", "ReviewProspectBody",
-           "V2ProspectCommandRepository", "contact_prospect", "prepare_contact_prospect",
-           "prepare_review_prospect", "review_prospect"]
+__all__ = ["CONTACT_PROSPECT", "EDIT_PROSPECT", "REVIEW_PROSPECT", "ContactProspectBody", "EditProspectBody",
+           "ReviewProspectBody", "V2ProspectCommandRepository", "apply_edits", "contact_prospect", "edit_prospect",
+           "prepare_contact_prospect", "prepare_edit_prospect", "prepare_review_prospect", "review_prospect"]

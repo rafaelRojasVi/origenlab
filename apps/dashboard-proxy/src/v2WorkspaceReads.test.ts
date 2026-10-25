@@ -31,6 +31,7 @@ const READS = [
   "/v2/workspace/opportunities/96301691-af05-41ea-82e3-05f5fae40837/threads",
   "/v2/workspace/opportunities/96301691-af05-41ea-82e3-05f5fae40837/messages/18f0a1b2c3d4e5f6",
   "/v2/workspace/mail-sync",
+  "/v2/workspace/lookup",
   "/v2/workspace/operations",
   "/v2/workspace/quote-readings",
   "/v2/workspace/mail-quote-numbers",

@@ -115,6 +115,7 @@ union all select 'evidence.bid_preparation', count(*)::text from evidence.bid_pr
 union all select 'platform.model_usage', count(*)::text from platform.model_usage
 union all select 'crm.notice_review', count(*)::text from crm.notice_review
 union all select 'crm.prospect_review', count(*)::text from crm.prospect_review
+union all select 'crm.prospect_edit', count(*)::text from crm.prospect_edit
 ;
 
 commit;

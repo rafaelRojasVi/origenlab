@@ -1,7 +1,8 @@
 /**
  * The one client for «Prospectos» (spec 2026-10-23): the list and its views, one prospect's full
  * profile, its logo (bytes the worker stored — the dashboard never loads the organization's site),
- * «Más tarde» / «Descartar» / «Deshacer» (`review-prospect`) and «Contactar» (`contact-prospect`).
+ * «Más tarde» / «Descartar» / «Deshacer» (`review-prospect`), «Contactar» (`contact-prospect`) and
+ * «Editar» (`edit-prospect`, a person's correction to the card; owner 2026-10-25).
  *
  * Not `/v2/prospects` (the lead-stage opportunities). The commands need a `sales` or `admin`
  * operator and an `Idempotency-Key`; this module owns their paths (pinned by
@@ -41,6 +42,8 @@ export interface ProspectItem {
   email: string | null;
   email_source_url: string | null;
   email_source_year: number | null;
+  /** Where a person found the email they added («Editar»); a text, not a link. */
+  email_source_note?: string | null;
   phone: string | null;
   links: ProspectLinks;
   has_logo: boolean;
@@ -52,6 +55,8 @@ export interface ProspectItem {
   latest_verdict: { verdict: ProspectVerdict; reason: string | null; remind_on: string | null; reviewed_at: string } | null;
   returns_today: boolean;
   acquired_at: string;
+  /** Who last corrected the card, and when; null when nobody has. */
+  edited?: { at: string; by: string | null } | null;
 }
 
 export interface ProspectCounts {
@@ -130,3 +135,30 @@ export const contactProspect = (
   body: { finding_id: string; organization_id?: string; create_new_organization?: boolean },
   idempotencyKey: string = newProspectCommandKey(),
 ) => post("/v2/commands/contact-prospect", body, idempotencyKey);
+
+/** The fields «Editar» may change; a null clears one. */
+export type ProspectChanges = Partial<{
+  person_name: string | null;
+  role: string | null;
+  organization_name: string;
+  unit: string | null;
+  email: string | null;
+  email_source_note: string | null;
+  email_source_url: string | null;
+  phone: string | null;
+  website: string | null;
+  linkedin_person: string | null;
+  linkedin_org: string | null;
+  orcid: string | null;
+  scholar: string | null;
+  why_now: string | null;
+  equipment: string[] | null;
+  fund_label: string | null;
+  amount_label: string | null;
+}>;
+
+/** «Editar»: a person's correction to the card; only the changed fields are sent. */
+export const editProspect = (
+  body: { finding_id: string; changes: ProspectChanges },
+  idempotencyKey: string = newProspectCommandKey(),
+) => post("/v2/commands/edit-prospect", body, idempotencyKey);

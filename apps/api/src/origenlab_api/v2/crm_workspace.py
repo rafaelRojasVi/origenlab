@@ -2461,6 +2461,13 @@ class CrmWorkspaceRepository:
             suppliers = [r[0] for r in cur.fetchall()]
         return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
 
+    def lookup(self, q: str) -> dict[str, Any]:
+        """«¿Ya lo tenemos?»: where a correo, name or domain already is (`system_lookup.lookup`)."""
+        from origenlab_api.v2.system_lookup import lookup
+
+        with self._read() as cur:
+            return lookup(cur, q)
+
     def opportunity_message_source(self, opportunity_id: str, message_id: str) -> dict[str, Any] | None:
         """Where one email of the case is stored (`comms.message.eml_storage_path`, null when only a
         staged record exists), for the reader (`case_mail.read_message`). `None` when the message
