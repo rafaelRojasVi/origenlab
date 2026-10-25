@@ -206,6 +206,11 @@ export interface Attention {
   code: string;
   label: string;
   blocking: boolean;
+  /**
+   * Who clears it: `person` (only these make a case «Pendiente»), `system` (the worker, by itself)
+   * or `info` (a fact about the record, nothing to do). Absent from an older API.
+   */
+  owner?: "person" | "system" | "info";
 }
 
 export interface OpportunityCardData {

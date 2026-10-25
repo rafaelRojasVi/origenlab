@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { displayName, quoteProduct } from "./caseDisplay";
-import type { OpportunityCardData, RevisionCard } from "./crmTypes";
+import { displayName, quoteProduct, systemNotes } from "./caseDisplay";
+import type { Attention, OpportunityCardData, RevisionCard } from "./crmTypes";
 
 // Every value below is invented; the repository is public.
 function withQuote(subject: string | null, filename: string | null): OpportunityCardData {
@@ -72,5 +72,27 @@ describe("quoteProduct", () => {
     expect(quoteProduct(withQuote("RE: EQUIPOS/INSUMOS PARA SU LABORATORIO - ORIGENLAB", "CN01168A-Ana - Instituto-T18.pdf"))).toBe("T18");
     expect(quoteProduct(withQuote("Suministros de equipos para el laboratorio", null))).toBeNull();
     expect(quoteProduct(withQuote("Re: Contacto Sonicador Ultrasonido Hielscher", "CN01187-Ana-UP400St.pdf"))).toBe("Sonicador Ultrasonido Hielscher · UP400St");
+  });
+});
+
+describe("systemNotes", () => {
+  const card = (attention: Attention[]) => ({ attention }) as unknown as OpportunityCardData;
+
+  it("keeps what the worker clears and plain facts, never a person's task or a blocker", () => {
+    const notes = systemNotes(card([
+      { code: "no_requesting_institution", label: "Sin institución", blocking: true, owner: "person" },
+      { code: "no_quote", label: "Sin cotización", blocking: false, owner: "person" },
+      { code: "document_pending_drive", label: "PDF pendiente", blocking: false, owner: "system" },
+      { code: "no_crm_contact", label: "Sin persona", blocking: false, owner: "info" },
+    ]));
+    expect(notes.map((n) => n.code)).toEqual(["document_pending_drive", "no_crm_contact"]);
+  });
+
+  it("reads an older API with no owner the same way", () => {
+    const notes = systemNotes(card([
+      { code: "no_quote", label: "Sin cotización", blocking: false },
+      { code: "no_gmail_evidence", label: "Sin correo", blocking: false },
+    ]));
+    expect(notes.map((n) => n.code)).toEqual(["no_gmail_evidence"]);
   });
 });

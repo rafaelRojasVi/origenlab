@@ -304,7 +304,6 @@ export function BoardCard({
   const line = cardLine(card, at);
   const driveUrl = latest?.drive?.file_url ?? card.drive_folder?.url ?? null;
   const gmailUrl = inSharedMailbox(latest?.gmail?.url ?? card.last_contact?.inbound?.url ?? card.last_contact?.outbound?.url);
-  const pending = card.attention.filter((a) => !a.blocking).length;
   const isDragging = drag?.current === card.opportunity_id;
   const open = (e: MouseEvent) => {
     if ((e.target as HTMLElement).closest("a, button")) return;
@@ -414,11 +413,6 @@ export function BoardCard({
               <MailIcon />
               Gmail
             </a>
-          ) : null}
-          {pending > 0 ? (
-            <span className="ml-auto shrink-0 whitespace-nowrap rounded-full bg-warn-bg px-1.5 py-px text-[10px] font-semibold text-warn" title={card.attention.map((a) => a.label).join(" · ")}>
-              {pending} pendiente{pending > 1 ? "s" : ""}
-            </span>
           ) : null}
         </div>
       )}

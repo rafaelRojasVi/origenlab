@@ -294,10 +294,16 @@ _SQL_PIPELINE_REVISIONS = f"""
     select qr.id::text as revision_id, qr.quote_id::text, qr.revision_no, qr.status,
            qr.origin, qr.sent_at::text, qr.pdf_sha256, qr.superseded_by_revision_no,
            qr.origin_source_record_id::text, d.payload as drive_record,
+           -- A Cotizador revision has no origin email: the one it was sent in (rule R16) stands in
+           -- for it, for the Gmail link and for whether the archiver can file its PDF.
+           sm.provider_message_id as sent_gmail_message_id,
+           sm.provider_thread_id as sent_gmail_thread_id, sm.subject as sent_subject,
+           (sm.eml_storage_path is not null) as sent_has_eml,
            {QUOTE_DOCUMENT_COLUMNS}
       from crm.quote_revision qr
       left join evidence.source_record d
              on d.dedupe_key = 'drive_file:' || qr.pdf_sha256 and d.kind = 'drive_file'
+      left join comms.message sm on sm.id = qr.sent_message_id
       {quote_document_join("qr.pdf_sha256")}
 """
 # Open follow-ups (`crm.task`, W11) with their owner's name; `due_at` and `created_at` as ISO text.
@@ -409,6 +415,22 @@ BLOCKING_CODES = frozenset(
     {"shared_printed_number", "canonical_undetermined", "no_requesting_institution"}
 )
 
+#: Who clears each note (owner 2026-10-25: «there's no button to fix it»). ``person``: someone has
+#: to act, and the dashboard offers the way; only these make a case «Pendiente». ``system``: the
+#: worker clears it by itself. ``info``: nothing anyone can do from here — a fact about the record.
+#: A PDF uploaded to Drive by hand is not seen (links are recorded by hash, by the archiver), so
+#: «not in Drive» is a fact, not a task.
+ATTENTION_OWNER: dict[str, str] = {
+    "shared_printed_number": "person",
+    "canonical_undetermined": "person",
+    "no_requesting_institution": "person",
+    "no_quote": "person",
+    "document_not_in_drive": "info",
+    "document_pending_drive": "system",
+    "no_gmail_evidence": "info",
+    "no_crm_contact": "info",
+}
+
 #: Stages after which a case waits on nothing (`crm.opportunity` terminal stages).
 CLOSED_STAGES: frozenset[str] = frozenset({"won", "lost", "abandoned"})
 
@@ -416,7 +438,7 @@ ATTENTION_LABELS_ES: dict[str, str] = {
     "shared_printed_number": "El mismo número impreso aparece en otro caso",
     "canonical_undetermined": "Hay más de una revisión vigente: no se sabe cuál es la canónica",
     "no_requesting_institution": "Caso sin institución solicitante",
-    "document_not_in_drive": "El PDF no está en Drive y no hay correo original para archivarlo: súbelo a mano",
+    "document_not_in_drive": "El PDF no está en Drive: no hay correo guardado del que archivarlo",
     "document_pending_drive": "PDF pendiente de archivar en Drive (lo archiva la próxima pasada)",
     "no_gmail_evidence": "Sin correo de Gmail vinculado a la última revisión",
     "no_quote": "Caso sin cotización registrada",
@@ -782,12 +804,21 @@ def compose_pipeline(
                             "subject": src.get("subject_raw"),
                         }
                         if src.get("gmail_message_id")
+                        else {
+                            "source_record_id": None,
+                            "message_id": r["sent_gmail_message_id"],
+                            "thread_id": r.get("sent_gmail_thread_id"),
+                            "url": gmail_url(r["sent_gmail_message_id"]),
+                            "subject": r.get("sent_subject"),
+                        }
+                        if r.get("sent_gmail_message_id")
                         else None
                     ),
                     "drive": link.as_dict() if link else None,
-                    # The archiver files a PDF from the captured `.eml`; without one it never will.
-                    # The archiver skips void revisions and revisions with no PDF hash (drive_filing.py).
-                    "drive_pending": (link is None and bool(src.get("has_eml"))
+                    # The archiver files a PDF from the captured `.eml` it came in or was sent in;
+                    # without one it never will. It skips void revisions and revisions with no PDF
+                    # hash (drive_filing.py).
+                    "drive_pending": (link is None and bool(src.get("has_eml") or r.get("sent_has_eml"))
                                       and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
                     "contents": quote_contents(r),
@@ -863,10 +894,15 @@ def compose_pipeline(
                     "url": rc["drive"]["folder_url"],
                 }
                 break
-        if latest is not None:
-            if latest["drive"] is None:
-                attention.append("document_pending_drive" if latest.get("drive_pending") else "document_not_in_drive")
-            if latest["gmail"] is None:
+        # Drive and Gmail are asked of the newest revision that reached the client: a Cotizador
+        # draft (or one in review) has no email and nothing to file yet, and is not missing either.
+        delivered = [rc for rc in all_revs if rc["status"] != "void"
+                     and (rc["status"] == "sent" or rc.get("origin") == "historical_import")]
+        last_out = max(delivered, key=_sort_key_sent) if delivered else None
+        if last_out is not None:
+            if last_out["drive"] is None:
+                attention.append("document_pending_drive" if last_out.get("drive_pending") else "document_not_in_drive")
+            if last_out["gmail"] is None:
                 attention.append("no_gmail_evidence")
 
         seen: set[str] = set()
@@ -934,11 +970,13 @@ def compose_pipeline(
                     for way, seen in ((contacts or {}).get(oid) or {"outbound": None, "inbound": None}).items()
                 },
                 "attention": [
-                    {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in blocked}
+                    {"code": c, "label": ATTENTION_LABELS_ES[c], "blocking": c in blocked,
+                     "owner": ATTENTION_OWNER[c]}
                     for c in ordered
                 ],
+                # «Pendiente» only when a person has something to do (`ATTENTION_OWNER`).
                 "status": "blocked" if blocked else (
-                    "pending" if any(c not in ("no_crm_contact", "document_pending_drive") for c in ordered) else "ok"),
+                    "pending" if any(ATTENTION_OWNER[c] == "person" for c in ordered) else "ok"),
                 # Open `crm.task` rows (W11), earliest due first. A case whose earliest open task
                 # is due after today is «En pausa hasta…» on the dashboard.
                 "open_tasks": tasks_by_opp.get(oid, []),

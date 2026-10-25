@@ -16,7 +16,7 @@ import { DecideCases } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { awaitsQuote, endOfDay, isFollowUpTask } from "../today";
-import { contactLine } from "../caseDisplay";
+import { contactLine, systemNotes } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
   HISTORICAL_STAGE_LABEL,
@@ -637,6 +637,7 @@ function OpportunityDrawer({
         aside={mayQuote && !card.closed_at ? <NewQuoteButton card={card} /> : null}
       >
         <QuoteList card={card} mayOpenCotizador={mayOpenCotizador} />
+        <SystemNotes card={card} />
       </Section>
 
       <Section title="Contacto">
@@ -686,6 +687,32 @@ function OpportunityDrawer({
       {/* Re-read when the case's newest note changes: a reminder from «Recordarme…». */}
       <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
     </Drawer>
+  );
+}
+
+/**
+ * What the system noted about the record, folded away: nothing here is for anyone to do (owner
+ * 2026-10-25 — «there's no button to fix it»), so it never reads as a task.
+ */
+function SystemNotes({ card }: { card: OpportunityCardData }) {
+  const notes = systemNotes(card);
+  if (!notes.length) return null;
+  return (
+    <details className="group mt-2 text-[12px] text-ink-muted" data-testid="case-system-notes">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-ink-faint hover:text-ink-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
+        <span aria-hidden="true" className="transition-transform group-open:rotate-90">›</span>
+        Notas del sistema ({notes.length})
+      </summary>
+      <ul className="mt-1.5 space-y-1 border-l border-line pl-3">
+        {notes.map((n) => (
+          <li key={n.code}>
+            {n.label}
+            {n.owner === "system" ? <span className="ml-1.5 text-[11px] text-good">· se resuelve solo</span> : null}
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 pl-3 text-[11px] text-ink-faint">No tienes que hacer nada con esto.</p>
+    </details>
   );
 }
 
