@@ -551,7 +551,7 @@ describe("V2 durable read boundary allowlist", () => {
       isAllowedUpstreamPath,
       marketingCommandMaxBytes,
     } = await import("./allowlist");
-    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(10);
+    expect(TENDER_COMMAND_POST_PATHS).toHaveLength(11);
     expect(isAllowedTenderCommandPostPath("/v2/commands/review-notice")).toBe(true);
     expect(isAllowedTenderCommandPostPath("/v2/commands/review-notice/")).toBe(false);
     expect(isAllowedPostPath("/v2/commands/review-notice")).toBe(true);
@@ -1330,7 +1330,7 @@ describe("«Prospectos» (spec 2026-10-23)", () => {
   it("posts the two commands with the tender guard and body limit, never as a read", async () => {
     const { isAllowedPostPath, isAllowedTenderCommandPostPath, isAllowedUpstreamPath, marketingCommandMaxBytes } =
       await import("./allowlist");
-    for (const path of ["/v2/commands/review-prospect", "/v2/commands/contact-prospect"]) {
+    for (const path of ["/v2/commands/review-prospect", "/v2/commands/contact-prospect", "/v2/commands/edit-prospect"]) {
       expect(isAllowedTenderCommandPostPath(path)).toBe(true);
       expect(isAllowedPostPath(path)).toBe(true);
       expect(isAllowedUpstreamPath(path)).toBe(false);
@@ -1338,6 +1338,14 @@ describe("«Prospectos» (spec 2026-10-23)", () => {
       expect(isAllowedPostPath(`${path}/`)).toBe(false);
     }
     expect(isAllowedPostPath("/v2/prospect-findings")).toBe(false);
+  });
+
+  it("forwards GET of «¿Ya lo tenemos?» by its exact path, never as a POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/lookup")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/lookup")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/workspace/lookup/")).toBe(false);
+    expect(isAllowedUpstreamPath("/v2/workspace/lookup/x")).toBe(false);
   });
 });
 

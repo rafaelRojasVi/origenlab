@@ -163,6 +163,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // captured mailbox. Same GET-only, operator-session rule as the reads above; it carries no
   // address and no message. Nothing under it is reachable.
   /^\/v2\/workspace\/mail-sync$/,
+  // «¿Ya lo tenemos?»: where a correo, name or domain already is (`?q=`). GET-only, operator
+  // session required; addresses masked by the API for a role that does not read them.
+  /^\/v2\/workspace\/lookup$/,
   // «Operaciones» (spec 2026-10-13): the state of each part of the system — mail sync, triage,
   // quote reading, Drive filing, the rules timer, the deployed version — and the last week of
   // rule actions. Same GET-only, operator-session rule; no address, subject or message body.
@@ -389,6 +392,8 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   // «Contactar» — its promotion into the CRM. Same session, role, key and size guard as the tenders.
   /^\/v2\/commands\/review-prospect$/,
   /^\/v2\/commands\/contact-prospect$/,
+  // «Editar» on a prospect (owner 2026-10-25): a person's correction to the card, same guard.
+  /^\/v2\/commands\/edit-prospect$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */

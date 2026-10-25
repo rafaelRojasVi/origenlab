@@ -370,3 +370,100 @@ def test_hosting_platform_parent_is_never_the_institution(client, db, operators)
     assert r.status_code == 200, r.text
     assert _one(db, "select name from crm.organization where id = %s", (r.json()["organization_id"],)) == (
         "Laboratorio Ficticio Alojado",)
+
+
+# ──────────────────────────────────────────────────────────── edit-prospect ──
+
+
+def test_edit_adds_the_found_email_and_contactar_uses_it(client, db, operators):
+    """Owner 2026-10-25: the person's email was found by hand — the card carries it, the legal trail
+    names where it came from, and «Contactar» creates the contact with it. The finding is untouched."""
+    rid = finding(db, org="Instituto Ficticio Editado", person="Persona Sin Correo")
+    r = _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": {
+        "email": "  Persona.Hallada@editado.example.test ", "email_source_note": "sitio del instituto",
+        "role": "Directora", "person_name": "Persona Sin Correo"}})
+    assert r.status_code == 200, r.text
+    assert r.json()["fields"] == ["email", "email_source_note", "role"]  # the unchanged name is not stored
+    assert _one(db, "select payload->>'email' from evidence.source_record where id = %s", (rid,)) == (None,)
+    card = client.get(f"/v2/prospect-findings/{rid}", headers={OPERATOR_EMAIL_HEADER: operators["sales"].email_norm}).json()
+    assert (card["email"], card["role"], card["email_source_note"]) == (
+        "persona.hallada@editado.example.test", "Directora", "sitio del instituto")
+    assert card["email_source_url"] is None and card["edited"]["by"] == "Operador sales"
+    r = _post(client, operators, "contact-prospect", {"finding_id": rid})
+    assert r.status_code == 200, r.text
+    assert _one(db, "select person_id::text from crm.contact_point where kind = 'email' and value_norm = %s",
+                ("persona.hallada@editado.example.test",)) == (r.json()["person_id"],)
+    assert _one(db, "select reason from crm.prospect_review where source_record_id = %s and verdict = 'contactar'",
+                (rid,)) == ("fuente: sitio del instituto",)
+
+
+def test_an_edited_email_is_classified_again(client, db, operators):
+    rid = finding(db, org="Instituto Reclasificado")
+    known_contact(db, "ya.conocida@reclasificado.example.test")
+    _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": {
+        "email": "ya.conocida@reclasificado.example.test", "email_source_url": "https://example.test/equipo"}})
+    card = client.get(f"/v2/prospect-findings/{rid}", headers={OPERATOR_EMAIL_HEADER: operators["sales"].email_norm}).json()
+    assert card["state"] == "known" and "El correo ya está en el CRM" in card["reasons"]
+
+
+def test_edit_refusals(client, db, operators):
+    rid = finding(db, email="con.correo@refusal.example.test")
+    for changes, code in (
+        ({"email": "otra@refusal.example.test"}, "email_source_required"),
+        ({"score": 99}, "invalid_field"),
+        ({"email": "no-es-correo"}, "invalid_field"),
+        ({"website": "ftp://x"}, "invalid_field"),
+        ({"organization_name": " "}, "invalid_field"),
+        ({"role": "Investigadora"}, "no_changes"),
+    ):
+        r = _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": changes})
+        assert r.status_code == 422, (changes, r.text)
+        assert r.json()["detail"]["code"] == code, (changes, r.text)
+    assert _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": {"role": "x"}},
+                 role="viewer").status_code == 403
+    verdict(db, operators, rid, "contactar", reason="fuente: x")
+    r = _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": {"role": "x"}})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "prospect_already_contacted"
+    assert _count(db, "select count(*) from crm.prospect_edit where source_record_id = %s", (rid,)) == 0
+
+
+def test_a_null_clears_a_field_and_the_later_correction_wins(client, db, operators):
+    rid = finding(db, email="limpiar@campos.example.test")
+    _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": {"unit": None, "phone": "+56 2 2222 0000"}})
+    _post(client, operators, "edit-prospect", {"finding_id": rid, "changes": {"phone": "+56 9 1111 0000",
+                                                                            "equipment": ["Balanzas", " ", "Hornos"]}})
+    card = client.get(f"/v2/prospect-findings/{rid}", headers={OPERATOR_EMAIL_HEADER: operators["sales"].email_norm}).json()
+    assert (card["unit"], card["phone"], card["equipment"]) == (None, "+56 9 1111 0000", ["Balanzas", "Hornos"])
+    assert card["email_source_url"] == "https://example.test/paper"  # the email was not edited
+
+
+# ──────────────────────────────────────────────────────────── «¿Ya lo tenemos?» ──
+
+
+def test_lookup_finds_an_email_everywhere_it_is(db, operators):
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+    from test_v2_prospect_findings_reads_db import mailed
+
+    repo = CrmWorkspaceRepository(connect=psycopg.connect, dsn=runtime_dsn(db))
+    oid = organization(db, "Universidad Ficticia Buscada", "buscada.example.test")
+    known_contact(db, "alguien@buscada.example.test")
+    mailed(db, "alguien@buscada.example.test", times=2)
+    blocked(db, "alguien@buscada.example.test")
+    rid = finding(db, email="alguien@buscada.example.test", org="Universidad Ficticia Buscada")
+    out = repo.lookup("  Alguien@Buscada.example.test ")
+    assert out["kind"] == "email" and out["found"] is True
+    assert [o["organization_id"] for o in out["organizations"]] == [oid], (oid, out["organizations"], out["people"])
+    assert out["mail"]["messages"] == 2
+    assert [c["kind"] for c in out["controls"]] == ["block"]
+    assert rid in [p["finding_id"] for p in out["prospects"]]
+
+    by_domain = repo.lookup("@buscada.example.test")
+    assert by_domain["kind"] == "domain" and by_domain["query"] == "buscada.example.test"
+    assert "alguien@buscada.example.test" in [a["email"] for a in by_domain["addresses"]]
+    assert by_domain["mail"]["messages"] >= 2
+
+    by_name = repo.lookup("ficticia buscada")
+    assert by_name["kind"] == "name" and oid in [o["organization_id"] for o in by_name["organizations"]]
+
+    assert repo.lookup("nadie@ninguno-ficticio.invalid")["found"] is False
+    assert repo.lookup("ab")["kind"] is None

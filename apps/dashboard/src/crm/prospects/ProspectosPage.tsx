@@ -5,8 +5,10 @@ import { Button, EmptyState, PageHeader, ResourceGate, Skeleton, toast } from ".
 import { useResource } from "../useResource";
 import { ContactarDialog } from "./ContactarDialog";
 import { DescartarDialog, MasTardeDialog } from "./DecisionDialogs";
+import { EditProspectDrawer } from "./EditProspectDrawer";
 import { ProspectCard, displayName } from "./ProspectCard";
 import { ProspectDetail } from "./ProspectDetail";
+import { SystemSearch } from "./SystemSearch";
 import {
   ambiguousCandidates,
   contactProspect,
@@ -103,6 +105,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState<ProspectItem[] | null>(null);
+  const [editing, setEditing] = useState<ProspectItem | null>(null);
   const [postponing, setPostponing] = useState<ProspectItem[] | null>(null);
   const [choosing, setChoosing] = useState<{ item: ProspectItem; candidates: OrganizationCandidate[] } | null>(null);
   const [openId, setOpenId] = useState<string | null>(id);
@@ -208,6 +211,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-4 py-5 sm:px-6">
       <PageHeader title="Prospectos" subtitle="Gente nueva que podría comprarnos. Revisa, contacta o descarta." />
+      <SystemSearch onOpenProspect={open} />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={5} cards />}>
         {(list) => {
           const counts: ProspectCounts = list.counts;
@@ -265,6 +269,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
                       onContact={() => void contact(item)}
                       onLater={() => setPostponing([item])}
                       onDiscard={() => setDiscarding([item])}
+                      onEdit={() => setEditing(item)}
                     />
                   ))}
                 </div>
@@ -293,6 +298,10 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
           onClose={() => setChoosing(null)} onChoose={(choice) => void contact(choosing.item, choice)} />
       ) : null}
       {openId ? <ProspectDetail id={openId} onClose={() => open(null)} /> : null}
+      {editing ? (
+        <EditProspectDrawer item={editing} onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); reload(); }} />
+      ) : null}
     </div>
   );
 }

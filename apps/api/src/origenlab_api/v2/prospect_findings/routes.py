@@ -7,6 +7,7 @@
 | `GET /v2/prospect-findings/{id}/logo` | the organization's logo, stored by the worker (never hot-linked) |
 | `POST /v2/commands/review-prospect` | «Más tarde», «Descartar» or «Deshacer» (`reabrir`) |
 | `POST /v2/commands/contact-prospect` | «Contactar»: the promotion into the CRM (`commands.py`) |
+| `POST /v2/commands/edit-prospect` | «Editar»: a person's correction to the card (`crm.prospect_edit`) |
 
 Any signed-in operator reads; the commands are behind `Deciding` (a `viewer` is 403), an
 `Idempotency-Key` and one `CommandTransaction`. A blocked finding is never listed and its page is 404. Not to be
@@ -26,11 +27,14 @@ from origenlab_api.v2.contact_redaction import ContactRedactingRoute
 from origenlab_api.v2.commands import CommandRefused, request_digest, require_idempotency_key
 from origenlab_api.v2.prospect_findings.commands import (
     CONTACT_PROSPECT,
+    EDIT_PROSPECT,
     REVIEW_PROSPECT,
     ContactProspectBody,
+    EditProspectBody,
     ReviewProspectBody,
     V2ProspectCommandRepository,
     prepare_contact_prospect,
+    prepare_edit_prospect,
     prepare_review_prospect,
 )
 from origenlab_api.v2.prospect_findings.reads import PAGE, ProspectFindingReadRepository
@@ -116,3 +120,9 @@ def review_prospect_route(body: ReviewProspectBody, operator: Deciding, repo: Co
 def contact_prospect_route(body: ContactProspectBody, operator: Deciding, repo: CommandRepo,
                            idempotency_key: IdempotencyKey = None) -> dict[str, Any]:
     return _run(CONTACT_PROSPECT, prepare_contact_prospect, body, operator, repo, idempotency_key)
+
+
+@prospect_command_router.post("/edit-prospect")
+def edit_prospect_route(body: EditProspectBody, operator: Deciding, repo: CommandRepo,
+                        idempotency_key: IdempotencyKey = None) -> dict[str, Any]:
+    return _run(EDIT_PROSPECT, prepare_edit_prospect, body, operator, repo, idempotency_key)

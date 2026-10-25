@@ -183,9 +183,13 @@ insert into expected values
     -- 20261023100000: crm.prospect_review — the human verdict on a prospect finding; append-only
     -- (api inserts, worker reads). No UPDATE or DELETE grant on either role.
     ('crm', 'prospect_review', 'origenlab_api', 'SI', null, 'SI'),
-    ('crm', 'prospect_review', 'origenlab_worker', 'S', null, 'S');
+    ('crm', 'prospect_review', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261025100000: crm.prospect_edit — a person's correction to a prospect finding; append-only
+    -- (api inserts, worker reads). No UPDATE or DELETE grant on either role.
+    ('crm', 'prospect_edit', 'origenlab_api', 'SI', null, 'SI'),
+    ('crm', 'prospect_edit', 'origenlab_worker', 'S', null, 'S');
 
-select is((select count(*)::int from expected), 122, 'the matrix covers all 61 tables for both runtime roles');
+select is((select count(*)::int from expected), 124, 'the matrix covers all 62 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

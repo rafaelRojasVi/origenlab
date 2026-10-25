@@ -15,6 +15,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from origenlab_api.v2.prospect_findings.classify import classify_many
+from origenlab_api.v2.prospect_findings.commands import apply_edits
 
 SANTIAGO = ZoneInfo("America/Santiago")
 View = Literal["nuevos", "conocidos", "mas_tarde", "contactados", "descartados"]
@@ -24,13 +25,20 @@ PAGE = 25
 _FINDINGS = """
 select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and s.payload->'logo' <> 'null'::jsonb) as has_logo,
        s.acquired_at,
-       r.verdict, r.reason, r.remind_on, r.reviewed_at
+       r.verdict, r.reason, r.remind_on, r.reviewed_at,
+       e.edits, e.edited_at, e.edited_by
   from evidence.source_record s
   left join lateral (
         select x.verdict, x.reason, x.remind_on, x.reviewed_at
           from crm.prospect_review x
          where x.source_record_id = s.id
          order by x.reviewed_at desc, x.id desc limit 1) r on true
+  -- A person's corrections (`crm.prospect_edit`), oldest first; `apply_edits` reads them over the payload.
+  left join lateral (
+        select jsonb_agg(x.changes order by x.edited_at, x.id) as edits, max(x.edited_at) as edited_at,
+               (array_agg(op.display_name order by x.edited_at desc, x.id desc))[1] as edited_by
+          from crm.prospect_edit x left join platform.operator op on op.id = x.edited_by_operator_id
+         where x.source_record_id = s.id) e on true
  where s.kind = 'prospect_finding' and not s.is_quarantined and s.superseded_by_source_record_id is null
 """
 _HISTORY = """
@@ -58,6 +66,7 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
         "fund_label": p.get("fund_label"), "amount_label": p.get("amount_label"), "awarded_on": p.get("awarded_on"),
         "why_now": p.get("why_now"), "equipment": list(p.get("equipment") or []), "email": p.get("email"),
         "email_source_url": p.get("email_source_url"), "email_source_year": p.get("email_source_year"),
+        "email_source_note": p.get("email_source_note"),
         "phone": p.get("phone"), "links": {k: p.get(k) for k in _LINKS}, "has_logo": bool(row.get("has_logo")),
         "confidence": p.get("confidence"), "score": int(p.get("score") or 0), "state": c["state"],
         "reasons": c["reasons"], "organization_candidates": c["organization_candidates"],
@@ -66,6 +75,9 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
             "reviewed_at": _instant(row["reviewed_at"])},
         "returns_today": verdict == "mas_tarde" and row["remind_on"] is not None and row["remind_on"] <= today,
         "acquired_at": _instant(row["acquired_at"]),
+        # Who last corrected the card, and when (`crm.prospect_edit`); null when nobody has.
+        "edited": None if row.get("edited_at") is None else {
+            "at": _instant(row["edited_at"]), "by": row.get("edited_by")},
     }
 
 
@@ -147,6 +159,8 @@ class ProspectFindingReadRepository:
     def _classified(self, cur: Any, extra_sql: str = "", params: Any = None) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         today = datetime.now(SANTIAGO).date()
         rows = self._rows(cur, _FINDINGS + extra_sql, params)
+        for r in rows:
+            r["payload"] = apply_edits(r["payload"] or {}, r.get("edits"))
         found = classify_many(cur, [{
             "email": (r["payload"] or {}).get("email"),
             "organization_name": (r["payload"] or {}).get("organization_name") or "",
