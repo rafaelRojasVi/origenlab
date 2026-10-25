@@ -26,6 +26,8 @@ def test_both_tasks_are_on_the_triage_queue_and_the_sweep_runs_every_minute(app)
     periodic = sorted(built.periodic_registry.periodic_tasks.values(), key=lambda p: p.periodic_id)
     assert [(p.task.name, p.cron, p.periodic_id) for p in periodic] == [
         ("bid_preparation_sweep", "* * * * *", "bids"), ("tender_discovery", "*/15 * * * *", "discovery"),
+        ("prospect_daily_enqueue", "0 9 * * *", "prospect_daily"),
+        ("prospect_search_sweep", "* * * * *", "prospect_sweep"),
         ("sweep_untriaged", "* * * * *", "sweep")]
 
 
@@ -37,14 +39,22 @@ def test_each_child_app_carries_only_its_own_queue_so_no_periodic_job_waits_unse
         return {name for name in app.tasks if "builtin" not in name}
 
     assert own(task_queue.app) == {"triage_message", "sweep_untriaged"}
-    assert own(task_queue.tender_app) == {"bid_preparation_sweep", "tender_discovery"}
-    bids, discovery = sorted(task_queue.tender_app.periodic_registry.periodic_tasks.values(),
-                             key=lambda p: p.periodic_id)
+    assert own(task_queue.tender_app) == {"bid_preparation_sweep", "tender_discovery",
+                                          "prospect_daily_enqueue", "prospect_search_sweep"}
+    by_id = {p.periodic_id: p for p in task_queue.tender_app.periodic_registry.periodic_tasks.values()}
+    bids = by_id["bids"]
+    discovery = by_id["discovery"]
+    prospect_daily = by_id["prospect_daily"]
+    prospect_sweep = by_id["prospect_sweep"]
     assert (bids.periodic_id, bids.task.queue) == ("bids", "tenders")
     assert (discovery.periodic_id, discovery.task.queue) == ("discovery", "tenders")
+    assert (prospect_daily.periodic_id, prospect_daily.task.queue) == ("prospect_daily", "tenders")
+    assert (prospect_sweep.periodic_id, prospect_sweep.task.queue) == ("prospect_sweep", "tenders")
     # One waiting sweep at most, even if nobody serves the queue for a while.
     assert bids.task.queueing_lock == task_queue.BID_SWEEP_LOCK
     assert discovery.task.queueing_lock == task_queue.DISCOVERY_LOCK
+    assert prospect_daily.task.queueing_lock == task_queue.PROSPECT_DAILY_LOCK
+    assert prospect_sweep.task.queueing_lock == task_queue.PROSPECT_SWEEP_LOCK
 
 
 def test_the_bid_sweep_refuses_to_run_before_the_cli_configured_it(monkeypatch) -> None:

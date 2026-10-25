@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 Source = Literal["fondequip", "fondecyt", "fondef", "industria_sag", "industria_inn", "manual"]
 SOURCES: frozenset[str] = frozenset({"fondequip", "fondecyt", "fondef", "industria_sag", "industria_inn", "manual"})
+SALUTATIONS: frozenset[str] = frozenset({"HOMBRE", "MUJER", ""})
 CONFIDENCES: frozenset[str] = frozenset({"alta", "media", "baja"})
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _LINK_FIELDS = ("email_source_url", "website", "linkedin_person", "linkedin_org", "orcid", "scholar")
@@ -52,6 +53,11 @@ class ProspectFinding:
     sources: tuple[tuple[str, str], ...]
     confidence: Literal["alta", "media", "baja"]
     score: int
+    # Optional ANID-specific fields (present only for daily-search findings)
+    salutation_sex: str | None = None       # HOMBRE / MUJER from ANID SEXO column
+    program: str | None = None             # PROGRAMA (fondecyt/fondef/fondequip)
+    keywords: tuple[str, ...] = ()          # PALABRAS_CLAVES (|'-separated)
+    hidden_reason: str | None = None        # 'no_calza' when fit < threshold
 
 
 def _text(raw: dict[str, Any], key: str) -> str | None:
@@ -106,6 +112,10 @@ def parse_finding(raw: dict[str, Any]) -> ProspectFinding:
         raise FindingRefused("link_not_http")
     awarded = _text(raw, "awarded_on")
     year = raw.get("email_source_year")
+    salutation = (_text(raw, "salutation_sex") or "").upper()
+    if salutation and salutation not in SALUTATIONS:
+        salutation = None  # ignore unknown values
+    hidden_reason = _text(raw, "hidden_reason")
     return ProspectFinding(
         source=source, external_id=external_id, person_name=_text(raw, "person_name"), role=_text(raw, "role"),
         organization_name=organization_name, unit=_text(raw, "unit"), email=email,
@@ -116,6 +126,10 @@ def parse_finding(raw: dict[str, Any]) -> ProspectFinding:
         amount_label=_text(raw, "amount_label"), awarded_on=date.fromisoformat(awarded) if awarded else None,
         why_now=why_now, equipment=tuple(str(e).strip() for e in raw.get("equipment") or () if str(e).strip()),
         sources=sources, confidence=confidence, score=max(0, min(int(raw.get("score") or 0), 100)),
+        salutation_sex=salutation or None,
+        program=_text(raw, "program"),
+        keywords=tuple(str(k).strip() for k in raw.get("keywords") or () if str(k).strip()),
+        hidden_reason=hidden_reason,
     )
 
 

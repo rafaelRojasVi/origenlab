@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMayRunCaseCommands } from "../caseCommands";
 import type { CrmSection } from "../crmRoute";
 import { Button, EmptyState, PageHeader, ResourceGate, Skeleton, toast } from "../ui";
@@ -13,12 +13,15 @@ import {
   ambiguousCandidates,
   contactProspect,
   fetchProspects,
+  fetchSearchStatus,
   prospectRefusal,
+  requestProspectSearch,
   reviewProspect,
   type OrganizationCandidate,
   type ProspectCounts,
   type ProspectItem,
   type ProspectList,
+  type ProspectSearchStatus,
   type ProspectView,
 } from "./prospectApi";
 import { santiagoDay } from "./santiagoDate";
@@ -89,6 +92,75 @@ function matches(item: ProspectItem, origin: Origin, reach: Reach): boolean {
   if (reach === "con_correo" && !item.email) return false;
   if (reach === "sin_correo" && item.email) return false;
   return true;
+}
+
+/** «Búsqueda diaria» header bar: status, «Buscar ahora» button, poll while running. */
+function DailySearchHeader({ canDecide }: { canDecide: boolean }) {
+  const [status, setStatus] = useState<ProspectSearchStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await fetchSearchStatus();
+      setStatus(s);
+      return s;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Initial load + poll every 8 s while running
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(async () => {
+      const s = await refresh();
+      if (s && !s.running) {
+        clearInterval(id);
+      }
+    }, 8_000);
+    pollRef.current = id;
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  // When a manual search is requested we start polling immediately
+  const startSearch = async () => {
+    setBusy(true);
+    try {
+      const r = await requestProspectSearch();
+      if (r.queued) {
+        toast("Búsqueda iniciada");
+        void refresh();
+      } else {
+        toast("Ya hay una búsqueda en curso", "warn");
+      }
+    } catch {
+      toast("No se pudo iniciar la búsqueda", "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const run = status?.last_run;
+  const running = status?.running ?? false;
+  const finishedAt = run?.finished_at ? run.finished_at.slice(0, 10) : null;
+  const added = run?.counts?.added ?? null;
+
+  let subtitle = "Búsqueda diaria 06:00 (Santiago)";
+  if (running) subtitle += " · En ejecución…";
+  else if (finishedAt) subtitle += ` · última: ${finishedAt}${added != null ? `, ${added} nuevos` : ""}`;
+  if (status != null) subtitle += ` · quedan ~${status.unreviewed} por revisar`;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-line bg-canvas-raised px-4 py-3">
+      <p className="text-sm text-ink-muted">{subtitle}</p>
+      {canDecide ? (
+        <Button onClick={() => void startSearch()} busy={busy || running} busyLabel="Buscando…">
+          Buscar ahora
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 export function ProspectosPage({ id = null, navigate, now }: { id?: string | null; navigate: Navigate; now?: Date }) {
@@ -211,6 +283,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-4 py-5 sm:px-6">
       <PageHeader title="Prospectos" subtitle="Gente nueva que podría comprarnos. Revisa, contacta o descarta." />
+      <DailySearchHeader canDecide={canDecide} />
       <SystemSearch onOpenProspect={open} />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={5} cards />}>
         {(list) => {

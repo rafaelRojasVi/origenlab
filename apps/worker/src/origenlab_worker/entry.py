@@ -20,13 +20,16 @@ from collections.abc import Mapping, Sequence
 #: Commands that run until SIGTERM, each importing only what it runs, and the tender child's
 #: one-shot discovery run (`triage_cli.discovery_in_subprocess`).
 LIGHT = frozenset({"mail-worker", "triage-worker", "capture-worker", "triage-child", "tender-child",
-                   "tender-discovery"})
+                   "tender-discovery", "prospect-search"})
 
 
 def _run(command: str, env: Mapping[str, str], started: float) -> int:
     if command == "tender-discovery":
         from origenlab_worker.triage_cli import run_tender_discovery_once
         return run_tender_discovery_once(env)
+    if command == "prospect-search":
+        from origenlab_worker.triage_cli import run_prospect_search_once
+        return run_prospect_search_once(env)
     if command == "triage-child":  # pragma: no cover - supervised until SIGTERM
         from origenlab_worker.triage_cli import run_triage_worker
         return run_triage_worker(env, started)

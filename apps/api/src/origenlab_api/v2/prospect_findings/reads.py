@@ -214,3 +214,54 @@ class ProspectFindingReadRepository:
         if not logo or logo.get("content_type") not in {"image/png", "image/jpeg", "image/webp", "image/x-icon"}:
             return None
         return logo["content_type"], base64.b64decode(logo["b64"])
+
+    def search_status(self) -> dict[str, Any]:
+        """Returns the daily search status for the Prospectos header.
+
+        ``last_run`` is the most recent finished (done/failed) run, or None.
+        ``running`` is True when a run with status='running' exists.
+        ``unreviewed`` is the count of visible unreviewed prospects (the queue level).
+        """
+        _LAST_RUN = """
+            select id::text, trigger, status, started_at, finished_at, counts, error, requested_at
+              from evidence.prospect_search_run
+             where status in ('done', 'failed')
+             order by finished_at desc nulls last, requested_at desc limit 1
+        """
+        _RUNNING = "select 1 from evidence.prospect_search_run where status in ('running', 'queued') limit 1"
+        _UNREVIEWED = """
+            select count(*) from evidence.source_record s
+              left join lateral (
+                  select verdict from crm.prospect_review
+                   where source_record_id = s.id
+                   order by reviewed_at desc, id desc limit 1) r on true
+             where s.kind = 'prospect_finding' and not s.is_quarantined
+               and s.superseded_by_source_record_id is null
+               and (r.verdict is null or r.verdict = 'reabrir')
+               and (s.payload->>'hidden_reason') is null
+        """
+        with self._read() as cur:
+            cur.execute(_LAST_RUN)
+            run_row = cur.fetchone()
+            if run_row:
+                names = [d.name for d in cur.description]
+                run_dict = dict(zip(names, run_row, strict=True))
+            else:
+                run_dict = None
+            cur.execute(_RUNNING)
+            is_running = cur.fetchone() is not None
+            cur.execute(_UNREVIEWED)
+            unreviewed = int(cur.fetchone()[0])
+        if run_dict is None:
+            last_run = None
+        else:
+            last_run = {
+                "id": run_dict["id"],
+                "trigger": run_dict["trigger"],
+                "status": run_dict["status"],
+                "started_at": _instant(run_dict["started_at"]),
+                "finished_at": _instant(run_dict["finished_at"]),
+                "counts": run_dict["counts"] or {},
+                "error": run_dict["error"],
+            }
+        return {"last_run": last_run, "running": is_running, "unreviewed": unreviewed}

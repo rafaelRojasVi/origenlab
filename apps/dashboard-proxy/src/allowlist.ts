@@ -143,6 +143,7 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // full profile and its logo (bytes the worker stored; never the organization's own site). GET-only,
   // any signed-in operator; a UUID-shaped segment, no other tail.
   /^\/v2\/prospect-findings$/,
+  /^\/v2\/prospect-findings\/search-status$/,
   /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/prospect-findings\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/logo$/,
   // The bidder's data (spec §6.2-§6.3): the profile with its history and live documents, and one
@@ -394,6 +395,8 @@ export const TENDER_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/contact-prospect$/,
   // «Editar» on a prospect (owner 2026-10-25): a person's correction to the card, same guard.
   /^\/v2\/commands\/edit-prospect$/,
+  // «Buscar ahora» (phase 2 2026-10-26): enqueue a manual daily prospect search run.
+  /^\/v2\/commands\/request-prospect-search$/,
 ];
 
 /** A tender command is a code or a link, a typed buyer, UUIDs and short texts. */
@@ -426,7 +429,7 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
  * contact_point, classification and product-line links, supplier-candidate resolution, and
  * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
- * Twenty-nine exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
+ * Thirty exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
  * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-

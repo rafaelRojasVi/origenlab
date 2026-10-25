@@ -79,7 +79,7 @@ def test_record_usage_records_each_billed_attempt_at_its_own_model():
     cost = record_usage(cur, feature="licitaciones", step="read", model="claude-opus-5-5", usage=usage,
                         bid_preparation_id=None, served_model="claude-opus-4-8")
     assert cost == Decimal("14") + Decimal("30")  # opus 5.5: 4 + 10; opus 4.8: 5 + 25
-    assert [(row[1], row[8]) for row in cur.inserts] == [("claude-opus-5-5", Decimal("14")),
+    assert [(row[1], row[9]) for row in cur.inserts] == [("claude-opus-5-5", Decimal("14")),
                                                           ("claude-opus-4-8", Decimal("30"))]
 
 
@@ -116,7 +116,7 @@ def test_record_usage_missing_tokens_count_zero_and_served_model_priced():
     usage = SimpleNamespace(input_tokens=1_000_000, output_tokens=None)
     cost = record_usage(cur, feature="licitaciones", step="read", model="claude-haiku-5-5", usage=usage,
                         bid_preparation_id=None, served_model="claude-opus-5-5")
-    assert cost == Decimal("4") and cur.inserted[1] == "claude-opus-5-5" and cur.inserted[5] == 0
+    assert cost == Decimal("4") and cur.inserted[1] == "claude-opus-5-5" and cur.inserted[6] == 0
 
 
 def test_spend_summary():

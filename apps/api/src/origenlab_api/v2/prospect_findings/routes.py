@@ -5,9 +5,11 @@
 | `GET /v2/prospect-findings?view=&limit=&offset=` | one view of the classified findings and the counters |
 | `GET /v2/prospect-findings/{id}` | one finding's full profile and its verdict history |
 | `GET /v2/prospect-findings/{id}/logo` | the organization's logo, stored by the worker (never hot-linked) |
+| `GET /v2/prospect-findings/search-status` | last run summary, running flag, unreviewed count |
 | `POST /v2/commands/review-prospect` | «Más tarde», «Descartar» or «Deshacer» (`reabrir`) |
 | `POST /v2/commands/contact-prospect` | «Contactar»: the promotion into the CRM (`commands.py`) |
 | `POST /v2/commands/edit-prospect` | «Editar»: a person's correction to the card (`crm.prospect_edit`) |
+| `POST /v2/commands/request-prospect-search` | «Buscar ahora»: enqueue a manual prospect search run |
 
 Any signed-in operator reads; the commands are behind `Deciding` (a `viewer` is 403), an
 `Idempotency-Key` and one `CommandTransaction`. A blocked finding is never listed and its page is 404. Not to be
@@ -80,6 +82,12 @@ def get_prospect_finding(finding_id: str, _: Operator, repo: ReadRepo) -> dict[s
     return page
 
 
+@prospect_read_router.get("/search-status")
+def get_search_status(_: Operator, repo: ReadRepo) -> dict[str, Any]:
+    """Last run summary, running/queued flag, and unreviewed count — for the Prospectos header."""
+    return repo.search_status()
+
+
 @prospect_read_router.get("/{finding_id}/logo")
 def get_prospect_logo(finding_id: str, _: Operator, repo: ReadRepo) -> Response:
     logo = repo.logo(_finding_id(finding_id))
@@ -126,3 +134,29 @@ def contact_prospect_route(body: ContactProspectBody, operator: Deciding, repo: 
 def edit_prospect_route(body: EditProspectBody, operator: Deciding, repo: CommandRepo,
                         idempotency_key: IdempotencyKey = None) -> dict[str, Any]:
     return _run(EDIT_PROSPECT, prepare_edit_prospect, body, operator, repo, idempotency_key)
+
+
+@prospect_command_router.post("/request-prospect-search")
+def request_prospect_search_route(operator: Deciding, repo: CommandRepo) -> dict[str, Any]:
+    """«Buscar ahora»: enqueue a manual prospect search run.
+
+    Returns ``{"queued": true, "run_id": "<uuid>"}`` when a new run was enqueued, or
+    ``{"queued": false, "reason": "already_running"}`` when one is already active.
+    Idempotency-Key is not required here — the partial unique index is the dedup guard.
+    """
+    _INSERT_MANUAL = """
+        insert into evidence.prospect_search_run
+               (trigger, requested_by_operator_id, status)
+        values ('manual', %s::uuid, 'queued')
+        on conflict do nothing
+        returning id::text
+    """
+    try:
+        with repo._write() as cur:  # noqa: SLF001 — intentional: same pattern as execute()
+            cur.execute(_INSERT_MANUAL, (operator.operator_id,))
+            row = cur.fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"code": "db_error", "message": type(exc).__name__}) from exc
+    if row is None:
+        return {"queued": False, "reason": "already_running"}
+    return {"queued": True, "run_id": row[0]}

@@ -164,6 +164,35 @@ def licitaciones_ia_card(f: Mapping[str, Any]) -> dict[str, Any]:
     return card("licitaciones_ia", "Licitaciones IA", status, summary, facts=facts)
 
 
+def prospectos_card(f: Mapping[str, Any]) -> dict[str, Any]:
+    """Daily ANID prospect search status and model spend (Operaciones card)."""
+    spent, cap = Decimal(str(f.get("spent_usd") or 0)), Decimal(str(f.get("cap_usd") or 0))
+    cap_text = f"US$ {int(cap)}" if cap == cap.to_integral() else _usd(cap)
+    if cap <= spent:
+        status = "bad"
+        summary = ("Tope mensual alcanzado: la búsqueda de prospectos se detuvo hasta el 1 de "
+                   f"{_next_month_name(f['month'])}.")
+    else:
+        status = "warn" if spent >= cap * LICITACIONES_WARN_FRACTION else "ok"
+        summary = f"{_usd(spent)} de {cap_text} este mes"
+    run = f.get("last_run") or {}
+    run_status = run.get("status", "sin datos")
+    run_label = {"done": "Completada", "failed": "Falló"}.get(run_status, run_status)
+    run_finished = run.get("finished_at") or run.get("started_at")
+    run_counts = run.get("counts") or {}
+    facts: list[dict[str, Any]] = []
+    if run_finished:
+        date_part = str(run_finished)[:10] if run_finished else ""
+        facts.append(_fact("Última búsqueda", f"{run_label} {date_part}"))
+        if run_counts.get("added"):
+            facts.append(_fact("Prospectos añadidos (última)", int(run_counts["added"])))
+    if f.get("running"):
+        facts.append(_fact("Estado", "En ejecución..."))
+    facts.append(_fact("Por revisar", int(f.get("unreviewed") or 0)))
+    facts.append(_fact("Añadidos este mes", int(f.get("added_month") or 0)))
+    return card("prospectos_ia", "Prospectos IA", status, summary, facts=facts)
+
+
 def version_card(commit: str | None) -> dict[str, Any]:
     if not commit:
         return card("version", "Versión", "info", "Versión no informada (fuera de Render)")
@@ -390,6 +419,58 @@ def _read_licitaciones(cur: Any) -> dict[str, Any]:
                          for step, _ in _STEP_LABEL}}
 
 
+def _read_prospectos(cur: Any) -> dict[str, Any]:
+    """Facts for the Prospectos Operaciones card: last run, running flag, unreviewed count and spend."""
+    from origenlab_api.v2.model_spend import FEATURE_PROSPECTOS, month_window, spend_summary
+
+    cur.execute("select now()")
+    now = cur.fetchone()[0]
+    summary = spend_summary(cur, FEATURE_PROSPECTOS, now)
+    start, end = month_window(now)
+
+    _LAST_RUN = """
+        select id::text, trigger, status, started_at, finished_at, counts, error
+          from evidence.prospect_search_run
+         where status in ('done', 'failed')
+         order by finished_at desc nulls last, requested_at desc limit 1
+    """
+    _RUNNING = "select 1 from evidence.prospect_search_run where status in ('running', 'queued') limit 1"
+    _UNREVIEWED = """
+        select count(*) from evidence.source_record s
+          left join lateral (
+              select verdict from crm.prospect_review
+               where source_record_id = s.id
+               order by reviewed_at desc, id desc limit 1) r on true
+         where s.kind = 'prospect_finding' and not s.is_quarantined
+           and s.superseded_by_source_record_id is null
+           and (r.verdict is null or r.verdict = 'reabrir')
+           and (s.payload->>'hidden_reason') is null
+    """
+    cur.execute(_LAST_RUN)
+    run_row = cur.fetchone()
+    run_names = [d.name for d in cur.description] if run_row else []
+    cur.execute(_RUNNING)
+    is_running = cur.fetchone() is not None
+    cur.execute(_UNREVIEWED)
+    unreviewed = int(cur.fetchone()[0])
+    cur.execute("select count(*) from evidence.source_record where kind = 'prospect_finding' "
+                "and not is_quarantined and superseded_by_source_record_id is null "
+                "and acquired_at >= %s and acquired_at < %s", (start, end))
+    added_month = int(cur.fetchone()[0])
+    last_run = (dict(zip(run_names, run_row, strict=True)) if run_row else None)
+    return {
+        **summary,
+        "last_run": None if last_run is None else {
+            "id": last_run["id"], "trigger": last_run["trigger"], "status": last_run["status"],
+            "started_at": _iso(last_run["started_at"]), "finished_at": _iso(last_run["finished_at"]),
+            "counts": last_run["counts"] or {}, "error": last_run["error"],
+        },
+        "running": is_running,
+        "unreviewed": unreviewed,
+        "added_month": added_month,
+    }
+
+
 def read_operation_facts(cur: Any) -> dict[str, Any]:
     """Every fact the cards classify, from one read-only transaction."""
     cur.execute(_MAILBOX_SQL)
@@ -444,6 +525,7 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
     cur.execute(_COUNTS_SQL)
     no_institution, por_confirmar = cur.fetchone()
     licitaciones = _read_licitaciones(cur)
+    prospectos = _read_prospectos(cur)
     return {
         "correo": {"authorization_state": mailbox[0] if mailbox else None,
                    "last_synced_at": _iso(mailbox[1]) if mailbox else None,
@@ -456,6 +538,7 @@ def read_operation_facts(cur: Any) -> dict[str, Any]:
         "drive": {"pending": int(d_pending or 0), "pending_over_a_day": int(d_late or 0),
                   "today": int(d_today or 0), "newest_at": _iso(d_newest), "events": []},
         "licitaciones": licitaciones,
+        "prospectos": prospectos,
         "actions": actions,
         "sent_quotes_without_case": sent_quotes,
         "sent_quotes_unrecorded_on_case": unrecorded_on_case,
@@ -472,6 +555,8 @@ def build_operations(facts: Mapping[str, Any], generated_at: str) -> dict[str, A
              cotizaciones_card(facts["cotizaciones"]), drive_card(facts["drive"])]
     if facts.get("licitaciones"):
         cards.append(licitaciones_ia_card(facts["licitaciones"]))
+    if facts.get("prospectos"):
+        cards.append(prospectos_card(facts["prospectos"]))
     return {
         "generated_at": generated_at,
         "cards": cards,

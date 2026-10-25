@@ -81,6 +81,22 @@ export interface ProspectDetailData extends ProspectItem {
 
 export const PAGE_SIZE = 25;
 
+export interface ProspectSearchRun {
+  id: string;
+  trigger: "daily" | "manual";
+  status: "done" | "failed";
+  started_at: string | null;
+  finished_at: string | null;
+  counts: { added?: number; skipped?: number; no_email?: number; low_fit?: number; pool_left?: number; error?: string };
+  error: string | null;
+}
+
+export interface ProspectSearchStatus {
+  last_run: ProspectSearchRun | null;
+  running: boolean;
+  unreviewed: number;
+}
+
 /** A fresh key for one command attempt; the same attempt retried keeps it. */
 export function newProspectCommandKey(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -162,3 +178,12 @@ export const editProspect = (
   body: { finding_id: string; changes: ProspectChanges },
   idempotencyKey: string = newProspectCommandKey(),
 ) => post("/v2/commands/edit-prospect", body, idempotencyKey);
+
+/** «Buscar ahora» status header: last run, running flag, unreviewed count. */
+export const fetchSearchStatus = () =>
+  fetchJsonGet<ProspectSearchStatus>(operatorApiUrl("/v2/prospect-findings/search-status"));
+
+/** «Buscar ahora»: enqueue a manual search run. Returns `{queued, run_id?}`. */
+export const requestProspectSearch = (
+  idempotencyKey: string = newProspectCommandKey(),
+) => post("/v2/commands/request-prospect-search", {}, idempotencyKey) as Promise<{ queued: boolean; run_id?: string; reason?: string }>;

@@ -44,9 +44,14 @@ def _payload(f: ProspectFinding, logo: tuple[str, bytes] | None) -> dict[str, An
     body = asdict(f)
     body["awarded_on"] = f.awarded_on.isoformat() if f.awarded_on else None
     body["equipment"] = list(f.equipment)
+    body["keywords"] = list(f.keywords)
     body["sources"] = [[fact, url] for fact, url in f.sources]
     body["logo"] = ({"content_type": logo[0], "b64": base64.b64encode(logo[1]).decode("ascii")}
                     if logo else None)
+    # Strip None optional fields to keep payloads compact; hidden_reason kept when set
+    for key in ("salutation_sex", "program", "hidden_reason"):
+        if body.get(key) is None:
+            body.pop(key, None)
     return body
 
 

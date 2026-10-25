@@ -89,6 +89,9 @@ class QueueContext:
     bid_sweep: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
     #: The tender child's «En Mercado Público» run (`triage_cli.discovery_for`): returns counts.
     discovery: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
+    #: The prospect search sweep (`triage_cli.run_tender_worker` sets it): claims and runs a queued
+    #: prospect search run, returns counts. None means the feature is off.
+    prospect_search: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
     log: Callable[[dict[str, Any]], None] = lambda event: print(json.dumps(event, sort_keys=True), file=sys.stdout,
                                                                   flush=True)
 
@@ -136,6 +139,10 @@ def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE,
     return app
 
 
+PROSPECT_SWEEP_LOCK = "prospect-search-sweep"
+PROSPECT_DAILY_LOCK = "prospect-daily-enqueue"
+
+
 def _register_tender_tasks(app: procrastinate.App) -> None:
     @app.periodic(cron="* * * * *", periodic_id="bids")
     @app.task(name="bid_preparation_sweep", queue=TENDER_QUEUE, queueing_lock=BID_SWEEP_LOCK, retry=False,
@@ -155,6 +162,42 @@ def _register_tender_tasks(app: procrastinate.App) -> None:
             raise RuntimeError("queue_context_not_configured")
         ctx.log({"event": "tender_discovery", **ctx.discovery()})
 
+    # ── Prospect search tasks ──────────────────────────────────────────────────────────────────
+    # Daily at 09:00 UTC ≈ 06:00 CLT/CLST (America/Santiago is UTC-3 or UTC-4 depending on DST).
+    # A queueing lock prevents a second enqueue if the previous daily run is still pending.
+    @app.periodic(cron="0 9 * * *", periodic_id="prospect_daily")
+    @app.task(name="prospect_daily_enqueue", queue=TENDER_QUEUE, queueing_lock=PROSPECT_DAILY_LOCK,
+              retry=False, pass_context=False)
+    def prospect_daily_enqueue(timestamp: int) -> None:
+        """Insert a 'daily' queued run row if one does not already exist for today."""
+        ctx = CONTEXT
+        if ctx.target is None:
+            raise RuntimeError("queue_context_not_configured")
+        import json as _json
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        with open_verified_connection(ctx.target, application_name="origenlab-worker-triage",
+                                      privileges=(), policies=frozenset()) as conn:
+            with conn.cursor() as cur:
+                today = _dt.now(_ZI("America/Santiago")).date().isoformat()
+                cur.execute(
+                    "insert into evidence.prospect_search_run (trigger, status) "
+                    "values ('daily', 'queued') "
+                    "on conflict do nothing",
+                )
+                ctx.log({"event": "prospect_daily_enqueue", "date": today})
+
+    @app.periodic(cron="* * * * *", periodic_id="prospect_sweep")
+    @app.task(name="prospect_search_sweep", queue=TENDER_QUEUE, queueing_lock=PROSPECT_SWEEP_LOCK,
+              retry=False, pass_context=False)
+    def prospect_search_sweep(timestamp: int) -> None:
+        """Claim the oldest queued prospect search run and execute it in a subprocess."""
+        ctx = CONTEXT
+        if ctx.prospect_search is None:
+            return  # feature off; leave queued runs pending
+        ctx.log({"event": "prospect_search_sweep", **ctx.prospect_search()})
+
 
 def defer_triage(app: procrastinate.App, source_record_ids: list[str]) -> int:
     """One `triage_message` job per id; an id whose job is already waiting is skipped."""
@@ -172,6 +215,7 @@ def defer_triage(app: procrastinate.App, source_record_ids: list[str]) -> int:
 app = build_app(queues=(QUEUE,))
 tender_app = build_app(queues=(TENDER_QUEUE,))
 
-__all__ = ["APP_NAME_QUEUE", "APP_NAME_TRIAGE", "BID_SWEEP_LOCK", "CONTEXT", "QUEUE", "RETRY", "SEARCH_PATH",
-           "TENDER_QUEUE", "QueueContext", "app", "build_app", "connector_for", "defer_triage", "pool_configure",
-           "tender_app"]
+__all__ = ["APP_NAME_QUEUE", "APP_NAME_TRIAGE", "BID_SWEEP_LOCK", "CONTEXT",
+           "PROSPECT_DAILY_LOCK", "PROSPECT_SWEEP_LOCK", "QUEUE", "RETRY", "SEARCH_PATH",
+           "TENDER_QUEUE", "QueueContext", "app", "build_app", "connector_for", "defer_triage",
+           "pool_configure", "tender_app"]

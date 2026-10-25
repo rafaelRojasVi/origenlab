@@ -2247,6 +2247,8 @@ Spec and rules:
 | `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_ENABLED` | `true` starts the tender child (default off). It keeps the `DRIVE_*` settings. |
 | `origenlab-mail-triage` | `ORIGENLAB_V2_CHILECOMPRA_TICKET` | **Secret**, the same ticket as the API's (falls back to `CHILECOMPRA_API_TICKET`). The tender child's «En Mercado Público» sweep reads the open-tender list with it; unset, each run logs `tender_discovery` `no_ticket` and nothing else changes. |
 | `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_READ_MODEL`, `_BID_FILL_MODEL`, `_BID_MATCH_MODEL` | Optional; defaults `claude-opus-5-5`, `claude-opus-5-5`, `claude-sonnet-5-5`. |
+| `origenlab-mail-triage` | `ORIGENLAB_WORKER_PROSPECTS_ENABLED` | `true` enables the daily ANID prospect search (default off). The tender child's periodic tasks always register, but the sweep skips queued runs and the daily cron skips inserting unless this is `true`. |
+| `origenlab-mail-triage` | `ORIGENLAB_WORKER_PROSPECT_MODEL` | Optional; the Claude model for prospect fit scoring. Defaults to `claude-haiku-4-5`. A model without a price in `model_spend.py` is refused at startup. |
 | `origenlab-mail-triage` | the Anthropic API key already set for triage | Required for the three models. |
 
 **Spend cap.** Model spend is recorded in `platform.model_usage`. The cap is a code constant,
