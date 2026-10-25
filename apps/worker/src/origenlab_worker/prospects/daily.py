@@ -270,8 +270,11 @@ def run_search(conn: Any, run_id: str, model: str, *,
             with conn.transaction() if not getattr(conn, "_autocommit", True) else _simple_tx(conn) as cur:
                 result = store_finding(cur, finding, logo)
             if result == "inserted":
-                added += 1
-                counts["added"] = added
+                # Only visible (non-hidden) findings count toward the queue target;
+                # hidden ones are stored but must not consume a slot meant for a visible prospect.
+                if not hidden:
+                    added += 1
+                counts["added"] = counts.get("added", 0) + 1
             else:
                 counts["skipped"] = counts.get("skipped", 0) + 1
                 continue
@@ -284,7 +287,7 @@ def run_search(conn: Any, run_id: str, model: str, *,
             with conn.cursor() as cur:
                 cur.execute(_UPDATE_COUNTS, (json.dumps(counts), run_id))
 
-    counts["pool_left"] = max(0, len(pool) - added - counts.get("skipped", 0))
+    counts["pool_left"] = max(0, len(pool) - added - counts.get("low_fit", 0) - counts.get("skipped", 0))
     if not dry_run:
         _finish(conn, run_id, "done", counts, None)
     return counts
