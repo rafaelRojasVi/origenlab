@@ -243,3 +243,43 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .crm-grow-x { animation: none; }
 }
+
+/* «Lo que sabemos»: the AI-read mark. The sparkle twinkles, one soft light sweeps the card,
+   and each part settles in from a slight blur, in order (`--d`). Once per open, never looping. */
+@keyframes crm-ai-twinkle {
+  0% { transform: scale(0.4) rotate(-30deg); opacity: 0; }
+  60% { transform: scale(1.15) rotate(8deg); opacity: 1; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes crm-ai-twinkle-2 {
+  0%, 40% { opacity: 0; }
+  70% { opacity: 1; }
+  100% { opacity: 0.7; }
+}
+@keyframes crm-ai-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+@keyframes crm-ai-reveal {
+  from { opacity: 0; filter: blur(4px); transform: translateY(3px); }
+  to { opacity: 1; filter: none; transform: none; }
+}
+.crm-ai-twinkle {
+  transform-origin: center;
+  animation: crm-ai-twinkle 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.crm-ai-twinkle-2 { animation: crm-ai-twinkle-2 1100ms ease-out both; }
+.crm-ai-sweep {
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--color-accent) 10%, transparent) 50%, transparent 70%);
+  animation: crm-ai-sweep 1200ms cubic-bezier(0.4, 0, 0.2, 1) 150ms both;
+}
+.crm-ai-reveal {
+  animation: crm-ai-reveal 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--d, 0) * 110ms + 200ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .crm-ai-twinkle,
+  .crm-ai-twinkle-2,
+  .crm-ai-reveal { animation: none; }
+  .crm-ai-sweep { display: none; }
+}
