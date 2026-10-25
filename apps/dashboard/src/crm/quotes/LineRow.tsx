@@ -313,7 +313,7 @@ export function LineRow({
               {clientView ? null : (
                 <label
                   className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11.5px] font-semibold ${
-                    principal ? "bg-brand-50 text-brand-700" : "text-ink-muted hover:bg-canvas-sunken"
+                    principal ? "bg-brand-50 text-accent" : "text-ink-muted hover:bg-canvas-sunken"
                   }`}
                 >
                   <input
@@ -360,7 +360,7 @@ export function LineRow({
                       setCostOpen(false);
                       onPatch({ unit_cost: null, cost_currency: null });
                     }}
-                    className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-50"
+                    className="text-[12px] font-semibold text-accent hover:underline disabled:opacity-50"
                   >
                     usar costo del catálogo
                   </button>
@@ -374,7 +374,7 @@ export function LineRow({
                   type="button"
                   disabled={disabled}
                   onClick={() => setCostOpen(true)}
-                  className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-50"
+                  className="text-[12px] font-semibold text-accent hover:underline disabled:opacity-50"
                 >
                   cambiar costo
                 </button>
@@ -394,7 +394,7 @@ export function LineRow({
                   type="button"
                   disabled={disabled}
                   onClick={() => onPatch({ margin_mode: "markup", typed_unit_price: null })}
-                  className="text-[12px] font-semibold text-brand-700 hover:underline disabled:opacity-50"
+                  className="text-[12px] font-semibold text-accent hover:underline disabled:opacity-50"
                 >
                   volver a recargo
                 </button>
@@ -495,7 +495,7 @@ export function LineRow({
               focusNote.current = true;
               setNoteOpen(true);
             }}
-            className="min-h-[24px] text-[12px] font-semibold text-brand-700 hover:underline"
+            className="min-h-[24px] text-[12px] font-semibold text-accent hover:underline"
           >
             + Descripción para el cliente
           </button>

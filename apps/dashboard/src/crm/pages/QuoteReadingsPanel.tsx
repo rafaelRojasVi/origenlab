@@ -42,7 +42,7 @@ export function QuoteReadingsPanel() {
                   </span>
                   <span className="text-ink">{REASON[r.code] ?? REASON.other}</span>
                   {r.opportunity_id ? (
-                    <a href={crmHash("oportunidades", r.opportunity_id)} className="text-brand-700 hover:underline">
+                    <a href={crmHash("oportunidades", r.opportunity_id)} className="text-accent hover:underline">
                       {r.case_title ?? "Abrir caso"}
                     </a>
                   ) : null}

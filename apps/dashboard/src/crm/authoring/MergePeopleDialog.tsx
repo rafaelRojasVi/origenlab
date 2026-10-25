@@ -30,7 +30,7 @@ export function MergePeopleDialog({ loserId, loserName, loserVersion, onDone, on
       aria-labelledby="merge-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-ink/30" onClick={onCancel} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={onCancel} aria-hidden="true" />
       <div className="relative w-full max-w-lg min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
         <h2 id="merge-dialog-title" className="text-base font-semibold text-ink">
           Fusionar personas
@@ -183,7 +183,7 @@ function MergePreviewPanel({
                     setBusy(false);
                   }
                 }}
-                className="h-8 rounded-md bg-bad px-3 text-xs font-medium text-white hover:bg-bad/90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-8 rounded-md bg-bad px-3 text-xs font-medium text-on-solid hover:bg-bad/90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {busy ? "…" : "Fusionar personas"}
               </button>

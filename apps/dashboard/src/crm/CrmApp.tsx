@@ -19,6 +19,7 @@ import { CotizadorModulePage } from "./pages/CotizadorModulePage";
 import { LicitacionesPage } from "./tenders/LicitacionesPage";
 import { ProspectosPage } from "./prospects/ProspectosPage";
 import { useMayOpenCotizador } from "./quotes/openOrCreateQuote";
+import { useTheme, type ThemeChoice } from "../lib/theme";
 
 /**
  * The dashboard: one shell, one navigation, one sign-in. The CRM sections over the V2 durable
@@ -71,7 +72,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
           e.preventDefault();
           document.getElementById("crm-main")?.focus();
         }}
-        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-ink focus:px-3 focus:py-1.5 focus:text-xs focus:text-white"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-ink focus:px-3 focus:py-1.5 focus:text-xs focus:text-on-solid"
       >
         Saltar al contenido
       </a>
@@ -197,6 +198,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
         ) : null}
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <QuickLinks />
+          <ThemeToggle />
           {session.kind === "signed_in" ? (
             <span
               className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-canvas-raised py-0.5 pl-1 pr-1 text-xs text-ink-muted"
@@ -284,6 +286,34 @@ async function switchAccount(signOut: () => Promise<boolean>): Promise<void> {
   if (await signOut()) {
     window.location.assign(googleLoginUrl());
   }
+}
+
+const THEME_NEXT: Record<ThemeChoice, ThemeChoice> = { system: "light", light: "dark", dark: "system" };
+const THEME_LABEL: Record<ThemeChoice, string> = { system: "Sistema", light: "Claro", dark: "Oscuro" };
+const THEME_ICON: Record<ThemeChoice, string> = {
+  system: "M2.5 3.5h11v7h-11zM6 13.5h4M8 10.5v3",
+  light: "M8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1",
+  dark: "M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z",
+};
+
+/** One button cycles Sistema → Claro → Oscuro; the icon shows the current choice. */
+function ThemeToggle() {
+  const [choice, choose] = useTheme();
+  const next = THEME_NEXT[choice];
+  return (
+    <button
+      type="button"
+      onClick={() => choose(next)}
+      title={`Tema: ${THEME_LABEL[choice]} · cambiar a ${THEME_LABEL[next]}`}
+      aria-label={`Tema: ${THEME_LABEL[choice]}. Cambiar a ${THEME_LABEL[next]}`}
+      data-testid="crm-theme-toggle"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+    >
+      <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d={THEME_ICON[choice]} />
+      </svg>
+    </button>
+  );
 }
 
 function SideNav({
@@ -411,7 +441,7 @@ function NavLink({
           : "text-ink-muted hover:bg-canvas-sunken hover:text-ink"
       }`}
     >
-      <span className={current ? "text-brand-700" : ""}>{icon}</span>
+      <span className={current ? "text-accent" : ""}>{icon}</span>
       <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{children}</span>
     </a>
   );

@@ -75,7 +75,7 @@ export function CrossThreadQuoteReview({
           <p className="text-xs text-ink-muted">{item.reason}</p>
           <p className="text-xs text-ink-muted">{item.subject ?? "Asunto no disponible"}</p>
           <a href={item.gmail_url} target="_blank" rel="noopener noreferrer"
-            className="text-brand-700 underline">
+            className="text-accent underline">
             Abrir mensaje original en Gmail ↗
           </a>
           {item.other_cases_on_quote_thread?.length ? (
@@ -85,7 +85,7 @@ export function CrossThreadQuoteReview({
                 cuál debe representar la operación comercial.</p>
               {item.other_cases_on_quote_thread.map((other) => (
                 <a key={other.opportunity_id} href={crmHash("oportunidades", other.opportunity_id)}
-                  className="block text-brand-700 underline">
+                  className="block text-accent underline">
                   Abrir caso original: {other.title}
                 </a>
               ))}

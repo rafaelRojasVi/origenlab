@@ -25,7 +25,7 @@ const TONE: Record<Tone, string> = {
   warn: "bg-warn-bg text-warn border-warn/30",
   bad: "bg-bad-bg text-bad border-bad/30",
   info: "bg-info-bg text-info border-info/30",
-  brand: "bg-brand-50 text-brand-700 border-brand-600/30",
+  brand: "bg-brand-50 text-accent border-brand-600/30",
 };
 
 const GLYPH: Record<Tone, string> = {
@@ -222,7 +222,7 @@ const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   primary: "bg-brand-700 text-white hover:bg-brand-900",
   secondary: "border border-line bg-canvas-raised text-ink hover:bg-canvas-sunken",
   danger: "border border-bad/40 bg-canvas-raised text-bad hover:bg-bad-bg",
-  quiet: "text-brand-700 hover:bg-canvas-sunken",
+  quiet: "text-accent hover:bg-canvas-sunken",
 };
 
 /** The class string of a button, for the rare element that must stay an `<a>` but look like one. */
@@ -400,7 +400,7 @@ export function ExternalLink({ href, children, label }: { href: string; children
       target="_blank"
       rel="noopener noreferrer"
       aria-label={label}
-      className="inline-flex items-center gap-1 font-medium text-brand-700 underline decoration-brand-600/30 underline-offset-2 hover:decoration-brand-700"
+      className="inline-flex items-center gap-1 font-medium text-accent underline decoration-brand-600/30 underline-offset-2 hover:decoration-brand-700"
     >
       {children}
       <span aria-hidden="true" className="text-[10px]">
@@ -519,7 +519,7 @@ export function ResourceGate<T>({
       <button
         type="button"
         onClick={reload}
-        className="mt-2 h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+        className="mt-2 h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong"
       >
         Reintentar
       </button>
@@ -566,7 +566,7 @@ export function Drawer({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-40" role="presentation">
-      <div className="absolute inset-0 bg-ink/30" onClick={onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={onClose} aria-hidden="true" />
       <aside
         role="dialog"
         aria-modal="true"
@@ -635,7 +635,7 @@ export function Modal({
   }, []);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="presentation">
-      <div className="absolute inset-0 bg-ink/30" onClick={busy ? undefined : onClose} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={busy ? undefined : onClose} aria-hidden="true" />
       <div
         ref={boxRef}
         role="dialog"
@@ -685,7 +685,7 @@ export function ChoiceChips({
           className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
             value === o
               ? "border-brand-700 bg-brand-700 text-white"
-              : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+              : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-accent"
           }`}
         >
           {o}
@@ -920,7 +920,7 @@ export function ConfirmDialog({
       aria-labelledby="confirm-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-ink/30" onClick={busy ? undefined : onCancel} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={busy ? undefined : onCancel} aria-hidden="true" />
       <div className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
         <h2 id="confirm-dialog-title" className="text-base font-semibold text-ink">
           {title}

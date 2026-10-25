@@ -109,7 +109,7 @@ export function PurchaseOrderReview({
           <p><strong>{item.filename}</strong> · {item.subject}</p>
           <p className="text-xs text-ink-muted">{item.reason}</p>
           <a href={item.gmail_url} target="_blank" rel="noopener noreferrer"
-            className="text-brand-700 underline">Abrir correo y PDF de la OC en Gmail ↗</a>
+            className="text-accent underline">Abrir correo y PDF de la OC en Gmail ↗</a>
           <div><Button onClick={() => {
             setCandidate(item); setEnteredPO(""); setPrinted(""); setVerified(false); setError(null);
           }}>{candidate?.source_record_id === item.source_record_id

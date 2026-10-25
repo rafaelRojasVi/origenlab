@@ -112,7 +112,7 @@ export function OrganizationsPage({
             <button
               type="button"
               onClick={() => setShowNewOrg(true)}
-              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong"
             >
               Nueva organización
             </button>
@@ -134,7 +134,7 @@ export function OrganizationsPage({
           <button
             type="button"
             onClick={() => navigate("datos", null, "proveedores")}
-            className="text-xs font-medium text-brand-700 hover:underline"
+            className="text-xs font-medium text-accent hover:underline"
           >
             Proveedores →
           </button>
@@ -248,7 +248,7 @@ function OrgCard({
     >
       <span
         aria-hidden="true"
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand-50 text-xs font-semibold text-brand-700 ring-1 ring-brand-600/15"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand-50 text-xs font-semibold text-accent ring-1 ring-brand-600/15"
       >
         {initials(org.name)}
       </span>

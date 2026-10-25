@@ -78,7 +78,7 @@ export function PeoplePage({ navigate, initialId = null }: { navigate: (s: CrmSe
             <button
               type="button"
               onClick={() => setShowNewPerson(true)}
-              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black"
+              className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong"
             >
               Nuevo contacto
             </button>
@@ -271,7 +271,7 @@ function Recipients({
                     key={c.opportunity_id}
                     type="button"
                     onClick={() => navigate("oportunidades", c.opportunity_id)}
-                    className="rounded-full border border-line bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink hover:border-brand-600/40 hover:text-brand-700"
+                    className="rounded-full border border-line bg-canvas-sunken px-1.5 py-px text-[11px] tabular-nums text-ink hover:border-brand-600/40 hover:text-accent"
                   >
                     {c.latest_revision?.quote_number ?? c.quote_numbers[0] ?? "caso"}
                   </button>

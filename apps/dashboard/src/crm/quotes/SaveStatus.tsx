@@ -50,7 +50,7 @@ export function SaveStatus({
     return (
       <span role="alert" className="text-[12.5px] text-bad">
         {message ? `no se pudo guardar: ${message}` : "no se pudo guardar"} ·{" "}
-        <button type="button" onClick={onRetry} className="font-semibold text-brand-700 underline hover:text-brand-900">
+        <button type="button" onClick={onRetry} className="font-semibold text-accent underline hover:text-accent-strong">
           Reintentar
         </button>
       </span>

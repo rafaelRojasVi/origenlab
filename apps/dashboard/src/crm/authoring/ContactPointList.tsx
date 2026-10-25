@@ -186,7 +186,7 @@ function ContactPointItem({
             <button
               type="button"
               onClick={onEdit}
-              className="text-[11px] font-medium text-brand-700 hover:underline"
+              className="text-[11px] font-medium text-accent hover:underline"
             >
               Editar
             </button>
@@ -281,7 +281,7 @@ function AddContactPointForm({
           type="button"
           onClick={submit}
           disabled={busy || !value.trim() || !note.trim()}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "…" : "Agregar"}
         </button>
@@ -358,7 +358,7 @@ function EditContactPointForm({
           type="button"
           onClick={submit}
           disabled={busy || !note.trim()}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? "…" : "Guardar"}
         </button>

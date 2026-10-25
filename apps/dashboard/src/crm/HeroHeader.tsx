@@ -33,7 +33,7 @@ export function HeroHeader({ name, counts, now }: {
   const { date, time } = santiagoParts(now ?? tick);
   const first = name.trim().split(/\s+/)[0] || "";
   return (
-    <header className="relative isolate overflow-hidden rounded-2xl bg-[#141617] px-6 py-7 text-[#ececeb] sm:px-9" data-testid="hero-header">
+    <header className="relative isolate overflow-hidden rounded-2xl bg-[#141617] dark:ring-1 dark:ring-line-strong px-6 py-7 text-[#ececeb] sm:px-9" data-testid="hero-header">
       <div aria-hidden="true" className="absolute inset-y-0 right-0 -z-10 w-[46%] bg-[#1d2022] [clip-path:polygon(14%_0,100%_0,100%_100%,0_100%)]" />
       <div aria-hidden="true" className="crm-hero-block absolute right-36 top-0 h-5 w-20 bg-[#14b8a6]" />
       <div aria-hidden="true" className="crm-hero-block absolute bottom-0 right-16 h-7 w-11 bg-[#0f766e]" />

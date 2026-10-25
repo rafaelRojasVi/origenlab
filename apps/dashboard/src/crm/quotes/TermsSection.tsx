@@ -292,7 +292,7 @@ export function TermsSection({
           type="button"
           disabled={t.terms_extra.length >= MAX_EXTRA}
           onClick={() => edit(addExtraTerm)}
-          className="min-h-[44px] self-start rounded-md px-1 text-[13.5px] font-semibold text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-[44px] self-start rounded-md px-1 text-[13.5px] font-semibold text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
         >
           + Agregar otra condición
         </button>

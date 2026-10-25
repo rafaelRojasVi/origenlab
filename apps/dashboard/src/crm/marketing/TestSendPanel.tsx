@@ -97,7 +97,7 @@ function Panel({ target, sender }: { target: TestSendTarget; sender: string }) {
                onChange={(e) => setTo(e.target.value)} placeholder="nombre@gmail.com"
                className="h-8 min-w-0 flex-1 rounded-md border border-line bg-canvas-raised px-2 text-[13px] text-ink focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-600/20" />
         <button type="button" onClick={() => void send()} disabled={!valid || busy}
-                className="h-8 shrink-0 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50">
+                className="h-8 shrink-0 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-50">
           Enviar prueba
         </button>
       </div>

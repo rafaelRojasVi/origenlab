@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* `dark:` follows the theme the operator chose (see lib/theme.ts), not only the OS. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 @theme {
   /* OrigenLab's typefaces, as on origenlab.cl. */
   --font-sans: "Plus Jakarta Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -35,6 +38,62 @@
   --color-bad-bg: #fef2f2;
   --color-info: #1d4ed8;
   --color-info-bg: #eff6ff;
+
+  /* Tokens that change meaning between themes. Accent text is teal-700 on white but must be
+     lighter on a dark page; a solid ink button keeps white text in light, dark text in dark. */
+  --color-accent: #0f766e;
+  --color-accent-strong: #134e4a;
+  --color-on-solid: #ffffff;
+  --color-ink-strong: #000000;
+  --color-scrim: rgb(28 25 23 / 0.3);
+  --color-skeleton-a: #f5f5f4;
+  --color-skeleton-b: #ebe9e7;
+}
+
+/* Dark theme: warm near-black surfaces (same stone family as light), lighter tonal status
+   colours rather than inverted ones. Every text token keeps ≥ 4.5:1 on canvas-raised, and
+   every status text on its own -bg. Screen only: printing a quote is always on white. */
+:root {
+  color-scheme: light;
+}
+
+@media screen {
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --color-surface: #141312;
+    --color-card: #1c1b19;
+    --color-muted: #a8a29e;
+    --color-border: #2e2b29;
+
+    --color-canvas: #141312;
+    --color-canvas-raised: #1c1b19;
+    --color-canvas-sunken: #262422;
+    --color-line: #2e2b29;
+    --color-line-strong: #423e3a;
+    --color-ink: #ecebe9;
+    --color-ink-muted: #b8b3ae;
+    --color-ink-faint: #918a85;
+    --color-good: #4ade80;
+    --color-good-bg: #0f2a1a;
+    --color-warn: #f0c75e;
+    --color-warn-bg: #2e2610;
+    --color-bad: #f87171;
+    --color-bad-bg: #321515;
+    --color-info: #93c5fd;
+    --color-info-bg: #142340;
+
+    /* Teal stays the one accent: soft washes go deep, text goes light. The solid fills
+       (brand-600/700 with white text) keep their light-theme values. */
+    --color-brand-50: #0d2a27;
+    --color-brand-100: #12403b;
+    --color-accent: #2dd4bf;
+    --color-accent-strong: #5eead4;
+    --color-on-solid: #141312;
+    --color-ink-strong: #ffffff;
+    --color-scrim: rgb(0 0 0 / 0.6);
+    --color-skeleton-a: #232120;
+    --color-skeleton-b: #2e2b29;
+  }
 }
 
 @keyframes crm-drawer-in {
@@ -77,7 +136,7 @@
 }
 
 .crm-skeleton {
-  background: linear-gradient(90deg, #f5f5f4 0px, #ebe9e7 80px, #f5f5f4 160px);
+  background: linear-gradient(90deg, var(--color-skeleton-a) 0px, var(--color-skeleton-b) 80px, var(--color-skeleton-a) 160px);
   background-size: 400px 100%;
   animation: crm-shimmer 1.2s linear infinite;
 }
@@ -119,7 +178,7 @@ body {
   min-height: 100vh;
   font-family: var(--font-sans);
   background: var(--color-surface);
-  color: #0f172a;
+  color: var(--color-ink);
 }
 
 @keyframes fade-in-up {

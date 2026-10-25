@@ -70,7 +70,7 @@ function Pills<T extends string>({ label, options, value, onChange, showLabel = 
           aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={`min-h-8 rounded-full border px-3 py-1 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${
-            value === o.value ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+            value === o.value ? "border-brand-700 bg-brand-700 text-white" : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-accent"
           }`}
         >
           {o.label}
@@ -237,7 +237,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
               </div>
               {canDecide && picked.length > 0 ? (
                 <div className="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-brand-600/30 bg-brand-50 px-4 py-2" role="region" aria-label="Selección">
-                  <span className="text-[13px] font-medium text-brand-700">{picked.length} seleccionados</span>
+                  <span className="text-[13px] font-medium text-accent">{picked.length} seleccionados</span>
                   <Button onClick={() => setPostponing(picked)}>Más tarde</Button>
                   <Button variant="quiet" onClick={() => setDiscarding(picked)}>Descartar</Button>
                   <button type="button" onClick={() => setSelected(new Set())} className="ml-auto text-xs text-ink-muted hover:text-ink">Quitar selección</button>

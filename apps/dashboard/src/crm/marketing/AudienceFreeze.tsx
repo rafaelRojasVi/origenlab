@@ -81,7 +81,7 @@ const NOTE_LABEL: Record<string, string> = {
 };
 
 const btn = "h-7 rounded-md px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-40";
-const btnPrimary = `${btn} bg-ink text-white hover:bg-black`;
+const btnPrimary = `${btn} bg-ink text-on-solid hover:bg-ink-strong`;
 const btnSecondary = `${btn} border border-line bg-canvas-raised text-ink hover:bg-canvas-sunken`;
 const inputCls = "h-7 w-full rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink";
 
@@ -615,7 +615,7 @@ function ReviewStep({
           ))
         )}
         {included.length > shown.length ? (
-          <button type="button" className="px-3 py-1.5 text-xs font-medium text-brand-700 hover:underline" onClick={() => setShowAll(true)}>
+          <button type="button" className="px-3 py-1.5 text-xs font-medium text-accent hover:underline" onClick={() => setShowAll(true)}>
             Mostrar los {fmtInt(included.length)}
           </button>
         ) : null}

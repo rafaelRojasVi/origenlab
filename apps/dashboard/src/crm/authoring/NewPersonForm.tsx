@@ -59,7 +59,7 @@ export function NewPersonForm({ onDone, onCancel, organizationOptions = [] }: Pr
       aria-labelledby="new-person-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
     >
-      <div className="absolute inset-0 bg-ink/30" onClick={onCancel} aria-hidden="true" />
+      <div className="absolute inset-0 bg-scrim" onClick={onCancel} aria-hidden="true" />
       <div className="relative w-full max-w-lg min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
         <h2 id="new-person-title" className="mb-4 text-base font-semibold text-ink">
           Nuevo contacto
@@ -123,7 +123,7 @@ export function NewPersonForm({ onDone, onCancel, organizationOptions = [] }: Pr
             type="button"
             onClick={submit}
             disabled={busy || !displayName.trim() || !note.trim()}
-            className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-8 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? "…" : "Crear contacto"}
           </button>

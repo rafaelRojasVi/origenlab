@@ -162,7 +162,7 @@ export function CampaignCalendar({
                 <div className="mb-1 flex items-center justify-between">
                   <span
                     className={`inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1 text-xs tabular-nums ${
-                      isToday ? "bg-ink font-semibold text-white" : current ? "text-ink" : "text-ink-faint"
+                      isToday ? "bg-ink font-semibold text-on-solid" : current ? "text-ink" : "text-ink-faint"
                     }`}
                     aria-label={isToday ? `Hoy, ${fmtLongDay(day)}` : fmtLongDay(day)}
                   >

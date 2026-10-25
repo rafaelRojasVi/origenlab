@@ -326,7 +326,7 @@ function SolicitudSinCotizarCard({
     >
       {/* Header: «Por cotizar» chip + days pill */}
       <div className="flex items-center gap-2">
-        <span className="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700" data-testid="por-cotizar-chip">
+        <span className="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-accent" data-testid="por-cotizar-chip">
           Por cotizar
         </span>
         <span
@@ -529,7 +529,7 @@ export function OpportunityCard({
 }
 
 const CONTACT_LINK =
-  "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-brand-900";
+  "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-accent-strong";
 
 /** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
 function displayNameOf(address: string): string {

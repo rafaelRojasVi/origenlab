@@ -222,7 +222,7 @@ function ProductsView({ openId, navigate }: { openId: string | null; navigate: N
               onClick={() => update({ ficha: !filters.ficha })}
               className={`inline-flex min-h-[44px] items-center rounded-md border px-3 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${
                 filters.ficha
-                  ? "border-brand-600 bg-brand-50 text-brand-700"
+                  ? "border-brand-600 bg-brand-50 text-accent"
                   : "border-line bg-canvas-raised text-ink-muted hover:text-ink"
               }`}
             >

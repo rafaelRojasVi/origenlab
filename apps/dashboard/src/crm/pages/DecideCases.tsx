@@ -62,7 +62,7 @@ interface Row {
 type Result = { ok: true; text: string } | { ok: false; text: string };
 
 const BADGE: Record<Tone, string> = {
-  brand: "bg-brand-50 text-brand-700",
+  brand: "bg-brand-50 text-accent",
   info: "bg-info-bg text-info",
   warn: "bg-warn-bg text-warn",
   bad: "bg-bad-bg text-bad",
@@ -72,10 +72,10 @@ const BADGE: Record<Tone, string> = {
 
 const CHOICE_ON: Record<Decision, string> = {
   seguir: "border-brand-700 bg-brand-700 text-white",
-  conversacion: "border-warn bg-warn text-white",
+  conversacion: "border-warn bg-warn text-on-solid",
   pausa: "border-violet-600 bg-violet-600 text-white",
-  perdida: "border-bad bg-bad text-white",
-  ganada: "border-good bg-good text-white",
+  perdida: "border-bad bg-bad text-on-solid",
+  ganada: "border-good bg-good text-on-solid",
 };
 
 export function DecideCases({
@@ -230,7 +230,7 @@ export function DecideCases({
             aria-pressed={filter === f}
             onClick={() => setFilter(f)}
             className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-              filter === f ? "border-ink bg-ink text-white" : "border-line-strong bg-canvas-raised text-ink hover:border-ink-faint"
+              filter === f ? "border-ink bg-ink text-on-solid" : "border-line-strong bg-canvas-raised text-ink hover:border-ink-faint"
             }`}
           >
             {f === "all" ? "Todas" : DECISION_LABEL[f]} <span className="tabular-nums opacity-70">{f === "all" ? pending.length : (counts[f] ?? 0)}</span>
@@ -285,7 +285,7 @@ export function DecideCases({
                   </td>
                   <td className="px-2 py-2">
                     {conv.url ? (
-                      <a href={inSharedMailbox(conv.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-brand-700 hover:underline">
+                      <a href={inSharedMailbox(conv.url) ?? undefined} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
                         {conv.text}
                       </a>
                     ) : (

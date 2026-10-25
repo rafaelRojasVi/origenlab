@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex, nofollow" />
     <title>OrigenLab — Panel comercial</title>
+    <script>
+      // Before the first paint: the theme chosen in src/lib/theme.ts (crm.theme), else the system's.
+      try {
+        var t = localStorage.getItem("crm.theme");
+        if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -73,7 +73,7 @@ export function FileLink({
             target="_blank"
             rel="noopener noreferrer"
             aria-label={name ? `${ready} ${name}` : undefined}
-            className="inline-flex min-h-[44px] items-center font-semibold text-brand-700 underline"
+            className="inline-flex min-h-[44px] items-center font-semibold text-accent underline"
           >
             {ready}
           </a>

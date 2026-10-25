@@ -119,7 +119,7 @@ function RateCard({ rate, unit, index }: { rate: FxRate; unit: string; index: nu
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-[12px] font-medium text-ink-muted">{rate.label}</p>
-        <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-brand-700">{rate.code}</span>
+        <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-accent">{rate.code}</span>
       </div>
       <p className="mt-2 text-[24px] font-semibold leading-none tracking-tight text-ink tabular-nums">
         <CountUp value={rate.clp} format={fmtRate} />

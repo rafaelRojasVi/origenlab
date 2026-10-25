@@ -64,7 +64,7 @@ export function DiscoveredTenderPage({ noticeId, navigate, now }: { noticeId: st
           e.preventDefault();
           navigate("licitaciones");
         }}
-        className="text-xs font-medium text-brand-700 hover:underline"
+        className="text-xs font-medium text-accent hover:underline"
       >
         ← En Mercado Público
       </a>
@@ -184,7 +184,7 @@ function Stats({ notice: n, now }: { notice: DiscoveredNoticePage; now: Date }) 
     { label: "Cierra", value: `${closingLabel(n.closes_at, now)} · ${closingWhen(n.closes_at)}`, tone: leftMs > 0 && leftMs <= 2 * 86_400_000 ? "text-bad" : "text-ink" },
     { label: "Estimado", value: amount ?? "sin monto publicado" },
     { label: "Ítems", value: String(n.item_count) },
-    { label: "Calzan con tu catálogo", value: `${catalogItems} de ${n.item_count}`, tone: catalogItems > 0 ? "text-brand-700" : "text-ink" },
+    { label: "Calzan con tu catálogo", value: `${catalogItems} de ${n.item_count}`, tone: catalogItems > 0 ? "text-accent" : "text-ink" },
   ];
   return (
     <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
@@ -201,7 +201,7 @@ function Stats({ notice: n, now }: { notice: DiscoveredNoticePage; now: Date }) 
         <div className="flex items-center gap-3">
           <span aria-hidden="true" className="h-3 w-px bg-line-strong" />
           <span>
-            Calza con: <span className="font-medium text-brand-700">{(n.terms ?? []).join(" · ")}</span>
+            Calza con: <span className="font-medium text-accent">{(n.terms ?? []).join(" · ")}</span>
           </span>
         </div>
       ) : null}
@@ -245,7 +245,7 @@ function Dates({ notice: n, now }: { notice: DiscoveredNoticePage; now: Date }) 
                     }`}
                   />
                 </span>
-                <span className={`text-xs font-semibold ${next ? "text-brand-700" : "text-ink"}`}>{d.label}</span>
+                <span className={`text-xs font-semibold ${next ? "text-accent" : "text-ink"}`}>{d.label}</span>
                 <span className="text-[11px] tabular-nums text-ink-muted">
                   {DAY.format(at)} · {HOUR.format(at)}
                 </span>

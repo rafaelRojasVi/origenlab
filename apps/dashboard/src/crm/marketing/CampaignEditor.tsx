@@ -282,7 +282,7 @@ function CampaignEditorForm({
                 onClick={() => void save()}
                 disabled={!canSave}
                 data-testid="save-draft"
-                className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-40"
+                className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {saving ? "Guardando…" : persistence.kind === "saved" ? "Guardar cambios" : "Guardar borrador"}
               </button>

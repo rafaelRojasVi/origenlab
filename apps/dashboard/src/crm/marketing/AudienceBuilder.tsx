@@ -95,14 +95,14 @@ export function AudienceBuilder({ taxonomy }: { taxonomy: EquipmentTaxonomy }) {
               type="button"
               aria-pressed={on}
               onClick={() => setBases((xs) => (on ? xs.filter((x) => x !== b.value) : [...xs, b.value]))}
-              className={`h-6 rounded-full border px-2.5 text-[11px] font-medium ${on ? "border-brand-600 bg-brand-50 text-brand-700" : "border-line bg-canvas-raised text-ink-muted hover:text-ink"}`}
+              className={`h-6 rounded-full border px-2.5 text-[11px] font-medium ${on ? "border-brand-600 bg-brand-50 text-accent" : "border-line bg-canvas-raised text-ink-muted hover:text-ink"}`}
             >
               {b.label}
             </button>
           );
         })}
         {organizationId ? (
-          <button type="button" onClick={() => setOrganizationId(null)} className="h-6 rounded-full border border-brand-600 bg-brand-50 px-2.5 text-[11px] font-medium text-brand-700">
+          <button type="button" onClick={() => setOrganizationId(null)} className="h-6 rounded-full border border-brand-600 bg-brand-50 px-2.5 text-[11px] font-medium text-accent">
             Institución filtrada ✕
           </button>
         ) : null}
@@ -228,7 +228,7 @@ function Coverage({ data, taxonomy }: { data: AudienceResponse; taxonomy: Equipm
           Nuevas consultas suman intereses al registrarlos en su caso («Registrar interés») o al importar su cotización; esta vista los lee
           sin pasos adicionales. Identidades ambiguas por revisar:{" "}
           {adminRole ? (
-            <a className="font-medium text-brand-700 underline" href={crmHash("datos", null, "evidencia")}>{fmtInt(reviewTotal)}</a>
+            <a className="font-medium text-accent underline" href={crmHash("datos", null, "evidencia")}>{fmtInt(reviewTotal)}</a>
           ) : (
             fmtInt(reviewTotal)
           )}

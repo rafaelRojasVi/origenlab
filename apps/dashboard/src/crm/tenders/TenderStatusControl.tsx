@@ -99,7 +99,7 @@ export function TenderStatusControl({
               className={`${CHIP} ${
                 pressed
                   ? "border-brand-700 bg-brand-700 text-white"
-                  : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+                  : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-accent"
               }`}
             >
               {c.label}

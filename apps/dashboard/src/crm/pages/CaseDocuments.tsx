@@ -106,7 +106,7 @@ export function OcPicker({
             aria-checked={mode === m.value}
             onClick={() => choose(m.value)}
             className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
-              mode === m.value ? "border-brand-600 bg-brand-50 text-brand-900" : "border-line bg-canvas-raised text-ink-muted hover:text-ink"
+              mode === m.value ? "border-brand-600 bg-brand-50 text-accent-strong" : "border-line bg-canvas-raised text-ink-muted hover:text-ink"
             }`}
           >
             {m.label}

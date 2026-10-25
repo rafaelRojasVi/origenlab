@@ -25,7 +25,7 @@ export function ProspectLogo({ id, name, hasLogo, size = "md" }: { id: string; n
     <span
       data-testid="prospect-initials"
       aria-hidden="true"
-      className={`${box} flex shrink-0 items-center justify-center rounded-lg border border-brand-600/20 bg-brand-50 font-semibold text-brand-700`}
+      className={`${box} flex shrink-0 items-center justify-center rounded-lg border border-brand-600/20 bg-brand-50 font-semibold text-accent`}
     >
       {initials(name)}
     </span>

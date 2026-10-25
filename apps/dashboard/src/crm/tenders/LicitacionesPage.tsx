@@ -143,7 +143,7 @@ function Chip({ label, count, pressed, onClick }: { label: string; count: number
       className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-full border px-3 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
         pressed
           ? "border-brand-700 bg-brand-700 text-white"
-          : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+          : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-accent"
       }`}
     >
       <span>{label}</span>{" "}

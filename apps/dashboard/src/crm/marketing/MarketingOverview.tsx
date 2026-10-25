@@ -85,7 +85,7 @@ export function MarketingOverview({
               {f.nextPlanned.campaignId === null ? (
                 <span className="font-medium text-ink">{f.nextPlanned.campaignName} · canal V1</span>
               ) : (
-                <button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => onOpen(f.nextPlanned!.campaignId!)}>
+                <button type="button" className="font-medium text-accent hover:underline" onClick={() => onOpen(f.nextPlanned!.campaignId!)}>
                   {f.nextPlanned.campaignName}
                 </button>
               )}

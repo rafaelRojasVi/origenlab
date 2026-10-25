@@ -425,7 +425,7 @@ function QuoteRows({
               ev.stopPropagation();
               onToggle();
             }}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md font-mono font-medium tabular-nums text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-md font-mono font-medium tabular-nums text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           >
             <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
             {label}

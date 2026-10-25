@@ -67,7 +67,7 @@ function BackToCases({ navigate }: { navigate: Navigate }) {
         e.preventDefault();
         navigate("oportunidades");
       }}
-      className="mt-3 inline-flex min-h-[44px] items-center rounded-md border border-line bg-canvas-raised px-3 text-[13px] font-medium text-brand-700 hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="mt-3 inline-flex min-h-[44px] items-center rounded-md border border-line bg-canvas-raised px-3 text-[13px] font-medium text-accent hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
     >
       Volver a Oportunidades
     </a>
@@ -132,7 +132,7 @@ export function CotizadorPage({
         <button
           type="button"
           onClick={reload}
-          className="mt-2 min-h-[44px] rounded-md bg-ink px-4 text-xs font-medium text-white hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          className="mt-2 min-h-[44px] rounded-md bg-ink px-4 text-xs font-medium text-on-solid hover:bg-ink-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           Reintentar
         </button>
@@ -615,7 +615,7 @@ function CotizadorHeader({
             e.preventDefault();
             if (!leaving) onBack();
           }}
-          className="inline-block max-w-full truncate text-[13px] font-medium text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          className="inline-block max-w-full truncate text-[13px] font-medium text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           ← {leaving ? "Guardando antes de salir…" : caseTitle}
         </a>

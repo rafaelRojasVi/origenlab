@@ -255,7 +255,7 @@ function FamilyChip({ label, count, pressed, onClick }: { label: string; count: 
       className={`inline-flex min-h-[32px] items-center gap-1.5 rounded-full border px-3 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
         pressed
           ? "border-brand-700 bg-brand-700 text-white"
-          : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-brand-700"
+          : "border-line-strong bg-canvas-raised text-ink hover:border-brand-600 hover:text-accent"
       }`}
     >
       <span>{label}</span> <span className="tabular-nums opacity-80">{count}</span>
@@ -333,7 +333,7 @@ function NoticeItem({
             e.preventDefault();
             navigate("licitaciones", page);
           }}
-          className="block break-words text-[13px] font-medium text-ink hover:text-brand-700 focus:outline-none focus-visible:underline"
+          className="block break-words text-[13px] font-medium text-ink hover:text-accent focus:outline-none focus-visible:underline"
         >
           {n.title}
         </a>
@@ -345,7 +345,7 @@ function NoticeItem({
         ) : null}
         {terms.length > 0 ? (
           <p className="text-[11px] text-ink-faint">
-            Calza con: <span className="font-medium text-brand-700">{terms.join(" · ")}</span>
+            Calza con: <span className="font-medium text-accent">{terms.join(" · ")}</span>
           </p>
         ) : null}
       </div>
@@ -379,7 +379,7 @@ function NoticeItem({
               e.preventDefault();
               navigate("licitaciones", n.opportunity_id);
             }}
-            className="text-xs font-medium text-brand-700 underline underline-offset-2"
+            className="text-xs font-medium text-accent underline underline-offset-2"
           >
             Abrir
           </a>

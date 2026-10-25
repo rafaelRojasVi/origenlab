@@ -648,6 +648,7 @@ prose is in git history (see commit referenced by the PR). Entries are in build 
 | §2.7.151 | 2026-10-22 |  | Request cases opened by R7/R11 add the sender as a participant; «+ Nueva» no longer… |
 | §2.7.152 | 2026-10-22 | #826 | `20261022100000`: indexes on `comms.message(provider_thread_id)`, Gmail thread id, catalog `model_key` (pg_trgm); worker case cards capped at 300 |
 | §2.7.153 | 2026-10-23 | — | `20261023100000`: «Prospectos» fase 1 — `prospect_finding` evidence kind, `crm.prospect_review` (#65, append-only), worker `prospects-load`, `/v2/prospect-findings` reads with read-time dedupe, `review-prospect` / `contact-prospect`, dashboard module; nothing loaded yet |
+| §2.7.154 | 2026-10-24 | — | Dashboard dark mode: «Sistema / Claro / Oscuro» toggle in the top bar, remembered per browser (`crm.theme`); dark values for the colour tokens, screen only (printed quotes stay white) |
 
 **Key milestones (highlighted in the table above):**
 

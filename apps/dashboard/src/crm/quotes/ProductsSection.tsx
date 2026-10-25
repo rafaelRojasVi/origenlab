@@ -49,7 +49,7 @@ function Chip({ label, onClick, disabled }: { label: string; onClick: () => void
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-8 items-center rounded-full border border-dashed border-brand-700 px-3 text-[13px] font-semibold text-brand-700 hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+      className="inline-flex h-8 items-center rounded-full border border-dashed border-brand-700 px-3 text-[13px] font-semibold text-accent hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {label}
     </button>

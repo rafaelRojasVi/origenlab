@@ -126,7 +126,7 @@ function SuggestionItem({
           type="button"
           onClick={() => void create()}
           disabled={busy}
-          className="h-6 rounded-md bg-ink px-2.5 text-[11px] font-medium text-white hover:bg-black disabled:opacity-50"
+          className="h-6 rounded-md bg-ink px-2.5 text-[11px] font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50"
         >
           {busy ? "…" : "Crear persona"}
         </button>

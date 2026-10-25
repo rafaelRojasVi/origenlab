@@ -365,7 +365,7 @@ function ConfirmationBar({
           type="button"
           onClick={() => void confirm()}
           disabled={busy}
-          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50"
+          className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50"
         >
           {busy ? "…" : "Confirmar institución"}
         </button>
@@ -442,7 +442,7 @@ function EditOrgForm({
       </FormField>
       {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
       <div className="col-span-full flex flex-wrap gap-2">
-        <button type="button" onClick={submit} disabled={busy || !name.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">
+        <button type="button" onClick={submit} disabled={busy || !name.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50">
           {busy ? "…" : "Guardar"}
         </button>
         <button type="button" onClick={onCancel} disabled={busy} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">
@@ -483,7 +483,7 @@ function RestoreOrgButton({ orgId, version, onDone }: { orgId: string; version: 
                 setError(r ? `${r.code}: ${r.message}` : String(err));
                 setBusy(false);
               }
-            }} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">
+            }} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50">
               {busy ? "…" : "Restaurar"}
             </button>
             <button type="button" onClick={() => setOpen(false)} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">
@@ -616,7 +616,7 @@ function AddIdentifierForm({ organizationId, orgVersion, onDone, onCancel }: {
       </FormField>
       {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
       <div className="col-span-full flex gap-2">
-        <button type="button" onClick={submit} disabled={busy || !value.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
+        <button type="button" onClick={submit} disabled={busy || !value.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
         <button type="button" onClick={onCancel} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
       </div>
     </div>
@@ -766,7 +766,7 @@ function AddDomainForm({ organizationId, orgVersion, onDone, onCancel }: { organ
       </FormField>
       {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
       <div className="col-span-full flex gap-2">
-        <button type="button" onClick={submit} disabled={busy || !domain.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
+        <button type="button" onClick={submit} disabled={busy || !domain.trim() || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
         <button type="button" onClick={onCancel} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
       </div>
     </div>
@@ -864,7 +864,7 @@ function AddClassificationForm({ organizationId, orgVersion, onDone, onCancel }:
       </FormField>
       {error ? <p className="col-span-full text-[11px] text-bad">{error}</p> : null}
       <div className="col-span-full flex gap-2">
-        <button type="button" onClick={submit} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
+        <button type="button" onClick={submit} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50">{busy ? "…" : "Agregar"}</button>
         <button type="button" onClick={onCancel} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
       </div>
     </div>
@@ -915,7 +915,7 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
                 {PRODUCT_LINE_LABELS[line] ?? line}
               </Badge>
               {mayAuthor && !activeIds.has(line) ? (
-                <button type="button" onClick={() => { setAddingLine(line); setAddError(null); }} className="text-[10px] text-brand-700 hover:underline">+</button>
+                <button type="button" onClick={() => { setAddingLine(line); setAddError(null); }} className="text-[10px] text-accent hover:underline">+</button>
               ) : null}
               {mayAuthor && linked ? (
                 <button type="button" onClick={() => { setUnlinkId(linked.id); setUnlinkError(null); }} className="text-[10px] text-bad hover:underline">−</button>
@@ -932,7 +932,7 @@ function ProductLineSection({ productLines, organizationId, orgVersion, mayAutho
           </FormField>
           {addError ? <p className="text-[11px] text-bad">{addError}</p> : null}
           <div className="flex gap-2">
-            <button type="button" onClick={doLink} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-white hover:bg-black disabled:opacity-50">{busy ? "…" : "Vincular"}</button>
+            <button type="button" onClick={doLink} disabled={busy || !note.trim()} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong disabled:opacity-50">{busy ? "…" : "Vincular"}</button>
             <button type="button" onClick={() => setAddingLine(null)} className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:bg-canvas-sunken">Cancelar</button>
           </div>
         </div>

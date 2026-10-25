@@ -272,7 +272,7 @@ function TotalsCard({
     <section
       aria-label="Totales"
       aria-busy={stale || undefined}
-      className={`flex flex-col gap-3 rounded-[14px] bg-[#141617] px-5 py-[18px] text-[#f4f6f5]${stale ? " opacity-60" : ""}`}
+      className={`flex flex-col gap-3 rounded-[14px] bg-[#141617] dark:ring-1 dark:ring-line-strong px-5 py-[18px] text-[#f4f6f5]${stale ? " opacity-60" : ""}`}
     >
       <div className="flex justify-between text-sm">
         <span className="text-[#a9bdb7]">Neto</span>
@@ -427,7 +427,7 @@ function FxCard({
                   aria-label={`Cambiar ${r.currency}`}
                   disabled={disabled}
                   onClick={() => setOpen(r.currency)}
-                  className="min-h-[32px] rounded-md px-2 text-[13px] font-semibold text-brand-700 hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="min-h-[32px] rounded-md px-2 text-[13px] font-semibold text-accent hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Cambiar
                 </button>
@@ -439,7 +439,7 @@ function FxCard({
                 type="button"
                 disabled={disabled}
                 onClick={() => edit((d) => setFxOverride(d, r.currency as "EUR" | "USD", null, ""))}
-                className="min-h-[32px] self-start rounded-md text-[13px] font-semibold text-brand-700 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+                className="min-h-[32px] self-start rounded-md text-[13px] font-semibold text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Volver al Banco Central
               </button>
