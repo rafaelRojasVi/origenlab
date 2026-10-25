@@ -69,6 +69,14 @@ def _author_name_matches(author: dict[str, Any], variants: list[str]) -> bool:
     return False
 
 
+def _address_is_theirs(email: str, name_variant: str) -> bool:
+    """True when the address's local part carries one of the person's surnames (first 4 letters).
+    An affiliation line shared by a lab often holds a colleague's address, not this author's."""
+    local = re.sub(r"[^a-z]", "", _fold(email.split("@")[0]))
+    surnames = [w for w in re.split(r"[\s-]+", _fold(name_variant))[:-1] if len(w) >= 3]
+    return any(w[:4] in local for w in surnames)
+
+
 def search_epmc(session: Any, name_variants: list[str], institution: str,
                 *, pause_s: float = _REQUEST_PAUSE_S) -> dict[str, Any] | None:
     """Search Europe PMC for the PI's most recent paper with an email. Returns a dict with
@@ -110,17 +118,23 @@ def _one_search(session: Any, name_variant: str, institution: str) -> dict[str, 
         for author in authors:
             if not _author_name_matches(author, [name_variant]):
                 continue
-            # Extract email from affiliationList
-            affs = author.get("affiliationList", {}).get("affiliation") or []
+            # Europe PMC `core` results carry affiliations per author in
+            # authorAffiliationDetailsList.authorAffiliation[].affiliation.
+            details = (author.get("authorAffiliationDetailsList") or {}).get("authorAffiliation") or []
+            affs = [d.get("affiliation") or "" for d in details if isinstance(d, dict)]
             for aff_text in affs:
                 emails = _EMAIL_RE.findall(aff_text)
                 for email in emails:
                     email_lc = email.lower()
+                    if not _address_is_theirs(email_lc, name_variant):
+                        continue
                     # Validate: institution mentioned in affiliation text or known domain
                     if (_institution_matches(aff_text, institution)
                             or _email_domain_matches(email_lc, institution, None)):
                         orcid_id = None
-                        for aid in (author.get("authorId") or []):
+                        ids = author.get("authorId") or []
+                        # A single id comes as an object ({"type": "ORCID", "value": …}), several as a list.
+                        for aid in ([ids] if isinstance(ids, dict) else ids):
                             if isinstance(aid, dict) and aid.get("type") == "ORCID":
                                 raw_orcid = aid.get("value") or ""
                                 if raw_orcid:

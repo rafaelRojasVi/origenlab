@@ -161,14 +161,13 @@ class TestParseCsv:
         assert results[0].programa == "FONDECYT"
         assert results[0].agno_fallo == "2025"
 
-    def test_excludes_wrong_year(self) -> None:
+    def test_pool_is_the_two_newest_years_newest_first(self) -> None:
         row_old = {**_FICTITIOUS_ROW, "AGNO_FALLO": "2023", "CODIGO_PROYECTO": "XXX230001"}
+        row_mid = {**_FICTITIOUS_ROW, "AGNO_FALLO": "2024", "CODIGO_PROYECTO": "XXX240001"}
         row_new = {**_FICTITIOUS_ROW, "AGNO_FALLO": "2025", "CODIGO_PROYECTO": "XXX250001"}
-        content = _csv([row_old, row_new])
+        content = _csv([row_old, row_mid, row_new])
         results = parse_csv(content)
-        # max year is 2025 — only the 2025 row
-        assert len(results) == 1
-        assert results[0].codigo == "XXX250001"
+        assert [r.codigo for r in results] == ["XXX250001", "XXX240001"]
 
     def test_explicit_year_overrides_max(self) -> None:
         row_old = {**_FICTITIOUS_ROW, "AGNO_FALLO": "2023", "CODIGO_PROYECTO": "XXX230001"}
@@ -330,7 +329,7 @@ class TestSearchEpmc:
                 "author": [{
                     "fullName": author_full,
                     "authorId": [],
-                    "affiliationList": {"affiliation": [aff_text]},
+                    "authorAffiliationDetailsList": {"authorAffiliation": [{"affiliation": aff_text}]},
                 }]
             },
         }
@@ -338,14 +337,23 @@ class TestSearchEpmc:
     def test_returns_email_when_institution_matches(self) -> None:
         article = self._article(
             author_full="Ficticia A",
-            aff_text="Instituto Ficticio, Chile. ana@ficticio.invalid",
-            email="ana@ficticio.invalid",
+            aff_text="Instituto Ficticio, Chile. aficticia@ficticio.invalid",
+            email="aficticia@ficticio.invalid",
         )
         sess = self._fake_session([article])
         result = search_epmc(sess, ["Ficticia A"], "Instituto Ficticio", pause_s=0)
         assert result is not None
-        assert result["email"] == "ana@ficticio.invalid"
+        assert result["email"] == "aficticia@ficticio.invalid"
         assert result["source_year"] == 2025
+
+    def test_skips_a_colleagues_address_on_a_shared_affiliation(self) -> None:
+        article = self._article(
+            author_full="Ficticia A",
+            aff_text="Instituto Ficticio, Chile. bperez@ficticio.invalid",
+            email="bperez@ficticio.invalid",
+        )
+        sess = self._fake_session([article])
+        assert search_epmc(sess, ["Ficticia A"], "Instituto Ficticio", pause_s=0) is None
 
     def test_returns_none_when_no_email_in_aff(self) -> None:
         article = self._article(
@@ -360,8 +368,8 @@ class TestSearchEpmc:
     def test_returns_none_when_institution_does_not_match(self) -> None:
         article = self._article(
             author_full="Ficticia A",
-            aff_text="Otra Institución Diferente, Chile. ana@ficticio.invalid",
-            email="ana@ficticio.invalid",
+            aff_text="Otra Institución Diferente, Chile. aficticia@ficticio.invalid",
+            email="aficticia@ficticio.invalid",
         )
         sess = self._fake_session([article])
         # institution won't match

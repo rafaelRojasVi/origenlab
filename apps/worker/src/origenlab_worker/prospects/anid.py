@@ -197,9 +197,10 @@ def _fund_label(programa: str, instrumento: str, agno: str) -> str:
     return f"{programa.title()} {agno}"
 
 
-def parse_csv(content: str, *, year: str | None = None) -> list[AnidCandidate]:
-    """Parse the ANID CSV, filter to the pool and return candidates. `year` defaults to the
-    maximum AGNO_FALLO present (so next year's file works without a code change)."""
+def parse_csv(content: str, *, year: str | None = None, years: int = 2) -> list[AnidCandidate]:
+    """Parse the ANID CSV, filter to the pool and return candidates, newest money first. Without
+    `year` the pool is the `years` newest AGNO_FALLO present (the 2026-10 file reaches 2026 and 2025),
+    so next year's file works without a code change."""
     # Strip BOM if present
     if content.startswith("﻿"):
         content = content[1:]
@@ -216,14 +217,17 @@ def parse_csv(content: str, *, year: str | None = None) -> list[AnidCandidate]:
         return []
 
     if year is None:
-        years = [r.get("AGNO_FALLO", "") for r in rows if r.get("AGNO_FALLO", "").isdigit()]
-        if not years:
+        present = sorted({r.get("AGNO_FALLO", "") for r in rows if r.get("AGNO_FALLO", "").isdigit()})
+        if not present:
             return []
-        year = max(years)
+        pool_years = set(present[-years:])
+    else:
+        pool_years = {year}
 
     candidates = []
     for row in rows:
-        if row.get("AGNO_FALLO", "") != year:
+        row_year = row.get("AGNO_FALLO", "")
+        if row_year not in pool_years:
             continue
         programa = row.get("PROGRAMA", "").strip().upper()
         instrumento = row.get("INSTRUMENTO", "").strip().upper()
@@ -248,7 +252,7 @@ def parse_csv(content: str, *, year: str | None = None) -> list[AnidCandidate]:
             codigo=codigo,
             programa=programa,
             instrumento=instrumento,
-            agno_fallo=year,
+            agno_fallo=row_year,
             nombre_proyecto=row.get("NOMBRE_PROYECTO", "").strip(),
             nombre_responsable=nombre_resp,
             institucion=institucion,
@@ -266,8 +270,8 @@ def parse_csv(content: str, *, year: str | None = None) -> list[AnidCandidate]:
             name_variants=_name_variants(nombre_resp) if nombre_resp else [],
         ))
 
-    # Sort: programme rank desc, lab bonus first (within rank), then year desc (all same here)
-    candidates.sort(key=lambda c: (-c.prog_rank, not c.lab_bonus))
+    # Newest award year first (fresher money), then programme rank, then lab-heavy topics.
+    candidates.sort(key=lambda c: (-int(c.agno_fallo), -c.prog_rank, not c.lab_bonus))
     return candidates
 
 

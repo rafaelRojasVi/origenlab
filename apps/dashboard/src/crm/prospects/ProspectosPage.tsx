@@ -150,8 +150,8 @@ function DailySearchHeader({ canDecide }: { canDecide: boolean }) {
   let subtitle = "Búsqueda diaria 06:00 (Santiago)";
   if (running) subtitle += " · En ejecución…";
   else if (finishedAt) subtitle += ` · última: ${finishedAt}${added != null ? `, ${added} nuevos` : ""}`;
-  if (status != null) subtitle += ` · quedan ~${status.unreviewed} por revisar`;
-  if (poolLeft != null) subtitle += ` · quedan ~${poolLeft} por revisar en ANID 2025`;
+  if (status != null) subtitle += ` · ${status.unreviewed} por revisar`;
+  if (poolLeft != null) subtitle += ` · ~${poolLeft} candidatos más en ANID`;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-line bg-canvas-raised px-4 py-3">
