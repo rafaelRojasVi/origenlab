@@ -23,7 +23,7 @@ import { SaveStatus } from "../quotes/SaveStatus";
 import { SummaryRail } from "../quotes/SummaryRail";
 import { takeDiscarded } from "../quotes/tabEditors";
 import { tabMetaOf, type TabMeta } from "../quotes/tabStore";
-import { TermsSection } from "../quotes/TermsSection";
+import { TermsSection, focusTerm, missingTerms } from "../quotes/TermsSection";
 import { useQuoteDraft } from "../quotes/useQuoteDraft";
 import { useResource } from "../useResource";
 
@@ -205,6 +205,15 @@ function CotizadorWorkspace({
   const [voidError, setVoidError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [askTerms, setAskTerms] = useState<{ key: string; label: string }[] | null>(null);
+  // «Completar condiciones»: the first empty field is focused once the dialog has gone.
+  const [focusAfter, setFocusAfter] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusAfter && !askTerms) {
+      focusTerm(focusAfter);
+      setFocusAfter(null);
+    }
+  }, [focusAfter, askTerms]);
   const reviseKey = useActionKey();
   const voidKey = useActionKey();
   const { state } = editor;
@@ -380,7 +389,12 @@ function CotizadorWorkspace({
           busy={approving}
           busyLabel="Emitiendo…"
           disabled={!editor.editable || revising || voiding}
-          onClick={() => void approve()}
+          onClick={() => {
+            // Owner 2026-10-26: empty conditions are asked about first; issuing without them is a choice.
+            const missing = missingTerms(state.draft);
+            if (missing.length && !editor.invalid.length) setAskTerms(missing);
+            else void approve();
+          }}
         >
           Emitir cotización
         </Button>
@@ -513,6 +527,19 @@ function CotizadorWorkspace({
         </div>
       ) : null}
       {printable ? <QuotePrintView quote={printable} onClose={() => setPrinting(false)} /> : null}
+      {askTerms ? (
+        <MissingTermsDialog
+          missing={askTerms}
+          onComplete={() => {
+            setFocusAfter(askTerms[0].key);
+            setAskTerms(null);
+          }}
+          onIssue={() => {
+            setAskTerms(null);
+            void approve();
+          }}
+        />
+      ) : null}
       {voidTarget ? (
         <ConfirmDialog
           title={`¿Anular la cotización ${voidTarget.label}?`}
@@ -530,6 +557,46 @@ function CotizadorWorkspace({
           onCancel={() => setVoidTarget(null)}
         />
       ) : null}
+    </div>
+  );
+}
+
+/** «Emitir cotización» with conditions left empty: complete them first (the default) or issue without them. */
+function MissingTermsDialog({
+  missing,
+  onComplete,
+  onIssue,
+}: {
+  missing: { key: string; label: string }[];
+  onComplete: () => void;
+  onIssue: () => void;
+}) {
+  const titleId = useId();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onComplete();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onComplete]);
+  return (
+    <div role="alertdialog" aria-modal="true" aria-labelledby={titleId} className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-scrim" onClick={onComplete} aria-hidden="true" />
+      <div className="relative w-full max-w-md min-w-0 rounded-xl border border-line bg-canvas-raised p-5 shadow-xl">
+        <h2 id={titleId} className="text-base font-semibold text-ink">
+          {missing.length === 1 ? "Falta una condición" : `Faltan ${missing.length} condiciones`}
+        </h2>
+        <p className="mt-2 text-[13px] text-ink-muted">Están vacías y no saldrán en la cotización. ¿Quieres completarlas antes de emitir?</p>
+        <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[13px] text-ink">
+          {missing.map((m) => (
+            <li key={m.key}>{m.label}</li>
+          ))}
+        </ul>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Button onClick={onIssue}>Emitir igual</Button>
+          <Button variant="primary" autoFocus onClick={onComplete}>
+            Completar condiciones
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
