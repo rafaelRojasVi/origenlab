@@ -68,6 +68,7 @@ from origenlab_api.v2.mail_rules import (
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     RECORD_AUTHORED_QUOTE_SENT,
+    REPLY_WINDOW_DAYS,
     SETTLE_DAYS,
     SYSTEM_LABEL,
     UNCONFIRM_ORGANIZATION_RECORD,
@@ -267,7 +268,7 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
 """
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
-AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16"})
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17"})
 #: R15: the institutions «por confirmar», what created them (the receipt of their
 #: `organization.created` event), and the PDF file name of each quote on their cases that is still
 #: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
@@ -412,6 +413,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
     # R14: the window of sent mail it may record (Operaciones lists the same 60 days).
     cur.execute("select now() - make_interval(days => %s)", (LATE_QUOTE_WINDOW_DAYS,))
     since = cur.fetchone()[0]
+    # R17: the window of client replies it may act on.
+    cur.execute("select now() - make_interval(days => %s)", (REPLY_WINDOW_DAYS,))
+    reply_since = cur.fetchone()[0]
 
     # R15: institutions «por confirmar» and their settled quotes.
     cur.execute(_INSTITUTIONS_SQL, {"days": int(settle_days)})
@@ -435,7 +439,8 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                             "sent_at": g.get("received_at"), "direction": "inbound"}
     return Snapshot(evidence=tuple(evidence), cases=cases, organizations=organizations,
                     applied_evidence_ids=applied, forwards=tuple(forwards), applied_pairs=pairs,
-                    institutions=institutions, late_quote_since=since.isoformat() if since else None), display
+                    institutions=institutions, late_quote_since=since.isoformat() if since else None,
+                    reply_since=reply_since.isoformat() if reply_since else None), display
 
 
 # ─────────────────────────────────────────────────────────────── the repository ──
@@ -785,6 +790,13 @@ class MailRulesRepository(V2CaseCommandRepository):
             result = self._run_step(cur, operator, command, inputs, receipt_id)
             done.append({"command": command, **{k: result.get(k) for k in _RESULT_KEYS if k in result}})
 
+        if rule == "R17":
+            # Back to «Enviada» — unless a person moved the case since; then there is nothing of ours to undo.
+            cur.execute("select stage, version from crm.opportunity where id = %s for update", (case_id,))
+            row = cur.fetchone()
+            if row is not None and row[0] == "negotiating":
+                run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
+                                         "stage": "quoting", "note": note})
         if rule in ("R5", "R6"):
             came_from = "negotiating" if rule == "R5" else action.get("from_stage")
             run(CORRECT_CASE_STAGE, {"opportunity_id": case_id, "to_stage": came_from, "note": note})
