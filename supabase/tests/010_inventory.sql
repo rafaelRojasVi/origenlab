@@ -1,4 +1,4 @@
--- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 62 tables, ownership, RLS
+-- Slice 0/2 — inventory proofs: seven schemas, exactly the reviewed 63 tables, ownership, RLS
 -- posture, no SECURITY DEFINER function, pinned search_path, `public` empty, forbidden columns
 -- absent, send flags false. docs/DOMAIN.md §7; docs/ARCHITECTURE.md §3, §6.1, §6.2.
 begin;
@@ -154,13 +154,13 @@ select hasnt_column('crm', 'external_identifier', 'entity_id', 'external_identif
 select hasnt_column('crm', 'address', 'parent_type', 'address is bound by a typed FK, not a parent_type/parent_id pair');
 select col_not_null('crm', 'address', 'organization_id', 'address.organization_id is NOT NULL');
 
--- RLS enabled on all 62 tables and never forced (the owner crosses it by ownership).
+-- RLS enabled on all 63 tables and never forced (the owner crosses it by ownership).
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and c.relrowsecurity),
-  62, 'RLS is enabled on all 62 tables');
+  63, 'RLS is enabled on all 63 tables');
 select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
@@ -180,7 +180,7 @@ select is(
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §7 #%'),
-  62, 'every table is commented with its DOMAIN.md §7 inventory number');
+  63, 'every table is commented with its DOMAIN.md §7 inventory number');
 
 select * from finish();
 rollback;

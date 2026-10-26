@@ -50,7 +50,7 @@ SEARCH_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     *PROSPECTS_REQUIRED_PRIVILEGES,
     ("evidence.prospect_search_run", "SELECT"),
     ("evidence.prospect_search_run", "INSERT"),
-    ("evidence.prospect_search_run", "UPDATE"),
+    # Its UPDATE is column-level (status … updated_at), which has_table_privilege does not see.
     ("platform.model_usage", "SELECT"),
     ("platform.model_usage", "INSERT"),
     ("crm.prospect_review", "SELECT"),

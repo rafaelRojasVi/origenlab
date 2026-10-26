@@ -89,7 +89,9 @@ revoke all on evidence.prospect_search_run from public, anon, authenticated, ser
 -- The API inserts manual runs (request-prospect-search) and reads them for the list header.
 grant select, insert on evidence.prospect_search_run to origenlab_api;
 -- The worker inserts daily runs and updates the status as the run progresses.
-grant select, insert, update on evidence.prospect_search_run to origenlab_worker;
+grant select, insert on evidence.prospect_search_run to origenlab_worker;
+grant update (status, started_at, finished_at, counts, error, updated_at)
+  on evidence.prospect_search_run to origenlab_worker;
 
 -- ── RLS ──────────────────────────────────────────────────────────────────────────────────────
 alter table evidence.prospect_search_run enable row level security;
