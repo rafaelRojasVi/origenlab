@@ -2,7 +2,7 @@
 -- platform.model_usage FK column. Fictitious fixtures only; no real ANID data.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(26);
+select plan(22);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
