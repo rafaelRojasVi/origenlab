@@ -1,11 +1,14 @@
 """Is this prospect new? Decided at read time, never stored (spec 2026-10-23 §6).
 
 Order: blocked (a `block` contact control on the address or its domain) → known (a CRM contact
-point, mail we exchanged, or a `prior_contact` control) → new. A known institution does not make a
+point, mail we exchanged, or a `prior_contact` control; or, by name, a CRM person or a mail
+correspondent called the same — a finding often has no email) → new. A known institution does not make a
 person known; it is a reason shown on the card. Free-mail domains never identify an organization."""
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Literal, TypedDict
 from urllib.parse import urlparse
 
@@ -102,6 +105,17 @@ select d.domain_norm, o.id::text, o.name from crm.organization o
    and o.merged_into_organization_id is null and o.status <> 'archived'
  order by o.name, o.id
 """
+#: Accent fold done in SQL (no `unaccent` extension): `Muñoz` and `Munoz` are one key.
+_FOLD = "translate(lower({}), 'áéíóúüñàèìòùâêîôû', 'aeiouunaeiouaeiou')"
+_MANY_PEOPLE_BY_NAME = f"""
+select display_name from crm.person
+ where merged_into_person_id is null and {_FOLD.format('display_name')} ~ %(pattern)s
+"""
+_MANY_CORRESPONDENTS_BY_NAME = f"""
+select display_name, count(distinct message_id)::int from comms.message_participant
+ where display_name is not null and {_FOLD.format('display_name')} ~ %(pattern)s
+ group by display_name
+"""
 _MANY_BY_NAME = """
 select lower(regexp_replace(btrim(o.name), '\\s+', ' ', 'g')) as norm, o.id::text, o.name from crm.organization o
  where o.merged_into_organization_id is null and o.status <> 'archived'
@@ -110,24 +124,68 @@ select lower(regexp_replace(btrim(o.name), '\\s+', ' ', 'g')) as norm, o.id::tex
 """
 
 
-class Subject(TypedDict):
+class Subject(TypedDict, total=False):
     email: str | None
     organization_name: str
     website: str | None
     block_only: bool
+    person_name: str | None
+
+
+_PARTICLES = frozenset({"de", "del", "la", "las", "los", "y", "van", "von", "da", "dos"})
+
+
+def name_tokens(name: str | None) -> list[str]:
+    """`Tapia, Ana M.` → [`ana`, `tapia`]: accent-folded words, `Last, First` turned
+    around, particles and initials dropped."""
+    if not name:
+        return []
+    if name.count(",") == 1:
+        last, first = name.split(",")
+        name = f"{first} {last}"
+    folded = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    return [t for t in re.findall(r"[a-z]+\.?", folded) if not t.endswith(".") and len(t) > 1 and t not in _PARTICLES]
+
+
+def same_person(finding: list[str], other: list[str]) -> bool:
+    """Same first name and a surname in common: `ana maria tapia` is `ana tapia soto`.
+    Surnames are the last word, or the last two of a four-word name; a shorter name made only of
+    the finding's own words (`juan gonzalez` for `juan gonzalez perez`) also counts."""
+    if len(finding) < 2 or len(other) < 2 or finding[0] != other[0]:
+        return False
+    surnames = finding[-2:] if len(finding) >= 4 else finding[-1:]
+    return any(s in other[1:] for s in surnames) or set(other) <= set(finding)
+
+
+def _surnames(tokens: list[str]) -> list[str]:
+    return [t for t in tokens[1:] if len(t) >= 3]
+
+
+def organization_name_parts(raw: str) -> list[str]:
+    """`Universidad Ficticia — Instituto X` → [`universidad ficticia`, `instituto x`]: a unit written next to its
+    institution still reaches the institution."""
+    parts = re.split(r"\s+[—–-]\s+|[,()/]", raw or "")
+    out = []
+    for part in parts:
+        norm = normalize_organization_name(part)
+        if len(norm) >= 4 and norm not in out:
+            out.append(norm)
+    return out
 
 
 def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
-    """Classify every subject with a fixed number of statements (six at most), whatever their count.
+    """Classify every subject with a fixed number of statements (eight at most), whatever their count.
 
     Same rules and order as one at a time: blocked → known → new; the most specific live domain
     names the institution (the email's before the website's, a subdomain before its parent), then
-    institutions with the same normalised name."""
+    institutions with the same normalised name, else with the name of one of its parts."""
     emails = [normalize_email(s["email"]) if s["email"] else None for s in subjects]
     own_domain = [domain_of(e, None) for e in emails]
     ladders = [[level for base in institution_domains(e, s["website"]) for level in _walk_up(base)]
                for e, s in zip(emails, subjects, strict=True)]
     names = [normalize_organization_name(s["organization_name"]) for s in subjects]
+    name_parts = [organization_name_parts(s["organization_name"]) for s in subjects]
+    people = [name_tokens(s.get("person_name")) for s in subjects]
     all_emails = sorted({e for e in emails if e})
     all_domains = sorted({d for d in own_domain if d})
     cur.execute(_MANY_BLOCKS, {"emails": all_emails, "domains": all_domains})
@@ -152,7 +210,17 @@ def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
         cur.execute(_MANY_BY_DOMAIN, {"domains": open_domains})
         for d, oid, name in cur.fetchall():
             by_domain.setdefault(d, []).append({"id": oid, "name": name})
-    open_names = sorted({names[i] for i in open_})
+    # One regex, one pass over the table: `like any` would scan it once per surname.
+    surnames = sorted({t for i in open_ for t in _surnames(people[i])})
+    pattern = "(" + "|".join(surnames) + ")" if surnames else None
+    crm_people: list[tuple[str, list[str]]] = []
+    correspondents: list[tuple[str, list[str], int]] = []
+    if pattern:
+        cur.execute(_MANY_PEOPLE_BY_NAME, {"pattern": pattern})
+        crm_people = [(r[0], name_tokens(r[0])) for r in cur.fetchall()]
+        cur.execute(_MANY_CORRESPONDENTS_BY_NAME, {"pattern": pattern})
+        correspondents = [(r[0], name_tokens(r[0]), r[1]) for r in cur.fetchall()]
+    open_names = sorted({n for i in open_ for n in [names[i], *name_parts[i]]})
     if open_names:
         cur.execute(_MANY_BY_NAME, {"names": open_names})
         for norm, oid, name in cur.fetchall():
@@ -182,10 +250,25 @@ def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
                 reasons.append("Ya fue contactado en una campaña")
             if e in in_crm or n or e in prior:
                 state = "known"
+        if state == "new" and people[i]:
+            person = next((name for name, toks in crm_people if same_person(people[i], toks)), None)
+            if person:
+                reasons.append(f"En el CRM hay una persona llamada {person}")
+            wrote = [(name, k) for name, toks, k in correspondents if same_person(people[i], toks)]
+            if wrote:
+                k = sum(k for _, k in wrote)
+                reasons.append(f"Ya nos escribimos con {wrote[0][0]} ({k} {'correo' if k == 1 else 'correos'})")
+            if person or wrote:
+                state = "known"
         candidates = next((list(by_domain[level]) for level in ladders[i] if by_domain.get(level)), [])
         for c in by_name.get(names[i], []):
             if all(x["id"] != c["id"] for x in candidates):
                 candidates.append(c)
+        if not candidates:
+            for part in name_parts[i]:
+                for c in by_name.get(part, []):
+                    if all(x["id"] != c["id"] for x in candidates):
+                        candidates.append(c)
         if len(candidates) == 1:
             reasons.append("Institución conocida: " + candidates[0]["name"])
         elif len(candidates) > 1:
@@ -197,7 +280,7 @@ def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
 
 
 def classify(cur: Any, *, email: str | None, organization_name: str, website: str | None,
-             block_only: bool = False) -> Classification:
+             block_only: bool = False, person_name: str | None = None) -> Classification:
     """One finding (the `contact-prospect` re-check under its lock): `classify_many` of one."""
     return classify_many(cur, [{"email": email, "organization_name": organization_name, "website": website,
-                                "block_only": block_only}])[0]
+                                "block_only": block_only, "person_name": person_name}])[0]

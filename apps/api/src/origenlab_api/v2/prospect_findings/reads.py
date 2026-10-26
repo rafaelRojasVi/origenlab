@@ -179,6 +179,7 @@ class ProspectFindingReadRepository:
             "email": (r["payload"] or {}).get("email"),
             "organization_name": (r["payload"] or {}).get("organization_name") or "",
             "website": (r["payload"] or {}).get("website"),
+            "person_name": (r["payload"] or {}).get("person_name"),
             "block_only": r["verdict"] in {"contactar", "descartar"},
         } for r in rows])
         return [(row, _item(row, c, today)) for row, c in zip(rows, found, strict=True)]
