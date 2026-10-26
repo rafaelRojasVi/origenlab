@@ -189,7 +189,7 @@ def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
         if len(candidates) == 1:
             reasons.append("Institución conocida: " + candidates[0]["name"])
         elif len(candidates) > 1:
-            reasons.append("Posible duplicado de institución")
+            reasons.append("Dos instituciones posibles: " + " / ".join(c["name"] for c in candidates))
         if state == "new" and not candidates:
             reasons.insert(0, "No está en el CRM ni en nuestros correos")
         out.append({"state": state, "reasons": reasons, "organization_candidates": candidates})

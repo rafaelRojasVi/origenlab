@@ -117,7 +117,7 @@ export function EmailDraftDrawer({ findingId, existingDraft, onClose, onDrafted 
               ) : null}
               {!state.result.labels_applied ? (
                 <p className="text-xs text-amber-600">
-                  No se pudieron poner las etiquetas «Claude» y «Prospecto»: falta autorizar Gmail de nuevo.
+                  No se pudieron poner las etiquetas «Claude – revisar» y «Prospecto»: falta autorizar Gmail de nuevo.
                 </p>
               ) : null}
               <a

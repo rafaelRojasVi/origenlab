@@ -347,7 +347,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
                       onLater={() => setPostponing([item])}
                       onDiscard={() => setDiscarding([item])}
                       onEdit={() => setEditing(item)}
-                      onPrepareEmail={item.email ? () => setPreparingEmail(item) : undefined}
+                      onPrepareEmail={canDecide && item.email ? () => setPreparingEmail(item) : undefined}
                     />
                   ))}
                 </div>

@@ -213,13 +213,25 @@ def test_free_mail_domain_never_matches_an_organization(client, db, operators):
     assert item["organization_candidates"] == []
 
 
-def test_two_candidate_organizations_flag_posible_duplicado(client, db, operators):
+def test_two_candidate_organizations_name_both(client, db, operators):
     organization(db, "Instituto Ficticio Doble", "doble.example.test")
     organization(db, "Instituto Ficticio Doble")
     rid = finding(db, email="x@doble.example.test", org="Instituto Ficticio Doble")
     item = next(i for i in _items(client, operators)["items"] if i["id"] == rid)
     assert len(item["organization_candidates"]) == 2
-    assert "Posible duplicado de institución" in item["reasons"]
+    assert "Dos instituciones posibles: Instituto Ficticio Doble / Instituto Ficticio Doble" in item["reasons"]
+
+
+def test_email_domain_and_name_point_to_different_institutions(client, db, operators):
+    # The correo's domain is one institution, the card's name another (a researcher who moved)
+    organization(db, "Universidad Ficticia del Norte", "norte.example.test")
+    organization(db, "Universidad Ficticia del Sur", "sur.example.test")
+    rid = finding(db, email="investigador@norte.example.test", org="Universidad Ficticia del Sur")
+    item = next(i for i in _items(client, operators)["items"] if i["id"] == rid)
+    assert {c["name"] for c in item["organization_candidates"]} == {
+        "Universidad Ficticia del Norte", "Universidad Ficticia del Sur"}
+    assert ("Dos instituciones posibles: Universidad Ficticia del Norte / Universidad Ficticia del Sur"
+            in item["reasons"])
 
 
 def test_descartado_never_in_nuevos(client, db, operators):
