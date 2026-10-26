@@ -290,3 +290,129 @@ def test_a_malformed_success_is_named_without_echoing_the_body() -> None:
     with pytest.raises(GmailSendError) as exc:
         GmailSender(TOKEN, transport=t, clock=_Clock()).send(b"x")
     assert exc.value.kind == "gmail_rejected" and exc.value.detail == "HTTP 200 invalid_response"
+
+
+# ------------------------------------------------------------ create_draft, apply_labels, fetch_send_as_signature
+
+
+def _multi_answers(responses: dict[str, tuple[int, bytes]]):
+    """Transport stub keyed on the full URL."""
+    def transport(method, url, headers, body, timeout):
+        for key, resp in responses.items():
+            if key in url:
+                return resp
+        raise AssertionError(f"unexpected URL: {url}")
+    return transport
+
+
+def test_create_draft_returns_draft_id_and_message_id() -> None:
+    token_resp = (200, _json({"access_token": "at1", "expires_in": 3600}))
+    draft_resp = (200, _json({"id": "draft-ficticio-01", "message": {"id": "msg-ficticio-01"}}))
+    sender = GmailSender(TOKEN, transport=_multi_answers({"/token": token_resp, "/drafts": draft_resp}),
+                         clock=_Clock())
+    draft_id, message_id = sender.create_draft(b"raw-mime-bytes")
+    assert draft_id == "draft-ficticio-01"
+    assert message_id == "msg-ficticio-01"
+
+
+def test_create_draft_raises_on_rejection() -> None:
+    token_resp = (200, _json({"access_token": "at1", "expires_in": 3600}))
+    draft_resp = (403, _json({"error": {"status": "PERMISSION_DENIED", "errors": [{"reason": "insufficientPermissions"}]}}))
+    sender = GmailSender(TOKEN, transport=_multi_answers({"/token": token_resp, "/drafts": draft_resp}),
+                         clock=_Clock())
+    with pytest.raises(GmailSendError) as exc:
+        sender.create_draft(b"raw-mime-bytes")
+    assert exc.value.kind == "draft_creation_failed"
+    assert exc.value.detail == "HTTP 403 PERMISSION_DENIED/insufficientPermissions"
+
+
+def test_apply_labels_creates_missing_label_then_applies_it() -> None:
+    token_resp = (200, _json({"access_token": "at1", "expires_in": 3600}))
+    labels_list_resp = (200, _json({"labels": [{"id": "Label_1", "name": "INBOX"}]}))
+    label_create_resp = (200, _json({"id": "Label_99", "name": "Claude"}))
+    modify_resp = (200, _json({"id": "msg-ficticio-01"}))
+    calls: list[str] = []
+
+    def transport(method, url, headers, body, timeout):
+        calls.append(f"{method}:{url}")
+        if "/token" in url:
+            return token_resp
+        if "/labels" in url and method == "GET":
+            return labels_list_resp
+        if "/labels" in url and method == "POST":
+            return label_create_resp
+        if "/modify" in url or "/messages/" in url:
+            return modify_resp
+        raise AssertionError(f"unexpected call: {method} {url}")
+
+    sender = GmailSender(TOKEN, transport=transport, clock=_Clock())
+    sender.apply_labels("msg-ficticio-01", ["Claude"])
+    # Must have listed labels and created the missing one
+    post_labels = [c for c in calls if "/labels" in c and c.startswith("POST")]
+    assert len(post_labels) == 1
+    modify_calls = [c for c in calls if "/modify" in c]
+    assert len(modify_calls) == 1
+
+
+def test_apply_labels_noop_on_empty_list() -> None:
+    # No transport call expected with an empty label list
+    def transport(method, url, headers, body, timeout):
+        raise AssertionError(f"should not be called: {method} {url}")
+    sender = GmailSender(TOKEN, transport=transport, clock=_Clock())
+    sender.apply_labels("msg-ficticio-01", [])  # must not raise
+
+
+def test_fetch_send_as_signature_returns_html_and_caches_it() -> None:
+    token_resp = (200, _json({"access_token": "at1", "expires_in": 3600}))
+    sig_resp = (200, _json({"sendAsEmail": "contacto@origenlab.cl", "signature": "<p>Firma Ficticia</p>"}))
+    calls: list[int] = []
+
+    def transport(method, url, headers, body, timeout):
+        if "/token" in url:
+            return token_resp
+        calls.append(1)
+        return sig_resp
+
+    clock_val = [0.0]
+    sender = GmailSender(TOKEN, transport=transport, clock=lambda: clock_val[0])
+    sig1 = sender.fetch_send_as_signature()
+    assert sig1 == "<p>Firma Ficticia</p>"
+    assert len(calls) == 1  # first call fetched
+    sig2 = sender.fetch_send_as_signature()
+    assert sig2 == sig1
+    assert len(calls) == 1  # second call served from cache
+
+
+def test_fetch_send_as_signature_returns_none_on_error() -> None:
+    token_resp = (200, _json({"access_token": "at1", "expires_in": 3600}))
+
+    def transport(method, url, headers, body, timeout):
+        if "/token" in url:
+            return token_resp
+        return (404, b"{}")
+
+    sender = GmailSender(TOKEN, transport=transport, clock=_Clock())
+    result = sender.fetch_send_as_signature()
+    assert result is None
+
+
+def test_fetch_send_as_signature_expires_cache() -> None:
+    from origenlab_api.v2.gmail_send import SIGNATURE_CACHE_TTL_SECONDS
+
+    token_resp = (200, _json({"access_token": "at1", "expires_in": 3600}))
+    sig_resp = (200, _json({"signature": "<p>Firma Ficticia</p>"}))
+    calls: list[int] = []
+    clock_val = [0.0]
+
+    def transport(method, url, headers, body, timeout):
+        if "/token" in url:
+            return token_resp
+        calls.append(1)
+        return sig_resp
+
+    sender = GmailSender(TOKEN, transport=transport, clock=lambda: clock_val[0])
+    sender.fetch_send_as_signature()
+    assert len(calls) == 1
+    clock_val[0] = SIGNATURE_CACHE_TTL_SECONDS + 1
+    sender.fetch_send_as_signature()
+    assert len(calls) == 2  # cache expired

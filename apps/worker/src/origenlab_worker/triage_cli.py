@@ -454,12 +454,14 @@ def discovery_in_subprocess(env: Mapping[str, str], *, run: Callable[..., Any] =
     return run_once
 
 
-def _serve_tenders(config: BidConfig, *, discovery: Callable[[], dict[str, Any]]) -> None:  # pragma: no cover
+def _serve_tenders(config: BidConfig, *, discovery: Callable[[], dict[str, Any]],
+                   prospect_search: Callable[[], dict[str, Any]] | None = None) -> None:  # pragma: no cover
     """Run the tender queue until SIGTERM: one preparation at a time, and the discovery sweep."""
     from origenlab_worker import task_queue
 
     task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
     task_queue.CONTEXT.discovery = discovery
+    task_queue.CONTEXT.prospect_search = prospect_search
 
     async def serve() -> None:
         with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
@@ -488,7 +490,9 @@ def run_tender_worker(env: Mapping[str, str], started: float) -> int:
     line["models"] = {"read": config.models.read, "fill": config.models.fill, "match": config.models.match}
     _emit(dict(line), started)
     try:
-        _serve_tenders(config, discovery=discovery_in_subprocess(env))
+        from origenlab_worker.flags import prospects_enabled
+        ps = prospect_search_in_subprocess(env) if prospects_enabled(env) else None
+        _serve_tenders(config, discovery=discovery_in_subprocess(env), prospect_search=ps)
     except Exception as exc:  # noqa: BLE001 — the class, never the text
         line.update(mode="failed", error=type(exc).__name__)
         _emit(line, started)
@@ -545,7 +549,91 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
     return _emit(line, started)
 
 
+PROSPECT_SEARCH_TIMEOUT_S = 20 * 60  # 20 minutes
+
+
+def prospect_search_in_subprocess(env: Mapping[str, str], *,
+                                   run: Callable[..., Any] = subprocess.run,
+                                   timeout_s: float = PROSPECT_SEARCH_TIMEOUT_S,
+                                   ) -> Callable[[], dict[str, Any]]:
+    """`QueueContext.prospect_search` for the tender child: `prospect-search` in a short-lived
+    process. Its stderr is dropped (a traceback could carry a project title); a run that prints
+    no counts is reported by its exit code only."""
+
+    def run_once() -> dict[str, Any]:
+        try:
+            done = run([sys.executable, "-m", "origenlab_worker.entry", "prospect-search"],
+                       env=dict(env), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                       text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return {"outcome": "failed", "error": "TimeoutExpired"}
+        lines = [line for line in (done.stdout or "").splitlines() if line.startswith("{")]
+        try:
+            counts = json.loads(lines[-1])
+        except (IndexError, ValueError):
+            counts = None
+        if not isinstance(counts, dict):
+            return {"outcome": "failed", "error": f"exit_{done.returncode}"}
+        return counts
+
+    return run_once
+
+
+def run_prospect_search_once(env: Mapping[str, str]) -> int:
+    """`prospect-search`: claim and execute one queued prospect search run. Prints one JSON line
+    of counts. Run by the tender child in a short-lived subprocess so its memory is freed."""
+    from origenlab_worker.database import open_verified_connection
+    from origenlab_worker.flags import prospects_enabled
+    from origenlab_worker.prospects.daily import SEARCH_REQUIRED_PRIVILEGES, run_search
+    from origenlab_worker.prospects.fit import model_from_env
+
+    if not prospects_enabled(env):
+        counts: dict[str, Any] = {"outcome": "skipped", "reason": "feature_off"}
+        print(json.dumps(counts, sort_keys=True), flush=True)
+        return EXIT_OK
+
+    try:
+        model = model_from_env(dict(env))
+    except (ValueError, Exception) as exc:
+        print(json.dumps({"outcome": "failed", "error": type(exc).__name__}, sort_keys=True), flush=True)
+        return EXIT_OK
+
+    # Build target from same env vars as the rest of the worker
+    try:
+        from origenlab_worker.triage_cli import bid_config_from_env
+        config = bid_config_from_env(env)
+        target = config.database
+    except Exception as exc:
+        print(json.dumps({"outcome": "config_refused", "error": type(exc).__name__}, sort_keys=True), flush=True)
+        return EXIT_OK
+
+    try:
+        with open_verified_connection(target, application_name="origenlab-worker-prospect",
+                                      privileges=SEARCH_REQUIRED_PRIVILEGES,
+                                      policies=frozenset()) as conn:
+            # Find the oldest queued run
+            with conn.cursor() as cur:
+                cur.execute(
+                    "select id::text from evidence.prospect_search_run "
+                    "where status = 'queued' order by requested_at, id limit 1 for update skip locked"
+                )
+                row = cur.fetchone()
+            if row is None:
+                print(json.dumps({"outcome": "no_run"}, sort_keys=True), flush=True)
+                return EXIT_OK
+            run_id = row[0]
+            counts = run_search(conn, run_id, model)
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"outcome": "failed", "error": type(exc).__name__}, sort_keys=True), flush=True)
+        return EXIT_OK
+
+    print(json.dumps({**counts, "outcome": "done"}, sort_keys=True, default=str), flush=True)
+    return EXIT_OK
+
+
 __all__ = ["DEFAULT_SINCE_DAYS", "ENV_ANTHROPIC_API_KEY", "ENV_BID_ENABLED", "ENV_BID_FILL_MODEL", "ENV_BID_MATCH_MODEL",
            "ENV_BID_READ_MODEL", "ENV_TRIAGE_ENABLED", "ENV_TRIAGE_MODEL", "ENV_TRIAGE_MODEL_ENABLED", "BidConfig",
-           "TriageConfig", "bid_config_from_env", "bid_enabled", "bid_sweep_for", "discovery_in_subprocess", "run_tender_discovery_once", "run_tender_worker", "run_triage_once",
+           "TriageConfig", "bid_config_from_env", "bid_enabled", "bid_sweep_for", "discovery_in_subprocess",
+           "prospect_search_in_subprocess", "run_prospect_search_once",
+           "run_tender_discovery_once", "run_tender_worker", "run_triage_once",
            "run_triage_worker", "triage_config_from_env", "triage_enabled"]

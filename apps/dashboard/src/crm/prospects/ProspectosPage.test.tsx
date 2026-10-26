@@ -51,6 +51,9 @@ function stubApi(onPost: (path: string, body: Record<string, unknown>) => Respon
     const headers = (init?.headers ?? {}) as Record<string, string>;
     calls.push({ method, path: u.pathname + u.search, body, key: headers["Idempotency-Key"] ?? null });
     if (method === "POST") return Promise.resolve(onPost(u.pathname, body ?? {}));
+    if (u.pathname === "/v2/prospect-findings/search-status") {
+      return Promise.resolve(json({ last_run: null, running: false, unreviewed: 22 }));
+    }
     if (u.pathname === "/v2/prospect-findings") {
       const offset = Number(u.searchParams.get("offset") ?? "0");
       return Promise.resolve(json(offset > 0 ? { counts: COUNTS, items: [item({ id: "33333333-3333-4333-8333-333333333333", person_name: "Clara Tercera" })], has_more: false } : LIST));
@@ -88,7 +91,7 @@ describe("ProspectosPage", () => {
     renderPage();
     const cards = await screen.findAllByTestId(/^prospect-card-/);
     expect(cards.map((c) => c.dataset.testid)).toEqual([`prospect-card-${ID1}`, `prospect-card-${ID2}`]);
-    expect(calls[0].path).toContain("view=nuevos");
+    expect(calls.some((c) => c.path.includes("view=nuevos"))).toBe(true);
     expect(screen.getByText("Gente nueva que podría comprarnos. Revisa, contacta o descarta.")).toBeInTheDocument();
     expect(screen.getByText("3 omitidos por bajas")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ver más" }));

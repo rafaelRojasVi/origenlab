@@ -1,4 +1,4 @@
-"""One-time, local: authorize «Enviar prueba» to send as contacto@origenlab.cl (gmail.compose + gmail.settings.basic by default).
+"""One-time, local: authorize «Enviar prueba» to send as contacto@origenlab.cl (gmail.compose + gmail.modify + gmail.settings.basic by default).
 
     uv run --extra drive-bootstrap python scripts/gmail_send_authorize.py [--scopes web-form|send] \
         --client-secrets ~/Downloads/client_secret_<id>.json \
@@ -19,14 +19,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from origenlab_api.v2.gmail_send import COMPOSE_SCOPE, SEND_SCOPE, SENDER_ADDRESS  # noqa: E402
+from origenlab_api.v2.gmail_send import COMPOSE_SCOPE, MODIFY_SCOPE, SEND_SCOPE, SENDER_ADDRESS  # noqa: E402
 
 IDENTITY_SCOPES = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 SETTINGS_SCOPE = "https://www.googleapis.com/auth/gmail.settings.basic"
-#: `web-form` (default): the production token — compose also sends, settings.basic for the
-#: signature. `send`: the original gmail.send-only token for «Enviar prueba».
+#: `web-form` (default): the production token — compose (also sends), modify (draft labels),
+#: settings.basic (send-as signature). `send`: the original gmail.send-only token for «Enviar prueba».
 SCOPE_SETS = {
-    "web-form": [COMPOSE_SCOPE, SETTINGS_SCOPE, *IDENTITY_SCOPES],
+    "web-form": [COMPOSE_SCOPE, MODIFY_SCOPE, SETTINGS_SCOPE, *IDENTITY_SCOPES],
     "send": [SEND_SCOPE, *IDENTITY_SCOPES],
 }
 SCOPES = SCOPE_SETS["web-form"]

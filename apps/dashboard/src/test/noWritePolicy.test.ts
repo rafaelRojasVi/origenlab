@@ -132,7 +132,9 @@ describe("dashboard read-only policy", () => {
   ];
   // «Prospectos» (spec 2026-10-23): «Más tarde» / «Descartar» / «Deshacer» and «Contactar», one POST site.
   const PROSPECT_API_FILE = "../crm/prospects/prospectApi.ts";
-  const PROSPECT_API_PATHS = ["/v2/commands/review-prospect", "/v2/commands/contact-prospect", "/v2/commands/edit-prospect"];
+  const PROSPECT_API_PATHS = ["/v2/commands/contact-prospect", "/v2/commands/edit-prospect",
+    "/v2/commands/prepare-prospect-email", "/v2/commands/request-prospect-search",
+    "/v2/commands/review-prospect"];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";

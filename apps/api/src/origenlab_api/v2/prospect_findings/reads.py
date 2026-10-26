@@ -15,7 +15,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from origenlab_api.v2.prospect_findings.classify import classify_many
-from origenlab_api.v2.prospect_findings.commands import apply_edits
+from origenlab_api.v2.prospect_findings.commands import apply_edits, gmail_draft_url
 
 SANTIAGO = ZoneInfo("America/Santiago")
 View = Literal["nuevos", "conocidos", "mas_tarde", "contactados", "descartados"]
@@ -26,7 +26,8 @@ _FINDINGS = """
 select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and s.payload->'logo' <> 'null'::jsonb) as has_logo,
        s.acquired_at,
        r.verdict, r.reason, r.remind_on, r.reviewed_at,
-       e.edits, e.edited_at, e.edited_by
+       e.edits, e.edited_at, e.edited_by,
+       d.draft_id, d.draft_message_id, d.drafted_at
   from evidence.source_record s
   left join lateral (
         select x.verdict, x.reason, x.remind_on, x.reviewed_at
@@ -39,7 +40,16 @@ select s.id::text as id, s.payload - 'logo' as payload, (s.payload ? 'logo' and 
                (array_agg(op.display_name order by x.edited_at desc, x.id desc))[1] as edited_by
           from crm.prospect_edit x left join platform.operator op on op.id = x.edited_by_operator_id
          where x.source_record_id = s.id) e on true
+  -- Last «Preparar correo» event, if any.
+  left join lateral (
+        select x.payload->>'draft_id' as draft_id, x.payload->>'message_id' as draft_message_id,
+               x.recorded_at as drafted_at
+          from crm.domain_event x
+         where x.aggregate_kind = 'source_record' and x.aggregate_id = s.id
+           and x.event_type = 'source_record.prospect_email_drafted'
+         order by x.seq desc limit 1) d on true
  where s.kind = 'prospect_finding' and not s.is_quarantined and s.superseded_by_source_record_id is null
+   and (s.payload->>'hidden_reason') is null
 """
 _HISTORY = """
 select x.verdict, x.reason, x.remind_on, x.reviewed_at, op.display_name as reviewed_by
@@ -78,6 +88,10 @@ def _item(row: dict[str, Any], c: dict[str, Any], today: date) -> dict[str, Any]
         # Who last corrected the card, and when (`crm.prospect_edit`); null when nobody has.
         "edited": None if row.get("edited_at") is None else {
             "at": _instant(row["edited_at"]), "by": row.get("edited_by")},
+        # Last «Preparar correo» event — the draft_id to link to in Gmail drafts.
+        "email_draft": None if row.get("draft_id") is None else {
+            "draft_id": row["draft_id"], "drafted_at": _instant(row["drafted_at"]),
+            "gmail_url": gmail_draft_url(row["draft_message_id"]) if row.get("draft_message_id") else None},
     }
 
 
@@ -214,3 +228,54 @@ class ProspectFindingReadRepository:
         if not logo or logo.get("content_type") not in {"image/png", "image/jpeg", "image/webp", "image/x-icon"}:
             return None
         return logo["content_type"], base64.b64decode(logo["b64"])
+
+    def search_status(self) -> dict[str, Any]:
+        """Returns the daily search status for the Prospectos header.
+
+        ``last_run`` is the most recent finished (done/failed) run, or None.
+        ``running`` is True when a run with status='running' exists.
+        ``unreviewed`` is the count of visible unreviewed prospects (the queue level).
+        """
+        _LAST_RUN = """
+            select id::text, trigger, status, started_at, finished_at, counts, error, requested_at
+              from evidence.prospect_search_run
+             where status in ('done', 'failed')
+             order by finished_at desc nulls last, requested_at desc limit 1
+        """
+        _RUNNING = "select 1 from evidence.prospect_search_run where status in ('running', 'queued') limit 1"
+        _UNREVIEWED = """
+            select count(*) from evidence.source_record s
+              left join lateral (
+                  select verdict from crm.prospect_review
+                   where source_record_id = s.id
+                   order by reviewed_at desc, id desc limit 1) r on true
+             where s.kind = 'prospect_finding' and not s.is_quarantined
+               and s.superseded_by_source_record_id is null
+               and (r.verdict is null or r.verdict = 'reabrir')
+               and (s.payload->>'hidden_reason') is null
+        """
+        with self._read() as cur:
+            cur.execute(_LAST_RUN)
+            run_row = cur.fetchone()
+            if run_row:
+                names = [d.name for d in cur.description]
+                run_dict = dict(zip(names, run_row, strict=True))
+            else:
+                run_dict = None
+            cur.execute(_RUNNING)
+            is_running = cur.fetchone() is not None
+            cur.execute(_UNREVIEWED)
+            unreviewed = int(cur.fetchone()[0])
+        if run_dict is None:
+            last_run = None
+        else:
+            last_run = {
+                "id": run_dict["id"],
+                "trigger": run_dict["trigger"],
+                "status": run_dict["status"],
+                "started_at": _instant(run_dict["started_at"]),
+                "finished_at": _instant(run_dict["finished_at"]),
+                "counts": run_dict["counts"] or {},
+                "error": run_dict["error"],
+            }
+        return {"last_run": last_run, "running": is_running, "unreviewed": unreviewed}

@@ -394,6 +394,36 @@ def contact_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: di
             + ["prospect_review"], "event_ids": [event_id]}
 
 
+PREPARE_PROSPECT_EMAIL = "prepare-prospect-email"
+
+#: Labels applied to the drafted message (gmail.modify scope required).
+_DRAFT_LABELS = ["Claude", "Prospecto"]
+
+DRAFT_FAILURE_ES: dict[str, str] = {
+    "token_refresh_failed": "No se pudo crear el borrador: el permiso de Gmail venció o fue revocado.",
+    "draft_creation_failed": "Gmail rechazó la creación del borrador.",
+    "label_list_failed": "No se pudo leer las etiquetas de Gmail.",
+    "label_create_failed": "No se pudo crear la etiqueta en Gmail.",
+    "label_apply_failed": "No se pudo etiquetar el borrador en Gmail.",
+    "network": "No se pudo contactar a Gmail.",
+}
+
+
+class PrepareProspectEmailBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    again: bool = False  # a second draft for a finding that already has one
+
+    @property
+    def finding_uuid(self) -> str:
+        return as_uuid(self.finding_id, "finding_id")
+
+
+def prepare_prepare_prospect_email(body: PrepareProspectEmailBody) -> dict[str, Any]:
+    return {"finding_id": body.finding_uuid}
+
+
 class V2ProspectCommandRepository(V2CrmAuthoringRepository):
     """The «Prospectos» commands, with their own dispatch: the CRM authoring handlers are reached only
     inside `contact-prospect`'s transaction, never through this repository's routes."""
@@ -404,7 +434,145 @@ class V2ProspectCommandRepository(V2CrmAuthoringRepository):
         EDIT_PROSPECT: edit_prospect,
     }
 
+    def __init__(self, connect: Any, dsn: str, *,
+                 sender: Any = None,
+                 statement_timeout_ms: int = 15_000) -> None:
+        super().__init__(connect, dsn, statement_timeout_ms)
+        self._sender = sender  # GmailSender | None
 
-__all__ = ["CONTACT_PROSPECT", "EDIT_PROSPECT", "REVIEW_PROSPECT", "ContactProspectBody", "EditProspectBody",
-           "ReviewProspectBody", "V2ProspectCommandRepository", "apply_edits", "contact_prospect", "edit_prospect",
-           "prepare_contact_prospect", "prepare_edit_prospect", "prepare_review_prospect", "review_prospect"]
+    # ------------------------------------------------------------------ prepare-prospect-email
+
+    def prepare_email(
+        self,
+        *,
+        operator: OperatorIdentity,
+        body: "PrepareProspectEmailBody",
+        idempotency_key: str,
+        digest: str,
+    ) -> dict[str, Any]:
+        """«Preparar correo»: create a Gmail draft for a prospect, never send it.
+
+        1. One transaction: claim the receipt, lock the finding, refuse (no email, hidden, Bajas,
+           already drafted without `again`), run «Contactar» if it is still pending, build the
+           message — committed, so the person is in the CRM whatever Gmail answers;
+        2. Gmail, outside any transaction: the draft, then the labels (best-effort);
+        3. One transaction: the `prospect_email_drafted` event and the completed receipt.
+
+        A Gmail failure finishes the receipt `failed` (502); a retry with a new key drafts again.
+        """
+        from origenlab_api.v2.gmail_send import GmailSendError
+        from origenlab_api.v2.prospect_findings.intro_email import (
+            build_html,
+            build_mime_message,
+            build_subject,
+            build_text,
+            load_catalogue_pdf,
+        )
+
+        if self._sender is None:
+            raise CommandRefused(503, "gmail_not_configured",
+                                 "Gmail no está conectado en este servidor; no se puede crear el borrador.")
+        finding_id = body.finding_uuid
+        contacted = False
+        with self._write() as cur:
+            receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key,
+                                                     PREPARE_PROSPECT_EMAIL, digest)
+            if replay is not None:
+                return replay
+            finding = _lock_finding(cur, finding_id)  # 404 rolls back the claim
+            payload = finding["payload"]
+            if payload.get("hidden_reason"):
+                raise CommandRefused(404, "prospect_not_found", "Ese prospecto no existe.")
+            if not payload.get("email"):
+                raise CommandRefused(409, "prospect_no_email",
+                                     "Este prospecto no tiene correo; agrégalo con «Editar».")
+            c = classify(cur, email=payload.get("email"), organization_name=payload.get("organization_name") or "",
+                         website=payload.get("website"))
+            if c["state"] == "blocked":
+                raise CommandRefused(409, "prospect_blocked",
+                                     "Esta persona está en Bajas o rebotó; no se le escribe.")
+            cur.execute("select 1 from crm.domain_event where aggregate_kind = 'source_record' "
+                        "and aggregate_id = %s::uuid and event_type = 'source_record.prospect_email_drafted' "
+                        "limit 1", (finding_id,))
+            if cur.fetchone() is not None and not body.again:
+                raise CommandRefused(409, "prospect_email_already_drafted",
+                                     "Ya hay un borrador para este prospecto en Gmail.")
+            if _latest_verdict(cur, finding_id) != "contactar":
+                try:
+                    contact_prospect(self, cur, operator, {"finding_id": finding_id, "organization_id": None,
+                                                           "create_new_organization": False}, receipt_id)
+                except CommandRefused as exc:
+                    if exc.code != "organization_ambiguous":
+                        raise
+                    raise CommandRefused(409, "prospect_contact_first",
+                                         "Hay varias instituciones posibles: usa «Contactar» para elegirla "
+                                         "y luego prepara el correo.") from exc
+                contacted = True
+            email_addr: str = payload["email"]
+            signature_html = self._sender.fetch_send_as_signature()
+            fields = {k: payload.get(k) for k in ("person_name", "salutation_sex", "project_title", "fund_label",
+                                                  "email_source_note", "email_source_url", "email_source_year")}
+            fields["equipment"] = list(payload.get("equipment") or [])
+            subject = build_subject(payload.get("fund_label"))
+            try:
+                raw = build_mime_message(
+                    to=email_addr, subject=subject,
+                    text_body=build_text(**fields, gmail_signature_html=signature_html),
+                    html_body=build_html(**fields, gmail_signature_html=signature_html),
+                    pdf_bytes=load_catalogue_pdf())
+            except ValueError as exc:  # rolls the claim and the contact back
+                raise CommandRefused(422, "invalid_recipient", "El correo de este prospecto no es válido.") from exc
+
+        try:
+            draft_id, message_id = self._sender.create_draft(raw)
+        except GmailSendError as exc:
+            _finish_receipt(self, receipt_id, 502, {"error": exc.kind, "detail": exc.detail,
+                                                    "contacted": contacted})
+            raise CommandRefused(502, exc.kind,
+                                 DRAFT_FAILURE_ES.get(exc.kind, "No se pudo crear el borrador.")) from exc
+        try:
+            self._sender.apply_labels(message_id, _DRAFT_LABELS)
+            labels_applied = True
+        except GmailSendError:
+            labels_applied = False  # gmail.modify not granted yet: the draft stands without labels
+
+        with self._write() as cur:
+            event_id = self._append_event(
+                cur, aggregate_kind="source_record", aggregate_id=finding_id,
+                event_type="source_record.prospect_email_drafted",
+                payload={"draft_id": draft_id, "message_id": message_id, "labels_applied": labels_applied,
+                         "signature": signature_html is not None, "subject": subject},
+                operator=operator, receipt_id=receipt_id)
+            response: dict[str, Any] = {
+                "command": PREPARE_PROSPECT_EMAIL, "finding_id": finding_id, "draft_id": draft_id,
+                "message_id": message_id, "gmail_url": gmail_draft_url(message_id), "to": email_addr,
+                "subject": subject, "signature": signature_html is not None, "labels_applied": labels_applied,
+                "contacted": contacted, "event_ids": [event_id], "idempotency_key": idempotency_key,
+                "command_receipt_id": receipt_id, "replayed": False,
+            }
+            self._complete_receipt(cur, receipt_id, response)
+        return response
+
+
+def gmail_draft_url(message_id: str) -> str:
+    """The draft open in Gmail's compose window (contacto@ is the first signed-in account)."""
+    return f"https://mail.google.com/mail/u/0/#drafts?compose={message_id}"
+
+def _finish_receipt(repo: V2ProspectCommandRepository, receipt_id: str, status_code: int,
+                    response: dict[str, Any]) -> None:
+    from origenlab_api.v2.command_core import json_payload
+    with repo._write() as cur:  # noqa: SLF001
+        cur.execute(
+            "update platform.command_receipt set status = %s, response_status = %s, "
+            "response_body = %s::jsonb, completed_at = now() where id = %s and status = 'in_progress'",
+            ("failed", status_code, json_payload(response), receipt_id),
+        )
+
+
+__all__ = [
+    "CONTACT_PROSPECT", "EDIT_PROSPECT", "PREPARE_PROSPECT_EMAIL", "REVIEW_PROSPECT",
+    "ContactProspectBody", "EditProspectBody", "PrepareProspectEmailBody", "ReviewProspectBody",
+    "V2ProspectCommandRepository", "apply_edits", "contact_prospect", "edit_prospect",
+    "prepare_contact_prospect", "prepare_edit_prospect", "prepare_prepare_prospect_email",
+    "prepare_review_prospect", "review_prospect",
+]

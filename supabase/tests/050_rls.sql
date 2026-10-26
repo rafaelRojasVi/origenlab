@@ -273,9 +273,16 @@ insert into expected_policies values
     -- 20261025100000: crm.prospect_edit — append-only correction; api select/insert, worker select.
     ('crm', 'prospect_edit', 'origenlab_api', 'SELECT'),
     ('crm', 'prospect_edit', 'origenlab_api', 'INSERT'),
-    ('crm', 'prospect_edit', 'origenlab_worker', 'SELECT');
+    ('crm', 'prospect_edit', 'origenlab_worker', 'SELECT'),
+    -- 20261026100000: evidence.prospect_search_run — api select/insert, worker
+    -- select/insert/update (mutable status table, not append-only).
+    ('evidence', 'prospect_search_run', 'origenlab_api', 'SELECT'),
+    ('evidence', 'prospect_search_run', 'origenlab_api', 'INSERT'),
+    ('evidence', 'prospect_search_run', 'origenlab_worker', 'SELECT'),
+    ('evidence', 'prospect_search_run', 'origenlab_worker', 'INSERT'),
+    ('evidence', 'prospect_search_run', 'origenlab_worker', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 218, 'the matrix implies 218 policies');
+select is((select count(*)::int from expected_policies), 223, 'the matrix implies 223 policies');
 
 -- Posture.
 select is(

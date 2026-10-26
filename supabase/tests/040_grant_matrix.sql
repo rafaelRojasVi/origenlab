@@ -187,9 +187,15 @@ insert into expected values
     -- 20261025100000: crm.prospect_edit — a person's correction to a prospect finding; append-only
     -- (api inserts, worker reads). No UPDATE or DELETE grant on either role.
     ('crm', 'prospect_edit', 'origenlab_api', 'SI', null, 'SI'),
-    ('crm', 'prospect_edit', 'origenlab_worker', 'S', null, 'S');
+    ('crm', 'prospect_edit', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261026100000: evidence.prospect_search_run — mutable status table; api select/insert,
+    -- worker select/insert + column-restricted UPDATE (status, started_at, finished_at, counts,
+    -- error, updated_at).
+    ('evidence', 'prospect_search_run', 'origenlab_api', 'SI', null, 'SI'),
+    ('evidence', 'prospect_search_run', 'origenlab_worker', 'SI',
+       array['status', 'started_at', 'finished_at', 'counts', 'error', 'updated_at'], 'SIU');
 
-select is((select count(*)::int from expected), 124, 'the matrix covers all 62 tables for both runtime roles');
+select is((select count(*)::int from expected), 126, 'the matrix covers all 63 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

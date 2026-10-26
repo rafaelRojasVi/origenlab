@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMayRunCaseCommands } from "../caseCommands";
 import type { CrmSection } from "../crmRoute";
 import { Button, EmptyState, PageHeader, ResourceGate, Skeleton, toast } from "../ui";
@@ -6,6 +6,7 @@ import { useResource } from "../useResource";
 import { ContactarDialog } from "./ContactarDialog";
 import { DescartarDialog, MasTardeDialog } from "./DecisionDialogs";
 import { EditProspectDrawer } from "./EditProspectDrawer";
+import { EmailDraftDrawer } from "./EmailDraftDrawer";
 import { ProspectCard, displayName } from "./ProspectCard";
 import { ProspectDetail } from "./ProspectDetail";
 import { SystemSearch } from "./SystemSearch";
@@ -13,12 +14,15 @@ import {
   ambiguousCandidates,
   contactProspect,
   fetchProspects,
+  fetchSearchStatus,
   prospectRefusal,
+  requestProspectSearch,
   reviewProspect,
   type OrganizationCandidate,
   type ProspectCounts,
   type ProspectItem,
   type ProspectList,
+  type ProspectSearchStatus,
   type ProspectView,
 } from "./prospectApi";
 import { santiagoDay } from "./santiagoDate";
@@ -91,6 +95,77 @@ function matches(item: ProspectItem, origin: Origin, reach: Reach): boolean {
   return true;
 }
 
+/** «Búsqueda diaria» header bar: status, «Buscar ahora» button, poll while running. */
+function DailySearchHeader({ canDecide }: { canDecide: boolean }) {
+  const [status, setStatus] = useState<ProspectSearchStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await fetchSearchStatus();
+      setStatus(s);
+      return s;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Initial load + poll every 8 s while running
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(async () => {
+      const s = await refresh();
+      if (s && !s.running) {
+        clearInterval(id);
+      }
+    }, 8_000);
+    pollRef.current = id;
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  // When a manual search is requested we start polling immediately
+  const startSearch = async () => {
+    setBusy(true);
+    try {
+      const r = await requestProspectSearch();
+      if (r.queued) {
+        toast("Búsqueda iniciada");
+        void refresh();
+      } else {
+        toast("Ya hay una búsqueda en curso", "warn");
+      }
+    } catch {
+      toast("No se pudo iniciar la búsqueda", "bad");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const run = status?.last_run;
+  const running = status?.running ?? false;
+  const finishedAt = run?.finished_at ? run.finished_at.slice(0, 10) : null;
+  const added = run?.counts?.added ?? null;
+  const poolLeft = run?.counts?.pool_left ?? null;
+
+  let subtitle = "Búsqueda diaria 06:00 (Santiago)";
+  if (running) subtitle += " · En ejecución…";
+  else if (finishedAt) subtitle += ` · última: ${finishedAt}${added != null ? `, ${added} nuevos` : ""}`;
+  if (status != null) subtitle += ` · ${status.unreviewed} por revisar`;
+  if (poolLeft != null) subtitle += ` · ~${poolLeft} candidatos más en ANID`;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border border-line bg-canvas-raised px-4 py-3">
+      <p className="text-sm text-ink-muted">{subtitle}</p>
+      {canDecide ? (
+        <Button onClick={() => void startSearch()} busy={busy || running} busyLabel="Buscando…">
+          Buscar ahora
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 export function ProspectosPage({ id = null, navigate, now }: { id?: string | null; navigate: Navigate; now?: Date }) {
   const clock = now ?? new Date();
   const today = santiagoDay(clock);
@@ -106,6 +181,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   const [busyId, setBusyId] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState<ProspectItem[] | null>(null);
   const [editing, setEditing] = useState<ProspectItem | null>(null);
+  const [preparingEmail, setPreparingEmail] = useState<ProspectItem | null>(null);
   const [postponing, setPostponing] = useState<ProspectItem[] | null>(null);
   const [choosing, setChoosing] = useState<{ item: ProspectItem; candidates: OrganizationCandidate[] } | null>(null);
   const [openId, setOpenId] = useState<string | null>(id);
@@ -211,6 +287,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-4 py-5 sm:px-6">
       <PageHeader title="Prospectos" subtitle="Gente nueva que podría comprarnos. Revisa, contacta o descarta." />
+      <DailySearchHeader canDecide={canDecide} />
       <SystemSearch onOpenProspect={open} />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={5} cards />}>
         {(list) => {
@@ -270,6 +347,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
                       onLater={() => setPostponing([item])}
                       onDiscard={() => setDiscarding([item])}
                       onEdit={() => setEditing(item)}
+                      onPrepareEmail={item.email ? () => setPreparingEmail(item) : undefined}
                     />
                   ))}
                 </div>
@@ -301,6 +379,14 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
       {editing ? (
         <EditProspectDrawer item={editing} onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload(); }} />
+      ) : null}
+      {preparingEmail ? (
+        <EmailDraftDrawer
+          findingId={preparingEmail.id}
+          existingDraft={preparingEmail.email_draft}
+          onClose={() => setPreparingEmail(null)}
+          onDrafted={reload}
+        />
       ) : null}
     </div>
   );

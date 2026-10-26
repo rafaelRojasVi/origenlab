@@ -1296,12 +1296,19 @@ in order over the payload.
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
 | 66 | `crm.prospect_edit` | a person's correction to a prospect finding: the fields they changed, a null clearing one | `changes` a non-empty JSON object whose keys are the editable finding fields (`prospect_edit_changes_keys`); **append-only** via `platform.reject_mutation` — the later correction wins per field; `origenlab_api` select/insert, `origenlab_worker` select |
+| 67 | `evidence.prospect_search_run` | one ANID prospect search run — daily (cron 09:00 UTC ≈ 06:00 Santiago) or manual («Buscar ahora»); tracks status from `queued` through `running` to `done`/`failed` | `trigger` ∈ {`daily`,`manual`}; `requested_by_operator_id` is null iff daily (CHECK); partial unique index prevents two active runs; `counts` a jsonb object (added, skipped, no_email, low_fit, pool_left); **append-only** (`platform.reject_mutation`); `origenlab_api` select/insert (manual enqueue), `origenlab_worker` select/insert/update(status, times, counts, error) |
 
-Domain event added: `source_record.prospect_edited` (aggregate `source_record`), payload the names of
+Domain events added: `source_record.prospect_search_requested` (manual «Buscar ahora» command),
+`source_record.prospect_email_drafted` (aggregate `source_record`), payload `{draft_id, message_id, labels_applied, signature, subject}` — the Gmail draft and its message (the message id opens the draft in Gmail), whether the labels «Claude» and «Prospecto» were applied (they need `gmail.modify`) and whether contacto@'s Gmail signature was used. The recipient is the finding's email, not repeated here.
+Domain event added earlier: `source_record.prospect_edited` (aggregate `source_record`), payload the names of
 the changed fields, never their values.
 
-Counts by schema: `crm` 27, `comms` 4, `outbound` 9, `evidence` 6,
-`catalog` 8, `procurement` 1, `platform` 7 — **62**.
+`platform.model_usage` widened (same migration): feature `'prospectos'`, step `'prospect'` (one call per
+candidate, writing «Por qué ahora» + «Equipos»), nullable FK `prospect_search_run_id`. Spend cap:
+US$ 10/month under feature key `prospectos`.
+
+Counts by schema: `crm` 27, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **63**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

@@ -77,6 +77,8 @@ EXPECTED_EXTRA_TABLES = {
     "prospect_review",
     # 20261025100000_slice7_prospect_edit.sql — DOMAIN.md §7 #66.
     "prospect_edit",
+    # 20261026100000_slice7_prospect_search.sql — DOMAIN.md §7 #67.
+    "prospect_search_run",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -344,6 +346,11 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # indexes: prospect_edit_record_idx (source_record_id leads it) and prospect_edit_operator_idx.
     "crm.prospect_edit.prospect_edit_source_record_id_fkey",
     "crm.prospect_edit.prospect_edit_edited_by_operator_id_fkey",
+    # 20261026100000_slice7_prospect_search.sql — both covered by conditional partial indexes
+    # (prospect_search_run_requested_by_idx and model_usage_prospect_search_run_idx, both
+    # WHERE col IS NOT NULL), so implied-partial coverage — not counted unconditionally.
+    "evidence.prospect_search_run.prospect_search_run_requested_by_operator_id_fkey",
+    "platform.model_usage.model_usage_prospect_search_run_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -364,18 +371,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 63,
+        "relation_count": 64,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 62,
+        "table_count": 63,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 218,
+        "policy_count": 223,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -489,8 +496,8 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "29 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly twenty-nine extra tables")
+    if "30 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly thirty extra tables")
 
     # The 93 policy additions must belong to those same twenty-nine reviewed tables, plus one each on
     # two existing tables (crm.quote_line and procurement.notice, below):
@@ -539,8 +546,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "93 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly ninety-three extra policies")
+    if "98 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly ninety-eight extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -564,7 +571,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 63, expected 34"],
+        "a04": ["relations in scope: observed 64, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
@@ -585,7 +592,8 @@ def main() -> int:
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
         "unsubscribe, campaign-block, shared-sign-in, slice-6 campaign-content-archive "
         "and crm-authoring, slice-7 catalog and document-line, notice-relevance-review, "
-        "prospect-findings and prospect-edit schema delta, less the revoked runtime writes on platform.operator"
+        "prospect-findings, prospect-edit and prospect-search-run schema delta, "
+        "less the revoked runtime writes on platform.operator"
     )
     return 0
 

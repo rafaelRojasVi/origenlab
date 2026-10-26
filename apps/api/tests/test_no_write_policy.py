@@ -11,15 +11,17 @@ from origenlab_api.main import create_app
 _API_SRC = Path(__file__).resolve().parents[1] / "src" / "origenlab_api"
 
 # «Enviar prueba» (owner decision 2026-10-04): one admin-only test of one campaign's stored email to
-# one address, from contacto@. These are the only files allowed to name the Gmail send client;
+# one address, from contacto@. «Preparar correo» (2026-10-25): creates a Gmail DRAFT (never sends)
+# for a prospect intro email. These are the only files allowed to name the Gmail send client;
 # every other file keeps the `gmail_send` guard. The allowance is by exact path (never a directory):
-# the client module, the repository that calls it, and the `main.py` mount that builds the sender.
-# The one sanctioned sender is `POST /v2/commands/send-campaign-test`, mounted only behind its switch.
+# the client module, the repositories that call it, and the `main.py` mount that builds the sender.
 _GMAIL_SEND_ALLOWED = frozenset(
     {
         "v2/gmail_send.py",
         "v2/campaign_test_send.py",
         "v2/web_quote_form.py",
+        "v2/prospect_findings/commands.py",
+        "v2/prospect_findings/intro_email.py",
         "main.py",
     }
 )

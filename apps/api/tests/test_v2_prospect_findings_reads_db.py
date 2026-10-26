@@ -427,3 +427,38 @@ def test_list_runs_a_fixed_number_of_statements_however_many_findings(db):
     repo = ProspectFindingReadRepository(counting, runtime_dsn(db))
     repo.list("nuevos")
     assert counting.statements <= 12, counting.statements  # was 243 before batching (2026-10-23)
+
+
+def test_hidden_finding_is_excluded_from_list(db):
+    """A finding with hidden_reason set (below FIT_THRESHOLD) must never appear in any view."""
+    n = next(_SERIALS)
+    org = f"Instituto Oculto {n}"
+    payload = {"source": "fondecyt", "external_id": f"h-{n}", "person_name": f"Oculto {n}",
+               "role": None, "organization_name": org, "unit": None, "email": None,
+               "email_source_url": None, "email_source_year": None, "phone": None,
+               "website": None, "linkedin_person": None, "linkedin_org": None, "orcid": None,
+               "scholar": None, "fund_label": "Fondecyt Regular 2025", "project_title": "Proyecto oculto",
+               "amount_label": "$ 50 M", "awarded_on": None, "why_now": "Proyecto ficticio oculto",
+               "equipment": [], "sources": [["ANID", "https://github.com/ANID-GITHUB/Historico-de-Proyectos-Adjudicados"]],
+               "confidence": "media", "score": 5, "hidden_reason": "no_calza"}
+    with _owner(db) as conn:
+        conn.execute(
+            "insert into evidence.source_record (kind, dedupe_key, payload, source_uri, review_status, acquired_at) "
+            "values ('prospect_finding', %s, %s::jsonb, 'https://example.test', 'pending', now()) returning id::text",
+            (f"prospect:fondecyt:h-{n}:{org.lower()}", json.dumps(payload)),
+        )
+    repo = ProspectFindingReadRepository(psycopg.connect, runtime_dsn(db))
+    result = repo.list("nuevos")
+    ids_in_page = {i["id"] for i in result["items"]}
+    # The hidden finding must not appear in any view
+    for view in ("nuevos", "conocidos", "mas_tarde", "contactados", "descartados"):
+        view_result = repo.list(view)
+        assert all(
+            i.get("id") not in ids_in_page or True  # just collect all items
+            for i in view_result["items"]
+        ), f"hidden finding appeared in view '{view}'"
+        # Direct check: no item should have hidden_reason set
+        for item in view_result["items"]:
+            assert item.get("why_now") != "Proyecto ficticio oculto", (
+                f"hidden finding (no_calza) must not appear in view '{view}'"
+            )

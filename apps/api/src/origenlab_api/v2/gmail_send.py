@@ -28,11 +28,19 @@ SENDER_NAME = "OrigenLab"
 SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 #: gmail.compose permits users.messages.send and is accepted as an alternative to gmail.send.
 COMPOSE_SCOPE = "https://www.googleapis.com/auth/gmail.compose"
+#: gmail.modify: needed to apply labels to a drafted message.
+MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+DRAFT_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
+LABELS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/labels"
+MODIFY_URL_TEMPLATE = "https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/modify"
+SEND_AS_URL_TEMPLATE = "https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs/{address}"
 TEST_SUBJECT_PREFIX = "[PRUEBA] "
 TIMEOUT_SECONDS = 10.0
 REFRESH_MARGIN_SECONDS = 60.0
+#: How long (seconds) to cache the contacto@ send-as signature in-process.
+SIGNATURE_CACHE_TTL_SECONDS = 600.0
 
 #: One plain ASCII mailbox and nothing a mail parser could read differently from what is recorded
 #: (no display name, comment, encoded word, group, quote or separator): a local part of
@@ -205,6 +213,8 @@ class GmailSender:
         self._clock = clock
         self._access: str | None = None
         self._expires_at = 0.0
+        self._signature_html: str | None = None
+        self._signature_cached_at = 0.0
 
     def _access_token(self) -> str:
         if self._access and self._clock() < self._expires_at - REFRESH_MARGIN_SECONDS:
@@ -253,3 +263,108 @@ class GmailSender:
         except (ValueError, KeyError) as exc:
             raise GmailSendError("gmail_rejected", f"Gmail returned invalid data ({type(exc).__name__})",
                                  "HTTP 200 invalid_response") from exc
+
+    def create_draft(self, raw: bytes) -> tuple[str, str]:
+        """Create a Gmail draft; return (draft_id, message_id).
+
+        Never sends the message. Requires gmail.compose scope (granted by the default
+        production token). Raises GmailSendError on network or API failure.
+        """
+        token = self._access_token()
+        payload = json.dumps({"message": {"raw": base64.urlsafe_b64encode(raw).decode()}}).encode()
+        status, body = self._call("POST", DRAFT_URL, {"Authorization": f"Bearer {token}",
+                                                      "Content-Type": "application/json"}, payload)
+        if status != 200:
+            detail = _http_detail(status, body)
+            raise GmailSendError("draft_creation_failed", f"Gmail answered {detail}", detail)
+        try:
+            data = json.loads(body)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            draft_id = data["id"]
+            message_id = data["message"]["id"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GmailSendError("draft_creation_failed",
+                                 f"Gmail returned invalid data ({type(exc).__name__})",
+                                 "HTTP 200 invalid_response") from exc
+        return draft_id, message_id
+
+    def _ensure_label(self, token: str, name: str) -> str:
+        """Return the Gmail label id for `name`, creating it if it does not exist."""
+        status, body = self._call("GET", LABELS_URL, {"Authorization": f"Bearer {token}"}, b"")
+        if status != 200:
+            raise GmailSendError("label_list_failed", f"Gmail answered {_http_detail(status, body)}")
+        try:
+            data = json.loads(body)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+            for lbl in data.get("labels") or []:
+                if isinstance(lbl, dict) and lbl.get("name") == name:
+                    return lbl["id"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GmailSendError("label_list_failed",
+                                 f"Gmail returned invalid data ({type(exc).__name__})",
+                                 "HTTP 200 invalid_response") from exc
+        # Label does not exist — create it
+        create_payload = json.dumps({"name": name}).encode()
+        status2, body2 = self._call("POST", LABELS_URL, {"Authorization": f"Bearer {token}",
+                                                         "Content-Type": "application/json"}, create_payload)
+        if status2 not in (200, 201):
+            raise GmailSendError("label_create_failed",
+                                 f"Gmail answered {_http_detail(status2, body2)}")
+        try:
+            lbl_data = json.loads(body2)
+            if not isinstance(lbl_data, dict):
+                raise ValueError("not an object")
+            return lbl_data["id"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise GmailSendError("label_create_failed",
+                                 f"Gmail returned invalid data ({type(exc).__name__})",
+                                 "HTTP 200 invalid_response") from exc
+
+    def apply_labels(self, message_id: str, label_names: list[str]) -> None:
+        """Apply named Gmail labels to `message_id`. Requires gmail.modify scope.
+
+        Raises GmailSendError if the scope is missing (HTTP 403) or any other API error.
+        Never raises on an empty label list.
+        """
+        if not label_names:
+            return
+        token = self._access_token()
+        label_ids = [self._ensure_label(token, name) for name in label_names]
+        url = MODIFY_URL_TEMPLATE.format(message_id=message_id)
+        payload = json.dumps({"addLabelIds": label_ids}).encode()
+        status, body = self._call("POST", url, {"Authorization": f"Bearer {token}",
+                                                "Content-Type": "application/json"}, payload)
+        if status != 200:
+            detail = _http_detail(status, body)
+            raise GmailSendError("label_apply_failed", f"Gmail answered {detail}", detail)
+
+    def fetch_send_as_signature(self, address: str = SENDER_ADDRESS) -> str | None:
+        """Fetch the HTML send-as signature for `address` from the Gmail settings API.
+
+        Results are cached for SIGNATURE_CACHE_TTL_SECONDS. Returns the HTML string or
+        None if the signature is empty, the scope is missing, or any error occurs.
+        Requires gmail.settings.basic scope (in the default production token).
+        """
+        now = self._clock()
+        if self._signature_html is not None and now < self._signature_cached_at + SIGNATURE_CACHE_TTL_SECONDS:
+            return self._signature_html if self._signature_html else None
+        url = SEND_AS_URL_TEMPLATE.format(address=urllib.parse.quote(address, safe=""))
+        try:
+            token = self._access_token()
+            status, body = self._call("GET", url, {"Authorization": f"Bearer {token}"}, b"")
+        except GmailSendError:
+            return None
+        if status != 200:
+            return None
+        try:
+            data = json.loads(body)
+            if not isinstance(data, dict):
+                return None
+            sig = data.get("signature") or ""
+            self._signature_html = str(sig) if sig else ""
+            self._signature_cached_at = now
+            return self._signature_html if self._signature_html else None
+        except (ValueError, TypeError):
+            return None

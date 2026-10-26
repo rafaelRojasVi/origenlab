@@ -1,4 +1,5 @@
-"""Model spend for the «Licitaciones» feature: prices, cost of a call, and the monthly hard cap.
+"""Model spend for the «Licitaciones» and «Prospectos» features: prices, cost of a call, and
+the monthly hard cap per feature.
 
 Spec §6.4: every model call is recorded in `platform.model_usage` (append-only); before each call
 the worst-case cost of that call is added to the month's spend and, if the sum would pass the cap,
@@ -12,6 +13,9 @@ model's rates and the fallback attempt at the fallback's, and the top-level `usa
 attempt that produced the message. So `worst_case_usd` adds every attempt the chain may make
 (`fallback_models`), and `record_usage` records each entry of `usage.iterations` at that entry's
 model, falling back to the top-level usage (priced at `served_model`) only when there are none.
+
+`record_usage` accepts an optional `search_run_id` that links a prospectos spend row to the
+`evidence.prospect_search_run` that caused it (same pattern as `bid_preparation_id`).
 """
 
 from __future__ import annotations
@@ -26,7 +30,11 @@ from zoneinfo import ZoneInfo
 _log = logging.getLogger(__name__)
 
 FEATURE_LICITACIONES = "licitaciones"
-MONTHLY_CAP_USD: dict[str, Decimal] = {FEATURE_LICITACIONES: Decimal("60")}
+FEATURE_PROSPECTOS = "prospectos"
+MONTHLY_CAP_USD: dict[str, Decimal] = {
+    FEATURE_LICITACIONES: Decimal("60"),
+    FEATURE_PROSPECTOS: Decimal("10"),
+}
 SANTIAGO = ZoneInfo("America/Santiago")
 _PLACES = Decimal("0.000001")
 _MTOK = Decimal(1_000_000)
@@ -170,12 +178,15 @@ def ensure_within_cap(cur: Any, feature: str, now: datetime, next_call_worst_usd
 
 
 def record_usage(cur: Any, *, feature: str, step: str, model: str, usage: Any,
-                 bid_preparation_id: Any, served_model: str | None = None) -> Decimal:
+                 bid_preparation_id: Any, served_model: str | None = None,
+                 search_run_id: Any = None) -> Decimal:
     """Insert the `platform.model_usage` rows of one call and return their total cost.
 
     With `usage.iterations` (server-side fallbacks, tool loops): one row per attempt, priced at the
     attempt's own model (an entry without one is the requested `model`). Without: one row from the
     top-level usage, priced at `served_model` (the response's `model`) when given, else `model`.
+
+    `search_run_id` links prospectos spend rows to `evidence.prospect_search_run`.
     """
     iterations = getattr(usage, "iterations", None)
     if isinstance(iterations, list | tuple) and iterations:
@@ -184,13 +195,15 @@ def record_usage(cur: Any, *, feature: str, step: str, model: str, usage: Any,
             entry_model = getattr(entry, "model", None)
             total += _record_one(cur, feature=feature, step=step,
                                  model=entry_model if isinstance(entry_model, str) and entry_model else model,
-                                 usage=entry, bid_preparation_id=bid_preparation_id)
+                                 usage=entry, bid_preparation_id=bid_preparation_id,
+                                 search_run_id=search_run_id)
         return _q(total)
     return _record_one(cur, feature=feature, step=step, model=served_model or model, usage=usage,
-                       bid_preparation_id=bid_preparation_id)
+                       bid_preparation_id=bid_preparation_id, search_run_id=search_run_id)
 
 
-def _record_one(cur: Any, *, feature: str, step: str, model: str, usage: Any, bid_preparation_id: Any) -> Decimal:
+def _record_one(cur: Any, *, feature: str, step: str, model: str, usage: Any,
+                bid_preparation_id: Any, search_run_id: Any = None) -> Decimal:
     tokens = {
         "input_tokens": getattr(usage, "input_tokens", None) or 0,
         "output_tokens": getattr(usage, "output_tokens", None) or 0,
@@ -204,10 +217,12 @@ def _record_one(cur: Any, *, feature: str, step: str, model: str, usage: Any, bi
     else:
         cost = cost_usd(model, **tokens)
     cur.execute(
-        "insert into platform.model_usage (feature, model, step, bid_preparation_id, input_tokens, "
-        "output_tokens, cache_read_tokens, cache_write_tokens, usd_cost) "
-        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-        (feature, model, step, bid_preparation_id, tokens["input_tokens"], tokens["output_tokens"],
+        "insert into platform.model_usage (feature, model, step, bid_preparation_id, "
+        "prospect_search_run_id, input_tokens, output_tokens, cache_read_tokens, "
+        "cache_write_tokens, usd_cost) "
+        "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (feature, model, step, bid_preparation_id, search_run_id,
+         tokens["input_tokens"], tokens["output_tokens"],
          tokens["cache_read_tokens"], tokens["cache_write_tokens"], cost))
     return cost
 

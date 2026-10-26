@@ -116,6 +116,7 @@ union all select 'platform.model_usage', count(*)::text from platform.model_usag
 union all select 'crm.notice_review', count(*)::text from crm.notice_review
 union all select 'crm.prospect_review', count(*)::text from crm.prospect_review
 union all select 'crm.prospect_edit', count(*)::text from crm.prospect_edit
+union all select 'evidence.prospect_search_run', count(*)::text from evidence.prospect_search_run
 ;
 
 commit;
