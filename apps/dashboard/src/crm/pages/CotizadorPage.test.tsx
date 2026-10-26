@@ -166,6 +166,11 @@ describe("Cotizador page", () => {
   });
 });
 
+const ALL_TERMS = {
+  delivery_terms: "4 semanas", validity_days: 30, payment_terms: "Contado", warranty_terms_es: "12 meses",
+  delivery_place_es: "Valdivia", installation_terms_es: "Incluida", terms_extra: [],
+};
+
 /** An authored draft the editor can change; the API answers by method and path. */
 function editableWorkspace() {
   const ws = workspaceFixture();
@@ -179,6 +184,12 @@ function editableWorkspace() {
       lo_que_pidio: "Un equipo de prueba.",
     },
   };
+}
+
+/** The same draft with given conditions (all filled by default), so «Emitir cotización» does not stop to ask. */
+function termsWorkspace(terms: QuoteDraft["terms"] = ALL_TERMS) {
+  const ws = editableWorkspace();
+  return { ...ws, current: { ...ws.current!, draft: { ...ws.current!.draft!, terms: { ...terms, terms_extra: [...terms.terms_extra] } } } };
 }
 
 const CATALOG = { version: "v1", fields: ["id", "model_number", "name"], suppliers: [], items: [] };
@@ -347,7 +358,7 @@ describe("Cotizador page — the draft editor", () => {
 
   it("«Guardar ahora» saves a draft whose prices changed since its last save (B4)", async () => {
     const stale = () => {
-      const ws = editableWorkspace();
+      const ws = termsWorkspace();
       return { ...ws, current: { ...ws.current!, needs_saving: true, totals_computed_at: "2026-10-10T12:00:00Z" } };
     };
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }), stale);
@@ -497,7 +508,7 @@ describe("Cotizador page — approving a draft", () => {
     const saving = new Promise<void>((r) => (releaseSave = r));
     const calls = stubApi(
       () => saving.then(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") })),
-      (read) => (read === 1 ? editableWorkspace() : issuedWorkspace()),
+      (read) => (read === 1 ? termsWorkspace() : issuedWorkspace()),
       { [APPROVE]: () => approved() },
     );
     renderPage();
@@ -519,7 +530,7 @@ describe("Cotizador page — approving a draft", () => {
 
   it("saves a draft whose prices changed since its last save before approving (B4)", async () => {
     const stale = () => {
-      const ws = editableWorkspace();
+      const ws = termsWorkspace();
       return { ...ws, current: { ...ws.current!, needs_saving: true, totals_computed_at: "2026-10-10T12:00:00Z" } };
     };
     const calls = stubApi(() => json({ revision_id: "r-1", version: 4, computed: computedFixture("200000") }), stale, { [APPROVE]: () => approved() });
@@ -532,7 +543,7 @@ describe("Cotizador page — approving a draft", () => {
   });
 
   it("lists every reason the API gave under the header", async () => {
-    const calls = stubApi(() => json({}), editableWorkspace, {
+    const calls = stubApi(() => json({}), () => termsWorkspace(), {
       [APPROVE]: () => json({ detail: { code: "missing_recipient", message: "Elige a quién va la cotización · Completa el texto de «Forma de pago»" } }, 409),
     });
     renderPage();
@@ -904,11 +915,45 @@ describe("Cotizador page — voiding an older revision with the draft open (I4)"
   });
 });
 
+describe("Cotizador page — empty conditions before issuing (owner 2026-10-26)", () => {
+  const someEmpty = { ...ALL_TERMS, payment_terms: null, warranty_terms_es: "  " };
+  // Its own number, so this toast is not mistaken for another test's that is still showing.
+  const issued = () => json({ ok: true, revision_id: "r-1", version: 5, quote_number: "00043-26", revision_label: "00043-26", negotiated_costs_skipped: [] });
+
+  it("asks first, naming what is empty, and «Completar condiciones» goes to the first one without issuing", async () => {
+    const calls = stubApi(() => json({}), () => termsWorkspace(someEmpty), { [APPROVE]: () => approved() });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Emitir cotización" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Faltan 2 condiciones" });
+    expect(within(dialog).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["Forma de pago", "Garantía"]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Completar condiciones" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(document.activeElement?.getAttribute("data-term")).toBe("payment_terms"));
+    expect(calls.some((c) => c.path === APPROVE)).toBe(false);
+  });
+
+  it("«Emitir igual» issues without them", async () => {
+    stubApi(() => json({}), (read) => (read === 1 ? termsWorkspace(someEmpty) : issuedWorkspace()), { [APPROVE]: issued });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Emitir cotización" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Emitir igual" }));
+    expect(await screen.findByText("Cotización emitida · CN00043")).toBeInTheDocument();
+  });
+
+  it("does not ask when every condition is filled", async () => {
+    const calls = stubApi(() => json({}), (read) => (read === 1 ? termsWorkspace() : issuedWorkspace()), { [APPROVE]: issued });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Emitir cotización" }));
+    await waitFor(() => expect(calls.some((c) => c.path === APPROVE)).toBe(true));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+});
+
 describe("Cotizador page — while a command runs (M1)", () => {
   it("the editor's inputs are off while approving", async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));
-    stubApi(() => json({}), (read) => (read === 1 ? editableWorkspace() : issuedWorkspace()), { [APPROVE]: () => held.then(() => approved()) });
+    stubApi(() => json({}), (read) => (read === 1 ? termsWorkspace() : issuedWorkspace()), { [APPROVE]: () => held.then(() => approved()) });
     renderPage();
     const qty = await screen.findByLabelText("Cantidad de la línea 1");
     expect(qty).toBeEnabled();

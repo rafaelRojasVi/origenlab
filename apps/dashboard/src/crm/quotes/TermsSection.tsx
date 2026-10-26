@@ -4,8 +4,9 @@
  * on the PDF) and any extra condition («+ Agregar otra condición»: a name and its text).
  *
  * A template placeholder in brackets («[CONDICIÓN DE PAGO]») is marked to be completed before
- * approving. What the API would refuse (a text over its length, validity outside 1–365 days, an
- * extra condition without its name or text) is said next to its field.
+ * approving; «Emitir cotización» first asks about the ones left empty (`missingTerms`). What the
+ * API would refuse (a text over its length, validity outside 1–365 days, an extra condition
+ * without its name or text) is said next to its field.
  */
 import { useEffect, useId, useState } from "react";
 import { addExtraTerm, removeExtraTerm, setTerm, updateExtraTerm, type DraftProblem, type TermKey } from "./draftEditor";
@@ -21,6 +22,21 @@ const TEXT_TERMS: {
   { key: "delivery_place_es", label: "Lugar de entrega" },
   { key: "installation_terms_es", label: "Instalación y capacitación" },
 ];
+
+/** The fixed conditions left empty, in the card's order: «Emitir cotización» asks before issuing without them. */
+export function missingTerms(draft: QuoteDraft): { key: string; label: string }[] {
+  const t = draft.terms;
+  const out: { key: string; label: string }[] = TEXT_TERMS.filter(({ key }) => !(t[key] ?? "").trim()).map(({ key, label }) => ({ key, label }));
+  if (t.validity_days === null || t.validity_days === undefined) out.splice(1, 0, { key: "validity_days", label: "Validez (días)" });
+  return out;
+}
+
+/** Brings a condition's field into view and focuses it (`data-term` on the input). */
+export function focusTerm(key: string) {
+  const el = document.querySelector<HTMLInputElement>(`[data-term="${key}"]`);
+  el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  el?.focus({ preventScroll: true });
+}
 
 const MAX_EXTRA = 12;
 const PLACEHOLDER = /\[[^\]]*\]/;
@@ -83,6 +99,7 @@ function ValidityInput({
         Validez (días)
         <input
           id={id}
+          data-term="validity_days"
           type="text"
           inputMode="numeric"
           value={shown}
@@ -106,6 +123,7 @@ function ValidityInput({
 }
 
 function TextTerm({
+  term,
   id,
   label,
   value,
@@ -113,6 +131,7 @@ function TextTerm({
   disabled,
   onChange,
 }: {
+  term: string;
   id: string;
   label: string;
   value: string;
@@ -126,6 +145,7 @@ function TextTerm({
         {label}
         <input
           id={id}
+          data-term={term}
           type="text"
           value={value}
           disabled={disabled}
@@ -224,6 +244,7 @@ export function TermsSection({
   const textTerm = ({ key, label }: (typeof TEXT_TERMS)[number]) => (
     <TextTerm
       key={key}
+      term={key}
       id={`${ids}-${key}`}
       label={label}
       value={t[key] ?? ""}
