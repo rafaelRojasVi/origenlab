@@ -1,5 +1,6 @@
 """R17 against a real database (owner 2026-10-26): a Cotizador quote sent (R16), then the client answers
-on the case → the case «Conversación», once; «Quitar» puts it back in «Enviada».
+on the case → the case «Conversación», once; «Quitar» puts it back in «Enviada»; never on a case
+«En pausa».
 
 Runs in a disposable `origenlab_test_<hex>` as the unprivileged `origenlab_api` role. Every name,
 number and address is fictitious.
@@ -81,3 +82,23 @@ def test_an_automatic_reply_is_not_an_answer(world) -> None:
     answer = _reply(dsn, case_id, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5),
                     subject="Respuesta automática: Re: Cotización")
     assert "R17" not in _planned(_mail_rules(dsn), answer)
+
+
+def _task(dsn: str, case_id: str, owner: str, title: str, due_at: datetime) -> None:
+    _owner(dsn, "insert into crm.task (opportunity_id, owner_operator_id, title, due_at) values (%s, %s, %s, %s)",
+           (case_id, owner, title, due_at))
+
+
+def test_a_case_en_pausa_waits_but_a_reminder_does_not_hold_it(world) -> None:
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    paused, reminded = _sent_case(world, admin), _sent_case(world, admin)
+    later = datetime.now(UTC) + timedelta(days=90)
+    _task(dsn, paused, admin.operator_id, "Retomar: evaluarán el año entrante", later)
+    _task(dsn, reminded, admin.operator_id, "Llamar para confirmar", later)
+    on_paused = _reply(dsn, paused, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+    on_reminded = _reply(dsn, reminded, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+
+    repo = _mail_rules(dsn)
+    assert "R17" not in _planned(repo, on_paused)
+    assert "R17" in _planned(repo, on_reminded)

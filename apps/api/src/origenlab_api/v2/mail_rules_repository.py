@@ -194,11 +194,16 @@ select oe.source_record_id::text as source_record_id, oe.opportunity_id::text as
 #: Sales cases only (`case_kind.py`): R1–R15 never link, advance, reopen or close a tender. An email
 #: already linked to a tender keeps that link in `linked_case_ids` (so no rule opens a second case
 #: for it), but the tender is not a case the planner can act on.
+#: `paused_until`: «En pausa hasta…» is an open «Retomar: …» task due later (`CaseMove`). A
+#: «Recordarme…» reminder is a task too, but not a pause.
 _CASES_SQL = """
-select id::text as id, title, stage, version, organization_id::text as organization_id,
-       closed_at is not null as closed
-  from crm.opportunity
- where kind = 'sale'
+select o.id::text as id, o.title, o.stage, o.version, o.organization_id::text as organization_id,
+       o.closed_at is not null as closed,
+       (select min(t.due_at) from crm.task t
+         where t.opportunity_id = o.id and t.status = 'open' and t.due_at > now()
+           and t.title like 'Retomar:%') as paused_until
+  from crm.opportunity o
+ where o.kind = 'sale'
 """
 _QUOTES_SQL = """
 select q.id::text as quote_id, q.opportunity_id::text as opportunity_id, q.quote_number,
@@ -383,7 +388,8 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                   organization_id=r["organization_id"], closed=bool(r["closed"]),
                   thread_ids=tuple(sorted(case_threads.get(r["id"], ()))),
                   quotes=tuple(by_case.get(r["id"], ())),
-                  people=tuple(sorted(case_people.get(r["id"], ()))))
+                  people=tuple(sorted(case_people.get(r["id"], ()))),
+                  paused_until=r["paused_until"].isoformat() if r["paused_until"] else None)
         for r in rows()
     )
 

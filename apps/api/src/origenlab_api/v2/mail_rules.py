@@ -202,6 +202,8 @@ class CaseState:
     quotes: tuple[CaseQuote, ...] = ()
     #: Lower-case addresses that wrote the inbound emails linked to this case (R11).
     people: tuple[str, ...] = ()
+    #: «En pausa hasta…»: the due date of the case's open «Retomar: …» task still in the future (R17).
+    paused_until: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1517,14 +1519,15 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
 
     Only an email already on exactly one open case in «Enviada» (R1, R12 or a person put it there),
     sent after that case's live quote and in the last `REPLY_WINDOW_DAYS`. Never our own mail, a
-    supplier's, or an automatic reply. «Quitar» moves the case back to «Enviada»."""
+    supplier's, or an automatic reply, and never a case put «En pausa»: a reply like «se evaluará el
+    año entrante» is why it was paused. «Quitar» moves the case back to «Enviada»."""
     if e.direction != "inbound" or len(e.linked_case_ids) != 1:
         return None
     at, since = _instant(e.sent_at), _instant(ix.reply_since)
     if at is None or since is None or at < since:
         return None
     c = ix.cases.get(e.linked_case_ids[0])
-    if c is None or c.closed or c.stage != "quoting":
+    if c is None or c.closed or c.stage != "quoting" or c.paused_until is not None:
         return None
     sender = _sender(e)
     if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):

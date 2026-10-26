@@ -656,6 +656,7 @@ prose is in git history (see commit referenced by the PR). Entries are in build 
 | §2.7.159 | 2026-10-26 | — | `20261026100000`: Prospectos fase 2 — `evidence.prospect_search_run` (#67, daily/manual ANID search runs, queued→running→done/failed, append-only), `platform.model_usage` widened (feature 'prospectos', step 'prospect', FK `prospect_search_run_id`), daily cron 09:00 UTC (≈06:00 Santiago), «Buscar ahora» manual trigger, Claude spend cap US$ 10/month; 63 tables, 223 policies |
 | §2.7.160 | 2026-10-25 | — | Prospectos «Preparar correo» — no migration; `prepare-prospect-email` command (runs «Contactar» if pending, then a Gmail draft with the catalogue, labelled «Claude»+«Prospecto», never sends; `source_record.prospect_email_drafted` event); `GET /v2/prospect-findings/{id}/email-preview`; `email_draft` field on list+detail; `EmailDraftDrawer`; «Preparar correo» button on `ProspectCard` (visible when the finding has an email); `gmail.modify` added to the `web-form` authorize scope set |
 | §2.7.161 | 2026-10-26 | — | Mail rule R17 — no migration: a client's reply on a case in «Enviada», after its quote went out (last 14 days; not ours, a supplier's or an automatic reply), moves the case to «Conversación» automatically; «Quitar» on Hoy moves it back |
+| §2.7.162 | 2026-10-26 | — | R17 skips a case «En pausa» — no migration: a reply on a case with an open «Retomar: …» task due later leaves its stage alone (a «Recordarme…» reminder does not hold it) |
 
 **Key milestones (highlighted in the table above):**
 
