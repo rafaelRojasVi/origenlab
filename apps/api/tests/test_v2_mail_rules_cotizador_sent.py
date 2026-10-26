@@ -66,8 +66,8 @@ def r16(*evidence: MailEvidence, cases: tuple[CaseState, ...], **kw):
     return [a for a in plan(snap) if a.rule_id == "R16"]
 
 
-def test_r16_is_the_last_rule() -> None:
-    assert RULE_IDS[-1] == "R16"
+def test_r16_is_a_rule() -> None:
+    assert "R16" in RULE_IDS
 
 
 def test_two_cotizador_pdfs_in_one_email_are_both_sent_and_the_case_walks_to_enviada() -> None:

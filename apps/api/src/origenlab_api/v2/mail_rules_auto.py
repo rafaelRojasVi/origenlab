@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 #: Safe intake/link rules the timer applies (R11, forwarded requests: owner 2026-10-14). Terminal actions (R5/R6) and recipient-domain
 #: creation (R3/R4) still wait for an admin.
 AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15",
-                                             "R16"})
+                                             "R16", "R17"})
 #: Rules with their own kill flag in settings (`v2_auto_rule_<id>_enabled`).
 FLAGGED_RULES: tuple[str, ...] = ("R14", "R15")
 SWITCH_COMMAND = "set_auto_mail_rules"

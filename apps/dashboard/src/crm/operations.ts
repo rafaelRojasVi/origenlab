@@ -194,6 +194,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "Se envía «CN09876A-Empresa Ficticia.pdf» (revisión A aprobada en el Cotizador) → la cotización 09876A queda enviada y el caso en «Enviada».",
   },
+  R17: {
+    cuando: "El cliente responde en un caso que está en «Enviada», después de recibir la cotización y en los últimos 14 días. No cuenta un correo nuestro, de un proveedor ni una respuesta automática (fuera de la oficina).",
+    hace: "Pasa el caso a «Conversación». «Quitar» lo devuelve a «Enviada».",
+    automatica: true,
+    ejemplo: "«Estamos evaluando la oferta, les aviso» en el hilo de la cotización 09876 → el caso pasa a «Conversación».",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -213,6 +219,7 @@ const RULE_WHY: Record<string, string> = {
   R14: "el correo ya estaba en el caso",
   R15: "cotización enviada hace 3 días o más",
   R16: "se envió el PDF del Cotizador",
+  R17: "el cliente respondió a la cotización",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -234,6 +241,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `Registró ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
   } else if (rule === "R16") {
     verb = `Marcó enviada ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
+  } else if (rule === "R17") {
+    verb = `Pasó a «Conversación» ${target}`;
   } else if (rule === "R15") {
     verb = `Confirmó la institución${a.organization_name ? ` «${a.organization_name}»` : ""}`;
   } else {

@@ -32,7 +32,9 @@ class _CountingAuto(AutoMailRules):
 def test_only_safe_intake_and_link_rules_are_automatic() -> None:
     # R9 (the institution a sent CN PDF names, one open case) owner-approved 2026-10-13.
     # R14 and R15 (the obvious decisions) owner-approved 2026-10-19, each with its own kill flag.
-    assert AUTOMATIC_RULES == {"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16"}
+    # R17 (a client's reply → «Conversación») owner-approved 2026-10-26.
+    assert AUTOMATIC_RULES == {"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16",
+                               "R17"}
 
 
 def test_a_kill_flag_keeps_its_rule_out_of_the_pass() -> None:

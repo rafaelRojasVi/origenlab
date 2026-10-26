@@ -139,7 +139,7 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
     }
   }
 
-  const label = sent ? "Cotización enviada" : opened ? "Solicitud abierta"
+  const label = sent ? "Cotización enviada" : item.rule_id === "R17" ? "Pasó a Conversación" : opened ? "Solicitud abierta"
     : many ? `${items.length} correos archivados` : "Archivado en el caso";
   return (
     <div data-testid="automatic-row" className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5">

@@ -24,6 +24,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R14 | outbound from contacto@, sent in the last `LATE_QUOTE_WINDOW_DAYS`, already linked to exactly one open case (by a rule or a person), carrying exactly one CN PDF whose number no case records | auto: the R1 gates (requesting institution, open stage, correlative not under another year), then «Enviada» + quote on that case; no link (it is there). The one rule that still reads an email another rule acted on |
 | R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes, naming which institution, not only a kind; else a person); confirmed with no operator named. Keyed by the institution's id, not an email |
 | R16 | outbound from contacto@, carrying the PDF of a Cotizador revision of that case that is approved and not yet sent — matched by the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; a «(borrador)» print never; the email's year, else the year before), sent after the approval | auto: each such revision → «sent» (the email, its PDF's hash), the case → «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several PDFs in one email: each its revision, on each case it belongs to, the email linked there. A closed case among them, an email a person put elsewhere, or an open case of its thread no PDF names → nothing. Reads an email another rule acted on, once |
+| R17 | inbound, already on exactly one case in «Enviada» (`quoting`), sent in the last `REPLY_WINDOW_DAYS` and after that case's live quote was sent, from neither us nor a supplier, not an automatic reply | auto: the case → «Conversación» (`negotiating`). Reads an email another rule acted on (R1 links it a pass earlier), once |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -57,7 +58,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16")
+                             "R14", "R15", "R16", "R17")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -240,6 +241,17 @@ class InstitutionFacts:
     settled_quote_files: tuple[str | None, ...] = ()
 
 
+#: R17 reads replies sent in the last this many days: an old reply on a case left in «Enviada» is a
+#: person's to judge, and the first pass after release must not move a backlog of cases at once.
+REPLY_WINDOW_DAYS = 14
+#: Subject words of an automatic reply (out of office, delivery receipt): never the client answering.
+AUTO_REPLY_PHRASES: tuple[str, ...] = (
+    "respuesta automatica", "automatic reply", "auto reply", "autoreply", "out of office", "fuera de la oficina",
+    "fuera de oficina", "ausente", "vacaciones", "undeliverable", "no se puede entregar", "delivery status",
+    "read receipt", "leido:", "acuse de recibo",
+)
+
+
 @dataclass(frozen=True)
 class Snapshot:
     evidence: tuple[MailEvidence, ...]
@@ -255,6 +267,9 @@ class Snapshot:
     #: R14 acts only on email sent at or after this instant (ISO; the repository sets it to
     #: `LATE_QUOTE_WINDOW_DAYS` ago, as Operaciones lists them). None: no email qualifies.
     late_quote_since: str | None = None
+    #: R17 acts only on a reply sent at or after this instant (ISO; the repository sets it to
+    #: `REPLY_WINDOW_DAYS` ago). None: no email qualifies.
+    reply_since: str | None = None
 
 
 @dataclass(frozen=True)
@@ -534,6 +549,7 @@ def _is_pdf(doc: MailDocument) -> bool:
 class _Index:
     def __init__(self, snapshot: Snapshot) -> None:
         self.late_quote_since = snapshot.late_quote_since
+        self.reply_since = snapshot.reply_since
         self.cases = {c.id: c for c in snapshot.cases}
         self.by_thread: dict[str, list[CaseState]] = {}
         for c in snapshot.cases:
@@ -726,6 +742,11 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
             sent = _authored_sent_rule(e, index)
             if sent is not None:
                 out.append(sent)
+        # R17 likewise: the reply R1 links on one pass moves its case on the next.
+        if (action is None or action.mode != AUTO) and (e.id, "R17") not in snapshot.applied_pairs:
+            reply = _client_reply_rule(e, index)
+            if reply is not None:
+                out.append(reply)
     for f in sorted(snapshot.forwards, key=lambda x: x.id):
         if f.id not in snapshot.applied_evidence_ids and not (set(f.ids) & snapshot.applied_evidence_ids):
             out.append(_plan_forward(f, index))
@@ -1488,6 +1509,41 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                          organization_id=main.organization_id, quote_number=labels[0], commands=tuple(steps),
                          candidates=tuple(c.id for c in order) if len(order) > 1 else (),
                          context={"case": first.id, "case_version": first.version, "from_stage": first.stage})
+
+
+def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R17 (owner, 2026-10-26): the client answered on a case after its quote went out — «estamos
+    evaluando la oferta» — so the case is in conversation, not waiting in «Enviada».
+
+    Only an email already on exactly one open case in «Enviada» (R1, R12 or a person put it there),
+    sent after that case's live quote and in the last `REPLY_WINDOW_DAYS`. Never our own mail, a
+    supplier's, or an automatic reply. «Quitar» moves the case back to «Enviada»."""
+    if e.direction != "inbound" or len(e.linked_case_ids) != 1:
+        return None
+    at, since = _instant(e.sent_at), _instant(ix.reply_since)
+    if at is None or since is None or at < since:
+        return None
+    c = ix.cases.get(e.linked_case_ids[0])
+    if c is None or c.closed or c.stage != "quoting":
+        return None
+    sender = _sender(e)
+    if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+        return None
+    subject = fold(e.subject)
+    if any(p in subject for p in AUTO_REPLY_PHRASES):
+        return None
+    answered = [(sent, q, r) for q in c.quotes for r in _live_revisions(q)
+                if (sent := _instant(r.sent_at)) is not None and sent < at]
+    if not answered:
+        return None
+    _, q, r = max(answered, key=lambda x: x[0])
+    label = _revision_label(q.quote_number, r.revision_no)
+    reasons = [f"el cliente respondió en el caso después de recibir la cotización {label}"]
+    note = _note("R17", reasons)
+    return PlannedAction(e.id, "R17", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id, quote_number=label,
+                         commands=(_advance_step("negotiating", note),),
+                         context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
 
 
 def _revision_label(quote_number: str, revision_no: int) -> str:
