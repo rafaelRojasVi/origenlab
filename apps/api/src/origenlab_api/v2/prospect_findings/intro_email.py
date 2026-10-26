@@ -15,7 +15,8 @@ Saludo rules (Chilean name order: First [Second] Paternal Maternal):
   HOMBRE       → «Estimado Dr. {apellido}:»
   unknown/None → «Estimado/a {person_name}:» or «Estimados:» (no name)
 
-Apellido rule (token index into the display name):
+Apellido rule (index into the name's units; a particle — San, de, del, la… — joins the next word,
+so «San Martín» and «de la Fuente» are one unit):
   2 tokens → tokens[-1]          (First Paternal)
   3 tokens → tokens[1]           (First Paternal Maternal → Paternal)
   4+ tokens → tokens[-2]         (First Second Paternal Maternal → Paternal)
@@ -31,9 +32,27 @@ from typing import Any
 
 # ── saludo ────────────────────────────────────────────────────────────────────
 
+#: Words that start a compound surname («San Martín», «de la Fuente», «Van Lith»): joined to what follows.
+_SURNAME_PARTICLES = frozenset({"san", "santa", "de", "del", "la", "las", "los", "van", "von", "da", "di", "mac", "mc"})
+
+
+def _name_units(person_name: str) -> list[str]:
+    """The name split into units, each compound surname kept whole («Ficticio San Prueba» → 2 units)."""
+    units: list[str] = []
+    pending: list[str] = []
+    for token in person_name.strip().split():
+        pending.append(token)
+        if token.lower() not in _SURNAME_PARTICLES:
+            units.append(" ".join(pending))
+            pending = []
+    if pending:
+        units.append(" ".join(pending))
+    return units
+
+
 def _apellido(person_name: str) -> str:
-    """Extract the paternal surname from a Chilean display name."""
-    parts = person_name.strip().split()
+    """Extract the paternal surname from a Chilean display name (units, not raw tokens)."""
+    parts = _name_units(person_name)
     if len(parts) == 1:
         return parts[0]
     if len(parts) == 2:

@@ -157,10 +157,25 @@ class ProspectFindingReadRepository:
     def _read(self) -> Iterator[Any]:
         with self._connect(self._dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute("set transaction read only")
-                cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                # Both setup statements in one round trip (the API sits ~180 ms from the database).
+                with conn.pipeline():
+                    cur.execute("set transaction read only")
+                    cur.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
                 try:
                     yield cur
+                finally:
+                    conn.rollback()
+
+    def _read_one(self, sql: str, params: Any) -> tuple[Any, ...] | None:
+        """One row in one round trip: the setup statements and the query travel together."""
+        with self._connect(self._dsn, autocommit=False) as conn:
+            with conn.cursor() as setup, conn.cursor() as cur:
+                try:
+                    with conn.pipeline():
+                        setup.execute("set transaction read only")
+                        setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
+                        cur.execute(sql, params)
+                    return cur.fetchone()
                 finally:
                     conn.rollback()
 
@@ -220,10 +235,8 @@ class ProspectFindingReadRepository:
                             for h in history]}
 
     def logo(self, finding_id: str) -> tuple[str, bytes] | None:
-        with self._read() as cur:
-            cur.execute("select payload->'logo' from evidence.source_record where id = %s and kind = 'prospect_finding'",
-                        (finding_id,))
-            row = cur.fetchone()
+        row = self._read_one("select payload->'logo' from evidence.source_record "
+                             "where id = %s and kind = 'prospect_finding'", (finding_id,))
         logo = row[0] if row else None
         if not logo or logo.get("content_type") not in {"image/png", "image/jpeg", "image/webp", "image/x-icon"}:
             return None
@@ -254,18 +267,17 @@ class ProspectFindingReadRepository:
                and (r.verdict is null or r.verdict = 'reabrir')
                and (s.payload->>'hidden_reason') is null
         """
-        with self._read() as cur:
-            cur.execute(_LAST_RUN)
-            run_row = cur.fetchone()
-            if run_row:
-                names = [d.name for d in cur.description]
-                run_dict = dict(zip(names, run_row, strict=True))
-            else:
-                run_dict = None
-            cur.execute(_RUNNING)
-            is_running = cur.fetchone() is not None
-            cur.execute(_UNREVIEWED)
-            unreviewed = int(cur.fetchone()[0])
+        with self._read() as cur:  # the three reads in one round trip: the header polls every 8 s
+            conn = cur.connection
+            with conn.cursor() as last, conn.cursor() as running, conn.cursor() as count:
+                with conn.pipeline():
+                    last.execute(_LAST_RUN)
+                    running.execute(_RUNNING)
+                    count.execute(_UNREVIEWED)
+                run_row = last.fetchone()
+                run_dict = dict(zip([d.name for d in last.description], run_row, strict=True)) if run_row else None
+                is_running = running.fetchone() is not None
+                unreviewed = int(count.fetchone()[0])
         if run_dict is None:
             last_run = None
         else:

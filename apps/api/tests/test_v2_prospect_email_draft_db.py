@@ -109,7 +109,7 @@ def test_drafts_with_catalogue_signature_and_labels_and_contacts(db, operators):
     body = r.json()
     assert body["gmail_url"] == "https://mail.google.com/mail/u/0/#drafts?compose=msg1"
     assert body["labels_applied"] is True and body["signature"] is True and body["contacted"] is True
-    assert gmail.labelled == [("msg1", ["Claude", "Prospecto"])]
+    assert gmail.labelled == [("msg1", ["Claude – revisar", "Prospecto"])]
     msg = email.message_from_bytes(gmail.drafts[0], policy=email.policy.default)
     assert msg["To"] == "dra.ficticia@example.test"
     assert msg["Subject"] == "Equipamiento para su proyecto Fondequip 2025 — OrigenLab"

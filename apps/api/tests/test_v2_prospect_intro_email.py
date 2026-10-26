@@ -47,6 +47,17 @@ class TestBuildSaludo:
         result = build_saludo("Ficticia", "MUJER")
         assert result == "Estimada Dra. Ficticia:"
 
+    def test_compound_maternal_surname_is_one_unit(self) -> None:
+        # «San Martín» is one surname: First Paternal [San Martín] → Paternal, not «San»
+        assert build_saludo("Carlos Ficticio San Laboratorio", "HOMBRE") == "Estimado Dr. Ficticio:"
+
+    def test_compound_paternal_surname_kept_whole(self) -> None:
+        assert build_saludo("Carlos San Ficticio", "HOMBRE") == "Estimado Dr. San Ficticio:"
+
+    def test_particles_join_the_surname(self) -> None:
+        # First Second [de la Ficticia] Maternal → «de la Ficticia»
+        assert build_saludo("Ana Belen de la Ficticia Laboratorio", "MUJER") == "Estimada Dra. de la Ficticia:"
+
 
 # ── subject ───────────────────────────────────────────────────────────────────
 
