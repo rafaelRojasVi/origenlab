@@ -46,6 +46,16 @@ const VIEWS: { view: ProspectView; label: string }[] = [
 type Origin = "todos" | "fondos" | "laboratorios";
 type Reach = "todos" | "con_correo" | "sin_correo";
 
+/** One module-level loader per view: page memory keys on the loader, so reopening Prospectos or a
+ *  tab shows its last list at once while the fresh one loads (an inline closure never hits). */
+const LOAD_VIEW: Record<ProspectView, () => Promise<ProspectList>> = {
+  nuevos: () => fetchProspects("nuevos"),
+  conocidos: () => fetchProspects("conocidos"),
+  mas_tarde: () => fetchProspects("mas_tarde"),
+  contactados: () => fetchProspects("contactados"),
+  descartados: () => fetchProspects("descartados"),
+};
+
 const EMPTY: Record<ProspectView, string> = {
   nuevos: "No hay nuevos. Los próximos llegan cuando se cargue una nueva búsqueda; mientras tanto revisa Más tarde.",
   mas_tarde: "Nada guardado para más tarde.",
@@ -173,7 +183,7 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   const [view, setView] = useState<ProspectView>("nuevos");
   const [origin, setOrigin] = useState<Origin>("todos");
   const [reach, setReach] = useState<Reach>("todos");
-  const [state, reload] = useResource(() => fetchProspects(view), [view]);
+  const [state, reload, , patch] = useResource(LOAD_VIEW[view], [view]);
   const [more, setMore] = useState<{ view: ProspectView; items: ProspectItem[]; has_more: boolean } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -193,6 +203,8 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   };
   const hide = (ids: string[]) => {
     setHidden((h) => new Set([...h, ...ids]));
+    // Out of the remembered list too, so reopening the page never shows a decided card again.
+    patch((list) => ({ ...list, items: list.items.filter((i) => !ids.includes(i.id)) }));
     setSelected((s) => new Set([...s].filter((x) => !ids.includes(x))));
   };
   const open = (pid: string | null) => {

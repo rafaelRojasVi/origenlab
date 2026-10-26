@@ -117,8 +117,25 @@ class Subject(TypedDict):
     block_only: bool
 
 
+def _batch(cur: Any, queries: dict[str, tuple[str, dict[str, Any]]]) -> dict[str, list[tuple[Any, ...]]]:
+    """Independent statements sent together in one pipeline: one round trip to the database for all
+    of them instead of one each (the API sits ~180 ms from it). Same transaction as `cur`."""
+    conn = cur.connection
+    cursors = {}
+    with conn.pipeline():
+        for name, (sql, params) in queries.items():
+            cursors[name] = conn.cursor()
+            cursors[name].execute(sql, params)
+    try:
+        return {name: c.fetchall() for name, c in cursors.items()}
+    finally:
+        for c in cursors.values():
+            c.close()
+
+
 def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
-    """Classify every subject with a fixed number of statements (six at most), whatever their count.
+    """Classify every subject with a fixed number of statements (six at most, sent in one round
+    trip), whatever their count.
 
     Same rules and order as one at a time: blocked → known → new; the most specific live domain
     names the institution (the email's before the website's, a subdomain before its parent), then
@@ -130,33 +147,33 @@ def classify_many(cur: Any, subjects: list[Subject]) -> list[Classification]:
     names = [normalize_organization_name(s["organization_name"]) for s in subjects]
     all_emails = sorted({e for e in emails if e})
     all_domains = sorted({d for d in own_domain if d})
-    cur.execute(_MANY_BLOCKS, {"emails": all_emails, "domains": all_domains})
-    blocks: dict[tuple[str, str], str] = {(r[0], r[1]): r[2] for r in cur.fetchall()}
-    open_ = [i for i, s in enumerate(subjects)
-             if not s["block_only"] and ("address", emails[i]) not in blocks and ("domain", own_domain[i]) not in blocks]
-    in_crm: set[str] = set()
-    mails: dict[str, int] = {}
-    prior: set[str] = set()
+    # Every lookup is asked for every subject still to classify (a blocked one's answers are simply
+    # never read), so the statements do not wait on each other: one pipeline, one round trip.
+    looked_up = [i for i, s in enumerate(subjects) if not s["block_only"]]
+    lookup_emails = sorted({emails[i] for i in looked_up if emails[i]})
+    lookup_domains = sorted({d for i in looked_up for d in ladders[i]})
+    lookup_names = sorted({names[i] for i in looked_up})
+    queries: dict[str, tuple[str, dict[str, Any]]] = {
+        "blocks": (_MANY_BLOCKS, {"emails": all_emails, "domains": all_domains})}
+    if lookup_emails:
+        queries["crm"] = (_MANY_CRM, {"emails": lookup_emails})
+        queries["mails"] = (_MANY_MAILS, {"emails": lookup_emails})
+        queries["prior"] = (_MANY_PRIOR, {"emails": lookup_emails})
+    if lookup_domains:
+        queries["by_domain"] = (_MANY_BY_DOMAIN, {"domains": lookup_domains})
+    if lookup_names:
+        queries["by_name"] = (_MANY_BY_NAME, {"names": lookup_names})
+    rows = _batch(cur, queries)
+    blocks: dict[tuple[str, str], str] = {(r[0], r[1]): r[2] for r in rows["blocks"]}
+    in_crm: set[str] = {r[0] for r in rows.get("crm", [])}
+    mails: dict[str, int] = {r[0]: r[1] for r in rows.get("mails", [])}
+    prior: set[str] = {r[0] for r in rows.get("prior", [])}
     by_domain: dict[str, list[dict[str, str]]] = {}
+    for d, oid, name in rows.get("by_domain", []):
+        by_domain.setdefault(d, []).append({"id": oid, "name": name})
     by_name: dict[str, list[dict[str, str]]] = {}
-    open_emails = sorted({emails[i] for i in open_ if emails[i]})
-    if open_emails:
-        cur.execute(_MANY_CRM, {"emails": open_emails})
-        in_crm = {r[0] for r in cur.fetchall()}
-        cur.execute(_MANY_MAILS, {"emails": open_emails})
-        mails = {r[0]: r[1] for r in cur.fetchall()}
-        cur.execute(_MANY_PRIOR, {"emails": open_emails})
-        prior = {r[0] for r in cur.fetchall()}
-    open_domains = sorted({d for i in open_ for d in ladders[i]})
-    if open_domains:
-        cur.execute(_MANY_BY_DOMAIN, {"domains": open_domains})
-        for d, oid, name in cur.fetchall():
-            by_domain.setdefault(d, []).append({"id": oid, "name": name})
-    open_names = sorted({names[i] for i in open_})
-    if open_names:
-        cur.execute(_MANY_BY_NAME, {"names": open_names})
-        for norm, oid, name in cur.fetchall():
-            by_name.setdefault(norm, []).append({"id": oid, "name": name})
+    for norm, oid, name in rows.get("by_name", []):
+        by_name.setdefault(norm, []).append({"id": oid, "name": name})
 
     out: list[Classification] = []
     for i, s in enumerate(subjects):

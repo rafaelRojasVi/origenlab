@@ -318,7 +318,7 @@ def test_logo_served_with_nosniff(client, db, operators):
     assert r.content == PNG
     assert r.headers["content-type"] == "image/png"
     assert r.headers["x-content-type-options"] == "nosniff"
-    assert r.headers["cache-control"] == "private, max-age=86400"
+    assert r.headers["cache-control"] == "private, max-age=604800, immutable"
 
 
 def test_logo_404_when_absent(client, db, operators):
