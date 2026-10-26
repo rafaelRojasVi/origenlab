@@ -81,6 +81,11 @@ def test_not_on_a_case_yet_waits_for_the_link() -> None:
     assert r17(reply(linked_case_ids=())) == []
 
 
+def test_never_a_case_put_en_pausa() -> None:
+    # «Se evaluará el año entrante» is why the case was paused: it stays «Enviada» until it comes back.
+    assert r17(reply(), cases=(case(paused_until="2027-03-01T12:00:00+00:00"),)) == []
+
+
 def test_only_from_enviada() -> None:
     for stage in ("lead", "qualified", "negotiating"):
         assert r17(reply(), cases=(case(stage=stage),)) == [], stage
