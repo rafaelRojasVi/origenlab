@@ -10,9 +10,10 @@ import type { TodoItem, TodoList } from "./todoApi";
 
 // The toaster is mounted by the CRM shell; read what the panel asked it to say.
 const toasts = vi.hoisted(() => [] as string[]);
+const tones = vi.hoisted(() => [] as (string | undefined)[]);
 vi.mock("../ui", async (importActual) => {
   const actual = await importActual<typeof import("../ui")>();
-  return { ...actual, toast: (text: string) => { toasts.push(text); } };
+  return { ...actual, toast: (text: string, tone?: string) => { toasts.push(text); tones.push(tone); } };
 });
 
 vi.mock("./todoApi", async (importActual) => {
@@ -90,6 +91,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllMocks();
   toasts.length = 0;
+  tones.length = 0;
   clearResourceCache();
 });
 
@@ -171,6 +173,77 @@ describe("«Pendientes de la semana»", () => {
     fireEvent.click(within(row).getByRole("button", { name: "Urgente" }));
     await waitFor(() => expect(fetchTodos).toHaveBeenCalledTimes(2));
     expect(toasts).toContain("Alguien cambió esta lista; la actualicé.");
+  });
+
+  it("any todo refusal (a stale move target) says the list changed and reloads, not case wording", async () => {
+    moveTodo.mockRejectedValue(
+      new OperatorApiError(JSON.stringify({ error: { code: "conflict", message: "x", details: { code: "todo_move_target_invalid", message: "gone" } } }), 409),
+    );
+    renderPanel();
+    const row = (await screen.findByText("Revisar la orden de compra")).closest("[data-testid=todo-row]") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: /Más acciones/ }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Subir" }));
+    await waitFor(() => expect(fetchTodos).toHaveBeenCalledTimes(2));
+    expect(toasts).toEqual(["Alguien cambió esta lista; la actualicé."]);
+    expect(tones).toEqual(["warn"]);
+  });
+
+  it("a missing case says so in plain words", async () => {
+    updateTodo.mockRejectedValue(
+      new OperatorApiError(JSON.stringify({ error: { code: "not_found", message: "x", details: { code: "case_not_found", message: "gone" } } }), 404),
+    );
+    renderPanel();
+    const row = (await screen.findByText("Llamar a Laboratorio Ficticio")).closest("[data-testid=todo-row]") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Urgente" }));
+    await waitFor(() => expect(toasts).toEqual(["El caso ya no existe."]));
+  });
+
+  it("a list pasted while a line is still being added is added after it, not lost", async () => {
+    let finish: (v: Record<string, unknown>) => void = () => {};
+    createTodo.mockImplementationOnce(() => new Promise((res) => { finish = res; }));
+    renderPanel();
+    await screen.findByText("Llamar a Laboratorio Ficticio");
+    fireEvent.change(input(), { target: { value: "Cotizar centrífuga" } });
+    fireEvent.keyDown(input(), { key: "Enter" });
+    fireEvent.paste(input(), { clipboardData: { getData: () => "Uno\nDos" } });
+    expect(createTodo).toHaveBeenCalledTimes(1);
+    await act(async () => finish(RECEIPT));
+    await waitFor(() => expect(createTodo).toHaveBeenCalledTimes(3));
+    expect(createTodo.mock.calls.map((c) => c[0].body)).toEqual(["Cotizar centrífuga", "Uno", "Dos"]);
+  });
+
+  it("typing a day in «Otro día» saves only a real day, not the digits on the way", async () => {
+    renderPanel();
+    const row = (await screen.findByText("Llamar a Laboratorio Ficticio")).closest("[data-testid=todo-row]") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: /Más acciones/ }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Día…" }));
+    const day = within(row).getByLabelText("Otro día");
+    fireEvent.change(day, { target: { value: "0002-11-05" } });
+    fireEvent.change(day, { target: { value: "0202-11-05" } });
+    expect(updateTodo).not.toHaveBeenCalled();
+    fireEvent.change(day, { target: { value: "2026-11-05" } });
+    await waitFor(() => expect(updateTodo).toHaveBeenCalledTimes(1));
+    expect(updateTodo.mock.calls[0][0]).toMatchObject({ todo_id: "t-1", due_on: "2026-11-05" });
+  });
+
+  it("a ticked line waiting for the reload is not used as a move anchor", async () => {
+    fetchTodos.mockResolvedValue({
+      open: [item("t-1", "Primera ficticia"), item("t-2", "Segunda ficticia"), item("t-3", "Tercera ficticia")],
+      done: [],
+    });
+    renderPanel();
+    const row = (text: string) => screen.getByText(text).closest("[data-testid=todo-row]") as HTMLElement;
+    await screen.findByText("Primera ficticia");
+    fireEvent.click(within(row("Primera ficticia")).getByRole("checkbox"));
+    await waitFor(() => expect(completeTodo).toHaveBeenCalledTimes(1));
+    await screen.findByRole("button", { name: "Deshacer" });
+    // The server still lists «Primera» as open; «Subir» on «Tercera» goes to the top, not after it.
+    fireEvent.click(within(row("Tercera ficticia")).getByRole("button", { name: /Más acciones/ }));
+    fireEvent.click(within(row("Tercera ficticia")).getByRole("menuitem", { name: "Subir" }));
+    await waitFor(() => expect(moveTodo).toHaveBeenCalledWith({ todo_id: "t-3", todo_version: 1, after_todo_id: null }));
+    // And «Segunda» is now first of what is left: it cannot go up.
+    fireEvent.click(within(row("Segunda ficticia")).getByRole("button", { name: /Más acciones/ }));
+    expect(within(row("Segunda ficticia")).getByRole("menuitem", { name: "Subir" })).toBeDisabled();
   });
 
   it("dragging places a line after another of its group; across groups does nothing", async () => {

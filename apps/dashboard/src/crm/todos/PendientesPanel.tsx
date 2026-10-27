@@ -49,6 +49,17 @@ interface Leaving {
   version: number | null;
 }
 
+/**
+ * Says what went wrong with a write. Every `todo_*` refusal (stale version, a move target that is
+ * gone or done, a line already ticked, reopened or deleted, a line that no longer exists) means
+ * the list moved under her: one calm line, and the caller reloads. Anything else — `case_not_found`
+ * («El caso ya no existe.»), a network error — keeps the shared case wording.
+ */
+const refusalToast = (err: unknown) => {
+  if (todoRefusal(err)?.code?.startsWith("todo_")) toast(CONFLICT_TEXT, "warn");
+  else toast(caseRefusalText(err), "bad");
+};
+
 const fullState = (t: TodoItem, change: Partial<CreateTodoBody> = {}): UpdateTodoBody => ({
   todo_id: t.todo_id,
   todo_version: t.version,
@@ -85,8 +96,7 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
         reload();
         return receipt;
       } catch (err) {
-        if (todoRefusal(err)?.code === "todo_version_conflict") toast(CONFLICT_TEXT, "warn");
-        else toast(caseRefusalText(err), "bad");
+        refusalToast(err);
         reload();
         return null;
       }
@@ -121,7 +131,7 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
       for (const body of lines) await createTodo({ body, is_urgent: false, due_on: null, opportunity_id: null });
       return true;
     } catch (err) {
-      toast(caseRefusalText(err), "bad");
+      refusalToast(err);
       return false;
     } finally {
       reload();
@@ -166,7 +176,10 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
     shown.splice(Math.min(entry.index, shown.length), 0, { kind: "leaving", entry });
   }
   const done = state.data.done.filter((t) => !leavingIds.has(t.todo_id));
-  const count = open.filter((t) => !leavingIds.has(t.todo_id)).length;
+  // What a move may name: a ticked line awaiting the reload is still in `open` but is not movable
+  // past (the server would refuse it as a target), so «Subir» / «Bajar» / a drop skip it.
+  const movable = open.filter((t) => !leavingIds.has(t.todo_id));
+  const count = movable.length;
 
   const drop = (e: DragEvent, target: TodoItem) => {
     e.preventDefault();
@@ -174,9 +187,9 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
     const before = over?.id === target.todo_id ? over.before : false;
     setDragging(null);
     setOver(null);
-    const moving = open.find((t) => t.todo_id === id);
+    const moving = movable.find((t) => t.todo_id === id);
     if (!moving || moving.todo_id === target.todo_id || moving.is_urgent !== target.is_urgent) return;
-    const group = open.filter((t) => t.is_urgent === moving.is_urgent);
+    const group = movable.filter((t) => t.is_urgent === moving.is_urgent);
     const rest = group.filter((t) => t.todo_id !== moving.todo_id);
     const insertAt = rest.findIndex((t) => t.todo_id === target.todo_id) + (before ? 0 : 1);
     const after = insertAt === 0 ? null : rest[insertAt - 1].todo_id;
@@ -214,8 +227,8 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
                 navigate={navigate}
                 write={write}
                 onTick={() => tick(s.item, index)}
-                up={open.filter((o) => o.is_urgent === s.item.is_urgent)[0]?.todo_id === s.item.todo_id ? undefined : neighbourAbove(state.data.open, s.item.todo_id)}
-                down={neighbourForMoveDown(state.data.open, s.item.todo_id) ?? undefined}
+                up={movable.filter((o) => o.is_urgent === s.item.is_urgent)[0]?.todo_id === s.item.todo_id ? undefined : neighbourAbove(movable, s.item.todo_id)}
+                down={neighbourForMoveDown(movable, s.item.todo_id) ?? undefined}
                 drag={
                   may
                     ? {
@@ -295,6 +308,8 @@ function Composer({ onAdd }: { onAdd: (lines: string[]) => Promise<boolean> }) {
   const [busy, setBusy] = useState(false);
   // A ref, not state: two Enters in the same tick must see the first one's lock.
   const adding = useRef(false);
+  // Lists pasted while a create is in flight: added, in order, once it finishes (never dropped).
+  const queued = useRef<string[]>([]);
   const hintId = useId();
 
   const send = async (lines: string[], clear: boolean) => {
@@ -303,6 +318,7 @@ function Composer({ onAdd }: { onAdd: (lines: string[]) => Promise<boolean> }) {
     setBusy(true);
     const ok = await onAdd(lines);
     if (ok && clear) setValue("");
+    while (queued.current.length > 0) await onAdd(queued.current.splice(0));
     adding.current = false;
     setBusy(false);
   };
@@ -319,7 +335,8 @@ function Composer({ onAdd }: { onAdd: (lines: string[]) => Promise<boolean> }) {
     const lines = splitPasted(e.clipboardData.getData("text"));
     if (lines.length < 2) return;
     e.preventDefault();
-    void send(lines, false);
+    if (adding.current) queued.current.push(...lines);
+    else void send(lines, false);
   };
 
   return (
@@ -710,7 +727,8 @@ function RowMenu({
             aria-label="Otro día"
             min={santiagoToday(now)}
             defaultValue={t.due_on ?? ""}
-            onChange={(e) => e.target.value && onDay(e.target.value)}
+            // Typing a year emits each partial value (0002-…, 0202-…): only a day from today on saves.
+            onChange={(e) => e.target.value >= santiagoToday(now) && onDay(e.target.value)}
             className="h-8 w-full rounded-md border border-line bg-canvas px-2 text-[12.5px] tabular-nums text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           />
           {t.due_on ? (

@@ -65,8 +65,9 @@ const groupOf = (list: TodoItem[], id: string): { group: TodoItem[]; at: number 
 
 /**
  * The `after_todo_id` that moves the item UP one place within its group (same `is_urgent`, list
- * order): the id of the item two places above it, or null when it would become first. Also null
- * when it is already first (or unknown) — callers treat «Subir» as disabled then.
+ * order): the id of the item two places above it. Null when it would become first (the 2nd line:
+ * move to the top) — and also when it is already first or unknown, which this function cannot tell
+ * apart; the caller decides "first in group" itself and disables «Subir» only then.
  */
 export function neighbourAbove(list: TodoItem[], id: string): string | null {
   const { group, at } = groupOf(list, id);
