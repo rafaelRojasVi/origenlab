@@ -1,7 +1,7 @@
 /**
  * «Pendientes de la semana»: the shared to-do list at the top of Hoy's side column. Text is the
  * only thing a line needs — type, Enter. Urgent (★) lines first, then her own order (drag, or
- * «Subir» / «Bajar» in the «…» menu); an optional day (a past day stays visible, marked
+ * «Subir» / «Bajar» in the «…» menu; dragging a line onto the other group flips its ★); an optional day (a past day stays visible, marked
  * «atrasada») and an optional case. Ticking a line strikes it with «Deshacer» for 5 s, then it
  * leaves for «Ver hechas».
  *
@@ -36,6 +36,7 @@ type Receipt = Record<string, unknown>;
 type Write = (run: () => Promise<Receipt>) => Promise<Receipt | null>;
 
 const UNDO_MS = 5000;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const DRAG_TYPE = "text/plain";
 const CONFLICT_TEXT = "Alguien cambió esta lista; la actualicé.";
 const VIEWER_REASON = "Tu perfil puede ver la lista, no cambiarla.";
@@ -81,7 +82,7 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
   const [leaving, setLeaving] = useState<Leaving[]>([]);
   const timers = useRef(new Map<string, number>());
   const [showDone, setShowDone] = useState(false);
-  const [dragging, setDragging] = useState<{ id: string; urgent: boolean } | null>(null);
+  const [dragging, setDragging] = useState<{ id: string } | null>(null);
   const [over, setOver] = useState<{ id: string; before: boolean } | null>(null);
 
   useEffect(() => {
@@ -152,15 +153,20 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
   if (state.kind !== "ready") {
     return (
       <Shell titleId={titleId}>
-        <div role="status" className="flex flex-wrap items-center gap-3 px-4 pb-4">
-          <p className="text-[13px] text-ink-muted">No pude cargar los pendientes.</p>
-          <button
-            type="button"
-            onClick={reload}
-            className="h-7 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink transition-colors hover:border-line-strong active:translate-y-px"
-          >
-            Reintentar
-          </button>
+        <div className="px-3 pb-3">
+          <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warn/30 bg-warn-bg px-3 py-2.5">
+            <p className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-semibold text-warn">
+              <span aria-hidden="true">⚠</span>
+              <span>No pude cargar los pendientes.</span>
+            </p>
+            <button
+              type="button"
+              onClick={reload}
+              className="h-7 rounded-md border border-warn/40 bg-canvas-raised px-3 text-xs font-medium text-ink transition-colors hover:border-warn active:translate-y-px"
+            >
+              Reintentar
+            </button>
+          </div>
         </div>
       </Shell>
     );
@@ -188,11 +194,22 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
     setDragging(null);
     setOver(null);
     const moving = movable.find((t) => t.todo_id === id);
-    if (!moving || moving.todo_id === target.todo_id || moving.is_urgent !== target.is_urgent) return;
-    const group = movable.filter((t) => t.is_urgent === moving.is_urgent);
-    const rest = group.filter((t) => t.todo_id !== moving.todo_id);
+    if (!moving || moving.todo_id === target.todo_id || !movable.some((t) => t.todo_id === target.todo_id)) return;
+    // The group it lands in: its own, or — dropped on a row of the other group — that one.
+    const rest = movable.filter((t) => t.is_urgent === target.is_urgent && t.todo_id !== moving.todo_id);
     const insertAt = rest.findIndex((t) => t.todo_id === target.todo_id) + (before ? 0 : 1);
     const after = insertAt === 0 ? null : rest[insertAt - 1].todo_id;
+    if (moving.is_urgent !== target.is_urgent) {
+      // Across groups the drop flips ★: the server puts it on top of the other group, then (unless
+      // it was dropped on top) it moves after the row it was dropped under, at its new version.
+      void write(async () => {
+        const receipt = await updateTodo(fullState(moving, { is_urgent: target.is_urgent }));
+        if (after === null) return receipt;
+        return moveTodo({ todo_id: moving.todo_id, todo_version: Number(receipt.todo_version), after_todo_id: after });
+      });
+      return;
+    }
+    const group = movable.filter((t) => t.is_urgent === moving.is_urgent);
     const at0 = group.findIndex((t) => t.todo_id === moving.todo_id);
     const now0 = at0 === 0 ? null : group[at0 - 1].todo_id;
     if (after === now0) return; // dropped where it already is
@@ -232,12 +249,13 @@ export function PendientesPanel({ cases, navigate, now }: { cases: OpportunityCa
                 drag={
                   may
                     ? {
-                        start: () => setDragging({ id: s.item.todo_id, urgent: s.item.is_urgent }),
+                        start: () => setDragging({ id: s.item.todo_id }),
                         end: () => {
                           setDragging(null);
                           setOver(null);
                         },
-                        accepts: dragging !== null && dragging.id !== s.item.todo_id && dragging.urgent === s.item.is_urgent,
+                        // Any other open row: its own group reorders, the other group also flips ★.
+                        accepts: dragging !== null && dragging.id !== s.item.todo_id,
                         over: over?.id === s.item.todo_id ? (over.before ? "before" : "after") : null,
                         setOver: (before) => setOver({ id: s.item.todo_id, before }),
                         leave: () => setOver((o) => (o?.id === s.item.todo_id ? null : o)),
@@ -726,9 +744,11 @@ function RowMenu({
             type="date"
             aria-label="Otro día"
             min={santiagoToday(now)}
+            max="9999-12-31"
             defaultValue={t.due_on ?? ""}
-            // Typing a year emits each partial value (0002-…, 0202-…): only a day from today on saves.
-            onChange={(e) => e.target.value >= santiagoToday(now) && onDay(e.target.value)}
+            // Typing a year emits each partial value (0002-…, 0202-…, and a fifth digit, 20261-…, which
+            // compares above any day as a string): only a four-digit-year day from today on saves.
+            onChange={(e) => ISO_DAY.test(e.target.value) && e.target.value >= santiagoToday(now) && onDay(e.target.value)}
             className="h-8 w-full rounded-md border border-line bg-canvas px-2 text-[12.5px] tabular-nums text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           />
           {t.due_on ? (

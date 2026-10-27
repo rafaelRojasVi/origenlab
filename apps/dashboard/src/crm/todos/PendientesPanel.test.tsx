@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { OperatorApiError } from "../../api/operatorClient";
@@ -81,6 +81,13 @@ function renderPanel(role = "sales", cases: OpportunityCardData[] = []) {
 }
 
 const rows = () => screen.getAllByTestId("todo-row");
+
+/** jsdom has no DragEvent, so `clientY` in the init is dropped: set it on the event itself. */
+function dragOverAt(el: HTMLElement, dataTransfer: unknown, clientY: number) {
+  const event = createEvent.dragOver(el, { dataTransfer });
+  Object.defineProperty(event, "clientY", { value: clientY });
+  fireEvent(el, event);
+}
 const input = () => screen.getByRole("textbox", { name: "Nuevo pendiente" });
 
 beforeEach(() => {
@@ -220,7 +227,10 @@ describe("«Pendientes de la semana»", () => {
     const day = within(row).getByLabelText("Otro día");
     fireEvent.change(day, { target: { value: "0002-11-05" } });
     fireEvent.change(day, { target: { value: "0202-11-05" } });
+    // A fifth year digit compares above any real day as a string; it must not save either.
+    fireEvent.change(day, { target: { value: "20261-11-05" } });
     expect(updateTodo).not.toHaveBeenCalled();
+    expect(day).toHaveAttribute("max", "9999-12-31");
     fireEvent.change(day, { target: { value: "2026-11-05" } });
     await waitFor(() => expect(updateTodo).toHaveBeenCalledTimes(1));
     expect(updateTodo.mock.calls[0][0]).toMatchObject({ todo_id: "t-1", due_on: "2026-11-05" });
@@ -246,19 +256,58 @@ describe("«Pendientes de la semana»", () => {
     expect(within(row("Segunda ficticia")).getByRole("menuitem", { name: "Subir" })).toBeDisabled();
   });
 
-  it("dragging places a line after another of its group; across groups does nothing", async () => {
+  it("dragging places a line after another of its group", async () => {
     renderPanel();
     const row = (text: string) => screen.getByText(text).closest("[data-testid=todo-row]") as HTMLElement;
     await screen.findByText("Llamar a Laboratorio Ficticio");
     const data = { getData: () => "t-1", setData: () => {}, effectAllowed: "", dropEffect: "" };
     fireEvent.dragStart(row("Llamar a Laboratorio Ficticio"), { dataTransfer: data });
-    fireEvent.dragOver(row("Enviar ficha técnica de la balanza"), { dataTransfer: data });
-    fireEvent.drop(row("Enviar ficha técnica de la balanza"), { dataTransfer: data });
-    expect(moveTodo).not.toHaveBeenCalled();
-    fireEvent.dragStart(row("Llamar a Laboratorio Ficticio"), { dataTransfer: data });
     fireEvent.dragOver(row("Revisar la orden de compra"), { dataTransfer: data, clientY: 10 });
     fireEvent.drop(row("Revisar la orden de compra"), { dataTransfer: data });
     await waitFor(() => expect(moveTodo).toHaveBeenCalledWith({ todo_id: "t-1", todo_version: 1, after_todo_id: "t-3" }));
+    expect(updateTodo).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchTodos).toHaveBeenCalledTimes(2)); // its reload lands inside this test
+  });
+
+  it("dropping on a row of the other group toggles ★, then places the line where it was dropped", async () => {
+    fetchTodos.mockResolvedValue({
+      open: [
+        item("u-1", "Urgente uno", { is_urgent: true }),
+        item("u-2", "Urgente dos", { is_urgent: true }),
+        item("n-1", "Normal uno", { version: 4 }),
+      ],
+      done: [],
+    });
+    updateTodo.mockResolvedValue({ ...RECEIPT, todo_id: "n-1", todo_version: 5 });
+    renderPanel();
+    const row = (text: string) => screen.getByText(text).closest("[data-testid=todo-row]") as HTMLElement;
+    await screen.findByText("Normal uno");
+    const data = { getData: () => "n-1", setData: () => {}, effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(row("Normal uno"), { dataTransfer: data });
+    dragOverAt(row("Urgente uno"), data, 10); // lower half: after «Urgente uno»
+    fireEvent.drop(row("Urgente uno"), { dataTransfer: data });
+    await waitFor(() => expect(moveTodo).toHaveBeenCalledTimes(1));
+    expect(updateTodo).toHaveBeenCalledWith({
+      todo_id: "n-1", todo_version: 4, body: "Normal uno", is_urgent: true, due_on: null, opportunity_id: null,
+    });
+    expect(moveTodo).toHaveBeenCalledWith({ todo_id: "n-1", todo_version: 5, after_todo_id: "u-1" });
+    expect(updateTodo.mock.invocationCallOrder[0]).toBeLessThan(moveTodo.mock.invocationCallOrder[0]);
+    await waitFor(() => expect(fetchTodos).toHaveBeenCalledTimes(2)); // refetched after
+    expect(updateTodo).toHaveBeenCalledTimes(1);
+  });
+
+  it("dropping on the upper half of the other group's first row only toggles ★ (it lands on top)", async () => {
+    renderPanel();
+    const row = (text: string) => screen.getByText(text).closest("[data-testid=todo-row]") as HTMLElement;
+    await screen.findByText("Llamar a Laboratorio Ficticio");
+    const data = { getData: () => "t-1", setData: () => {}, effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(row("Llamar a Laboratorio Ficticio"), { dataTransfer: data });
+    dragOverAt(row("Enviar ficha técnica de la balanza"), data, -1); // upper half (jsdom rows measure 0×0)
+    fireEvent.drop(row("Enviar ficha técnica de la balanza"), { dataTransfer: data });
+    await waitFor(() => expect(updateTodo).toHaveBeenCalledTimes(1));
+    expect(updateTodo.mock.calls[0][0]).toMatchObject({ todo_id: "t-1", todo_version: 1, is_urgent: true });
+    await waitFor(() => expect(fetchTodos).toHaveBeenCalledTimes(2));
+    expect(moveTodo).not.toHaveBeenCalled();
   });
 
   it("«Subir» moves a line to the top of its group; the first line cannot go up", async () => {
@@ -289,11 +338,14 @@ describe("«Pendientes de la semana»", () => {
     expect(screen.getAllByRole("checkbox").every((c) => (c as HTMLInputElement).disabled)).toBe(true);
   });
 
-  it("fails quietly in its own box when the list cannot load", async () => {
+  it("warns visibly inside its own box when the list cannot load, and retries", async () => {
     fetchTodos.mockRejectedValue(new OperatorApiError("not found", 404));
     renderPanel();
-    expect(await screen.findByText("No pude cargar los pendientes.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Reintentar" }));
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveClass("bg-warn-bg");
+    expect(within(warning).getByText("No pude cargar los pendientes.").closest("p")).toHaveClass("font-semibold", "text-warn");
+    expect(screen.getByTestId("pendientes-panel")).toContainElement(warning); // stays in the panel
+    fireEvent.click(within(warning).getByRole("button", { name: "Reintentar" }));
     await waitFor(() => expect(fetchTodos).toHaveBeenCalledTimes(2));
   });
 
