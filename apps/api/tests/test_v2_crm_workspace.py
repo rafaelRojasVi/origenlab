@@ -518,6 +518,19 @@ def test_a_first_quote_still_in_the_cotizador_is_the_next_step_not_a_reply() -> 
         assert card["next_action"]["text"] == f"{verb} la cotización 01300-26"
 
 
+def test_a_voided_quote_is_not_the_next_step() -> None:
+    """Owner 2026-10-27: a case whose quotes were all voided said «Terminar y enviar la cotización …» of
+    a voided draft. The next step follows the newest revision still alive, else there is none."""
+    quotes = [{"quote_id": q, "opportunity_id": "o1", "quote_number": n, "number_origin": "minted"}
+              for q, n in (("q1", "01300-26"), ("q2", "01301-26"))]
+    void = _rev("r2", "q2", 1, None, src=None, origin="authored", status="void", sent_at=None)
+    draft = _rev("r1", "q1", 1, None, src=None, origin="authored", status="draft", sent_at=None)
+    both_void = compose_pipeline([_opp("o1")], [], quotes, [void, {**draft, "status": "void"}], {}, [], {})[0]
+    assert both_void["next_action"]["text"] == "Registrar la cotización del caso"
+    one_alive = compose_pipeline([_opp("o1")], [], quotes, [void, draft], {}, [], {})[0]
+    assert one_alive["next_action"]["text"] == "Terminar y enviar la cotización 01300-26"
+
+
 def test_a_closed_case_carries_no_notes() -> None:
     """Decision 2026-10-09: a closed case never blocks. Owner 2026-10-12: nor does it show notes —
     «whatever, it's already closed»: a won, lost or abandoned case is «al día» with no attention."""
