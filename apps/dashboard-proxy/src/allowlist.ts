@@ -81,6 +81,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // upstream and masked destinations join only by an opaque keyed `address_ref`.
   /^\/v2\/workspace\/providers$/,
   /^\/v2\/workspace\/equipment-interests$/,
+  // «Pendientes», the shared to-do list on Hoy (`apps/api` v2/todos/routes.py): one literal path,
+  // GET-only, `?done_days=` the only query. Its six commands are in `CASE_COMMAND_POST_PATHS`.
+  /^\/v2\/workspace\/todos$/,
   // CRM authoring reads (ContactRedactingRoute; viewer sees addresses masked as ***@domain).
   // Three exact paths: person detail, organization authoring detail, and merge preview (with
   // query string). Named individually — not `/v2/workspace/.+` — so nothing else becomes
@@ -325,8 +328,10 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * «Hecho» (`complete-task`), and «Abrir caso» on a «Correos sin caso» row (`open-commercial-case`:
  * a case at `lead` whose origin is that email, owner decision 2026-10-10). «Reabrir» on a reply to a
  * lost case is `advance-case-stage` on that same case. «Adjuntar OC» copies a purchase order from a
- * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). Thirteen
- * exact paths, and only thirteen. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). The six
+ * «Pendientes» commands of Hoy (`create-todo`, `update-todo`, `move-todo`, `complete-todo`,
+ * `reopen-todo`, `delete-todo`) ride the same list: a todo never changes a case. Twenty-two
+ * exact paths, and only twenty-two. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -356,6 +361,13 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   // upload itself is multipart and listed with the other upload (CATALOG_UPLOAD_POST_PATHS).
   /^\/v2\/commands\/attach-case-document-from-email$/,
   /^\/v2\/commands\/remove-case-document$/,
+  // «Pendientes» on Hoy: the shared to-do list (`apps/api` v2/todos). The version shown is the line's.
+  /^\/v2\/commands\/create-todo$/,
+  /^\/v2\/commands\/update-todo$/,
+  /^\/v2\/commands\/move-todo$/,
+  /^\/v2\/commands\/complete-todo$/,
+  /^\/v2\/commands\/reopen-todo$/,
+  /^\/v2\/commands\/delete-todo$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
