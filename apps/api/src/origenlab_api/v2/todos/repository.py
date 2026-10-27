@@ -11,11 +11,14 @@ Order is a fractional `position` inside a group (urgent / not urgent); smaller i
 regrouped line takes `min(position) - 1` among the open lines of its group, a moved line the
 midpoint between its new neighbours, so a move normally rewrites one row. Done lines do not count
 towards a group's order, and a reopened line keeps the position it had — so two open lines can tie
-(tick the top line, add one, «Deshacer»). Ties read in `(position, created_at, id)` order, and when
-a move's neighbours tie or the midpoint collapses onto one of them (Decimal bisection runs out of
-digits after ~90 moves into one gap), the group's open lines are renumbered 1..n in that order, in
-the same transaction, before the move is placed. Renumbering rewrites only `position`: no version,
-no event, so nobody else's line goes stale.
+(tick the top line, add one, «Deshacer»). Ties read newest first — `(position, created_at desc,
+id)`, the same order here, in the read and in the renumber — and when a move's neighbours tie or the
+midpoint collapses onto one of them (Decimal bisection runs out of digits after ~90 moves into one
+gap), the group's open lines are renumbered 1..n in that order, in the same transaction, before the
+move is placed. Renumbering rewrites only `position`: no version, no event, so nobody else's line
+goes stale. It first locks the group's open lines in id order, then ranks them in a fresh statement:
+a move of another line committed meanwhile is ranked where it now is, not overwritten from a stale
+snapshot, and two renumbers of one group queue instead of deadlocking.
 """
 
 from __future__ import annotations
@@ -59,17 +62,29 @@ class V2TodoCommandRepository(CommandTransaction):
         return Decimal(0) if lowest is None else Decimal(lowest) - 1
 
     def _renumber_open(self, cur: Any, *, is_urgent: bool) -> None:
-        """Rewrite the group's open positions to 1..n in read order, in one statement."""
+        """Rewrite the group's open positions to 1..n in read order.
+
+        Lock first, rank after. Under READ COMMITTED a single `update ... from (ranked)` takes its
+        snapshot before it waits on a row another transaction is moving; once that commits, the
+        row is re-checked but the ranking is not, so the committed move would be overwritten by a
+        stale rank (its receipt, version and event already recorded). Locking the group's open
+        lines (in id order, so two renumbers cannot deadlock) makes the ranking statement start
+        after every concurrent writer of the group has finished.
+        """
+        cur.execute(
+            "select id from crm.todo where status = 'open' and is_urgent = %s order by id for update",
+            (is_urgent,),
+        )
         cur.execute(
             """
             update crm.todo t
                set position = ranked.n
-              from (select id, row_number() over (order by position, created_at, id) as n
+              from (select id, row_number() over (order by position, created_at desc, id) as n
                       from crm.todo
                      where status = 'open' and is_urgent = %s) ranked
-             where t.id = ranked.id and t.position <> ranked.n
+             where t.id = ranked.id and t.status = 'open' and t.is_urgent = %s and t.position <> ranked.n
             """,
-            (is_urgent,),
+            (is_urgent, is_urgent),
         )
 
     def _slot_after(self, cur: Any, todo: dict[str, Any], after_id: str) -> tuple[Decimal, Decimal | None]:
@@ -80,8 +95,11 @@ class V2TodoCommandRepository(CommandTransaction):
                    (select n.position
                       from crm.todo n
                      where n.status = 'open' and n.is_urgent = a.is_urgent and n.id <> %s
-                       and (n.position, n.created_at, n.id) > (a.position, a.created_at, a.id)
-                     order by n.position, n.created_at, n.id
+                       and (n.position > a.position
+                            or (n.position = a.position
+                                and (n.created_at < a.created_at
+                                     or (n.created_at = a.created_at and n.id > a.id))))
+                     order by n.position, n.created_at desc, n.id
                      limit 1) as following
               from crm.todo a
              where a.id = %s
@@ -95,7 +113,7 @@ class V2TodoCommandRepository(CommandTransaction):
     def _require_case(self, cur: Any, opportunity_id: str | None) -> None:
         if opportunity_id is None:
             return
-        cur.execute("select 1 from crm.opportunity where id = %s for share", (opportunity_id,))
+        cur.execute("select 1 from crm.opportunity where id = %s for key share", (opportunity_id,))
         if cur.fetchone() is None:
             raise CommandRefused(404, "case_not_found", "no such commercial case")
 

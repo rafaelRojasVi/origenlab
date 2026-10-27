@@ -101,6 +101,13 @@ def test_open_lines_are_urgent_first_then_by_position(world) -> None:
     assert item["created_by"] == world["operators"]["sales"].display_name
 
 
+def test_a_tie_reads_newest_first(world) -> None:
+    _todo(world, "antigua", position=2)
+    _todo(world, "nueva", position=2)  # inserted later: newer created_at
+    _todo(world, "arriba", position=1)
+    assert [t["body"] for t in _get(world).json()["open"]] == ["arriba", "nueva", "antigua"]
+
+
 def test_done_lines_are_limited_to_the_window_newest_first_and_deleted_never(world) -> None:
     _todo(world, "hace 2", status="done", done_ago_days=2)
     _todo(world, "hace 1", status="done", done_ago_days=1)

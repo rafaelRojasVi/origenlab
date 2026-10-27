@@ -124,7 +124,7 @@ def _order(world, urgent: bool) -> list[str]:
 
     with psycopg.connect(world["db"], autocommit=True) as conn, conn.cursor() as cur:
         cur.execute("select body from crm.todo where status = 'open' and is_urgent = %s "
-                    "order by position, created_at, id", (urgent,))  # the read's order
+                    "order by position, created_at desc, id", (urgent,))  # the read's order: newest first on a tie
         return [row[0] for row in cur.fetchall()]
 
 
@@ -203,13 +203,13 @@ def test_move_past_tied_positions_after_undo_really_moves(world) -> None:
     _run(world, COMPLETE_TODO, CompleteTodoBody(todo_id=c["todo_id"], todo_version=1, note="hecho"))
     d = _create(world, "D")  # min(open) - 1 = -2, the position C still holds
     _run(world, REOPEN_TODO, ReopenTodoBody(todo_id=c["todo_id"], todo_version=2, note="deshacer"))
-    assert _order(world, False) == ["C", "D", "B", "A"]
-    # «Subir» on the third line (B): it goes right after the first (C), above D.
-    _move(world, b, c)
-    assert _order(world, False) == ["C", "B", "D", "A"]
+    assert _order(world, False) == ["D", "C", "B", "A"]  # the tie reads newest first: D above C
+    # «Subir» on the third line (B): it goes right after the first (D), above C.
+    _move(world, b, d)
+    assert _order(world, False) == ["D", "B", "C", "A"]
     # A drop between the formerly tied lines lands between them too.
-    _move(world, a, c)
-    assert _order(world, False) == ["C", "A", "B", "D"]
+    _move(world, a, d)
+    assert _order(world, False) == ["D", "A", "B", "C"]
     versions = {row[0]: row[1] for row in _all(world, "select body, version from crm.todo")}
     assert versions == {"A": 2, "B": 2, "C": 3, "D": 1}  # renumbering bumps no other line's version
     assert _one(world, "select count(*) from crm.domain_event where aggregate_id = %s", d["todo_id"])[0] == 1
@@ -221,15 +221,81 @@ def test_move_between_tied_lines_renumbers_then_moves(world) -> None:
     b = _create(world, "B")
     c = _create(world, "C")
     d = _create(world, "D")  # D, C, B, A
-    # A tie the move itself must cope with (a reopen now unties its own): B and C share a position.
+    # A tie the move itself must cope with (a reopen now unties its own): C and B share a position.
     _owner_sql(world, "update crm.todo set position = -2 where id = %s", b["todo_id"])
-    assert _order(world, False) == ["D", "B", "C", "A"]  # created_at breaks the tie: B before C
-    _move(world, a, b)  # between the tied B and C
-    assert _order(world, False) == ["D", "B", "A", "C"]
-    _move(world, c, d)  # «Subir» on the last line past the tie: right after D
-    assert _order(world, False) == ["D", "C", "B", "A"]
+    assert _order(world, False) == ["D", "C", "B", "A"]  # created_at breaks the tie: newest (C) first
+    _move(world, a, c)  # between the tied C and B
+    assert _order(world, False) == ["D", "C", "A", "B"]
+    _move(world, b, d)  # «Subir» on the last line: right after D
+    assert _order(world, False) == ["D", "B", "C", "A"]
     assert _all(world, "select body, version from crm.todo order by body") == [
-        ("A", 2), ("B", 1), ("C", 2), ("D", 1)]
+        ("A", 2), ("B", 2), ("C", 1), ("D", 1)]
+
+
+@needs_db
+def test_a_forced_tie_reads_and_moves_newest_first(world) -> None:
+    older = _create(world, "Antigua")
+    newer = _create(world, "Nueva")
+    tail = _create(world, "Cola")  # Cola, Nueva, Antigua
+    _owner_sql(world, "update crm.todo set position = 5 where id in (%s, %s)", older["todo_id"], newer["todo_id"])
+    assert _order(world, False) == ["Cola", "Nueva", "Antigua"]
+    # «Bajar» on Cola sends it after the next line in read order (Nueva): it must land between the tie.
+    _move(world, tail, newer)
+    assert _order(world, False) == ["Nueva", "Cola", "Antigua"]
+
+
+@needs_db
+def test_renumber_waits_for_a_concurrent_move_and_keeps_it(world) -> None:
+    """A renumber must not overwrite a move another transaction commits while it runs.
+
+    Connection 1 holds an uncommitted versioned move of A to the top. Connection 2 (the repository,
+    in a thread) reopens C onto a tied position, which renumbers the group; it has to wait for A's
+    row lock. Once connection 1 commits, A must still be first — not put back at the rank a stale
+    snapshot gave it.
+    """
+    import threading
+    import time
+
+    import psycopg
+
+    a = _create(world, "A")  # 0
+    _create(world, "B")  # -1
+    c = _create(world, "C")  # -2
+    _run(world, COMPLETE_TODO, CompleteTodoBody(todo_id=c["todo_id"], todo_version=1, note="hecho"))
+    _create(world, "X")  # -2: C's held position, so reopening C renumbers
+    outcome: dict[str, object] = {}
+    with psycopg.connect(world["db"], autocommit=False) as mover:
+        with mover.cursor() as cur:
+            cur.execute("set local role origenlab_owner")
+            cur.execute("update crm.todo set position = -10, version = version + 1 where id = %s", (a["todo_id"],))
+
+        def reopen() -> None:
+            try:
+                outcome["result"] = _run(world, REOPEN_TODO, ReopenTodoBody(
+                    todo_id=c["todo_id"], todo_version=2, note="deshacer"))
+            except BaseException as exc:  # noqa: BLE001 - re-raised in the test thread
+                outcome["error"] = exc
+
+        worker = threading.Thread(target=reopen)
+        worker.start()
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:  # wait until the reopen is blocked on A's row lock
+            waiting = _one(world, "select count(*) from pg_stat_activity where datname = current_database() "
+                                  "and wait_event_type = 'Lock'")[0]
+            if waiting or not worker.is_alive():
+                break
+            time.sleep(0.02)
+        if "error" in outcome:
+            raise outcome["error"]  # type: ignore[misc]
+        assert waiting == 1, "the renumber never waited on the concurrent move"
+        mover.commit()
+    worker.join(15)
+    assert not worker.is_alive()
+    if "error" in outcome:
+        raise outcome["error"]  # type: ignore[misc]
+    assert _order(world, False) == ["A", "X", "C", "B"]
+    assert _one(world, "select version from crm.todo where id = %s", a["todo_id"])[0] == 2
+    assert _one(world, "select count(distinct position) from crm.todo where status = 'open'")[0] == 4
 
 
 @needs_db

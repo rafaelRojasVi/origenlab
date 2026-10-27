@@ -17,7 +17,7 @@ select t.id::text as todo_id, t.version, t.body, t.is_urgent, t.position::text a
   left join crm.opportunity o on o.id = t.opportunity_id
   left join crm.organization org on org.id = o.organization_id
 """
-_OPEN = _ITEM + " where t.status = 'open' order by t.is_urgent desc, t.position, t.created_at, t.id"
+_OPEN = _ITEM + " where t.status = 'open' order by t.is_urgent desc, t.position, t.created_at desc, t.id"
 _DONE = _ITEM + (" where t.status = 'done' and t.completed_at >= now() - make_interval(days => %s)"
                  " order by t.completed_at desc, t.id")
 
