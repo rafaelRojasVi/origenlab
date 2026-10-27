@@ -891,6 +891,8 @@ def compose_pipeline(
             )
 
         latest = max(all_revs, key=_sort_key_sent) if all_revs else None
+        # The next step follows the newest revision still alive: a voided one is no work to finish.
+        live_latest = max((r for r in all_revs if r.get("status") != "void"), key=_sort_key_sent, default=None)
         requesting = [o for o in orgs_by_opp.get(oid, []) if o["role"] == "requesting_institution"]
         organization = None
         if opp.get("organization_id"):
@@ -1038,7 +1040,7 @@ def compose_pipeline(
                 # written after the client's last email as answered.
                 "last_note": note_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
-                or suggest_next_action(opp, blocked, latest, last_contact=(contacts or {}).get(oid)),
+                or suggest_next_action(opp, blocked, live_latest, last_contact=(contacts or {}).get(oid)),
             }
         )
     return cards
