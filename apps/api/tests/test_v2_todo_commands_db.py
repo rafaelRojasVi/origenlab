@@ -95,6 +95,22 @@ def _one(world, sql, *params):
         return cur.fetchone()
 
 
+def _owner_sql(world, sql, *params):
+    import psycopg
+
+    with psycopg.connect(world["db"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(sql, params)
+
+
+def _all(world, sql, *params):
+    import psycopg
+
+    with psycopg.connect(world["db"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
 def _create(world, text, *, urgent=False, **extra):
     return _run(world, CREATE_TODO, CreateTodoBody(body=text, is_urgent=urgent, note="alta", **extra))
 
@@ -107,8 +123,8 @@ def _order(world, urgent: bool) -> list[str]:
     import psycopg
 
     with psycopg.connect(world["db"], autocommit=True) as conn, conn.cursor() as cur:
-        cur.execute("select body from crm.todo where status = 'open' and is_urgent = %s order by position",
-                    (urgent,))
+        cur.execute("select body from crm.todo where status = 'open' and is_urgent = %s "
+                    "order by position, created_at, id", (urgent,))  # the read's order
         return [row[0] for row in cur.fetchall()]
 
 
@@ -177,6 +193,62 @@ def test_move_between_two_lines_orders_them(world) -> None:
     assert _order(world, False) == ["B", "A", "C"]
     _move(world, b, None, version=2)  # alone at the top stays at the top
     assert _order(world, False)[0] == "B"
+
+
+@needs_db
+def test_move_past_tied_positions_after_undo_really_moves(world) -> None:
+    a = _create(world, "A")  # 0
+    b = _create(world, "B")  # -1
+    c = _create(world, "C")  # -2
+    _run(world, COMPLETE_TODO, CompleteTodoBody(todo_id=c["todo_id"], todo_version=1, note="hecho"))
+    d = _create(world, "D")  # min(open) - 1 = -2, the position C still holds
+    _run(world, REOPEN_TODO, ReopenTodoBody(todo_id=c["todo_id"], todo_version=2, note="deshacer"))
+    assert _order(world, False) == ["C", "D", "B", "A"]
+    # «Subir» on the third line (B): it goes right after the first (C), above D.
+    _move(world, b, c)
+    assert _order(world, False) == ["C", "B", "D", "A"]
+    # A drop between the formerly tied lines lands between them too.
+    _move(world, a, c)
+    assert _order(world, False) == ["C", "A", "B", "D"]
+    versions = {row[0]: row[1] for row in _all(world, "select body, version from crm.todo")}
+    assert versions == {"A": 2, "B": 2, "C": 3, "D": 1}  # renumbering bumps no other line's version
+    assert _one(world, "select count(*) from crm.domain_event where aggregate_id = %s", d["todo_id"])[0] == 1
+
+
+@needs_db
+def test_move_between_tied_lines_renumbers_then_moves(world) -> None:
+    a = _create(world, "A")
+    b = _create(world, "B")
+    c = _create(world, "C")
+    d = _create(world, "D")  # D, C, B, A
+    # A tie the move itself must cope with (a reopen now unties its own): B and C share a position.
+    _owner_sql(world, "update crm.todo set position = -2 where id = %s", b["todo_id"])
+    assert _order(world, False) == ["D", "B", "C", "A"]  # created_at breaks the tie: B before C
+    _move(world, a, b)  # between the tied B and C
+    assert _order(world, False) == ["D", "B", "A", "C"]
+    _move(world, c, d)  # «Subir» on the last line past the tie: right after D
+    assert _order(world, False) == ["D", "C", "B", "A"]
+    assert _all(world, "select body, version from crm.todo order by body") == [
+        ("A", 2), ("B", 1), ("C", 2), ("D", 1)]
+
+
+@needs_db
+def test_many_moves_into_the_same_gap_keep_order(world) -> None:
+    a = _create(world, "A")
+    b = _create(world, "B")
+    c = _create(world, "C")  # C, B, A
+    lines = {"A": a, "B": b}
+    versions = {"A": 1, "B": 1}
+    expected = ["C", "B", "A"]
+    for step in range(120):  # each move halves the gap under C: Decimal bisection collapses near ~90
+        name = "A" if step % 2 == 0 else "B"
+        before = _position(world, lines[name]["todo_id"])
+        moved = _move(world, lines[name], c, version=versions[name])
+        versions[name] = moved["todo_version"]
+        expected = ["C", name, "B" if name == "A" else "A"]
+        assert _order(world, False) == expected, step
+        assert _position(world, lines[name]["todo_id"]) != before or step == 0, step
+    assert _one(world, "select count(distinct position) from crm.todo where status = 'open'")[0] == 3
 
 
 @needs_db

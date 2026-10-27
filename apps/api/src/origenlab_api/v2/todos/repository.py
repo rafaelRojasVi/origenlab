@@ -9,8 +9,13 @@ must exist) and never written, and it may be in any stage: a line can be about a
 
 Order is a fractional `position` inside a group (urgent / not urgent); smaller is higher. A new or
 regrouped line takes `min(position) - 1` among the open lines of its group, a moved line the
-midpoint between its new neighbours, so a move rewrites one row and never renumbers the list.
-Done lines do not count towards a group's order, and a reopened line keeps the position it had.
+midpoint between its new neighbours, so a move normally rewrites one row. Done lines do not count
+towards a group's order, and a reopened line keeps the position it had — so two open lines can tie
+(tick the top line, add one, «Deshacer»). Ties read in `(position, created_at, id)` order, and when
+a move's neighbours tie or the midpoint collapses onto one of them (Decimal bisection runs out of
+digits after ~90 moves into one gap), the group's open lines are renumbered 1..n in that order, in
+the same transaction, before the move is placed. Renumbering rewrites only `position`: no version,
+no event, so nobody else's line goes stale.
 """
 
 from __future__ import annotations
@@ -52,6 +57,40 @@ class V2TodoCommandRepository(CommandTransaction):
         )
         lowest = self._row(cur)["lowest"]
         return Decimal(0) if lowest is None else Decimal(lowest) - 1
+
+    def _renumber_open(self, cur: Any, *, is_urgent: bool) -> None:
+        """Rewrite the group's open positions to 1..n in read order, in one statement."""
+        cur.execute(
+            """
+            update crm.todo t
+               set position = ranked.n
+              from (select id, row_number() over (order by position, created_at, id) as n
+                      from crm.todo
+                     where status = 'open' and is_urgent = %s) ranked
+             where t.id = ranked.id and t.position <> ranked.n
+            """,
+            (is_urgent,),
+        )
+
+    def _slot_after(self, cur: Any, todo: dict[str, Any], after_id: str) -> tuple[Decimal, Decimal | None]:
+        """The anchor's position and the next open line's (in read order, skipping the moved one)."""
+        cur.execute(
+            """
+            select a.position as anchor,
+                   (select n.position
+                      from crm.todo n
+                     where n.status = 'open' and n.is_urgent = a.is_urgent and n.id <> %s
+                       and (n.position, n.created_at, n.id) > (a.position, a.created_at, a.id)
+                     order by n.position, n.created_at, n.id
+                     limit 1) as following
+              from crm.todo a
+             where a.id = %s
+            """,
+            (todo["id"], after_id),
+        )
+        row = self._row(cur)
+        following = row["following"]
+        return Decimal(row["anchor"]), None if following is None else Decimal(following)
 
     def _require_case(self, cur: Any, opportunity_id: str | None) -> None:
         if opportunity_id is None:
@@ -220,17 +259,12 @@ class V2TodoCommandRepository(CommandTransaction):
                     "todo_move_target_invalid",
                     "a to-do can only go after another open to-do of its own group",
                 )
-            cur.execute(
-                """
-                select min(position) as following
-                  from crm.todo
-                 where status = 'open' and is_urgent = %s and id <> %s and position > %s
-                """,
-                (todo["is_urgent"], todo["id"], after["position"]),
-            )
-            following = self._row(cur)["following"]
-            anchor = Decimal(after["position"])
-            position = anchor + 1 if following is None else (anchor + Decimal(following)) / 2
+            anchor, following = self._slot_after(cur, todo, after_id)
+            if following is not None and (following == anchor or (anchor + following) / 2 in (anchor, following)):
+                # Tied neighbours, or no digits left between them: renumber the group, then place.
+                self._renumber_open(cur, is_urgent=todo["is_urgent"])
+                anchor, following = self._slot_after(cur, todo, after_id)
+            position = anchor + 1 if following is None else (anchor + following) / 2
         return self._change(
             cur, operator, receipt_id, todo,
             command=MOVE_TODO, event_type="todo.moved", assignments={"position": position},
@@ -257,12 +291,20 @@ class V2TodoCommandRepository(CommandTransaction):
         todo = self._lock_line(cur, fields)
         if todo["status"] != "done":
             raise CommandRefused(409, "todo_is_not_done", f"this to-do is '{todo['status']}', not done")
-        return self._change(
+        result = self._change(
             cur, operator, receipt_id, todo,
             command=REOPEN_TODO, event_type="todo.reopened",
             assignments={"status": "open", "completed_at": None},
             payload={"note": fields["note"]}, status="open",
         )
+        cur.execute(
+            "select 1 from crm.todo where status = 'open' and is_urgent = %s and position = %s and id <> %s",
+            (todo["is_urgent"], todo["position"], todo["id"]),
+        )
+        if cur.fetchone() is not None:
+            # Its old place was taken while it was done: untie the group (read order is unchanged).
+            self._renumber_open(cur, is_urgent=todo["is_urgent"])
+        return result
 
     def _delete_todo(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
