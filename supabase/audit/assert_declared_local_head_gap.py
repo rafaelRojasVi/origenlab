@@ -79,6 +79,8 @@ EXPECTED_EXTRA_TABLES = {
     "prospect_edit",
     # 20261026100000_slice7_prospect_search.sql — DOMAIN.md §7 #67.
     "prospect_search_run",
+    # 20261028100000_slice7_hoy_todo.sql — DOMAIN.md §7 #68.
+    "todo",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -351,6 +353,12 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # WHERE col IS NOT NULL), so implied-partial coverage — not counted unconditionally.
     "evidence.prospect_search_run.prospect_search_run_requested_by_operator_id_fkey",
     "platform.model_usage.model_usage_prospect_search_run_id_fkey",
+    # 20261028100000_slice7_hoy_todo.sql — created_by_operator_id is covered by a plain
+    # unconditional index (todo_created_by_operator_idx); opportunity_id by a conditional partial
+    # one (todo_opportunity_idx, WHERE opportunity_id IS NOT NULL), so implied-partial — not
+    # counted unconditionally.
+    "crm.todo.todo_opportunity_id_fkey",
+    "crm.todo.todo_created_by_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -363,7 +371,7 @@ EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
 # ten slice-7 catalog and document-line keys and the later slice-7 keys (case documents, product
 # documents, merge, memory, quote authoring, model aliases, tender bid preparation) by plain ones.
 COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 86
-POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 71
+POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY = 72
 EXPECTED_COVERED_UNCONDITIONALLY = (
     COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
     + POST_COMMERCIAL_CASE_COVERED_UNCONDITIONALLY
@@ -378,11 +386,11 @@ EXPECTED_SUMMARIES = {
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 63,
+        "table_count": 64,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 223,
+        "policy_count": 226,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -464,7 +472,8 @@ def main() -> int:
     # The inventory delta must be precisely the reviewed tables of
     # EXPECTED_EXTRA_TABLES: the three commercial-case tables,
     # outbound.campaign_block, the four sign-in tables, the four slice-6 tables,
-    # the five slice-7 catalog and evidence tables, crm.notice_review, crm.prospect_review and crm.prospect_edit.
+    # the five slice-7 catalog and evidence tables, crm.notice_review, crm.prospect_review, crm.prospect_edit,
+    # evidence.prospect_search_run and crm.todo.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -496,8 +505,8 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "30 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly thirty extra tables")
+    if "31 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly thirty-one extra tables")
 
     # The 93 policy additions must belong to those same twenty-nine reviewed tables, plus one each on
     # two existing tables (crm.quote_line and procurement.notice, below):
@@ -524,7 +533,9 @@ def main() -> int:
     # on product_document and one api insert on notice (an existing Slice 0 table); and from
     # 20261020180000, three for notice_review (api select/insert, worker select); and from
     # 20261023100000, three for prospect_review (api select/insert, worker select); and from
-    # 20261025100000, three for prospect_edit (api select/insert, worker select).
+    # 20261025100000, three for prospect_edit (api select/insert, worker select); from
+    # 20261026100000, five for prospect_search_run; and from 20261028100000, three for todo
+    # (api select/insert/update).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -546,7 +557,7 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "98 entr(y|ies) are present here and not in the baseline" not in a09_text:
+    if "101 entr(y|ies) are present here and not in the baseline" not in a09_text:
         refuse("a09 does not report exactly ninety-eight extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every

@@ -193,9 +193,13 @@ insert into expected values
     -- error, updated_at).
     ('evidence', 'prospect_search_run', 'origenlab_api', 'SI', null, 'SI'),
     ('evidence', 'prospect_search_run', 'origenlab_worker', 'SI',
-       array['status', 'started_at', 'finished_at', 'counts', 'error', 'updated_at'], 'SIU');
+       array['status', 'started_at', 'finished_at', 'counts', 'error', 'updated_at'], 'SIU'),
+    -- 20261028100000: crm.todo — the shared «Pendientes» list; api select/insert/update like
+    -- crm.task (a line is never deleted: no DELETE grant), no worker access at all.
+    ('crm', 'todo', 'origenlab_api', 'SIU', null, 'SIU'),
+    ('crm', 'todo', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 126, 'the matrix covers all 63 tables for both runtime roles');
+select is((select count(*)::int from expected), 128, 'the matrix covers all 64 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(
