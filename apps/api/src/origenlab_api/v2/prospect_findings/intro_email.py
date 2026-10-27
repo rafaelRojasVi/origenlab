@@ -76,8 +76,9 @@ _CATEGORIES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("osmom", "osmóm"), "osmómetros"),
 )
 _BRANDS: tuple[str, ...] = ("OHAUS", "Adam", "IKA", "Hielscher", "Ortoalresa", "Löser", "SERVA")
-_DEFAULT_EQUIPMENT = "balanzas, agitadores, centrífugas"
-_DEFAULT_BRANDS = "OHAUS, IKA, Hielscher"
+_DEFAULT_EQUIPMENT = ("balanzas", "agitadores", "centrífugas")
+_DEFAULT_BRANDS = "OHAUS, IKA, Ortoalresa"
+_HIELSCHER = "sonicadores Hielscher"  # named in every intro, so never in the brand list
 
 
 def _join_es(items: list[str]) -> str:
@@ -90,8 +91,9 @@ def _join_es(items: list[str]) -> str:
 
 
 def _equipment_phrase(equipment: list[str]) -> str:
-    """The Spanish categories the equipment lines name, in order and once each («balanzas analíticas,
-    agitadores y homogeneizadores»); the default list when none is recognised."""
+    """The Spanish categories the equipment lines name, in order and once each, always ending with
+    «sonicadores Hielscher» (owner 2026-10-27: every intro mentions them); the default categories when
+    none is recognised («balanzas analíticas, agitadores y sonicadores Hielscher»)."""
     found: list[str] = []
     for line in equipment:
         low = line.lower()
@@ -101,14 +103,18 @@ def _equipment_phrase(equipment: list[str]) -> str:
                     label = "balanzas analíticas"
                 if label not in found and not (label == "balanzas" and "balanzas analíticas" in found):
                     found.append(label)
-    return _join_es(found) if found else _DEFAULT_EQUIPMENT
+    found = [c for c in found if c != "sonicadores"] or list(_DEFAULT_EQUIPMENT)
+    return _join_es([*found, _HIELSCHER])
 
 
 def _brands_phrase(equipment: list[str]) -> str:
-    """The brands the equipment lines name, in order of first mention; the default trio otherwise."""
+    """The brands the equipment lines name, in order of first mention (Hielscher is already named with
+    its sonicadores); the default trio otherwise."""
     seen: list[tuple[int, str]] = []
     text = " ".join(equipment).lower()
     for brand in _BRANDS:
+        if brand == "Hielscher":
+            continue
         match = re.search(rf"\b{re.escape(brand.lower())}\b", text)  # «conservación» is not SERVA
         if match:
             seen.append((match.start(), brand))
@@ -215,20 +221,20 @@ def build_text(
         p2 = (
             f"Vimos que su proyecto «{project_title}» fue adjudicado en {fund_label}, "
             f"felicitaciones. Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {equipos} y otros equipos de las marcas con que trabajamos "
+            f"ayudarle con {equipos}, y otros equipos de las marcas con que trabajamos "
             f"({marcas}, entre otras)."
         )
     elif fund_label:
         p2 = (
             f"Vimos que fue adjudicado en {fund_label}, felicitaciones. "
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {equipos} y otros equipos de las marcas con que trabajamos "
+            f"ayudarle con {equipos}, y otros equipos de las marcas con que trabajamos "
             f"({marcas}, entre otras)."
         )
     else:
         p2 = (
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {equipos} y otros equipos de las marcas con que trabajamos "
+            f"ayudarle con {equipos}, y otros equipos de las marcas con que trabajamos "
             f"({marcas}, entre otras)."
         )
 
@@ -288,20 +294,20 @@ def build_html(
             f"Vimos que su proyecto «{_html.escape(project_title)}» fue adjudicado en "
             f"{_html.escape(fund_label)}, felicitaciones. "
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {_html.escape(equipos)} y otros equipos de las marcas con que trabajamos "
+            f"ayudarle con {_html.escape(equipos)}, y otros equipos de las marcas con que trabajamos "
             f"({marcas}, entre otras)."
         )
     elif fund_label:
         p2 = (
             f"Vimos que fue adjudicado en {_html.escape(fund_label)}, felicitaciones. "
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {_html.escape(equipos)} y otros equipos de las marcas con que trabajamos "
+            f"ayudarle con {_html.escape(equipos)}, y otros equipos de las marcas con que trabajamos "
             f"({marcas}, entre otras)."
         )
     else:
         p2 = (
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {_html.escape(equipos)} y otros equipos de las marcas con que trabajamos "
+            f"ayudarle con {_html.escape(equipos)}, y otros equipos de las marcas con que trabajamos "
             f"({marcas}, entre otras)."
         )
 

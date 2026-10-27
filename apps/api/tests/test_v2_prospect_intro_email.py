@@ -112,29 +112,40 @@ class TestBuildText:
         assert "Fondecyt Regular 2025" in self._text()
 
     def test_equipment_joined(self) -> None:
-        assert "con balanzas analíticas y agitadores y otros equipos" in self._text()
+        assert "con balanzas analíticas, agitadores y sonicadores Hielscher, y otros equipos" in self._text()
 
     def test_equipment_in_spanish_keeps_brand_capitals(self) -> None:
         text = self._text(equipment=["OHAUS/Adam balances analíticas", "IKA stirrers y homogenizers"])
-        assert "con balanzas analíticas, agitadores y homogeneizadores y otros equipos" in text
+        assert "con balanzas analíticas, agitadores, homogeneizadores y sonicadores Hielscher, y otros equipos" in text
         assert "(OHAUS, Adam e IKA, entre otras)" in text
         assert "oHAUS" not in text and "iKA" not in text and "stirrers" not in text
 
     def test_equipment_categories_deduplicated_in_order(self) -> None:
         text = self._text(equipment=["Ortoalresa centrifuges", "OHAUS moisture analyzers",
                                      "Adam Equipment balances", "IKA rotary evaporators o stirrers"])
-        assert ("con centrífugas, analizadores de humedad, balanzas, evaporadores rotatorios y "
-                "agitadores y otros equipos") in text
+        assert ("con centrífugas, analizadores de humedad, balanzas, evaporadores rotatorios, "
+                "agitadores y sonicadores Hielscher, y otros equipos") in text
         assert "(Ortoalresa, OHAUS, Adam e IKA, entre otras)" in text
 
     def test_brand_matched_as_a_whole_word(self) -> None:
         text = self._text(equipment=["Balanzas para conservación de muestras"])
         assert "SERVA" not in text.split("entre otras")[0].split("(")[-1]
 
+    def test_hielscher_sonicators_always_named_once(self) -> None:
+        # Owner 2026-10-27: every intro names Hielscher sonicadores, and only once.
+        for eq in ([], ["OHAUS balances"], ["Hielscher sonicadores", "IKA homogenizers"]):
+            text = self._text(equipment=eq)
+            assert text.count("sonicadores Hielscher") == 1
+            assert "Hielscher, entre otras" not in text and "Hielscher e" not in text
+            html = build_html(person_name="Ana Ficticia", salutation_sex="MUJER", project_title=None,
+                              fund_label=None, equipment=eq, email_source_note=None,
+                              email_source_url=None, email_source_year=None)
+            assert html.count("sonicadores Hielscher") == 1
+
     def test_unknown_equipment_falls_back(self) -> None:
         text = self._text(equipment=["Equipo ficticio sin categoría"])
-        assert "con balanzas, agitadores, centrífugas y otros equipos" in text
-        assert "(OHAUS, IKA, Hielscher, entre otras)" in text
+        assert "con balanzas, agitadores, centrífugas y sonicadores Hielscher, y otros equipos" in text
+        assert "(OHAUS, IKA, Ortoalresa, entre otras)" in text
 
     def test_fuente_from_note(self) -> None:
         assert "ResearchGate ficticio" in self._text()
@@ -162,8 +173,8 @@ class TestBuildText:
 
     def test_empty_equipment_uses_defaults(self) -> None:
         text = self._text(equipment=[])
-        assert "balanzas, agitadores, centrífugas" in text
-        assert "(OHAUS, IKA, Hielscher, entre otras)" in text
+        assert "balanzas, agitadores, centrífugas y sonicadores Hielscher" in text
+        assert "(OHAUS, IKA, Ortoalresa, entre otras)" in text
 
     def test_gmail_signature_replaces_fallback(self) -> None:
         text = self._text(gmail_signature_html="<p>Tatiana Ficticia<br>OrigenLab</p>")
