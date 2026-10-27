@@ -397,7 +397,7 @@ def contact_prospect(repo: Any, cur: Any, operator: OperatorIdentity, fields: di
 PREPARE_PROSPECT_EMAIL = "prepare-prospect-email"
 
 #: Labels applied to the drafted message (gmail.modify scope required).
-_DRAFT_LABELS = ["Claude", "Prospecto"]
+_DRAFT_LABELS = ["Claude – revisar", "Prospecto"]
 
 DRAFT_FAILURE_ES: dict[str, str] = {
     "token_refresh_failed": "No se pudo crear el borrador: el permiso de Gmail venció o fue revocado.",
