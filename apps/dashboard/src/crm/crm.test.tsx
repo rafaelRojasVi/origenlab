@@ -430,6 +430,8 @@ describe("no write path in the CRM workspace", () => {
   const TENDER_API_CLIENT = "./tenders/tenderApi.ts";
   //  - the prospect client (prospects/prospectApi.ts) POSTs «Más tarde», «Descartar» and «Contactar» (2026-10-23).
   const PROSPECT_API_CLIENT = "./prospects/prospectApi.ts";
+  //  - the to-do client (todos/todoApi.ts) POSTs the six «Pendientes» commands.
+  const TODO_API_CLIENT = "./todos/todoApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -442,7 +444,8 @@ describe("no write path in the CRM workspace", () => {
     for (const [f, src] of Object.entries(sources)) {
       if (
         f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT ||
-        f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === TENDER_API_CLIENT || f === PROSPECT_API_CLIENT
+        f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === TENDER_API_CLIENT || f === PROSPECT_API_CLIENT ||
+        f === TODO_API_CLIENT
       ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
