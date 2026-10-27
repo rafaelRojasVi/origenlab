@@ -505,8 +505,15 @@ describe("V2 durable read boundary allowlist", () => {
       // «Adjuntar OC»: copy a case email's purchase order, or remove one (2026-10-12).
       "/v2/commands/attach-case-document-from-email",
       "/v2/commands/remove-case-document",
+      // «Pendientes» on Hoy.
+      "/v2/commands/create-todo",
+      "/v2/commands/update-todo",
+      "/v2/commands/move-todo",
+      "/v2/commands/complete-todo",
+      "/v2/commands/reopen-todo",
+      "/v2/commands/delete-todo",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(16);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(22);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -689,6 +696,26 @@ describe("V2 durable read boundary allowlist", () => {
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
     }
+  });
+});
+
+describe("«Pendientes» (todos) allowlist", () => {
+  it("allows GET of the list only and the six commands only as exact POST paths", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/todos")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/todos?done_days=14")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/todos")).toBe(false);
+    for (const path of ["/v2/workspace/todos/1", "/v2/workspace/todos/", "/v2/workspace/todosx"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+    for (const verb of ["create", "update", "move", "complete", "reopen", "delete"]) {
+      const path = `/v2/commands/${verb}-todo`;
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(`${path}/x`), `${path}/x`).toBe(false);
+      expect(isAllowedPostPath(`${path}s`), `${path}s`).toBe(false);
+    }
+    expect(isAllowedPostPath("/v2/commands/delete-todo/x")).toBe(false);
   });
 });
 

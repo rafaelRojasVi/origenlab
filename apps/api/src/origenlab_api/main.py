@@ -670,6 +670,19 @@ def _mount_v2_command_boundary(
     app.include_router(command_router)
     app.include_router(case_command_router)
     app.include_router(task_command_router)
+    # «Pendientes» (the shared to-do list on Hoy): same database, role and switch.
+    from origenlab_api.v2.todos.reads import TodoReadRepository
+    from origenlab_api.v2.todos.repository import V2TodoCommandRepository
+    from origenlab_api.v2.todos.routes import todo_command_router, todo_read_router
+
+    app.state.v2_todo_command_repository = V2TodoCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.v2_todo_read_repository = TodoReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(todo_command_router)
+    app.include_router(todo_read_router)
     # «Licitaciones» (spec 2026-10-19 §6.10): tender cases, same database, role and switch. The
     # Mercado Público ticket reads a tender's detail by code; without one the operator types the buyer.
     from origenlab_api.v2.tenders.mercado_publico import resolve_ticket

@@ -567,6 +567,8 @@ def test_a_refused_win_reaches_the_operator_as_its_own_status_and_code() -> None
     # A case's purchase order (2026-10-12) mounts behind the same switch.
     "/v2/commands/attach-case-document", "/v2/commands/attach-case-document-from-email",
     "/v2/commands/remove-case-document",
+    # «Pendientes» (2026-10-27) mounts behind the same switch.
+    "/v2/commands/create-todo", "/v2/commands/delete-todo",
 ])
 def test_the_case_commands_the_dashboard_uses_are_404_without_their_switch(
     monkeypatch, path: str

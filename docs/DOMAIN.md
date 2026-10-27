@@ -1307,8 +1307,22 @@ the changed fields, never their values.
 candidate, writing «Por qué ahora» + «Equipos»), nullable FK `prospect_search_run_id`. Spend cap:
 US$ 10/month under feature key `prospectos`.
 
-Counts by schema: `crm` 27, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **63**.
+### 7.14 «Pendientes» de Hoy — built 2026-10-27
+
+The operators keep one shared list of loose to-dos on «Hoy»: a line of text, optionally urgent,
+optionally dated (a Santiago day), optionally tied to a case, ordered by hand inside two groups
+(urgent first). It is not `crm.task` (a case follow-up with a due instant) and never changes a
+case's stage.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 68 | `crm.todo` | one line of the shared «Pendientes» list | `body` 1–500 characters after trimming; `position` a fractional order inside its group (smaller = higher); `status` ∈ {`open`,`done`,`deleted`} with `done` ⇔ `completed_at` set; `version` ≥ 1 (optimistic concurrency); optional `opportunity_id` and `due_on`; **never physically deleted** (`platform.reject_mutation` — a removed line is `status = 'deleted'`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
+
+Domain events added: aggregate kind `todo` with `todo.created`, `todo.updated`, `todo.moved`,
+`todo.completed`, `todo.reopened`, `todo.deleted`.
+
+Counts by schema: `crm` 28, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **64**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
