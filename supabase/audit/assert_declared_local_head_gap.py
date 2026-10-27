@@ -379,7 +379,7 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 64,
+        "relation_count": 65,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
@@ -558,7 +558,7 @@ def main() -> int:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
     if "101 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly ninety-eight extra policies")
+        refuse("a09 does not report exactly one hundred and one extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -582,7 +582,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 64, expected 34"],
+        "a04": ["relations in scope: observed 65, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "

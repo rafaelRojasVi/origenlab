@@ -80,7 +80,7 @@ def _check(check_id, status="PASS", summary=None, findings=None, required=True):
 
 
 def current_head_report():
-    """The shape of a real local audit of current head (the 2026-10-28 Pendientes run: crm.todo
+    """The shape of a real local audit of current head (the 2026-10-27 Pendientes run: crm.todo
     +1 table, +3 policies, +2 foreign keys; the 2026-10-26 prospect search run:
     evidence.prospect_search_run +1 table, +5 policies, +2 foreign keys; the 2026-10-25 prospect
     edit run: crm.prospect_edit +1 table, +3 policies, +2 foreign keys; the 2026-10-23 prospect
@@ -100,8 +100,8 @@ def current_head_report():
     checks = [_check(f"a{i:02d}") for i in (1, 2, 3, 6, 7, 11, 12)] + [
         _check("s01"),
         _check("a13", status="CORROBORATED", required=False),
-        _check("a04", "FAIL", {"relation_count": 64},
-               ["relations in scope: observed 64, expected 34"]),
+        _check("a04", "FAIL", {"relation_count": 65},
+               ["relations in scope: observed 65, expected 34"]),
         _check("a05", "FAIL", {"function_count": 40, "security_definer_count": 3}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "3 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
