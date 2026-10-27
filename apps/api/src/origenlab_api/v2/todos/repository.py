@@ -16,15 +16,24 @@ id)`, the same order here, in the read and in the renumber — and when a move's
 midpoint collapses onto one of them (Decimal bisection runs out of digits after ~90 moves into one
 gap), the group's open lines are renumbered 1..n in that order, in the same transaction, before the
 move is placed. Renumbering rewrites only `position`: no version, no event, so nobody else's line
-goes stale. It first locks the group's open lines in id order, then ranks them in a fresh statement:
-a move of another line committed meanwhile is ranked where it now is, not overwritten from a stale
-snapshot, and two renumbers of one group queue instead of deadlocking.
+goes stale. It locks the group's open lines, then ranks them in a fresh statement: a move of
+another line committed meanwhile is ranked where it now is, not overwritten from a stale snapshot.
+
+Only `move-todo` and `reopen-todo` can renumber, and each already holds its own line's row lock
+when it does — so two of them on lines X and Y of one group would hold one row each and wait on the
+other's (a deadlock that row-lock order alone cannot prevent). Both therefore take one
+transaction-scoped advisory lock for the list's order (`_ORDER_LOCK`) *before* their row lock: they
+queue, one at a time, for the whole list (three people, a short list). The other commands take no
+other line's lock and do not need it. Should a deadlock still reach a todo command, it is answered
+as `todo_version_conflict` (409, re-read) rather than a 500.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
+
+import psycopg
 
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
@@ -39,12 +48,25 @@ from origenlab_api.v2.todos.commands import (
 )
 
 
+# One key for the whole list's order; held to the end of the transaction (see the module docstring).
+_ORDER_LOCK = "select pg_advisory_xact_lock(hashtext('crm.todo:order'))"
+
+
 def _iso(value: Any) -> str | None:
     return value.isoformat() if value is not None and hasattr(value, "isoformat") else value
 
 
 class V2TodoCommandRepository(CommandTransaction):
     """`create_todo` … `delete_todo` — each in one transaction."""
+
+    def execute(self, **kwargs: Any) -> dict[str, Any]:
+        """The shared entry point; a deadlock (already rolled back) reads as a stale list."""
+        try:
+            return super().execute(**kwargs)
+        except psycopg.errors.DeadlockDetected as exc:
+            raise CommandRefused(
+                409, "todo_version_conflict", "the list changed while the command ran; re-read it"
+            ) from exc
 
     # ------------------------------------------------------------------ helpers
 
@@ -68,8 +90,10 @@ class V2TodoCommandRepository(CommandTransaction):
         snapshot before it waits on a row another transaction is moving; once that commits, the
         row is re-checked but the ranking is not, so the committed move would be overwritten by a
         stale rank (its receipt, version and event already recorded). Locking the group's open
-        lines (in id order, so two renumbers cannot deadlock) makes the ranking statement start
-        after every concurrent writer of the group has finished.
+        lines makes the ranking statement start after every concurrent writer of the group has
+        finished. The id order keeps any two lockers of the group consistent; it does not by itself
+        stop a deadlock between two commands that each already hold their own line — the callers'
+        `_ORDER_LOCK` does that.
         """
         cur.execute(
             "select id from crm.todo where status = 'open' and is_urgent = %s order by id for update",
@@ -254,6 +278,7 @@ class V2TodoCommandRepository(CommandTransaction):
     def _move_todo(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:
+        cur.execute(_ORDER_LOCK)  # before the row lock: it may renumber
         todo = self._lock_line(cur, fields)
         if todo["status"] != "open":
             raise CommandRefused(409, "todo_is_not_open", f"this to-do is already '{todo['status']}'")
@@ -306,6 +331,7 @@ class V2TodoCommandRepository(CommandTransaction):
     def _reopen_todo(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:
+        cur.execute(_ORDER_LOCK)  # before the row lock: it may renumber
         todo = self._lock_line(cur, fields)
         if todo["status"] != "done":
             raise CommandRefused(409, "todo_is_not_done", f"this to-do is '{todo['status']}', not done")

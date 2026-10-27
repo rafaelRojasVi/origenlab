@@ -469,3 +469,95 @@ def test_replay_same_key_returns_same_result(world) -> None:
     second = _run(world, CREATE_TODO, body, key="pytest-todo-replay")
     assert second["replayed"] is True and second["todo_id"] == first["todo_id"]
     assert _one(world, "select count(*) from crm.todo")[0] == 1
+
+
+def _wait_for_lock(world, worker, outcome, *, event: str | None = None) -> int:
+    """Poll until one backend of this database waits on a lock (of kind `event`, if given)."""
+    import time
+
+    deadline = time.monotonic() + 15
+    waiting = 0
+    while time.monotonic() < deadline:
+        waiting = _one(world, "select count(*) from pg_stat_activity where datname = current_database() "
+                              "and wait_event_type = 'Lock' and (%s::text is null or wait_event = %s::text)",
+                       event, event)[0]
+        if waiting or not worker.is_alive():
+            break
+        time.sleep(0.02)
+    if "error" in outcome:
+        raise outcome["error"]  # type: ignore[misc]
+    return waiting
+
+
+def _in_thread(fn, outcome):
+    import threading
+
+    def run() -> None:
+        try:
+            outcome["result"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised / inspected in the test thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    return worker
+
+
+@needs_db
+def test_a_reordering_command_queues_on_the_list_order_lock(world) -> None:
+    """Moves and reopens take one transaction-scoped advisory lock before their own row lock.
+
+    Connection 1 holds that lock in an open transaction; a move started meanwhile waits on it
+    (not on a row) and completes once connection 1 commits. Without it, two renumbering moves on
+    lines X < Y could each hold their own row and wait on the other's: a deadlock.
+    """
+    import psycopg
+
+    a = _create(world, "A")
+    _create(world, "B")
+    c = _create(world, "C")  # C, B, A
+    outcome: dict[str, object] = {}
+    with psycopg.connect(world["db"], autocommit=False) as holder:
+        holder.execute("select pg_advisory_xact_lock(hashtext('crm.todo:order'))")
+        worker = _in_thread(lambda: _move(world, a, c), outcome)
+        waiting = _wait_for_lock(world, worker, outcome, event="advisory")
+        assert waiting == 1, "the move did not wait on the list-order lock"
+        assert worker.is_alive()
+        holder.commit()
+    worker.join(15)
+    assert not worker.is_alive()
+    if "error" in outcome:
+        raise outcome["error"]  # type: ignore[misc]
+    assert outcome["result"]["todo_version"] == 2  # type: ignore[index]
+    assert _order(world, False) == ["C", "A", "B"]
+
+
+@needs_db
+def test_a_deadlock_inside_a_todo_command_is_a_version_conflict_not_a_500(world) -> None:
+    """Belt: should a deadlock still reach a todo command, the operator gets the calm 409.
+
+    Connection 1 follows no protocol (raw SQL, no advisory lock): it locks Y, the move of X then
+    holds X and waits on Y inside the renumber, and connection 1 asks for X. The move's backend
+    detects the cycle first (connection 1's deadlock_timeout is raised) and is the one aborted.
+    """
+    import psycopg
+
+    x = _create(world, "X")
+    y = _create(world, "Y")
+    z = _create(world, "Z")  # Z, Y, X
+    _owner_sql(world, "update crm.todo set position = -1 where id = %s", z["todo_id"])  # Z ties Y: a renumber
+    outcome: dict[str, object] = {}
+    with psycopg.connect(world["db"], autocommit=False) as other:
+        other.execute("set deadlock_timeout = '20s'")
+        other.execute("set local role origenlab_owner")
+        other.execute("select 1 from crm.todo where id = %s for update", (y["todo_id"],))
+        worker = _in_thread(lambda: _move(world, x, z), outcome)  # between the tied Z and Y
+        assert _wait_for_lock(world, worker, outcome) == 1, "the move never waited on Y"
+        other.execute("select 1 from crm.todo where id = %s for update", (x["todo_id"],))  # closes the cycle
+        worker.join(15)
+        other.rollback()
+    assert not worker.is_alive()
+    error = outcome.get("error")
+    assert isinstance(error, CommandRefused), error
+    assert (error.status_code, error.code) == (409, "todo_version_conflict")
+    assert _one(world, "select version from crm.todo where id = %s", x["todo_id"])[0] == 1  # rolled back
