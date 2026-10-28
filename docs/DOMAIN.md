@@ -1317,12 +1317,13 @@ case's stage.
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
 | 68 | `crm.todo` | one line of the shared «Pendientes» list | `body` 1–500 characters after trimming; `position` a fractional order inside its group (smaller = higher); `status` ∈ {`open`,`done`,`deleted`} with `done` ⇔ `completed_at` set; `version` ≥ 1 (optimistic concurrency); optional `opportunity_id` and `due_on`; **never physically deleted** (`platform.reject_mutation` — a removed line is `status = 'deleted'`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
+| 69 | `crm.person_name` | another name a person is known by (from a message display name or signature, or typed by an operator) | `source` ∈ {`display_name`,`signature`,`operator`}; `confirmation` ∈ {`machine_proposed`,`confirmed`}; at most one live row per (`person_id`, `name_norm`); **never physically deleted** (soft-removed via `removed_at`); `origenlab_api` select/insert + UPDATE of `removed_at`/`removed_by_operator_id` only, `origenlab_worker` select |
 
 Domain events added: aggregate kind `todo` with `todo.created`, `todo.updated`, `todo.moved`,
 `todo.completed`, `todo.reopened`, `todo.deleted`.
 
-Counts by schema: `crm` 28, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **64**.
+Counts by schema: `crm` 29, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **65**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
