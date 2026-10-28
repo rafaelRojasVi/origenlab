@@ -110,8 +110,11 @@ Rules:
   stored normalized `role_key`, and `daterange(valid_from, valid_to, '[)')`.
 - `valid_to > valid_from` when `valid_to` is set. Leaving an organization
   closes `valid_to`. **Affiliation rows are never deleted.**
-- **Nothing ever infers an affiliation from an email address.** A work address
-  may produce an affiliation *assertion*; an operator confirms it.
+- **An email address alone never makes an affiliation.** The people rules
+  (§3.6.6, P2–P5) may record one by themselves when the sender's own signature
+  names the institution; it is `machine_proposed`, logged in «Hecho
+  automáticamente» and undone with «Quitar». An operator may confirm it.
+  (Owner-approved 2026-10-27.)
 
 ### 2.5 Contact point — the channel, and only the channel
 
@@ -138,7 +141,9 @@ E.164), `value_display`, nullable `person_id`, nullable `organization_id`,
   known, the person absent because they are not. A named-looking address is
   `individual_owner_unknown`; calling it a shared mailbox is a claim an operator makes
   deliberately and justifies, never a value a boundary picks because the row shape allowed
-  it. Neither value creates a `person`.
+  it. Neither value creates a `person`: a named-looking address does not create a person.
+  P3 creates a `machine_proposed` person only from a signature that states a full name and
+  an institution already in the CRM (§3.6.6, owner-approved 2026-10-27).
 - **A contact point is never a substitute for an affiliation.** On a `work`
   row, `organization_id` means "this organization operates this mailbox", never
   "this person works at this organization".
@@ -175,8 +180,10 @@ a fifth subject requires a migration adding a fifth typed FK, not a text
 
 An organization or person merge sets `merged_into` on the loser, repoints
 every FK and every external identifier inside the same transaction, and writes
-one merge domain event. Merges are never inferred: an operator command
-performs them. A merge can never collide on `(kind, value_norm)` in
+one merge domain event. Merges are performed by an operator command, or by
+people rule P5 when one address and a signature prove two proposed records are
+the same person (never two confirmed ones). P5 records every moved row so
+«Quitar» restores them exactly (§3.6.6, owner-approved 2026-10-27). A merge can never collide on `(kind, value_norm)` in
 `contact_point`, because that value was already globally unique before the
 merge. `outbound.contact_control` is keyed by normalized text, deliberately
 not by FK, so safety facts survive every merge.
@@ -711,6 +718,40 @@ else (R7, R8) stays a proposal in Revisión.
   stage guard only when its latest `opportunity.staged` event is a worker
   event. Since 2026-10-10 a `lost` case reopens by an ordinary stage move
   anyway; a case an undo discarded never does.
+
+**People rules — who wrote each email** (owner-approved 2026-10-27, spec
+`2026-10-27-people-first-design.md`). The worker reads each inbound email a
+person wrote into one `message_triage` assertion `people:v1` (the sender's
+address, the name in its header, what its own signature states, who else was
+on it) and never writes `crm.*`. The API plans the unapplied readings of the
+last 90 days against the CRM (`people_rules.py`) and runs the **strong** ones by
+itself on the automatic timer, before the mail rules, only while
+`ORIGENLAB_V2_AUTO_PEOPLE_ENABLED` is on (default off) and the same admin switch
+is on, on that admin's behalf. Each strong action is one transaction and one
+receipt (`apply_people_rule`); every row it creates is `machine_proposed`,
+every event `actor_kind = 'worker'` with `payload.attribution.source =
+people_rules`; Hoy lists it in «Hecho automáticamente» (P1 is not listed) and
+«Quitar» undoes exactly the recorded rows, refusing when a person edited one
+since. A **weak** one is a «¿Es …?» guess with Sí/No and writes nothing until
+answered. Shared mailboxes, `individual_owner_unknown` addresses, our own
+domains, generic mailboxes and readings without a name get nothing; an address
+that signs with two different names never gets a strong action; a free-mail
+domain never names an institution.
+
+| Rule | Tier | When | What it records |
+|---|---|---|---|
+| P1 | strong | the address is already a live person's contact point | the email is that person's (resolves the participant) |
+| P1b | strong | a full name (header or signature) is surely that person's — another form of their name, or the person had no name yet — and no other person's | the name as a `crm.person_name` of that person |
+| P2 | strong | an unknown address whose signature names exactly one person, of the one institution it states, which that person already belongs to | the address as that person's contact point (`work`, or `personal` on free mail) |
+| P3 | strong | an unknown address whose signature states a full name nobody has and an institution that is exactly one CRM organization | a new person with that address and that affiliation |
+| P4 | strong | a known person with no open affiliation; the signature names exactly one CRM institution and the email is surely theirs | the affiliation |
+| P5 | strong | a known address whose signature names one other person; both of the signature's institution; not both confirmed | merge into the confirmed (else older) person; loser's affiliations closed and reopened on the winner; frozen campaign recipients never move |
+| W1 | weak | a name points to one person but something strong is missing (only part of the name, a first name only, no signature, another institution, two confirmed persons) | nothing until answered (sales or admin): «Sí» attaches the address to that person as the operator's act (`confirmed`); «No» is recorded, never asked again, and keeps P2/P5 from joining that pair |
+
+Mail captured before `people:v1` existed is read once by the worker's
+`people-backfill` (90 days, one people-only model call per email); the owner
+reads `python -m origenlab_api.v2.people_dry_run` (read-only, masked) once
+before turning the flag on.
 
 ## 4. Products, manufacturers and suppliers
 
@@ -1317,7 +1358,7 @@ case's stage.
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
 | 68 | `crm.todo` | one line of the shared «Pendientes» list | `body` 1–500 characters after trimming; `position` a fractional order inside its group (smaller = higher); `status` ∈ {`open`,`done`,`deleted`} with `done` ⇔ `completed_at` set; `version` ≥ 1 (optimistic concurrency); optional `opportunity_id` and `due_on`; **never physically deleted** (`platform.reject_mutation` — a removed line is `status = 'deleted'`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
-| 69 | `crm.person_name` | another name a person is known by (from a message display name or signature, or typed by an operator) | `source` ∈ {`display_name`,`signature`,`operator`}; `confirmation` ∈ {`machine_proposed`,`confirmed`}; at most one live row per (`person_id`, `name_norm`); **never physically deleted** (soft-removed via `removed_at`); `origenlab_api` select/insert + UPDATE of `removed_at`/`removed_by_operator_id` only, `origenlab_worker` select |
+| 69 | `crm.person_name` | another name a person is known by (from a message display name or signature, or typed by an operator) | `source` ∈ {`display_name`,`signature`,`operator`}; `confirmation` ∈ {`machine_proposed`,`confirmed`}; at most one live row per (`person_id`, `name_norm`); **never physically deleted** (soft-removed via `removed_at`); `origenlab_api` select/insert + UPDATE of `removed_at`/`removed_by_operator_id` and `confirmation` (`20261029110000`, «Confirmar» on the contact page) only, `origenlab_worker` select |
 
 Domain events added: aggregate kind `todo` with `todo.created`, `todo.updated`, `todo.moved`,
 `todo.completed`, `todo.reopened`, `todo.deleted`.

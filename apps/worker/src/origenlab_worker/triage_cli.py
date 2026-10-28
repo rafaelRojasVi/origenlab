@@ -5,6 +5,9 @@ points (docs/OPERATIONS.md §8.11).
   worker on queue `triage` until SIGTERM. The periodic sweep defers new messages every minute.
 * `triage-once [--since-days N] [--limit N] [--dry-run]` — one pass without the queue: the owner's
   backfill and smoke test. `--dry-run` lists how many messages are pending and writes nothing.
+* `people-backfill [--since-days 90] [--limit N] [--sample N] [--apply]` — `people:v1` (who wrote it)
+  for mail triaged before that reading existed: one people-only model call per inbound email a
+  person wrote. Without `--apply` nothing is written; `--sample N` prices the run first.
 * `forward-backfill [--since-days N] [--limit N] [--apply]` — reads only the forwards we sent of the
   last days for who really asked (spec 2026-10-14); never re-runs the triage, never calls a model.
   Without `--apply` it reads and counts and writes nothing.
@@ -63,6 +66,7 @@ from origenlab_worker.triage import (
     SweepCounts,
     TriageDb,
     backfill_forwards,
+    backfill_people,
     backfill_quote_refs,
     triage_one,
 )
@@ -194,6 +198,65 @@ def run_quote_refs_backfill(args: Any, env: Mapping[str, str], started: float, *
     """Past emails read for the quote numbers their body names (`quote_refs:v1`); dry run by default."""
     return _run_backfill("quote_refs_backfill", "pending_quote_refs", backfill_quote_refs, args, env, started,
                          open_connection=open_connection, store_factory=store_factory)
+
+
+PEOPLE_BACKFILL_DAYS = 90
+
+
+def run_people_backfill(args: Any, env: Mapping[str, str], started: float, *,
+                        open_connection: OpenConnection = _open_triage_connection,
+                        store_factory: Callable[[StorageConfig], Any] | None = None,
+                        reader_factory: Callable[[str], Any] = anthropic_reader) -> int:
+    """`people:v1` for the last days' mail triaged before it existed (`triage.backfill_people`).
+
+    Plain run: counts only, no model, nothing written. `--sample N`: the model reads the first N
+    pending emails and the line prices them (`sample_usd`) and the whole list (`estimated_usd_all`,
+    the sample's average times `found`); written only with `--apply`. `--apply` alone: every pending
+    email. Resumable — rerun it after a stop. Needs `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` whenever
+    the model runs; `ORIGENLAB_WORKER_TRIAGE_MODEL` picks the model (default as the triage)."""
+    from decimal import Decimal
+
+    from origenlab_api.v2.model_spend import UnpricedModel, cost_usd
+
+    sample = None if args.sample is None else max(1, min(int(args.sample), 1000))
+    mode = "apply" if args.apply else ("sample" if sample is not None else "dry_run")
+    line: dict[str, Any] = {"event": "people_backfill", "mode": mode, "exit": EXIT_OK, "error": None}
+    try:
+        try:
+            model = check_model_id((env.get(ENV_TRIAGE_MODEL) or DEFAULT_MODEL).strip())
+        except ValueError:
+            raise ConfigRefused("triage_model_invalid") from None
+        storage = StorageConfig.from_env(env)
+        database = remote_worker_target(env.get(ENV_DATABASE_URL) or "", expected_host=env.get(ENV_EXPECTED_HOST),
+                                        ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""))
+        reader = None
+        if args.apply or sample is not None:
+            key = (env.get(ENV_ANTHROPIC_API_KEY) or "").strip()
+            if not key:
+                raise ConfigRefused("anthropic_api_key_missing")
+            reader = reader_factory(key)
+        store = (store_factory or (lambda s: S3EmlStore(s.client())))(storage)
+        since = max(1, min(int(args.since_days), 3650))
+        limit = max(1, min(int(args.limit), 5000))
+        line.update(model=model, since_days=since)
+        with open_connection(database) as conn:
+            db = TriageDb(conn)
+            counts = backfill_people(db, store, reader, db.pending_people(since_days=since, limit=limit),
+                                     apply=bool(args.apply), sample=sample, model=model)
+        line.update(counts)
+        if counts["model_calls"]:
+            try:
+                spent = cost_usd(model, input_tokens=counts["input_tokens"], output_tokens=counts["output_tokens"])
+                line["sample_usd"] = str(spent)
+                if counts["read"]:
+                    line["estimated_usd_all"] = str((spent / counts["read"] * counts["found"]).quantize(Decimal("0.0001")))
+            except UnpricedModel:
+                line["sample_usd"] = "unpriced"
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
+    return _emit(line, started)
 
 
 def _run_backfill(event: str, pending: str, backfill: Callable[..., dict[str, int]], args: Any,

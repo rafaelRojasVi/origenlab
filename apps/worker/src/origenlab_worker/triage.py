@@ -51,12 +51,17 @@ from origenlab_worker.mail_text import MailText, parse_mail
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
 from origenlab_worker.storage import StorageError
 from origenlab_worker.triage_model import (
+    DEFAULT_MODEL,
     LinkedCase,
     ModelReader,
     ModelReading,
     ModelRefused,
+    ModelSender,
+    build_people_request,
     build_request,
+    parse_people,
     parse_reading,
+    usage_tokens,
 )
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
@@ -440,6 +445,14 @@ class TriageDb:
 
         with self._tx() as cur:
             cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", PEOPLE_VALUE_NORM, Jsonb(value)))
+
+    def pending_people(self, *, since_days: int, limit: int) -> list[str]:
+        """Inbound emails of the last days with a triage reading of a class a person writes and no
+        `people:v1` yet — what `people-backfill` reads, newest first. A forward is skipped in Python."""
+        with self._tx() as cur:
+            cur.execute(_PEOPLE_PENDING, (since_days, VALUE_NORM, sorted(NO_PEOPLE_CLASSES), PEOPLE_VALUE_NORM,
+                                          limit))
+            return [row[0] for row in cur.fetchall()]
 
     def past_decisions(self, sender: str | None, limit: int = 6) -> list[PastDecision]:
         if not sender or "@" not in sender:
@@ -860,11 +873,8 @@ def record_people_reading(db: Any, message: PendingMessage, mail: MailText, read
     if message.direction != "inbound" or triage_class in NO_PEOPLE_CLASSES:
         return False
     try:
-        sender, names, co = db.message_people(message.message_id)
-        value = people_value(direction=message.direction, sender_address=sender, header_names=names,
-                             reading_sender=reading.sender if reading is not None else None,
-                             signature_text=mail.signature_text, co_addresses=co,
-                             forwarded=is_forward_subject(mail.subject))
+        value = _people_value(message, mail, db.message_people(message.message_id),
+                              reading.sender if reading is not None else None)
         if value is None:
             return False
         db.record_people(message.source_record_id, value)
@@ -872,6 +882,80 @@ def record_people_reading(db: Any, message: PendingMessage, mail: MailText, read
     except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
         logger.warning("people reading skipped: %s", type(exc).__name__)
         return False
+
+
+def _people_value(message: PendingMessage, mail: MailText, people: tuple[str | None, dict[str, str], tuple[str, ...]],
+                  sender: ModelSender | None) -> dict[str, Any] | None:
+    """The one place a `people:v1` value is built — the triage and the backfill write the same."""
+    address, names, co = people
+    return people_value(direction=message.direction, sender_address=address, header_names=names,
+                        reading_sender=sender, signature_text=mail.signature_text, co_addresses=co,
+                        forwarded=is_forward_subject(mail.subject))
+
+
+def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source_record_ids: Sequence[str], *,
+                    apply: bool, sample: int | None, model: str = DEFAULT_MODEL) -> dict[str, int]:
+    """`people:v1` for emails triaged before the reading existed (`TriageDb.pending_people`): one
+    people-only model call each (`build_people_request`), then the very value the triage writes.
+
+    Never re-runs the triage. Skips mail the triage would skip (not inbound, no triage reading, a
+    class no person writes, a forward, our own sender) without calling the model. A plain dry run
+    reads and counts and calls no model; ``sample`` reads only the first N emails and calls the model
+    for them, so their token totals price the whole run; only ``apply`` writes. Resumable: a written
+    email leaves `pending_people`. A refused answer or a permanent API error is written without a
+    signature, as the triage does; a passing outage raises `ModelUnavailable` (run it again later).
+    """
+    counts = {"found": len(source_record_ids), "read": 0, "model_calls": 0, "written": 0, "skipped": 0,
+              "input_tokens": 0, "output_tokens": 0}
+    ids = list(source_record_ids)[:sample] if sample is not None else list(source_record_ids)
+    ask = reader is not None and (apply or sample is not None)
+    for sid in ids:
+        loaded = db.load(sid)
+        if loaded is None:
+            counts["skipped"] += 1
+            continue
+        message, done, triage_class = loaded[0], loaded[1], loaded[2]
+        if (not done or message.direction != "inbound" or triage_class in NO_PEOPLE_CLASSES
+                or not message.eml_storage_path):
+            counts["skipped"] += 1
+            continue
+        try:
+            mail = parse_mail(store.get(storage_key(message.eml_storage_path)))
+        except Exception:  # noqa: BLE001 - one unreadable message is skipped, never fatal
+            counts["skipped"] += 1
+            continue
+        people = db.message_people(message.message_id)
+        if is_forward_subject(mail.subject) or not people[0] or is_own_address(people[0]):
+            counts["skipped"] += 1
+            continue
+        counts["read"] += 1
+        sender: ModelSender | None = None
+        if ask:
+            assert reader is not None
+            counts["model_calls"] += 1
+            try:
+                answer = reader(build_people_request(mail, model=model))
+            except Exception as exc:  # noqa: BLE001 - reported by class only, never message text
+                if not is_permanent_api_error(exc):
+                    raise ModelUnavailable(type(exc).__name__) from None
+                answer = None
+            if answer is not None:
+                tokens_in, tokens_out = usage_tokens(answer)
+                counts["input_tokens"] += tokens_in
+                counts["output_tokens"] += tokens_out
+                try:
+                    sender, _ = parse_people(answer)
+                except ModelRefused:
+                    sender = None
+        if not apply:
+            continue
+        value = _people_value(message, mail, people, sender)
+        if value is None:
+            counts["skipped"] += 1
+            continue
+        db.record_people(sid, value)
+        counts["written"] += 1
+    return counts
 
 
 def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:
@@ -911,6 +995,26 @@ _INSERT_FORWARD = """
 insert into evidence.source_record (kind, dedupe_key, payload)
 values ('forwarded_request', %s, %s)
 on conflict (dedupe_key) do nothing
+"""
+
+#: `people-backfill`'s list: inbound, parsed, stored, of the last days; triaged (this triage version)
+#: as a class a person writes; no `people:v1` yet.
+_PEOPLE_PENDING = """
+select sr.id::text
+  from comms.message m
+  join evidence.source_record sr on sr.dedupe_key = 'gmail_message:' || m.provider_message_id
+ where sr.kind = 'gmail_message'
+   and m.direction = 'inbound'
+   and m.parse_status = 'parsed'
+   and m.eml_storage_path is not null
+   and m.internal_date >= now() - make_interval(days => %s)
+   and exists (select 1 from evidence.assertion a
+                where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s
+                  and not (coalesce(a.value->>'class', '') = any(%s)))
+   and not exists (select 1 from evidence.assertion p
+                    where p.source_record_id = sr.id and p.kind = 'message_triage' and p.value_norm = %s)
+ order by m.internal_date desc
+ limit %s
 """
 
 _QUOTE_REFS_PENDING = """

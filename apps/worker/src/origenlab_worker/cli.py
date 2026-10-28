@@ -74,6 +74,7 @@ from origenlab_worker.triage import DEFAULT_SINCE_DAYS
 from origenlab_worker.triage_cli import (
     run_forward_backfill,
     run_memory_backfill,
+    run_people_backfill,
     run_quote_refs_backfill,
     run_tender_worker,
     run_triage_once,
@@ -290,6 +291,11 @@ def _parser() -> argparse.ArgumentParser:
     refs.add_argument("--since-days", type=int, default=30, help="look back this many days")
     refs.add_argument("--limit", type=int, default=2000, help="at most this many messages")
     refs.add_argument("--apply", action="store_true", help="write the readings (default: read and count only)")
+    people = commands.add_parser("people-backfill", help="read who wrote past emails into people:v1")
+    people.add_argument("--since-days", type=int, default=90, help="look back this many days")
+    people.add_argument("--limit", type=int, default=5000, help="at most this many messages")
+    people.add_argument("--sample", type=int, default=None, help="read only the first N with the model, to price the run")
+    people.add_argument("--apply", action="store_true", help="write the readings (default: count only)")
     load = commands.add_parser("prospects-load", help="load a JSON-lines file of prospect findings into evidence")
     load.add_argument("--file", required=True, help="the findings, one JSON object per line")
     load.add_argument("--apply", action="store_true", help="write the findings (default: validate and count only)")
@@ -445,6 +451,8 @@ def main(
         return run_quote_refs_backfill(args, env, started)
     if args.command == "memory-backfill":
         return run_memory_backfill(args, env, started)
+    if args.command == "people-backfill":
+        return run_people_backfill(args, env, started)
     if args.command == "prospects-load":
         from origenlab_worker.prospects.cli import run_prospects_load
 
