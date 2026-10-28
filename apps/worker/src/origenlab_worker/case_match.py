@@ -7,7 +7,9 @@ result is stored as a `message_triage` assertion (`case_match:v1`) and a person 
 case is never enough alone; a quote number no case holds proposes a new case, never the nearest one.
 People first (2026-10-27): the person behind the sender's address being on a case is a signal of its own
 (`person_on_case`, also never enough alone), and when that person is on an open case, a case that only
-shares the topic with the email — no quote number, no thread — is not offered («mismo tema, otra persona»).
+shares the topic with the email — no quote number, no thread — and names other people is not offered,
+by layer 1 or to the model («mismo tema, otra persona»). A case with no participants recorded, or one the
+sender's own address already wrote on, is never dropped: nothing says it is another person's.
 
 The snapshot holds sales cases only (`triage.CASE_CARDS_SQL`, `o.kind = 'sale'`, the API's
 `case_kind.SALE_CASES`): a tender is never a candidate.
@@ -109,6 +111,8 @@ class MatchResult:
     candidates: tuple[Candidate, ...]
     quote_numbers: tuple[str, ...]
     new_case_quote: str | None
+    #: Cases the person guard dropped: never offered to the model either. Not stored (`as_json`).
+    excluded: tuple[str, ...] = ()
 
     def as_json(self) -> dict[str, Any]:
         return {"case_match_version": CASE_MATCH_VERSION, "decision": self.decision,
@@ -195,6 +199,7 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: 
     person_guard = bool(person) and any(person in c.person_ids for c in cases if not c.closed_at)
 
     scored: list[Candidate] = []
+    excluded: list[str] = []
     for case in cases:
         keyed, bare = _case_keys(case.quote_numbers)
         signals: list[str] = []
@@ -216,8 +221,10 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: 
             signals.append("sender_on_case")
         if person and person in case.person_ids:
             signals.append("person_on_case")
-        elif person_guard and not EXACT_SIGNALS & set(signals):
-            continue  # «mismo tema, otra persona»
+        elif (person_guard and case.person_ids and "sender_on_case" not in signals
+              and not EXACT_SIGNALS & set(signals)):
+            excluded.append(case.opportunity_id)  # «mismo tema, otra persona»
+            continue
         score = sum(WEIGHTS[s] for s in signals)
         if score >= MIN_SCORE and set(signals) - PEOPLE_SIGNALS:
             scored.append(Candidate(case.opportunity_id, score, tuple(signals)))
@@ -247,12 +254,12 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: 
     # new quote of that case (R1 records it there), and the number is kept so a person sees it.
     on_thread = any("same_thread" in c.signals for c in top)
     if new_quote and not on_thread and not any({"pdf_quote", "thread_pdf_quote"} & set(c.signals) for c in top):
-        return MatchResult("new_case", top, numbers, new_quote)
+        return MatchResult("new_case", top, numbers, new_quote, tuple(excluded))
     if top and set(top[0].signals) & EXACT_SIGNALS and (len(top) == 1 or rank(top[0]) < rank(top[1])):
-        return MatchResult("exact", top[:1], numbers, new_quote if on_thread else None)
+        return MatchResult("exact", top[:1], numbers, new_quote if on_thread else None, tuple(excluded))
     if top:
-        return MatchResult("propose", top, numbers, None)
-    return MatchResult("none", (), numbers, None)
+        return MatchResult("propose", top, numbers, None, tuple(excluded))
+    return MatchResult("none", (), numbers, None, tuple(excluded))
 
 
 __all__ = ["CASE_MATCH_VALUE_NORM", "CASE_MATCH_VERSION", "DECISIONS", "Candidate", "CaseCard", "MatchInput",

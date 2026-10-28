@@ -59,11 +59,11 @@ def test_the_export_writes_one_case_per_row_with_what_a_person_would_look_at() -
     ex = load_script("triage_export")
     at = datetime(2026, 10, 1, tzinfo=timezone.utc)
     row = ex.case_row(("o-1", "Balanza", "quoting", at, None, None, "Universidad Ficticia", ["uni.test"], ["09147-26"],
-                       ["t1"], ["ana@uni.test"], ["Balanza analítica", None]))
+                       ["t1"], ["ana@uni.test"], ["Balanza analítica", None], ["p-2", "p-1"]))
     assert row == {"opportunity_id": "o-1", "title": "Balanza", "stage": "quoting", "created_at": at.isoformat(),
                    "closed_at": None, "close_reason": None, "institution": "Universidad Ficticia", "domains": ["uni.test"],
                    "quote_numbers": ["09147-26"], "threads": ["t1"], "addresses": ["ana@uni.test"],
-                   "interests": ["Balanza analítica"], "person_ids": []}
+                   "interests": ["Balanza analítica"], "person_ids": ["p-1", "p-2"]}
     assert "discarded_by_correction" in ex._CASES and "120 days" in ex._CASES
     assert "provider_thread_id" in ex._MESSAGES
 

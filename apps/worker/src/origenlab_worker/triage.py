@@ -628,8 +628,8 @@ class TriageDb:
 
 def case_row(c: tuple) -> dict[str, Any]:
     """One `CASE_CARDS_SQL` row as a plain dict (the shape of the eval's `cases.jsonl`)."""
-    oid, title, stage, created, closed, reason, institution, domains, quotes, threads, addresses, interests, *rest = c
-    people = rest[0] if rest else None
+    (oid, title, stage, created, closed, reason, institution, domains, quotes, threads, addresses, interests,
+     people) = c
     iso = lambda v: v.isoformat() if v is not None else None  # noqa: E731
     return {"opportunity_id": oid, "title": title, "stage": stage, "created_at": iso(created), "closed_at": iso(closed),
             "close_reason": reason, "institution": institution, "domains": list(domains or []),

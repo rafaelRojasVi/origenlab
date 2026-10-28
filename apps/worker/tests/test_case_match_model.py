@@ -14,6 +14,7 @@ from origenlab_worker.case_match_model import (
     PICK_SYSTEM_PROMPT,
     PastDecision,
     build_pick_request,
+    offered_cases,
     parse_pick,
 )
 from origenlab_worker.triage_model import DEFAULT_MODEL, ModelRefused
@@ -86,3 +87,17 @@ def test_unusable_answers_are_refused(payload, code) -> None:
 def test_a_refusal_or_truncation_is_refused_before_reading() -> None:
     with pytest.raises(ModelRefused, match="model_refused"):
         parse_pick(answer("{}", stop="refusal"), offered={"o-1"}, model=DEFAULT_MODEL)
+
+
+def test_a_case_the_person_guard_dropped_is_never_offered_to_the_model() -> None:
+    """«Mismo tema, otra persona»: the case layer 1 dropped is not shown to the model either."""
+    ana = CaseCard("o-ana", "Sonicador — Ana", "quoting", None, None, ("cli.invalid",), (), (), (),
+                   ("Sonicador UP200St",), ("p-ana",))
+    bruno = CaseCard("o-bruno", "Sonicador — Bruno", "quoting", None, None, ("cli.invalid",), (), (), (),
+                     ("Sonicador UP200St",), ("p-bruno",))
+    mail = MatchInput("ana@cli.invalid", ("contacto@origenlab.cl",), "t-n", "inbound", "UP200St", "la UP200St",
+                      (), SENT, sender_person_id="p-ana")
+    layer1 = match_case(mail, [ana, bruno])
+    assert [c.opportunity_id for c in offered_cases(layer1, [ana, bruno])] == ["o-ana"]
+    content = build_pick_request(mail, layer1, [ana, bruno], [], model=DEFAULT_MODEL)["messages"][0]["content"]
+    assert "o-bruno" not in content

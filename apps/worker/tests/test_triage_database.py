@@ -454,6 +454,10 @@ def test_the_case_snapshot_reads_each_cases_people_and_the_senders_person_follow
     bruno_cp = address(f"bruno-{tag}@cliente.invalid", bruno)
     desk = f"compras-{tag}@cliente.invalid"
     address(desk, None, "shared_mailbox", org)
+    owner_unknown = f"lab-{tag}@cliente.invalid"
+    address(owner_unknown, None, "individual_owner_unknown", org)
+    unattributed = f"info-{tag}@cliente.invalid"
+    address(unattributed, None, "unattributed")
     retired = f"ana.retirada-{tag}@cliente.invalid"
     address(retired, winner)
     owner_rows(dsn, "update crm.contact_point set status = 'inactive', deactivated_at = now(), "
@@ -467,11 +471,11 @@ def test_the_case_snapshot_reads_each_cases_people_and_the_senders_person_follow
     with triage_conn(target) as conn:
         db = TriageDb(conn)
         card = next(c for c in db.case_cards() if c.opportunity_id == oid)
-        senders = {a: db.sender_person(a) for a in (ana_old, ana_old.upper(), desk, retired,
-                                                     f"nadie-{tag}@cliente.invalid", None)}
+        senders = {a: db.sender_person(a) for a in (ana_old, ana_old.upper(), desk, owner_unknown, unattributed,
+                                                     retired, f"nadie-{tag}@cliente.invalid", None)}
     assert sorted(card.person_ids) == sorted([winner, bruno])
-    assert senders == {ana_old: winner, ana_old.upper(): winner, desk: None, retired: None,
-                       f"nadie-{tag}@cliente.invalid": None, None: None}
+    assert senders == {ana_old: winner, ana_old.upper(): winner, desk: None, owner_unknown: None,
+                       unattributed: None, retired: None, f"nadie-{tag}@cliente.invalid": None, None: None}
 
 
 def test_past_decisions_read_links_and_rejected_suggestions_for_the_senders_domain(dsn, target, mailbox_id) -> None:

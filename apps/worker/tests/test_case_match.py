@@ -181,3 +181,36 @@ def test_exact_signal_still_wins_over_person_guard():
     r = match_case(mail(subject="Re: Cotización CN09201", body="la UP200St", person="p-ana"), [a, b])
     assert r.decision == "exact"
     assert r.candidates[0].opportunity_id == "b" and "text_quote" in r.candidates[0].signals
+
+
+def test_guard_keeps_a_case_with_no_participants_recorded():
+    a = card("a", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-ana",))
+    c = card("c", domains=("cliente.invalid",), interests=("Sonicador UP200St",))
+    r = match_case(mail(body="necesito la UP200St", person="p-ana"), [a, c])
+    assert {x.opportunity_id for x in r.candidates} == {"a", "c"}
+    assert r.excluded == ()
+
+
+def test_guard_keeps_a_case_the_senders_address_already_wrote_on():
+    # Ana is a participant of A, and has written on C's threads; C names Bruno as its participant.
+    a = card("a", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-ana",))
+    c = card("c", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-bruno",),
+             addresses=("ana@cliente.invalid",))
+    r = match_case(mail(body="necesito la UP200St", person="p-ana"), [a, c])
+    assert {x.opportunity_id for x in r.candidates} == {"a", "c"}
+    assert "sender_on_case" in next(x for x in r.candidates if x.opportunity_id == "c").signals
+
+
+def test_guard_names_the_cases_it_dropped_even_below_the_score():
+    a = card("a", interests=("Sonicador UP200St",), people=("p-ana",))
+    b = card("b", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-bruno",))
+    weak = card("w", people=("p-bruno",))  # nothing in common: still another person's case
+    r = match_case(mail(body="la UP200St", person="p-ana"), [a, b, weak])
+    assert set(r.excluded) == {"b", "w"}
+    assert "excluded" not in r.as_json()  # the stored case_match:v1 value keeps its shape
+
+
+def test_person_on_case_with_the_domain_alone_proposes():
+    mine = card("mine", domains=("cliente.invalid",), people=("p-ana",))
+    r = match_case(mail(subject="Hola", person="p-ana"), [mine])
+    assert r.decision == "propose" and set(r.candidates[0].signals) == {"domain", "person_on_case"}
