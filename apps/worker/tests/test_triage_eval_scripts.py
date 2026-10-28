@@ -63,7 +63,7 @@ def test_the_export_writes_one_case_per_row_with_what_a_person_would_look_at() -
     assert row == {"opportunity_id": "o-1", "title": "Balanza", "stage": "quoting", "created_at": at.isoformat(),
                    "closed_at": None, "close_reason": None, "institution": "Universidad Ficticia", "domains": ["uni.test"],
                    "quote_numbers": ["09147-26"], "threads": ["t1"], "addresses": ["ana@uni.test"],
-                   "interests": ["Balanza analítica"]}
+                   "interests": ["Balanza analítica"], "person_ids": []}
     assert "discarded_by_correction" in ex._CASES and "120 days" in ex._CASES
     assert "provider_thread_id" in ex._MESSAGES
 

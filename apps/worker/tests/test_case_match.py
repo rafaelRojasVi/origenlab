@@ -10,14 +10,15 @@ SENT = "2026-10-06T15:00:00+00:00"
 
 
 def card(oid, *, stage="quoting", closed_at=None, institution=None, domains=(), quotes=(), threads=(),
-         addresses=(), interests=()):
+         addresses=(), interests=(), people=()):
     return CaseCard(oid, f"Caso {oid}", stage, closed_at, institution, tuple(domains), tuple(quotes),
-                    tuple(threads), tuple(addresses), tuple(interests))
+                    tuple(threads), tuple(addresses), tuple(interests), tuple(people))
 
 
 def mail(*, sender="ana@cliente.invalid", subject="Re: consulta", body="Hola", pdfs=(), thread="t-x",
-         direction="inbound", recipients=("contacto@origenlab.cl",)):
-    return MatchInput(sender, tuple(recipients), thread, direction, subject, body, tuple(pdfs), SENT)
+         direction="inbound", recipients=("contacto@origenlab.cl",), person=None):
+    return MatchInput(sender, tuple(recipients), thread, direction, subject, body, tuple(pdfs), SENT,
+                      sender_person_id=person)
 
 
 def test_attachment_quote_keys_read_revision_letter_cn_and_year():
@@ -133,3 +134,50 @@ def test_a_crm_quote_number_without_year_matches_by_correlative():
 def test_a_quote_held_by_a_case_outside_the_snapshot_is_not_a_new_deal():
     r = match_case(mail(pdfs=("CN09137.pdf",)), [card("a")], known_quote_numbers=("09137-26",))
     assert r.decision == "none" and r.new_case_quote is None
+
+
+# The person on a case (people first, 2026-10-27): the CRM knows which person owns which address, so a
+# person writing from a new thread (or a new address) finds their case, and a case that only shares the
+# topic is not offered when the sender is known on another open case.
+
+def test_same_person_new_thread_finds_case():
+    mine = card("mine", interests=("Sonicador UP200St",), people=("p-ana",))
+    r = match_case(mail(sender="ana.nueva@otra.invalid", subject="Consulta UP200St", person="p-ana"), [mine])
+    assert r.decision == "propose"
+    assert r.candidates[0].opportunity_id == "mine"
+    assert set(r.candidates[0].signals) == {"person_on_case", "product"}
+
+
+def test_person_on_case_alone_never_suggests():
+    r = match_case(mail(subject="Hola", person="p-ana"), [card("mine", people=("p-ana",))])
+    assert r.decision == "none" and r.candidates == ()
+
+
+def test_same_topic_other_person_not_matched():
+    # Ana (person p-ana) has case A on the sonicator; Bruno (p-bruno), same institution, has case B on the
+    # same equipment. Without the guard B scores domain + product and would be offered for Ana's email.
+    a = card("a", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-ana",))
+    b = card("b", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-bruno",))
+    r = match_case(mail(subject="Cotización UP200St", body="necesito la UP200St", person="p-ana"), [b, a])
+    assert [c.opportunity_id for c in r.candidates] == ["a"]
+
+
+def test_same_topic_other_person_kept_when_sender_is_on_no_open_case():
+    closed = card("old", closed_at="2026-09-01T00:00:00+00:00", people=("p-ana",))
+    b = card("b", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-bruno",))
+    r = match_case(mail(body="necesito la UP200St", person="p-ana"), [closed, b])
+    assert [c.opportunity_id for c in r.candidates] == ["b"]
+
+
+def test_unknown_sender_person_keeps_topic_matches():
+    b = card("b", domains=("cliente.invalid",), interests=("Sonicador UP200St",), people=("p-bruno",))
+    r = match_case(mail(body="necesito la UP200St"), [b])
+    assert [c.opportunity_id for c in r.candidates] == ["b"]
+
+
+def test_exact_signal_still_wins_over_person_guard():
+    a = card("a", interests=("Sonicador UP200St",), people=("p-ana",))
+    b = card("b", quotes=("09201-26",), interests=("Sonicador UP200St",), people=("p-bruno",))
+    r = match_case(mail(subject="Re: Cotización CN09201", body="la UP200St", person="p-ana"), [a, b])
+    assert r.decision == "exact"
+    assert r.candidates[0].opportunity_id == "b" and "text_quote" in r.candidates[0].signals

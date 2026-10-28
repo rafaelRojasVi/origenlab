@@ -73,6 +73,10 @@ class FakeDb:
     def known_quote_numbers(self):
         return []
 
+    def sender_person(self, address):
+        self.person_asked = address
+        return {"ana@cliente.invalid": "p-ana"}.get(address or "")
+
     def past_decisions(self, sender):
         self.past_asked = sender
         return []
@@ -484,6 +488,18 @@ def test_a_failed_pick_call_never_blocks_the_triage() -> None:
     reader = PickReader(None, exc=RuntimeError("network"))
     result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
     assert result.outcome == "recorded" and db.case_matches[0][1]["pick_state"] == "unavailable"
+
+
+def test_the_senders_person_reaches_the_matcher() -> None:
+    from origenlab_worker.case_match import CaseCard
+
+    mine = CaseCard("o-ana", "Caso", "quoting", None, None, (), (), (), (), ("Balanza XB3100",), ("p-ana",))
+    db = FakeDb(cards=[mine])
+    triage_one(db, FakeStore(make_raw(subject="Consulta XB3100")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    value = db.case_matches[0][1]
+    assert db.person_asked == "ana@cliente.invalid"
+    assert value["candidates"][0]["opportunity_id"] == "o-ana"
+    assert set(value["candidates"][0]["signals"]) == {"person_on_case", "product"}
 
 
 def test_a_database_failure_in_the_matcher_never_blocks_the_triage() -> None:

@@ -45,7 +45,7 @@ export interface TriageSuggestion {
   stage: string;
   version: number;
   closed: boolean;
-  /** Layer-1 signals: pdf_quote, thread_pdf_quote, text_quote, same_thread, domain, institution_name, product, sender_on_case. */
+  /** Layer-1 signals: pdf_quote, thread_pdf_quote, text_quote, same_thread, domain, institution_name, product, sender_on_case, person_on_case. */
   signals: string[];
   from: "rules" | "model";
   reason_es: string | null;
@@ -71,6 +71,7 @@ export const SIGNAL_LABEL: Record<string, string> = {
   institution_name: "nombra la institución",
   product: "mismo producto",
   sender_on_case: "la persona está en el caso",
+  person_on_case: "la misma persona del caso",
 };
 
 /** The reason line of a suggestion: the model's own words when it chose, otherwise the signals. */

@@ -427,6 +427,53 @@ def test_the_case_snapshot_leaves_out_discarded_and_long_closed_cases_and_the_re
     assert value["candidates"][0] == {"opportunity_id": live, "score": 8, "signals": ["thread_pdf_quote"]}
 
 
+def test_the_case_snapshot_reads_each_cases_people_and_the_senders_person_follows_merges(dsn, target) -> None:
+    """People first: a case's `person_ids` are its current participants' persons (named directly or
+    through their contact point), a merged person read as the person it was merged into; the sender's
+    person comes from an active, owned address only."""
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-p-{tag}@example.test",))[0][0]
+
+    def person(name: str) -> str:
+        return owner_rows(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                               "returning id::text", (f"{name} {tag}",))[0][0]
+
+    def address(value: str, who: str | None, usage: str = "personal", org: str | None = None) -> str:
+        return owner_rows(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, "
+                               "organization_id, usage, confirmation) values ('email', %s, %s, %s, %s, %s, "
+                               "'machine_proposed') returning id::text", (value, value, who, org, usage))[0][0]
+
+    winner, loser, bruno, gone = person("Ana"), person("Ana duplicada"), person("Bruno"), person("Carla")
+    owner_rows(dsn, "update crm.person set merged_into_person_id = %s where id = %s returning id", (winner, loser))
+    org = owner_rows(dsn, "insert into crm.organization (kind, name, confirmation) values ('institution', %s, "
+                          "'confirmed') returning id::text", (f"Instituto Personas {tag}",))[0][0]
+    ana_old = f"ana.antigua-{tag}@cliente.invalid"
+    address(ana_old, loser)
+    bruno_cp = address(f"bruno-{tag}@cliente.invalid", bruno)
+    desk = f"compras-{tag}@cliente.invalid"
+    address(desk, None, "shared_mailbox", org)
+    retired = f"ana.retirada-{tag}@cliente.invalid"
+    address(retired, winner)
+    owner_rows(dsn, "update crm.contact_point set status = 'inactive', deactivated_at = now(), "
+                    "deactivated_by_operator_id = %s where value_norm = %s returning id", (operator, retired))
+    oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) values (%s, 'lead', %s) "
+                          "returning id::text", (f"Caso personas {tag}", operator))[0][0]
+    for who, cp, valid_to in ((loser, None, None), (None, bruno_cp, None), (gone, None, "2026-02-01")):
+        owner_rows(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, contact_point_id, role, "
+                        "valid_from, valid_to, confirmation) values (%s, %s, %s, 'end_user', '2026-01-01', %s, "
+                        "'machine_proposed') returning id", (oid, who, cp, valid_to))
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        card = next(c for c in db.case_cards() if c.opportunity_id == oid)
+        senders = {a: db.sender_person(a) for a in (ana_old, ana_old.upper(), desk, retired,
+                                                     f"nadie-{tag}@cliente.invalid", None)}
+    assert sorted(card.person_ids) == sorted([winner, bruno])
+    assert senders == {ana_old: winner, ana_old.upper(): winner, desk: None, retired: None,
+                       f"nadie-{tag}@cliente.invalid": None, None: None}
+
+
 def test_past_decisions_read_links_and_rejected_suggestions_for_the_senders_domain(dsn, target, mailbox_id) -> None:
     tag = uuid.uuid4().hex[:6]
     operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "

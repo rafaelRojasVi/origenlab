@@ -184,9 +184,11 @@ select exists (select 1 from crm.opportunity_evidence oe
 """
 #: The cases an email could belong to: open, or closed in the last 120 days, never one an undo or a
 #: person discarded. What a person would look at to place an email: who is asking (institution and
-#: its domains), the quote numbers, every address seen on the case's Gmail threads, and the products.
+#: its domains), the quote numbers, every address seen on the case's Gmail threads, the products, and
+#: the persons on the case (current participants, named directly or through their contact point; a merged
+#: person walked up to the person it was merged into).
 CASE_CARDS_SQL = """
-with threads as (
+with recursive threads as (
   select oe.opportunity_id, sr.payload ->> 'gmail_thread_id' as thread_id
     from crm.opportunity_evidence oe
     join evidence.source_record sr on sr.id = oe.source_record_id
@@ -197,6 +199,18 @@ with threads as (
     join crm.quote q on q.id = qr.quote_id
     join evidence.source_record sr on sr.id = qr.origin_source_record_id
    where sr.payload ->> 'gmail_thread_id' is not null
+),
+people (opportunity_id, person_id, depth) as (
+  select pa.opportunity_id, coalesce(pa.person_id, cp.person_id), 0
+    from crm.opportunity_participant pa
+    left join crm.contact_point cp on cp.id = pa.contact_point_id
+   where (pa.valid_to is null or pa.valid_to > current_date)
+     and coalesce(pa.person_id, cp.person_id) is not null
+  union all
+  select pe.opportunity_id, p.merged_into_person_id, pe.depth + 1
+    from people pe
+    join crm.person p on p.id = pe.person_id
+   where p.merged_into_person_id is not null and pe.depth < 20
 )
 select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
        org.name as institution,
@@ -207,7 +221,10 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
        coalesce((select array_agg(distinct t.thread_id) from threads t where t.opportunity_id = o.id), '{}') as threads,
        coalesce(a.addresses, '{}') as addresses,
        coalesce((select array_agg(coalesce(i.model_text, i.description)) from crm.opportunity_interest i
-                  where i.opportunity_id = o.id), '{}') as interests
+                  where i.opportunity_id = o.id), '{}') as interests,
+       coalesce((select array_agg(distinct pe.person_id::text) from people pe
+                   join crm.person p on p.id = pe.person_id and p.merged_into_person_id is null
+                  where pe.opportunity_id = o.id), '{}') as person_ids
   from crm.opportunity o
   left join crm.organization org on org.id = o.organization_id
   -- Every address seen on the case's threads, in one grouped join (not one scan of comms.message per case).
@@ -224,6 +241,25 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
  limit 300
 """
 _KNOWN_QUOTE_NUMBERS = "select quote_number from crm.quote"
+#: The person behind a sender's address: an active email contact point a person owns (never a shared
+#: mailbox or an address whose owner is unknown — those have no person), merges followed to the winner.
+_SENDER_PERSON = """
+with recursive chain (person_id, depth) as (
+  select cp.person_id, 0
+    from crm.contact_point cp
+   where cp.kind = 'email' and cp.value_norm = %s and cp.status = 'active' and cp.person_id is not null
+     and cp.usage not in ('shared_mailbox', 'individual_owner_unknown', 'unattributed')
+  union all
+  select p.merged_into_person_id, c.depth + 1
+    from chain c
+    join crm.person p on p.id = c.person_id
+   where p.merged_into_person_id is not null and c.depth < 20
+)
+select c.person_id::text
+  from chain c
+  join crm.person p on p.id = c.person_id and p.merged_into_person_id is null
+ limit 1
+"""
 _RECIPIENTS = """
 select p.address_norm from comms.message_participant p
  where p.message_id = %s and p.role in ('to', 'cc') order by 1
@@ -363,6 +399,15 @@ class TriageDb:
         with self._tx() as cur:
             cur.execute(_KNOWN_QUOTE_NUMBERS)
             return [r[0] for r in cur.fetchall()]
+
+    def sender_person(self, address: str | None) -> str | None:
+        """The person behind the sender's address (`_SENDER_PERSON`), read-only; None when unknown."""
+        if not address:
+            return None
+        with self._tx() as cur:
+            cur.execute(_SENDER_PERSON, (address.strip().lower(),))
+            row = cur.fetchone()
+        return row[0] if row else None
 
     def case_context(self, message: PendingMessage) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """(recipients, attachment names of the thread's other emails) of one message."""
@@ -583,12 +628,13 @@ class TriageDb:
 
 def case_row(c: tuple) -> dict[str, Any]:
     """One `CASE_CARDS_SQL` row as a plain dict (the shape of the eval's `cases.jsonl`)."""
-    oid, title, stage, created, closed, reason, institution, domains, quotes, threads, addresses, interests = c
+    oid, title, stage, created, closed, reason, institution, domains, quotes, threads, addresses, interests, *rest = c
+    people = rest[0] if rest else None
     iso = lambda v: v.isoformat() if v is not None else None  # noqa: E731
     return {"opportunity_id": oid, "title": title, "stage": stage, "created_at": iso(created), "closed_at": iso(closed),
             "close_reason": reason, "institution": institution, "domains": list(domains or []),
             "quote_numbers": list(quotes or []), "threads": list(threads or []), "addresses": list(addresses or []),
-            "interests": [i for i in (interests or []) if i]}
+            "interests": [i for i in (interests or []) if i], "person_ids": sorted(people or [])}
 
 
 def match_message(db: Any, message: PendingMessage, mail: MailText,
@@ -603,6 +649,8 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
             recipients, thread_names = db.case_context(message)
             cards = db.case_cards()
             known = db.known_quote_numbers()
+            # Only a client's email is placed by its person: our own outbound sender is no client.
+            person = db.sender_person(mail.sender) if message.direction == "inbound" else None
     except Exception:  # noqa: BLE001 - a suggestion never takes the triage down with it
         return None
     if held_by_tender:
@@ -610,7 +658,7 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
         none = MatchResult("none", (), (), None)
         return none, {**none.as_json(), "pick_state": "not_needed", "held_by": "tender"}
     inp = MatchInput(mail.sender, recipients, message.thread_id, message.direction, mail.subject, mail.body,
-                     mail.attachment_names, message.sent_at, thread_names)
+                     mail.attachment_names, message.sent_at, thread_names, sender_person_id=person)
     result = match_case(inp, cards, known)
     value: dict[str, Any] = result.as_json()
     if settings is None or settings.reader is None:
