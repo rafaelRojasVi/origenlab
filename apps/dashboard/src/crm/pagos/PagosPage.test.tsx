@@ -26,11 +26,16 @@ vi.mock("./invoiceApi", async (importActual) => {
     markInvoiceUnpaid: vi.fn(),
   };
 });
+vi.mock("../caseDocuments", async (importActual) => {
+  const actual = await importActual<typeof import("../caseDocuments")>();
+  return { ...actual, fetchCaseDocumentUrl: vi.fn() };
+});
 vi.mock("../crmApi", async (importActual) => {
   const actual = await importActual<typeof import("../crmApi")>();
   return { ...actual, fetchPipeline: vi.fn() };
 });
 
+import * as caseDocuments from "../caseDocuments";
 import * as crmApi from "../crmApi";
 import * as api from "./invoiceApi";
 import { PagosPage } from "./PagosPage";
@@ -67,6 +72,16 @@ const LIST: InvoiceList = {
 const CARD = {
   opportunity_id: CASE, title: "Balanza ficticia", stage: "won", quote_numbers: ["CN09876"], latest_revision: null,
   organization: { organization_id: ORG, name: "Instituto Ficticio" },
+  documents: [{ document_id: "d-1", quote_revision_id: null, kind: "purchase_order", document_number: "4500012345",
+    original_filename: "oc-ficticia.pdf", content_type: "application/pdf", byte_size: 1000, source: "upload",
+    attached_at: "2026-10-05T12:00:00Z", attached_by: "Ventas" }],
+  quotes: [{ quote_id: "q-1", quote_number: "CN09876", revisions: [{
+    revision_id: "r-1", revision_no: 1, status: "sent", origin: "historical_import", sent_at: "2026-10-01T12:00:00Z",
+    superseded_by_revision_no: null, is_active: true, document: null, gmail: null, drive: null, quote_number: "CN09876",
+    contents: { currency: "CLP", net_total: "84034", net_source: "document", tax_total: null, gross_total: null,
+      lines: [{ line_no: 1, item: "1", parent_item: null, kind: "product", brand: "Marca", model: "BX-1",
+        description: "Balanza ficticia", qty: "2", unit_price: "42017", line_total: "84034", optional: false, check_status: "ok" }] },
+  }] }],
 } as unknown as OpportunityCardData;
 
 const fetchInvoices = vi.mocked(api.fetchInvoices);
@@ -188,5 +203,49 @@ describe("«Pagos»", () => {
     renderPage();
     expect(await screen.findByText("Todavía no hay facturas")).toBeInTheDocument();
     expect(screen.getByText(/Descargar Detalles/)).toBeInTheDocument();
+  });
+
+  it("opens a factura: folio, client, the quote's lines, amounts and the case's OC", async () => {
+    fetchInvoices.mockResolvedValue({ ...LIST, items: [invoice("i-2", 9002, {
+      case_link: "machine", opportunity: { id: CASE, title: "Balanza ficticia", stage: "won", quote_number: "CN09876" },
+      net_amount: 84034, vat_amount: 15966, total_amount: 100000, balance: 100000 })] });
+    vi.mocked(caseDocuments.fetchCaseDocumentUrl).mockResolvedValue("https://example.invalid/oc.pdf");
+    const tab = { opener: {}, location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    renderPage();
+    const row = (await screen.findAllByTestId("invoice-row"))[0];
+    expect(await within(row).findByText(/OC 4500012345/)).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Ver la Factura 9002" }));
+    const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9002" });
+    expect(within(sheet).getByTestId("folio-box")).toHaveTextContent("Nº 9002");
+    expect(within(sheet).getByTestId("invoice-summary")).toHaveTextContent("Te debe$ 100.000");
+    expect(within(sheet).getByText(/RUT 12345678-5/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/Marca · BX-1 · Balanza ficticia/)).toBeInTheDocument();
+    expect(within(sheet).getByText("Mismo neto que la factura")).toBeInTheDocument();
+    expect(within(sheet).getByText(/asignado solo: el neto calza con la cotización/)).toBeInTheDocument();
+    expect(within(sheet).getByText("$ 15.966")).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole("button", { name: "Ver la orden de compra 4500012345" }));
+    await waitFor(() => expect(tab.location.href).toBe("https://example.invalid/oc.pdf"));
+    expect(caseDocuments.fetchCaseDocumentUrl).toHaveBeenCalledWith(CASE, "d-1");
+  });
+
+  it("a factura without a case says there is no OC or quote to show", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Ver la Factura 9001" }));
+    const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9001" });
+    expect(within(sheet).getByText(/Sin caso todavía/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/no envía los productos/)).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: /Nº 9001/ })).not.toBeInTheDocument();
+  });
+
+  it("marks it paid from the factura itself", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Ver la Factura 9001" }));
+    const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9001" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Marcar pagada…" }));
+    fireEvent.change(within(sheet).getByLabelText("¿Qué día pagó?"), { target: { value: "2026-10-27" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Guardar pago" }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-27" }));
   });
 });

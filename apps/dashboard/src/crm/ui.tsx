@@ -713,7 +713,10 @@ export function Section({ title, children, aside, named = false }: { title: stri
 
 export function fmtDate(value: string | null | undefined): string {
   if (!value) return "—";
-  const d = new Date(value);
+  // A bare day («2026-10-09», a factura's date) is that calendar day: `new Date` would read it as
+  // UTC midnight, which in Chile is still the day before.
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const d = day ? new Date(Number(day[1]), Number(day[2]) - 1, Number(day[3])) : new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" });
 }
