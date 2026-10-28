@@ -217,6 +217,7 @@ describe("«Pagos»", () => {
     expect(await within(row).findByText(/OC 4500012345/)).toBeInTheDocument();
     fireEvent.click(within(row).getByRole("button", { name: "Ver la Factura 9002" }));
     const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9002" });
+    expect(within(sheet).getByTestId("folio-box")).toHaveTextContent("Nº 9002");
     expect(within(sheet).getByTestId("invoice-summary")).toHaveTextContent("Te debe$ 100.000");
     expect(within(sheet).getByText(/RUT 12345678-5/)).toBeInTheDocument();
     expect(within(sheet).getByText(/Marca · BX-1 · Balanza ficticia/)).toBeInTheDocument();

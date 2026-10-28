@@ -9,7 +9,8 @@ import { markInvoicePaid, type Invoice, type InvoiceStatus } from "./invoiceApi"
 
 /**
  * «Ver factura»: one factura, read the way the owner asks about it — who owes, how much, since when —
- * in large type first, with «Marcar pagada» right there; then the papers behind it as large cards
+ * in large type first under the red folio box every Chilean factura prints, with «Marcar pagada»
+ * right there; then the papers behind it as large cards
  * (the client's purchase order, the quotation, the case), then the amounts and what was sold.
  *
  * The SII «Registro de Ventas» carries only the header of each document (client, folio, date and
@@ -212,16 +213,23 @@ export function InvoiceSheet({
     <Drawer open onClose={onClose} title={`${docTitle} Nº ${i.folio}`} subtitle={`Emitida el ${fmtDate(i.issued_on)}`}>
       {/* The answer first: who, how much, since when — and the one thing to do about it. */}
       <section aria-label="Resumen" className="space-y-3" data-testid="invoice-summary">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex min-h-8 items-center rounded-full px-3 text-[15px] font-semibold ${PILL[status.tone] ?? PILL.neutral}`}>
-            {status.label}
-            {i.status === "paid" && i.paid_on ? ` el ${fmtDate(i.paid_on)}` : ""}
-          </span>
-          {i.status === "unpaid" ? (
-            <span className={`text-[15px] ${i.days_open > 60 ? "font-semibold text-warn" : "text-ink-muted"}`}>
-              hace {i.days_open} {i.days_open === 1 ? "día" : "días"}
+        {/* The folio box every Chilean factura prints, large. */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="rounded-lg border-2 border-bad px-5 py-3 text-center" data-testid="folio-box">
+            <p className="text-sm font-bold uppercase tracking-wide text-bad">{docTitle}</p>
+            <p className="text-[32px] font-bold leading-tight tabular-nums text-bad">Nº {i.folio}</p>
+          </div>
+          <div className="flex flex-col items-end gap-1.5 text-right">
+            <span className={`inline-flex min-h-8 items-center rounded-full px-3 text-[15px] font-semibold ${PILL[status.tone] ?? PILL.neutral}`}>
+              {status.label}
+              {i.status === "paid" && i.paid_on ? ` el ${fmtDate(i.paid_on)}` : ""}
             </span>
-          ) : null}
+            {i.status === "unpaid" ? (
+              <span className={`text-[15px] ${i.days_open > 60 ? "font-semibold text-warn" : "text-ink-muted"}`}>
+                hace {i.days_open} {i.days_open === 1 ? "día" : "días"}
+              </span>
+            ) : null}
+          </div>
         </div>
         <div>
           <p className="break-words text-xl font-semibold leading-snug text-ink">{i.organization?.name ?? i.client_name}</p>
@@ -268,7 +276,11 @@ export function InvoiceSheet({
             ) : null}
             <PaperCard
               kind="Caso"
-              title={i.opportunity.title}
+              title={
+                <a href={crmHash("oportunidades", i.opportunity.id)} onClick={goTo("oportunidades", i.opportunity.id)} className="text-accent underline-offset-2 hover:underline">
+                  {i.opportunity.title}
+                </a>
+              }
               detail={`${STAGE[i.opportunity.stage] ?? i.opportunity.stage} · ${
                 i.case_link === "machine"
                   ? billed?.sameNet
@@ -276,11 +288,6 @@ export function InvoiceSheet({
                     : "asignado solo: es el único caso ganado del cliente"
                   : "asignado por una persona"
               }`}
-              action={
-                <a href={crmHash("oportunidades", i.opportunity.id)} onClick={goTo("oportunidades", i.opportunity.id)} className={`${buttonClass()} ${BIG_ACTION}`}>
-                  Abrir caso
-                </a>
-              }
             />
           </ul>
         ) : (
