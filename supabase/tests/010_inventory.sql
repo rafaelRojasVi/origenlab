@@ -59,8 +59,8 @@ select results_eq(
       where c.relkind = 'r'
         and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
       group by 1 order by 1 $$,
-  $$ values ('catalog', 8), ('comms', 4), ('crm', 28), ('evidence', 7), ('outbound', 9), ('platform', 7), ('procurement', 1) $$,
-  'counts by schema: crm 28, comms 4, outbound 9, evidence 7, catalog 8, procurement 1, platform 7');
+  $$ values ('catalog', 8), ('comms', 4), ('crm', 29), ('evidence', 7), ('outbound', 9), ('platform', 7), ('procurement', 1) $$,
+  'counts by schema: crm 29, comms 4, outbound 9, evidence 7, catalog 8, procurement 1, platform 7');
 
 -- No views, materialized views, partitions or foreign tables in Slice 0.
 select is(

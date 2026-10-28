@@ -566,7 +566,7 @@ def main() -> int:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
     if "105 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly one hundred and one extra policies")
+        refuse("a09 does not report exactly one hundred and five extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
