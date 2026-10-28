@@ -750,9 +750,11 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/add-note",
     "/v2/commands/revise-note",
     "/v2/commands/archive-note",
+    "/v2/commands/answer-person-guess",
+    "/v2/commands/confirm-person-fact",
   ];
 
-  it("isAllowedCrmAuthoringCommandPostPath allows all 29 exact paths", async () => {
+  it("isAllowedCrmAuthoringCommandPostPath allows all 31 exact paths", async () => {
     const { isAllowedCrmAuthoringCommandPostPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
@@ -761,7 +763,7 @@ describe("CRM authoring command POST allowlist", () => {
     expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/create-person?x=1")).toBe(true);
   });
 
-  it("isAllowedPostPath admits all 29 authoring paths", async () => {
+  it("isAllowedPostPath admits all 31 authoring paths", async () => {
     const { isAllowedPostPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -787,7 +789,7 @@ describe("CRM authoring command POST allowlist", () => {
     }
   });
 
-  it("none of the 29 authoring command paths are GET-readable", async () => {
+  it("none of the 31 authoring command paths are GET-readable", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
@@ -1381,3 +1383,26 @@ describe("«Prospectos» (spec 2026-10-23)", () => {
   });
 });
 
+
+describe("People first: weak guesses and «Confirmar» (Task 7)", () => {
+  const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+
+  it("the person payload and the case emails that carry the guesses are already GET-readable", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath(`/v2/workspace/people/${uuid}`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/threads`)).toBe(true);
+  });
+
+  it("answer-person-guess and confirm-person-fact are exact authoring POSTs, never GET", async () => {
+    const { isAllowedCrmAuthoringCommandPostPath, isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of ["/v2/commands/answer-person-guess", "/v2/commands/confirm-person-fact"]) {
+      expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      for (const near of [`${path}/`, `${path}s`, `${path}/x`, path.toUpperCase()]) {
+        expect(isAllowedPostPath(near), near).toBe(false);
+        expect(isAllowedUpstreamPath(near), near).toBe(false);
+      }
+    }
+  });
+});

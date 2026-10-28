@@ -2,7 +2,7 @@
 
 Covers: body validation, role checks (viewer 403 incl. forged header escalation attempt),
 admin-only gates, missing Idempotency-Key (400), replay (replayed=true, no second handler call),
-product-line closed list, no `delete from` in the module source, all 29 route shapes present,
+product-line closed list, no `delete from` in the module source, all 31 route shapes present,
 switch off-by-default, mount test, and per-command shape validation.
 
 **No database, no network.**  Every handler call goes to a _FakeRepo that captures its args.
@@ -89,6 +89,8 @@ ALL_ROUTES = {
     "/v2/commands/add-note",
     "/v2/commands/revise-note",
     "/v2/commands/archive-note",
+    "/v2/commands/answer-person-guess",
+    "/v2/commands/confirm-person-fact",
 }
 
 
@@ -123,10 +125,26 @@ class _FakeRepo:
         return self._response
 
 
+class _FakePeople:
+    """The people rules' repository behind answer-person-guess / confirm-person-fact."""
+
+    def __init__(self):
+        self.calls = []
+
+    def answer_guess(self, operator, guess_id, answer, key):
+        self.calls.append(("answer", guess_id, answer, key))
+        return {"answer": answer, "replayed": False}
+
+    def confirm_fact(self, operator, kind, fact_id, key):
+        self.calls.append(("confirm", kind, fact_id, key))
+        return {"kind": kind, "id": fact_id, "replayed": False}
+
+
 def _client(role="sales"):
     app = FastAPI()
     app.include_router(crm_authoring_router)
     app.state.crm_authoring_repository = _FakeRepo()
+    app.state.people_rules_repository = _FakePeople()
     app.state.v2_identity = LocalDevIdentity(LOOPBACK, _Lookup(_operator(role)))
     return app, TestClient(app)
 
@@ -266,9 +284,9 @@ def test_archive_person_forbids_extra() -> None:
         ArchivePersonBody(person_id=str(uuid.uuid4()), expected_version=1, note="r", extra="bad")
 
 
-# ──────────────────────────────────────────────────────────────────── 29 routes ──
+# ──────────────────────────────────────────────────────────────────── 31 routes ──
 
-def test_the_router_exposes_exactly_29_posts() -> None:
+def test_the_router_exposes_exactly_31_posts() -> None:
     routes = set(r.path for r in crm_authoring_router.routes)
     assert routes == ALL_ROUTES
     # All are POST
@@ -361,6 +379,10 @@ def _minimal_body(path: str) -> dict:
         return {"note_id": pid, "expected_version": 1, "note": note}
     if path == "/v2/commands/confirm-organization-record":
         return {"organization_id": oid, "expected_version": 1}
+    if path == "/v2/commands/answer-person-guess":
+        return {"guess_id": f"{oid}:{pid}", "answer": "no"}
+    if path == "/v2/commands/confirm-person-fact":
+        return {"kind": "name", "id": pid}
     raise ValueError(f"No minimal body defined for {path}")
 
 
@@ -661,3 +683,24 @@ def test_confirm_organization_record_hands_the_handler_a_json_ready_body() -> No
     [call] = app.state.crm_authoring_repository.calls
     assert call["command_name"] == "confirm-organization-record"
     assert call["fields"] == {"organization_id": oid, "expected_version": 4, "note": "revisada"}
+
+
+# ─────────────────────────────────────────────── people first: guesses and «Confirmar» ──
+
+def test_people_commands_take_the_key_from_header_or_body_and_refuse_without_one() -> None:
+    app, client = _client(role="sales")
+    people = app.state.people_rules_repository
+    gid = f"{uuid.uuid4()}:{uuid.uuid4()}"
+    r = client.post("/v2/commands/answer-person-guess", json={"guess_id": gid, "answer": "si"}, headers=HEADERS)
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "idempotency_key_required"
+    r = client.post("/v2/commands/answer-person-guess",
+                    json={"guess_id": gid, "answer": "si", "idempotency_key": "k-body"}, headers=HEADERS)
+    assert r.status_code == 200 and people.calls[-1] == ("answer", gid, "si", "k-body")
+    fid = str(uuid.uuid4())
+    r = client.post("/v2/commands/confirm-person-fact", json={"kind": "affiliation", "id": fid},
+                    headers={**HEADERS, "Idempotency-Key": "k-head"})
+    assert r.status_code == 200 and people.calls[-1] == ("confirm", "affiliation", fid, "k-head")
+    for bad in ({"guess_id": gid, "answer": "quizas"}, {"guess_id": gid, "answer": "no", "note": "x"}):
+        assert client.post("/v2/commands/answer-person-guess", json=bad, headers={**HEADERS, **_ikey()}).status_code == 422
+    assert client.post("/v2/commands/confirm-person-fact", json={"kind": "phone", "id": fid},
+                       headers={**HEADERS, **_ikey()}).status_code == 422

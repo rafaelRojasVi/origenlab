@@ -611,6 +611,105 @@ def _instant(value: Any) -> float:
 _REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+", re.IGNORECASE)
 
 
+_MONTHS_ES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+#: Where a person's name, address or institution was learned (people first, Task 7).
+LEARNED_BY_PERSON = "lo agregó una persona"
+LEARNED_FROM_HEADER = "nombre en el correo"
+LEARNED_BY_SYSTEM = "lo propuso el sistema"
+
+#: The people rules' apply receipts (`people_rules_repository.APPLY_COMMAND`/`UNDO_COMMAND`), named
+#: here so this read module does not import the write side.
+_PEOPLE_APPLY = "apply_people_rule"
+_PEOPLE_UNDO = "undo_people_rule"
+
+
+def day_es(value: Any) -> str | None:
+    """«21 oct»: the day an email was sent, in Santiago."""
+    when = value if isinstance(value, datetime) else _aware(value)
+    if when is None:
+        return None
+    from zoneinfo import ZoneInfo
+
+    local = when.astimezone(ZoneInfo("America/Santiago"))
+    return f"{local.day} {_MONTHS_ES[local.month - 1]}"
+
+
+def learned_from(*, machine: bool, by_rules: bool, name_source: str | None, sent: Any) -> str:
+    """The muted line beside a name, address or institution on the contact page."""
+    if name_source == "operator":
+        return LEARNED_BY_PERSON
+    if name_source == "display_name":
+        return LEARNED_FROM_HEADER
+    if by_rules or name_source == "signature":
+        day = day_es(sent)
+        return f"firma del correo {day}" if day else "firma del correo"
+    return LEARNED_BY_SYSTEM if machine else LEARNED_BY_PERSON
+
+
+def person_provenance(cur: Any, person_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(other names, provenance) of one person: every live name, active address and open
+    institution, where it was learned, whether the machine proposed it (`machine` — «Quitar» and
+    «Confirmar» apply) and the people-rule receipt that made it (`receipt_id`, null when none or
+    undone)."""
+    cur.execute(
+        """
+        select 'name' as kind, n.id::text as id, n.name_display as label, n.confirmation, n.source,
+               n.origin_source_record_id::text as origin, n.created_at
+          from crm.person_name n where n.person_id = %(p)s::uuid and n.removed_at is null
+        union all
+        select 'address', cp.id::text, cp.value_display, cp.confirmation, null,
+               cp.origin_source_record_id::text, cp.created_at
+          from crm.contact_point cp where cp.person_id = %(p)s::uuid and cp.status = 'active'
+        union all
+        select 'affiliation', a.id::text, o.name, a.confirmation, null,
+               a.origin_source_record_id::text, a.created_at
+          from crm.affiliation a join crm.organization o on o.id = a.organization_id
+         where a.person_id = %(p)s::uuid and a.valid_to is null
+         order by 1, 7, 2
+        """,
+        {"p": person_id},
+    )
+    facts = cur.fetchall()
+    ids = [f[1] for f in facts]
+    receipts: dict[str, str] = {}
+    sent: dict[str, Any] = {}
+    if ids:
+        cur.execute(
+            """
+            select r.id::text, x.fact_id
+              from platform.command_receipt r
+             cross join lateral (values (r.response_body -> 'created' ->> 'person_name_id'),
+                                        (r.response_body -> 'created' ->> 'contact_point_id'),
+                                        (r.response_body -> 'created' ->> 'affiliation_id')) as x(fact_id)
+             where r.command_name = %(apply)s and r.status = 'completed' and x.fact_id = any(%(ids)s)
+               and not exists (select 1 from platform.command_receipt u
+                                where u.command_name = %(undo)s and u.status = 'completed'
+                                  and u.response_body ->> 'undoes_receipt_id' = r.id::text)
+            """,
+            {"apply": _PEOPLE_APPLY, "undo": _PEOPLE_UNDO, "ids": ids},
+        )
+        receipts = {fact_id: rid for rid, fact_id in cur.fetchall()}
+        origins = sorted({f[5] for f in facts if f[5]})
+        if origins:
+            cur.execute("select id::text, coalesce(payload ->> 'sent_at', created_at::text) "
+                        "from evidence.source_record where id = any(%s::uuid[])", (origins,))
+            sent = dict(cur.fetchall())
+    names: list[dict[str, Any]] = []
+    provenance: list[dict[str, Any]] = []
+    for kind, fact_id, label, confirmation, source, origin, _created in facts:
+        machine = confirmation == "machine_proposed"
+        provenance.append({
+            "kind": kind, "id": fact_id, "label": label,
+            "source_es": learned_from(machine=machine, by_rules=fact_id in receipts, name_source=source,
+                                      sent=sent.get(origin) if origin else None),
+            "machine": machine, "receipt_id": receipts.get(fact_id),
+        })
+        if kind == "name":
+            names.append({"id": fact_id, "name": label, "source": source, "confirmation": confirmation,
+                          "machine": machine})
+    return names, provenance
+
+
 def case_threads(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> list[dict[str, Any]]:
     """A case's emails as Gmail cadenas (threads), newest activity first, for «Correos del caso».
 
@@ -2013,8 +2112,11 @@ class CrmWorkspaceRepository:
 
     # -- CRM authoring reads
 
-    def person_authoring(self, person_id: str) -> dict[str, Any] | None:
-        """Full authoring view of one person: contact points, affiliations, notes, references."""
+    def person_authoring(self, person_id: str, guesses: Any = None) -> dict[str, Any] | None:
+        """Full authoring view of one person: contact points, affiliations, notes, references, and
+        (people first) the other names, where each name, address and institution was learned
+        (`provenance`) and the «¿Es …?» guesses about them — `guesses(person_id)` is the people
+        rules' `guesses_for_person`, absent where they are not mounted."""
         with self._read() as cur:
             cur.execute(
                 """
@@ -2098,6 +2200,7 @@ class CrmWorkspaceRepository:
                 (person_id, person_id, person_id, person_id, person_id),
             )
             ref_row = cur.fetchone()
+            other_names, provenance = person_provenance(cur, person_id)
             refs = {
                 "campaign_recipients": ref_row[0],
                 "opportunity_participants": ref_row[1],
@@ -2130,6 +2233,9 @@ class CrmWorkspaceRepository:
             "notes": notes,
             "references": refs,
             "removal": {"allowed": False, "reasons": reasons},
+            "other_names": other_names,
+            "provenance": provenance,
+            "guesses": list(guesses(person_id)) if guesses is not None else [],
             "authoring": None,  # injected by the route from request.app.state
         }
 
@@ -2414,11 +2520,13 @@ class CrmWorkspaceRepository:
             "institution_memory": institution_memory,
         }
 
-    def opportunity_threads(self, opportunity_id: str) -> dict[str, Any] | None:
+    def opportunity_threads(self, opportunity_id: str, person_guesses: Any = None) -> dict[str, Any] | None:
         """Every captured email on the Gmail threads of one case, grouped by thread (`case_threads`).
 
         The threads are the ones `_SQL_PIPELINE_CONTACT` reads: any thread with an email linked to
         the case, plus the threads its quote revisions came from. `None` when the case does not exist.
+        Each message carries `person_guesses`, the «¿Es …?» guesses about its sender:
+        `person_guesses(message_ids)` is the people rules' `guesses_for_case` (empty without them).
         """
         with self._read() as cur:
             cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
@@ -2461,7 +2569,13 @@ class CrmWorkspaceRepository:
                 """
             )
             suppliers = [r[0] for r in cur.fetchall()]
-        return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
+        threads = case_threads(rows, suppliers)
+        messages = [m for t in threads for m in t["messages"]]
+        found = person_guesses([m["message_id"] for m in messages if m.get("message_id")]) \
+            if person_guesses is not None and messages else {}
+        for m in messages:
+            m["person_guesses"] = list(found.get(m.get("message_id"), []))
+        return {"opportunity_id": opportunity_id, "threads": threads}
 
     def lookup(self, q: str) -> dict[str, Any]:
         """«¿Ya lo tenemos?»: where a correo, name or domain already is (`system_lookup.lookup`)."""

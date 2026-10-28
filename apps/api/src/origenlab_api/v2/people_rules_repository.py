@@ -65,6 +65,13 @@ from origenlab_api.v2.people_rules import (
 
 APPLY_COMMAND = "apply_people_rule"
 UNDO_COMMAND = "undo_people_rule"
+#: A person's Sí/No to a W1 «¿Es …?» guess (Task 7). «No» is this receipt only; the planner reads
+#: every answer back through `answered` and never asks the same (address, person) again.
+ANSWER_COMMAND = "answer_person_guess"
+#: The contact page's «Confirmar» on a learned name, address or institution (ruling R1).
+CONFIRM_COMMAND = "confirm_person_fact"
+ANSWERS = ("si", "no")
+FACT_KINDS = ("name", "address", "affiliation")
 STRONG_RULES = frozenset({"P1", "P1b", "P2", "P3", "P4", "P5"})
 #: Readings older than this are not planned any more (the backfill reads the same 90 days).
 READING_WINDOW_DAYS = 90
@@ -248,13 +255,206 @@ class PeopleRulesRepository(V2CaseCommandRepository):
                               org_by_domain=org_by_domain, answered=self.answered(cur))
 
     def answered(self, cur: Any) -> dict[tuple[str, str], bool]:
-        """(address, person id) → a person's Sí/No to a «¿Es …?» guess. Task 7 fills it."""
-        return {}
+        """(address, person id) → a person's Sí (True) or No (False) to a «¿Es …?» guess."""
+        cur.execute(
+            "select response_body ->> 'address', response_body ->> 'person_id', response_body ->> 'answer' "
+            "from platform.command_receipt where command_name = %s and status = 'completed' "
+            "order by completed_at, id",
+            (ANSWER_COMMAND,),
+        )
+        return {(address, pid): answer == "si" for address, pid, answer in cur.fetchall() if address and pid}
 
     def plan(self) -> list[PeopleAction]:
         with self._read() as cur:
             snapshot = self.read_snapshot(cur)
         return plan_people(snapshot)
+
+    # ------------------------------------------------------------------ weak guesses (W1)
+
+    def _guesses(self, keep: Any) -> list[dict[str, Any]]:
+        """The W1 guesses the rules plan right now, as the contact page and the case show them,
+        `keep(action)` choosing which. Planned at read time from the same snapshot the timer uses,
+        so an answered pair, or a reading already handled, is never shown."""
+        with self._read() as cur:
+            snapshot = self.read_snapshot(cur)
+            weak = [a for a in plan_people(snapshot) if a.rule_id == "W1" and a.person_id and keep(a)]
+            messages: dict[str, str | None] = {}
+            if weak:
+                cur.execute(
+                    "select a.id::text, sr.payload ->> 'gmail_message_id' from evidence.assertion a "
+                    "join evidence.source_record sr on sr.id = a.source_record_id where a.id = any(%s::uuid[])",
+                    (sorted({a.assertion_id for a in weak}),),
+                )
+                messages = dict(cur.fetchall())
+        out = []
+        for a in weak:
+            pid = str(a.person_id)
+            person = snapshot.persons.get(pid)
+            name = person.display_name if person is not None else ""
+            orgs = sorted(snapshot.organizations[o].name for o in snapshot.affiliations.get(pid, set())
+                          if o in snapshot.organizations and snapshot.organizations[o].status == "active")
+            org = orgs[0] if orgs else None
+            out.append({
+                "guess_id": f"{a.assertion_id}:{pid}", "address": a.address, "person_id": pid,
+                "person_name": name, "organization_name": org, "reasons": list(a.reasons),
+                "question_es": f"¿Es {name} ({org})?" if org else f"¿Es {name}?",
+                "message_id": messages.get(a.assertion_id),
+            })
+        return out
+
+    def guesses_for_person(self, person_id: str) -> list[dict[str, Any]]:
+        """The «¿Es …?» guesses that name this person (contact page)."""
+        return self._guesses(lambda a: a.person_id == person_id)
+
+    def guesses_for_case(self, message_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Gmail message id → the guesses about who wrote that email (the case's «Correos»)."""
+        wanted = {m for m in message_ids if m}
+        if not wanted:
+            return {}
+        out: dict[str, list[dict[str, Any]]] = {}
+        for guess in self._guesses(lambda a: True):
+            if guess["message_id"] in wanted:
+                out.setdefault(guess["message_id"], []).append(guess)
+        return out
+
+    def answer_guess(self, operator: OperatorIdentity, guess_id: str, answer: str,
+                     idempotency_key: str) -> dict[str, Any]:
+        """One Sí/No (sales or admin, checked by the route). «Sí» attaches the address to the person
+        as a person's act — P2's step, `confirmed`, events `actor_kind = 'operator'` — and points the
+        email's sender at it; «No» records the answer only. Either way the planner never asks again,
+        and a «No» also keeps P2/P5 from joining that pair by themselves."""
+        assertion_id, _, person_id = (guess_id or "").partition(":")
+        assertion_id = as_uuid(assertion_id, "guess_id")
+        person_id = as_uuid(person_id, "guess_id")
+        if answer not in ANSWERS:
+            raise CommandRefused(422, "unknown_answer", "answer is si or no")
+        digest = _digest({"guess_id": f"{assertion_id}:{person_id}", "answer": answer})
+        with self._write() as cur:
+            receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key, ANSWER_COMMAND, digest)
+            if replay is not None:
+                return replay
+            cur.execute(
+                "select lower(btrim(a.value ->> 'sender_address')), a.source_record_id::text "
+                "from evidence.assertion a where a.id = %s and a.kind = 'message_triage' and a.value_norm = 'people:v1'",
+                (assertion_id,),
+            )
+            row = cur.fetchone()
+            if row is None or not row[0]:
+                raise CommandRefused(404, "guess_not_found", "no people reading with that id")
+            address, source_record_id = row
+            _live_person(cur, person_id)
+            # One answer per (address, person): concurrent answers wait here, then see the first.
+            cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (f"people-guess:{address}:{person_id}",))
+            cur.execute("select 1 from platform.command_receipt where command_name = %s and status = 'completed' "
+                        "and response_body ->> 'address' = %s and response_body ->> 'person_id' = %s",
+                        (ANSWER_COMMAND, address, person_id))
+            if cur.fetchone() is not None:
+                raise CommandRefused(409, "already_answered", "someone already answered that guess")
+            response: dict[str, Any] = {
+                "guess_id": f"{assertion_id}:{person_id}", "assertion_id": assertion_id, "address": address,
+                "person_id": person_id, "answer": answer, "created": {}, "resolved_participant_ids": [],
+                "idempotency_key": idempotency_key, "command_receipt_id": receipt_id, "replayed": False,
+            }
+            if answer == "si":
+                person = replace(operator, acts_as_system=False, event_attribution={
+                    "source": "people_guess", "guess_id": response["guess_id"], "assertion_id": assertion_id,
+                })
+                ctx = _Ctx(self, cur, person, receipt_id, source_record_id, confirmed=True)
+                cur.execute("select person_id::text from crm.contact_point where kind = 'email' and value_norm = %s",
+                            (address,))
+                owner = cur.fetchone()
+                if owner is not None:
+                    # The address is someone's already: joining two persons is the ficha's «Unir».
+                    raise CommandRefused(409, "contact_point_taken",
+                                         "Esa dirección ya es de otra persona; únelas desde la ficha"
+                                         if owner[0] != person_id else "Esa dirección ya es de esta persona")
+                usage, organization_id = self._guess_usage(cur, address, person_id)
+                self._attach_address(ctx, address, person_id, usage, organization_id)
+                cur.execute(
+                    "select coalesce(array(select p.id::text from evidence.source_record sr "
+                    "join comms.message m on m.provider_message_id = sr.payload ->> 'gmail_message_id' "
+                    "join comms.message_participant p on p.message_id = m.id "
+                    "where sr.id = %s and p.role = 'from' and p.address_norm = %s order by p.id), '{}')",
+                    (source_record_id, address),
+                )
+                participants = list(cur.fetchone()[0] or [])
+                resolved_cp, resolved = self._resolve_participants(cur, address, participants)
+                response.update(created=ctx.created, versions=ctx.versions, resolved_participant_ids=resolved,
+                                resolved_contact_point_id=resolved_cp, usage=usage, organization_id=organization_id)
+            self._complete_receipt(cur, receipt_id, response)
+            return response
+
+    def _guess_usage(self, cur: Any, address: str, person_id: str) -> tuple[str, str | None]:
+        """How a «Sí» address is filed: free mail is personal; an institution's exclusive domain is
+        work at it; otherwise work at the person's one open institution, else personal."""
+        domain = address.rsplit("@", 1)[-1]
+        if is_free_mail(domain):
+            return "personal", None
+        cur.execute(
+            "select d.organization_id::text from crm.organization_domain d join crm.organization o "
+            "on o.id = d.organization_id where d.domain_norm = %s and d.scope = 'exclusive' "
+            "and d.removed_at is null and o.status = 'active' and o.merged_into_organization_id is null",
+            (domain,),
+        )
+        rows = cur.fetchall()
+        if len(rows) == 1:
+            return "work", rows[0][0]
+        cur.execute(
+            "select a.organization_id::text from crm.affiliation a join crm.organization o on o.id = a.organization_id "
+            "where a.person_id = %s and a.valid_to is null and o.status = 'active'", (person_id,))
+        orgs = sorted({r[0] for r in cur.fetchall()})
+        return ("work", orgs[0]) if len(orgs) == 1 else ("personal", None)
+
+    # ------------------------------------------------------------------ «Confirmar» (ruling R1)
+
+    def confirm_fact(self, operator: OperatorIdentity, kind: str, fact_id: str,
+                     idempotency_key: str) -> dict[str, Any]:
+        """A person confirms a learned name, address or institution: `confirmation = 'confirmed'`
+        (and `confirmed_by_operator_id` on an affiliation, the one table of the three with it), one
+        operator event, one receipt. «Quitar» then no longer undoes the action that learned it."""
+        if kind not in FACT_KINDS:
+            raise CommandRefused(422, "unknown_kind", "kind is name, address or affiliation")
+        fact_id = as_uuid(fact_id, "id")
+        digest = _digest({"kind": kind, "id": fact_id})
+        with self._write() as cur:
+            receipt_id, replay = self._claim_receipt(cur, operator, idempotency_key, CONFIRM_COMMAND, digest)
+            if replay is not None:
+                return replay
+            if kind == "name":
+                cur.execute("select person_id::text, confirmation from crm.person_name "
+                            "where id = %s and removed_at is null for update", (fact_id,))
+            elif kind == "address":
+                cur.execute("select person_id::text, confirmation from crm.contact_point "
+                            "where id = %s and status = 'active' and person_id is not null for update", (fact_id,))
+            else:
+                cur.execute("select person_id::text, confirmation from crm.affiliation "
+                            "where id = %s and valid_to is null for update", (fact_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise CommandRefused(404, "fact_not_found", f"no live {kind} with that id")
+            person_id, confirmation = row
+            if confirmation == "confirmed":
+                raise CommandRefused(409, "already_confirmed", "a person already confirmed it")
+            ctx = _Ctx(self, cur, replace(operator, acts_as_system=False, event_attribution=None), receipt_id, None)
+            if kind == "name":
+                cur.execute("update crm.person_name set confirmation = 'confirmed' where id = %s", (fact_id,))
+                self._bump_person(ctx, person_id)
+                ctx.event("person", person_id, "person.updated", {"person_name_confirmed": fact_id})
+            elif kind == "address":
+                cur.execute("update crm.contact_point set confirmation = 'confirmed', version = version + 1, "
+                            "updated_at = now() where id = %s", (fact_id,))
+                ctx.event("contact_point", fact_id, "contact_point.confirmed",
+                          {"contact_point_id": fact_id, "person_id": person_id})
+            else:
+                cur.execute("update crm.affiliation set confirmation = 'confirmed', confirmed_by_operator_id = %s, "
+                            "updated_at = now() where id = %s", (operator.operator_id, fact_id))
+                self._bump_person(ctx, person_id)
+                ctx.event("person", person_id, "person.updated", {"affiliation_confirmed": fact_id})
+            response = {"kind": kind, "id": fact_id, "person_id": person_id, "confirmation": "confirmed",
+                        "idempotency_key": idempotency_key, "command_receipt_id": receipt_id, "replayed": False}
+            self._complete_receipt(cur, receipt_id, response)
+            return response
 
     # ------------------------------------------------------------------ «Hoy»
 
@@ -481,10 +681,11 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             """
             insert into crm.contact_point (kind, value_norm, value_display, person_id, organization_id, usage,
                                            confirmation, origin_source_record_id)
-            values ('email', %s, %s, %s, %s, %s, 'machine_proposed', %s)
+            values ('email', %s, %s, %s, %s, %s, %s, %s)
             returning id::text, version
             """,
-            (address, address, person_id, organization_id, usage, ctx.source_record_id),
+            (address, address, person_id, organization_id, usage,
+             "confirmed" if ctx.confirmed else "machine_proposed", ctx.source_record_id),
         )
         cp_id, version = ctx.cur.fetchone()
         ctx.created["contact_point_id"] = cp_id
@@ -718,6 +919,13 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             )
             if int(cur.fetchone()[0]):
                 raise CommandRefused(409, "changed_since", CHANGED_SINCE)
+        # A learned name or institution a person confirmed since is theirs now (`confirm-person-fact`).
+        for table, key in (("crm.person_name", "person_name_id"), ("crm.affiliation", "affiliation_id")):
+            if created.get(key):
+                cur.execute(f"select confirmation from {table} where id = %s", (created[key],))  # noqa: S608
+                row = cur.fetchone()
+                if row is not None and row[0] == "confirmed":
+                    raise CommandRefused(409, "changed_since", CHANGED_SINCE)
         tables = {"person": "crm.person", "contact_point": "crm.contact_point", "note": "crm.note"}
         for ref, version in sorted((action.get("versions") or {}).items()):
             kind, _, row_id = ref.partition(":")
@@ -820,9 +1028,11 @@ class _Ctx:
     """One action's cursor, acting identity, receipt and what it created."""
 
     def __init__(self, repo: PeopleRulesRepository, cur: Any, operator: OperatorIdentity, receipt_id: str,
-                 source_record_id: str | None) -> None:
+                 source_record_id: str | None, *, confirmed: bool = False) -> None:
         self.repo, self.cur, self.operator, self.receipt_id = repo, cur, operator, receipt_id
         self.source_record_id = source_record_id
+        #: A person's act (a «Sí»): the rows it creates are `confirmed`, not `machine_proposed`.
+        self.confirmed = confirmed
         self.created: dict[str, Any] = {}
         self.versions: dict[str, int] = {}
 
@@ -840,5 +1050,5 @@ def _is_database_error(exc: Exception) -> bool:
     return isinstance(exc, psycopg.Error)
 
 
-__all__ = ["APPLY_COMMAND", "CHANGED_SINCE", "PeopleRulesRepository", "READING_WINDOW_DAYS", "UNDO_COMMAND",
-           "idempotency_key"]
+__all__ = ["ANSWER_COMMAND", "APPLY_COMMAND", "CHANGED_SINCE", "CONFIRM_COMMAND", "PeopleRulesRepository",
+           "READING_WINDOW_DAYS", "UNDO_COMMAND", "idempotency_key"]

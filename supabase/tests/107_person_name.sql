@@ -3,7 +3,7 @@
 -- Fictitious fixtures only.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(13);
+select plan(15);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -69,6 +69,14 @@ select is(pg_temp.run_as('origenlab_api', $$ insert into crm.person_name
 select is(left(pg_temp.run_as('origenlab_api', $$ update crm.person_name
     set name_norm = 'otro' where person_id = '99000000-0000-4000-9900-000000000701' $$), 5), '42501',
   'the API cannot rewrite name_norm (column-restricted UPDATE)');
+
+-- ── confirm (20261029110000): a person confirms a learned name ──────────────────────────────
+select is(pg_temp.run_as('origenlab_api', $$ update crm.person_name set confirmation = 'confirmed'
+  where person_id = '99000000-0000-4000-9900-000000000701' and removed_at is null $$), 'ok',
+  'the API confirms a name (column UPDATE of confirmation)');
+select is(left(pg_temp.run_as('origenlab_api', $$ update crm.person_name
+    set confirmation = 'guessed' where person_id = '99000000-0000-4000-9900-000000000701' $$), 5), '23514',
+  'a confirmation outside the closed list is still rejected');
 
 -- ── never deleted ────────────────────────────────────────────────────────────────────────────
 select is(left(pg_temp.run_as('origenlab_api', $$ delete from crm.person_name $$), 5), '42501',

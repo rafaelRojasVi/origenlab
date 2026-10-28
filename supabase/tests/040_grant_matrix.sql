@@ -200,7 +200,8 @@ insert into expected values
     ('crm', 'todo', 'origenlab_worker', '', null, ''),
     -- 20261029100000: crm.person_name — api select/insert + column UPDATE (removed_at,
     -- removed_by_operator_id); worker select. No DELETE.
-    ('crm', 'person_name', 'origenlab_api', 'SI', array['removed_at', 'removed_by_operator_id'], 'SIU'),
+    -- 20261029110000 adds confirmation (the contact page's «Confirmar»).
+    ('crm', 'person_name', 'origenlab_api', 'SI', array['confirmation', 'removed_at', 'removed_by_operator_id'], 'SIU'),
     ('crm', 'person_name', 'origenlab_worker', 'S', null, 'S');
 
 select is((select count(*)::int from expected), 130, 'the matrix covers all 65 tables for both runtime roles');

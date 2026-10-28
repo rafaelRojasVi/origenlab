@@ -445,8 +445,11 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
  * contact_point, classification and product-line links, supplier-candidate resolution, and
  * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
- * Thirty exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
- * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
+ * Thirty-one exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
+ * «Confirmar institución», a record-level confirm that needs no assertion) among them, and the two
+ * of «people first» (2026-10-28): `answer-person-guess` (one Sí/No on a «¿Es …?» guess) and
+ * `confirm-person-fact` (the contact page's «Confirmar» on a learned name, address or
+ * institution). None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
  * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the six case
@@ -487,6 +490,8 @@ export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-note$/,
   /^\/v2\/commands\/revise-note$/,
   /^\/v2\/commands\/archive-note$/,
+  /^\/v2\/commands\/answer-person-guess$/,
+  /^\/v2\/commands\/confirm-person-fact$/,
 ];
 
 /** 64 KiB: enough for a CRM authoring body (names, notes, identifiers). */

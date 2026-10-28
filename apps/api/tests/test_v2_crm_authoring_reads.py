@@ -66,7 +66,7 @@ _FAKE_OP = str(uuid.uuid4())
 class _FakeRepo:
     """Minimal stand-in for the DB repository; no SQL executed."""
 
-    def person_authoring(self, person_id: str) -> dict[str, Any] | None:
+    def person_authoring(self, person_id: str, guesses: Any = None) -> dict[str, Any] | None:
         if person_id == "00000000-0000-4000-8000-000000000001":
             return None
         return {
@@ -101,6 +101,7 @@ class _FakeRepo:
                 "quotes": 0, "evidence_assertions": 0, "notes": 1,
             },
             "removal": {"allowed": False, "reasons": ["Es destinatario en 2 campañas"]},
+            "guesses": list(guesses(person_id)) if guesses is not None else [],
             "authoring": None,
         }
 
@@ -221,6 +222,21 @@ def test_person_authoring_shape() -> None:
     assert body["removal"]["reasons"]
     # authoring flag injected by route
     assert body["authoring"]["enabled"] is False
+
+
+def test_person_payload_carries_the_people_rules_guesses() -> None:
+    """The route hands the people rules' `guesses_for_person` to the read (people first)."""
+
+    class _People:
+        def guesses_for_person(self, person_id):
+            return [{"guess_id": f"a:{person_id}", "question_es": "¿Es Pedro Soto (Universidad Ficticia)?"}]
+
+    app = _app("sales")
+    pid = "00000000-0000-4000-8001-000000000001"
+    assert TestClient(app).get(f"/v2/workspace/people/{pid}").json()["guesses"] == []
+    app.state.people_rules_repository = _People()
+    body = TestClient(app).get(f"/v2/workspace/people/{pid}").json()
+    assert [g["question_es"] for g in body["guesses"]] == ["¿Es Pedro Soto (Universidad Ficticia)?"]
 
 
 def test_person_authoring_enabled_flag() -> None:
