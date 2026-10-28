@@ -100,8 +100,8 @@ def current_head_report():
     checks = [_check(f"a{i:02d}") for i in (1, 2, 3, 6, 7, 11, 12)] + [
         _check("s01"),
         _check("a13", status="CORROBORATED", required=False),
-        _check("a04", "FAIL", {"relation_count": 65},
-               ["relations in scope: observed 65, expected 34"]),
+        _check("a04", "FAIL", {"relation_count": 66},
+               ["relations in scope: observed 66, expected 34"]),
         _check("a05", "FAIL", {"function_count": 40, "security_definer_count": 3}, [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             "3 entr(y|ies) are present here and not in the baseline: " + gap.EXPECTED_SECURITY_DEFINER,
