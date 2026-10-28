@@ -151,3 +151,28 @@ describe("Hecho automáticamente, only what is news", () => {
     expect(screen.queryByText("Hecho automáticamente")).toBeNull();
   });
 });
+
+describe("Hecho automáticamente, people", () => {
+  const PERSON_ROW = { receipt_id: "00000000-0000-4000-8000-0000000000e5", applied_at: "2026-10-27T10:00:00+00:00",
+    rule_id: "P2", kind: "person", source: "people", reasons: ["la firma del correo dice «Pedro Soto Díaz»"],
+    case_id: null, case_title: null, quote_number: null, person_id: "00000000-0000-4000-8000-0000000000f6",
+    what: "Pedro Soto: nuevo nombre «P. Soto Díaz»" };
+
+  it("renders a people row with its line, «Ver contacto» and «Quitar»", async () => {
+    stub([PERSON_ROW, ...ITEMS]);
+    const { navigate } = renderPanel();
+    const rows = await screen.findAllByTestId("automatic-row");
+    expect(rows).toHaveLength(3);
+    const row = rows[0];
+    expect(screen.getByText(/1 contacto actualizado/)).toBeInTheDocument();
+    expect(row).toHaveTextContent("Pedro Soto: nuevo nombre «P. Soto Díaz»");
+    expect(row).toHaveTextContent("Contacto actualizado");
+    expect(row).toHaveTextContent("la firma del correo dice");
+    expect(within(row).queryByRole("button", { name: "Abrir caso" })).toBeNull();
+    fireEvent.click(within(row).getByRole("button", { name: "Ver contacto" }));
+    expect(navigate).toHaveBeenCalledWith("personas", "00000000-0000-4000-8000-0000000000f6");
+    fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].body).toEqual({ receipt_id: PERSON_ROW.receipt_id });
+  });
+});

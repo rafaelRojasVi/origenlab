@@ -20,13 +20,15 @@ export interface AutomaticAction {
   receipt_id: string;
   applied_at: string | null;
   rule_id: string | null;
-  kind: "opened" | "filed";
-  source: "email" | "forward";
+  kind: "opened" | "filed" | "person";
+  source: "email" | "forward" | "people";
   reasons: string[];
   case_id: string | null;
   case_title: string | null;
   quote_number: string | null;
   what: string | null;
+  /** People rows (P2–P5): the contact the rule changed. */
+  person_id?: string | null;
 }
 
 /** Rules whose filings are routine — a reply on a thread already in a case — and stay off Hoy. */
@@ -77,9 +79,11 @@ export function AutomaticActionsPanel({ navigate, onChanged }: { navigate: Navig
   if (rows.length === 0) return null;
   const opened = rows.filter((r) => r.items[0].kind === "opened").length;
   const filed = rows.reduce((n, r) => n + (r.items[0].kind === "filed" ? r.items.length : 0), 0);
+  const people = rows.filter((r) => r.items[0].kind === "person").length;
   const summary = [
     opened ? `${opened} ${opened === 1 ? "solicitud abierta" : "solicitudes abiertas"}` : null,
     filed ? `${filed} ${filed === 1 ? "correo archivado en su caso" : "correos archivados en su caso"}` : null,
+    people ? `${people} ${people === 1 ? "contacto actualizado" : "contactos actualizados"}` : null,
   ].filter(Boolean).join(" y ");
   const shown = all ? rows : rows.slice(0, ROWS_SHOWN);
   return (
@@ -121,6 +125,7 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
   const [keys] = useState(() => new Map(items.map((i) => [i.receipt_id, newCaseCommandKey()])));
   const item = items[0];
   const opened = item.kind === "opened";
+  const person = item.kind === "person";
   const many = items.length > 1;
   const sent = item.rule_id === "R16";
 
@@ -130,7 +135,7 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
       for (const it of items) {
         await removeAutomaticAction({ receipt_id: it.receipt_id }, keys.get(it.receipt_id) ?? newCaseCommandKey());
       }
-      toast(opened ? "Solicitud quitada." : many ? "Correos quitados del caso." : "Correo quitado del caso.");
+      toast(person ? "Cambio en el contacto quitado." : opened ? "Solicitud quitada." : many ? "Correos quitados del caso." : "Correo quitado del caso.");
       onRemoved();
     } catch (err) {
       toast(caseRefusalText(err), "bad");
@@ -139,7 +144,7 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
     }
   }
 
-  const label = sent ? "Cotización enviada" : item.rule_id === "R17" ? "Pasó a Conversación" : opened ? "Solicitud abierta"
+  const label = sent ? "Cotización enviada" : item.rule_id === "R17" ? "Pasó a Conversación" : person ? "Contacto actualizado" : opened ? "Solicitud abierta"
     : many ? `${items.length} correos archivados` : "Archivado en el caso";
   return (
     <div data-testid="automatic-row" className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5">
@@ -160,6 +165,9 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap gap-2">
+        {person && item.person_id ? (
+          <Button variant="secondary" onClick={() => navigate("personas", item.person_id)}>Ver contacto</Button>
+        ) : null}
         {item.case_id ? (
           <Button variant="secondary" onClick={() => navigate("oportunidades", item.case_id)}>Abrir caso</Button>
         ) : null}
