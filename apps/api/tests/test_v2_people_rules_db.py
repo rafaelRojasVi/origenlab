@@ -236,31 +236,59 @@ def test_undo_p3_leaves_no_live_rows(db, world) -> None:
                 reading["participant"])[0] is None
     # Undone still counts as handled: the reading never re-applies by itself.
     assert _actions(repo, reading) == []
-    assert repo.recent_automatic() == [r for r in repo.recent_automatic()
-                                       if r["receipt_id"] != result["command_receipt_id"]]
+    assert all(r["receipt_id"] != result["command_receipt_id"] for r in repo.recent_automatic())
+
+
+def _merge_world(db, w):
+    """Two persons of one name and institution — the older one wins — and, on the loser, a second
+    contact point, an affiliation the winner shares, one it does not, a note, a case participant and
+    an unfrozen campaign recipient. Then the email that merges them."""
+    m = {"name": f"Marta {w['sur']}", "address": f"marta.{w['tag']}@{w['domain']}"}
+    m["winner"], m["winner_cp"] = _person(db, m["name"], address=f"mf.{w['tag']}@{w['domain']}", org=w["org"],
+                                          created_at="2026-01-01")
+    m["loser"], m["loser_cp"] = _person(db, m["name"], address=m["address"], org=w["org"], created_at="2026-06-01")
+    phone = "+569" + str(int(w["tag"], 16) % 10**8).zfill(8)
+    with _owner(db) as conn:
+        m["loser_cp2"] = conn.execute(
+            "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+            "values ('phone', %s, %s, %s, 'personal', 'machine_proposed') returning id::text",
+            (phone, phone, m["loser"])).fetchone()[0]
+        m["other_aff"] = conn.execute(
+            "insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
+            "values (%s, %s, '2026-01-01', 'machine_proposed') returning id::text",
+            (m["loser"], w["other_org"])).fetchone()[0]
+        m["dup_aff"] = conn.execute("select id::text from crm.affiliation where person_id = %s and organization_id = %s",
+                                    (m["loser"], w["org"])).fetchone()[0]
+        m["note"] = conn.execute(
+            "insert into crm.note (subject_kind, subject_id, body, author_operator_id) "
+            "values ('person', %s, 'nota ficticia', %s) returning id::text", (m["loser"], w["admin"])).fetchone()[0]
+        case = conn.execute("insert into crm.opportunity (title, stage, owner_operator_id) values (%s, 'lead', %s) "
+                            "returning id::text", (f"Caso ficticio {w['tag']}", w["admin"])).fetchone()[0]
+        m["participant"] = conn.execute(
+            "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, valid_from, "
+            "confirmation) values (%s, %s, 'quote_recipient', true, current_date, 'machine_proposed') "
+            "returning id::text", (case, m["loser"])).fetchone()[0]
+        mailbox = conn.execute("insert into comms.mailbox (address_norm) values (%s) returning id",
+                               (f"camp-{w['tag']}@example.test",)).fetchone()[0]
+        campaign = conn.execute(
+            "insert into outbound.campaign (name, max_sends, recontact_interval_days, status, mailbox_id, "
+            "created_by_operator_id) values (%s, 10, 30, 'archived', %s, %s) returning id::text",
+            (f"Campaña ficticia {w['tag']}", mailbox, w["admin"])).fetchone()[0]
+        m["recipient"] = conn.execute(
+            "insert into outbound.campaign_recipient (campaign_id, address_norm, person_id, state) "
+            "values (%s, %s, %s, 'sent') returning id::text", (campaign, m["address"], m["loser"])).fetchone()[0]
+    m["reading"] = _reading(db, m["address"], sig_name=m["name"], institution=w["org_name"])
+    return m
+
+
+def _person_of(db, table, row_id):
+    return _one(db, f"select person_id::text from {table} where id = %s", row_id)[0]
 
 
 def test_auto_merge_records_ids_and_undo_restores_exactly(db, world) -> None:
-    name = f"Marta {world['sur']}"
-    address = f"marta.{world['tag']}@{world['domain']}"
-    winner, winner_cp = _person(db, name, address=f"mf.{world['tag']}@{world['domain']}", org=world["org"],
-                                created_at="2026-01-01")
-    loser, loser_cp = _person(db, name, address=address, org=world["org"], created_at="2026-06-01")
-    with _owner(db) as conn:
-        loser_cp2 = conn.execute(
-            "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
-            "values ('phone', '+56911112222', '+56911112222', %s, 'personal', 'machine_proposed') returning id::text",
-            (loser,)).fetchone()[0]
-        other_aff = conn.execute(
-            "insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
-            "values (%s, %s, '2026-01-01', 'machine_proposed') returning id::text",
-            (loser, world["other_org"])).fetchone()[0]
-        dup_aff = conn.execute("select id::text from crm.affiliation where person_id = %s and organization_id = %s",
-                               (loser, world["org"])).fetchone()[0]
-        note = conn.execute(
-            "insert into crm.note (subject_kind, subject_id, body, author_operator_id) "
-            "values ('person', %s, 'nota ficticia', %s) returning id::text", (loser, world["admin"])).fetchone()[0]
-    reading = _reading(db, address, sig_name=name, institution=world["org_name"])
+    m = _merge_world(db, world)
+    winner, winner_cp, loser, loser_cp, loser_cp2 = m["winner"], m["winner_cp"], m["loser"], m["loser_cp"], m["loser_cp2"]
+    other_aff, dup_aff, note, reading = m["other_aff"], m["dup_aff"], m["note"], m["reading"]
     repo = _repo(db)
     results = _apply_all(repo, world, reading)
     assert [r["rule_id"] for r in results] == ["P1", "P5"]
@@ -270,6 +298,10 @@ def test_auto_merge_records_ids_and_undo_restores_exactly(db, world) -> None:
     assert merge["moved"]["affiliation_ids"] == [other_aff]
     assert merge["moved"]["closed_affiliation_ids"] == [dup_aff]
     assert merge["moved"]["note_ids"] == [note]
+    assert merge["moved"]["opportunity_participant_ids"] == [m["participant"]]
+    assert merge["moved"]["campaign_recipient_ids"] == [m["recipient"]]
+    assert _person_of(db, "crm.opportunity_participant", m["participant"]) == winner
+    assert _person_of(db, "outbound.campaign_recipient", m["recipient"]) == winner
     assert _one(db, "select merged_into_person_id::text, status from crm.person where id = %s", loser) == (winner, "archived")
     assert {r[0] for r in _all(db, "select id::text from crm.contact_point where person_id = %s", winner)} == {
         winner_cp, loser_cp, loser_cp2}
@@ -295,6 +327,8 @@ def test_auto_merge_records_ids_and_undo_restores_exactly(db, world) -> None:
     assert {r[0] for r in _all(db, "select id::text from crm.contact_point where person_id = %s", winner)} == {
         winner_cp, added}
     assert _one(db, "select subject_id::text from crm.note where id = %s", note)[0] == loser
+    assert _person_of(db, "crm.opportunity_participant", m["participant"]) == loser
+    assert _person_of(db, "outbound.campaign_recipient", m["recipient"]) == loser
     assert {r[0] for r in _all(db, "select id::text from crm.affiliation where person_id = %s and valid_to is null",
                                loser)} == {other_aff, dup_aff}
     assert {r[0] for r in _all(db, "select organization_id::text from crm.affiliation "
@@ -342,6 +376,8 @@ def test_p2_attaches_a_work_address_and_undo_deactivates_it(db, world) -> None:
     repo = _repo(db)
     (result,) = _apply_all(repo, world, reading)
     assert result["rule_id"] == "P2"
+    # Like the authoring handlers, the new address moves the person's version (an open ficha goes stale).
+    assert _one(db, "select version from crm.person where id = %s", pid)[0] == 2
     cp = result["created"]["contact_point_id"]
     assert _one(db, "select person_id::text, organization_id::text, usage, confirmation from crm.contact_point "
                     "where id = %s", cp) == (pid, world["org"], "work", "machine_proposed")
@@ -364,3 +400,45 @@ def test_p4_adds_an_affiliation_machine_proposed(db, world) -> None:
                     "where id = %s", aff) == (pid, world["org"], "machine_proposed", None)
     repo.undo(_operator(world["admin"]), results[1]["command_receipt_id"], "no es de esa institución")
     assert _one(db, "select valid_to is not null from crm.affiliation where id = %s", aff)[0] is True
+
+
+def test_undo_merge_refused_when_a_moved_row_was_moved_again(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    m = _merge_world(db, world)
+    repo = _repo(db)
+    results = _apply_all(repo, world, m["reading"])
+    third, _ = _person(db, f"Tercera {world['sur']}")
+    with _owner(db) as conn:
+        conn.execute("update crm.opportunity_participant set person_id = %s where id = %s", (third, m["participant"]))
+    before = _all(db, "select id::text, person_id::text from crm.contact_point where person_id in (%s, %s) order by id",
+                  m["winner"], m["loser"])
+    with pytest.raises(CommandRefused) as refused:
+        repo.undo(_operator(world["admin"]), results[1]["command_receipt_id"], "no eran la misma persona")
+    assert refused.value.code == "changed_since" and refused.value.message == (
+        "Alguien cambió este contacto después; deshazlo desde la ficha")
+    # Nothing changed: the loser stays merged, every row where the merge left it.
+    assert _one(db, "select merged_into_person_id::text from crm.person where id = %s", m["loser"])[0] == m["winner"]
+    assert _all(db, "select id::text, person_id::text from crm.contact_point where person_id in (%s, %s) order by id",
+                m["winner"], m["loser"]) == before
+    assert _person_of(db, "outbound.campaign_recipient", m["recipient"]) == m["winner"]
+    assert _one(db, "select subject_id::text from crm.note where id = %s", m["note"])[0] == m["winner"]
+
+
+def test_undo_p3_refused_when_the_person_gained_rows_since(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    name, _address, reading = _new_person_reading(db, world, first="Julia")
+    repo = _repo(db)
+    (result,) = _apply_all(repo, world, reading)
+    pid = result["created"]["person_id"]
+    # Another name lands on the person without moving its version (as a row written outside a command).
+    with _owner(db) as conn:
+        conn.execute("insert into crm.person_name (person_id, name_display, name_norm, source, confirmation) "
+                     "values (%s, %s, %s, 'operator', 'confirmed')", (pid, f"Julia M {world['sur']}",
+                                                                        f"julia m {world['sur'].lower()}"))
+    with pytest.raises(CommandRefused) as refused:
+        repo.undo(_operator(world["admin"]), result["command_receipt_id"], "Quitado de Hoy")
+    assert refused.value.code == "changed_since"
+    assert _one(db, "select status from crm.person where id = %s", pid)[0] == "active"
+    assert _one(db, "select status from crm.contact_point where id = %s", result["created"]["contact_point_id"])[0] == "active"

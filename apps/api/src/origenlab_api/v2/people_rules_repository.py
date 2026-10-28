@@ -384,6 +384,7 @@ class PeopleRulesRepository(V2CaseCommandRepository):
         if row is None:
             raise CommandRefused(409, "name_already_known", "the person already carries that name")
         ctx.created["person_name_id"] = row[0]
+        self._bump_person(ctx, person_id)
         ctx.event("person", person_id, "person.updated", {"person_name_added": row[0], "source": source})
 
     def _attach_address(self, ctx: "_Ctx", address: str, person_id: str, usage: str,
@@ -394,6 +395,7 @@ class PeopleRulesRepository(V2CaseCommandRepository):
                 raise CommandRefused(422, "organization_required", "a work address names its institution")
             _live_organization_active(ctx.cur, organization_id)
         self._new_contact_point(ctx, address, person_id, organization_id if usage == "work" else None, usage)
+        self._bump_person(ctx, person_id)
 
     def _new_contact_point(self, ctx: "_Ctx", address: str, person_id: str, organization_id: str | None,
                            usage: str) -> None:
@@ -448,6 +450,13 @@ class PeopleRulesRepository(V2CaseCommandRepository):
         if ctx.cur.fetchone() is not None:
             raise CommandRefused(409, "already_affiliated", "the person already belongs to that institution")
         self._open_affiliation(ctx, person_id, organization_id)
+        self._bump_person(ctx, person_id)
+
+    def _bump_person(self, ctx: "_Ctx", person_id: str) -> None:
+        """A row added under a person moves its version, as the authoring handlers do
+        (`_bump_person_or_org_version`): an operator's open ficha then gets `stale_version`. It is
+        not recorded for undo — removing the added row does not touch the person's own fields."""
+        ctx.cur.execute("update crm.person set version = version + 1, updated_at = now() where id = %s", (person_id,))
 
     def _open_affiliation(self, ctx: "_Ctx", person_id: str, organization_id: str, *,
                           role_title: str | None = None, unit_label: str | None = None,
@@ -619,6 +628,22 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             return response
 
     def _refuse_if_changed(self, cur: Any, action: dict[str, Any]) -> None:
+        created = action.get("created") or {}
+        if action.get("rule_id") == "P3" and created.get("person_id"):
+            # The person this action created gained an address, a name or an institution since: archiving
+            # it would strand them. A person undoes that from the ficha.
+            cur.execute(
+                """
+                select (select count(*) from crm.contact_point where person_id = %(p)s and status = 'active'
+                          and id is distinct from %(cp)s::uuid)
+                     + (select count(*) from crm.person_name where person_id = %(p)s and removed_at is null)
+                     + (select count(*) from crm.affiliation where person_id = %(p)s and valid_to is null
+                          and id is distinct from %(aff)s::uuid)
+                """,
+                {"p": created["person_id"], "cp": created.get("contact_point_id"), "aff": created.get("affiliation_id")},
+            )
+            if int(cur.fetchone()[0]):
+                raise CommandRefused(409, "changed_since", CHANGED_SINCE)
         tables = {"person": "crm.person", "contact_point": "crm.contact_point", "note": "crm.note"}
         for ref, version in sorted((action.get("versions") or {}).items()):
             kind, _, row_id = ref.partition(":")
@@ -686,21 +711,23 @@ class PeopleRulesRepository(V2CaseCommandRepository):
         )
         if cur.rowcount == 0:
             raise CommandRefused(409, "changed_since", CHANGED_SINCE)
-        if moved.get("contact_point_ids"):
-            cur.execute("update crm.contact_point set person_id = %s, version = version + 1, updated_at = now() "
-                        "where id = any(%s::uuid[]) and person_id = %s",
-                        (loser_id, moved["contact_point_ids"], winner_id))
-        if moved.get("opportunity_participant_ids"):
-            cur.execute("update crm.opportunity_participant set person_id = %s, updated_at = now() "
-                        "where id = any(%s::uuid[]) and person_id = %s",
-                        (loser_id, moved["opportunity_participant_ids"], winner_id))
-        if moved.get("campaign_recipient_ids"):
-            cur.execute("update outbound.campaign_recipient set person_id = %s "
-                        "where id = any(%s::uuid[]) and person_id = %s",
-                        (loser_id, moved["campaign_recipient_ids"], winner_id))
-        if moved.get("note_ids"):
-            cur.execute("update crm.note set subject_id = %s where id = any(%s::uuid[]) and subject_id = %s",
-                        (loser_id, moved["note_ids"], winner_id))
+        # Every recorded row goes back, or none: a row a person moved since refuses the whole undo.
+        for ids, sql in (
+            (moved.get("contact_point_ids") or [],
+             "update crm.contact_point set person_id = %s, version = version + 1, updated_at = now() "
+             "where id = any(%s::uuid[]) and person_id = %s"),
+            (moved.get("opportunity_participant_ids") or [],
+             "update crm.opportunity_participant set person_id = %s, updated_at = now() "
+             "where id = any(%s::uuid[]) and person_id = %s"),
+            (moved.get("campaign_recipient_ids") or [],
+             "update outbound.campaign_recipient set person_id = %s where id = any(%s::uuid[]) and person_id = %s"),
+            (moved.get("note_ids") or [],
+             "update crm.note set subject_id = %s where id = any(%s::uuid[]) and subject_id = %s"),
+        ):
+            if ids:
+                cur.execute(sql, (loser_id, ids, winner_id))
+                if cur.rowcount != len(ids):
+                    raise CommandRefused(409, "changed_since", CHANGED_SINCE)
         for aff_id in moved.get("opened_affiliation_ids") or []:
             self._close_affiliation(ctx, aff_id, winner_id)
         for aff_id in (moved.get("affiliation_ids") or []) + (moved.get("closed_affiliation_ids") or []):
