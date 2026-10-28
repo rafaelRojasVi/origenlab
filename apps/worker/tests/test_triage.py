@@ -511,17 +511,44 @@ def test_who_wrote_the_email_is_recorded_as_people_v1_with_the_model_signature()
     assert value["sender_address"] == "ana@cliente.invalid" and value["header_name"] == "Ana Pérez"
     assert value["signature"] == PEOPLE_READING["sender"]
     assert value["co_addresses"] == ["lab@cliente.invalid"]
-    assert value["signature_raw"] == "Hola,\nadjunto el documento."  # no delimiter: the tail stands in
+    assert value["signature_raw"] == ""  # no delimiter: the tail went to the model but is never stored
 
 
-def test_mail_the_model_never_reads_still_gets_the_header_name() -> None:
-    reader = Reader(READING)
+def test_with_the_model_off_the_header_name_is_still_read() -> None:
     db = FakeDb()
-    triage_one(db, FakeStore(make_raw(subject="Respuesta automática: Solicitud de cotización")), "sr-1",
-               ModelSettings(reader, DEFAULT_MODEL))
-    assert reader.requests == []
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
     [(_, value)] = db.people_recorded
     assert value["signature"] is None and value["header_name"] == "Ana Pérez"
+
+
+def test_a_delimited_signature_is_stored_raw() -> None:
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "Ana Pérez <ana@cliente.invalid>", "contacto@origenlab.cl", "Consulta"
+    msg.set_content("Hola, ¿tienen stock?\n\n-- \nAna Pérez\nUniversidad Ficticia\n")
+    db = FakeDb()
+    triage_one(db, FakeStore(msg.as_bytes()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.people_recorded[0][1]["signature_raw"] == "Ana Pérez\nUniversidad Ficticia"
+
+
+def test_machine_mail_gets_no_people_reading() -> None:
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw(subject="Respuesta automática: Solicitud de cotización")), "sr-1",
+               ModelSettings(None, DEFAULT_MODEL))
+    assert db.recorded and db.people_recorded == []
+    bounce = (
+        b"From: Mail Delivery Subsystem <mailer-daemon@googlemail.invalid>\r\n"
+        b"To: contacto@origenlab.cl\r\n"
+        b"Subject: Delivery Status Notification (Failure)\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"Final-Recipient: rfc822; dead@cliente.invalid\r\n"
+        b"Status: 5.1.1\r\n550 5.1.1 User unknown; address does not exist.\r\n"
+    )
+    db = FakeDb()
+    db.people = ("mailer-daemon@googlemail.invalid", {"mailer-daemon@googlemail.invalid": "Mail Delivery Subsystem"}, ())
+    result = triage_one(db, FakeStore(bounce), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.triage_class == "bounce" and db.people_recorded == []
 
 
 def test_outbound_and_forwarded_mail_get_no_people_reading() -> None:

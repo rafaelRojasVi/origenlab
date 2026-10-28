@@ -166,8 +166,9 @@ class ModelReading:
     #: The linked cases' current stages, and whether moving each to `stage` is a legal transition
     #: (`case_commands.STAGE_TRANSITIONS`). Empty when the thread is not on a case yet.
     linked_cases: tuple[dict[str, Any], ...] = ()
-    #: Who wrote the email (`people:v1` reads it). None when unstated — and for readings stored
-    #: before the field existed, which have no `sender` key.
+    #: Who wrote the email (`people:v1` reads it). None when the answer has no `sender`, a null
+    #: one, or one with every field blank — never a refusal. Readings stored before the field
+    #: existed have no `sender` key; readers of stored values use `.get("sender")`.
     sender: ModelSender | None = None
 
     def as_json(self) -> dict[str, Any]:
@@ -358,6 +359,6 @@ def anthropic_reader(api_key: str, *, timeout_s: float = 60.0, max_retries: int 
     return read
 
 
-__all__ = ["DEFAULT_MODEL", "INTENTS", "STAGE_ANSWERS", "LinkedCase", "OUTPUT_SCHEMA", "SYSTEM_PROMPT", "URGENCIES",
-           "ModelProduct", "ModelReader", "ModelSender", "SENDER_FIELDS", "signature_for", "ModelReading", "ModelRefused", "anthropic_reader", "build_request",
-           "parse_reading", "user_content"]
+__all__ = ["DEFAULT_MODEL", "INTENTS", "STAGE_ANSWERS", "LinkedCase", "OUTPUT_SCHEMA", "SENDER_FIELDS", "SYSTEM_PROMPT",
+           "URGENCIES", "ModelProduct", "ModelReader", "ModelReading", "ModelRefused", "ModelSender", "anthropic_reader",
+           "build_request", "parse_reading", "signature_for", "user_content"]

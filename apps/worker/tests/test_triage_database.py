@@ -638,7 +638,8 @@ def test_who_wrote_an_inbound_email_is_read_from_its_participants_into_people_v1
 
     store = Store()
     raw = make_raw(frm="Juan Pedro Soto Rivas <pjsoto@hotmail.invalid>",
-                   to=f"{MAILBOX}, compras@ficticia.invalid", cc="Ana <ana@origenlab.cl>, lab@ficticia.invalid",
+                   to=f"{MAILBOX}, compras@ficticia.invalid",
+                   cc="Ana <ana@origenlab.cl>, Tatiana <contacto@labdelivery.cl>, lab@ficticia.invalid",
                    subject="Consulta de equipos", message_id=f"<{uuid.uuid4().hex}@hotmail.invalid>")
     sid = source_record(dsn, capture(target, mailbox_id, store, f"pp-{uuid.uuid4().hex[:8]}", raw))
     before = business_rows(dsn)
@@ -648,5 +649,17 @@ def test_who_wrote_an_inbound_email_is_read_from_its_participants_into_people_v1
                                  "and kind = 'message_triage' and value_norm = %s", (sid, PEOPLE_VALUE_NORM))
     assert value == {"version": 1, "sender_address": "pjsoto@hotmail.invalid", "header_name": "Juan Pedro Soto Rivas",
                      "signature": None, "co_addresses": ["compras@ficticia.invalid", "lab@ficticia.invalid"],
-                     "signature_raw": "Hola,\nadjunto el documento."}
+                     "signature_raw": ""}
     assert business_rows(dsn) == before  # nothing in crm.* or outbound.*
+
+
+def test_a_bounce_gets_no_people_reading_on_a_real_database(dsn, target, mailbox_id) -> None:
+    from origenlab_worker.people_reading import PEOPLE_VALUE_NORM
+
+    store = Store()
+    sid = source_record(dsn, capture(target, mailbox_id, store, f"pb-{uuid.uuid4().hex[:8]}",
+                                     ndr_raw("550 5.1.1 User unknown", failed="dead@cliente.invalid")))
+    with triage_conn(target) as conn:
+        assert triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL)).triage_class == "bounce"
+    assert owner_rows(dsn, "select 1 from evidence.assertion where source_record_id = %s and value_norm = %s",
+                      (sid, PEOPLE_VALUE_NORM)) == []

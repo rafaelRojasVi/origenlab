@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from origenlab_worker.people_reading import PEOPLE_VALUE_NORM, people_value
+from origenlab_worker.people_reading import NO_PEOPLE_CLASSES, OWN_DOMAINS, PEOPLE_VALUE_NORM, people_value
 from origenlab_worker.triage_model import ModelSender
 
 SENDER = "pjsoto@hotmail.invalid"
@@ -68,3 +68,27 @@ def test_a_model_sender_with_every_field_null_is_no_signature() -> None:
 
 def test_nothing_known_about_the_writer_is_no_reading() -> None:
     assert value(header_names={}, reading_sender=None, signature_text="") is None
+
+
+def test_a_labdelivery_sender_is_ours_and_has_no_reading() -> None:
+    assert value(sender_address="contacto@labdelivery.cl", header_names={"contacto@labdelivery.cl": "Tatiana"}) is None
+
+
+def test_own_co_addresses_are_dropped() -> None:
+    co = ["contacto@labdelivery.cl", "lab@ficticia.invalid", "ana@origenlab.cl"]
+    assert value(co_addresses=co)["co_addresses"] == ["lab@ficticia.invalid"]
+
+
+def test_own_domains_are_the_apis() -> None:
+    from origenlab_api.v2.person_suggestions import OWN_DOMAINS as API_OWN_DOMAINS
+
+    assert OWN_DOMAINS == API_OWN_DOMAINS == {"origenlab.cl", "labdelivery.cl"}
+
+
+def test_machine_classes_are_every_class_no_person_wrote() -> None:
+    from origenlab_worker.triage import HUMAN_CLASSES
+    from origenlab_worker.triage_rules import CLASSES
+
+    assert NO_PEOPLE_CLASSES == {"outbound", "bounce", "auto_reply", "calendar", "unsubscribe", "bulk",
+                                 "notification", "empty", "tender_notice"}
+    assert NO_PEOPLE_CLASSES | set(HUMAN_CLASSES) == set(CLASSES) and not NO_PEOPLE_CLASSES & set(HUMAN_CLASSES)
