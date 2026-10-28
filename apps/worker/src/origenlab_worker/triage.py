@@ -8,6 +8,11 @@ Writes, all `on conflict do nothing`, in one transaction per message:
   `value` (class, reasons, signals, candidates, the model's answer or why it did not run);
 * one `product_mention` assertion per product named — by the model when it ran, otherwise by an
   exact model-number match in the catalog;
+* for inbound mail from outside that a person wrote (not `people_reading.NO_PEOPLE_CLASSES`), one
+  `message_triage` assertion `people:v1` (`people_reading.py`) — who wrote it: the sender's
+  address, the name in its header, what its signature states (the model's `sender`, when the model
+  ran), its delimited signature block and who else was on it. Isolated: a failure never breaks
+  the triage;
 * for mail a person wrote (`HUMAN_CLASSES`), one `message_triage` assertion
   `case_match:v<CASE_MATCH_VERSION>` — which case it probably belongs to (`case_match.py`), or that it
   looks like a deal with no case. A person decides; nothing is linked here.
@@ -40,17 +45,23 @@ from origenlab_worker.case_match_model import PastDecision, build_pick_request, 
 from origenlab_worker.bounce import BounceAnalysis, DELIVERY_FAILURE_VALUE_NORM, analyze_bounce
 from origenlab_worker.catalog_match import ProductCandidate, match_products, model_key
 from origenlab_worker.drive_filing import storage_key
-from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, read_forward
+from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, is_forward_subject, read_forward
+from origenlab_worker.people_reading import NO_PEOPLE_CLASSES, PEOPLE_VALUE_NORM, is_own_address, people_value
 from origenlab_worker.mail_text import MailText, parse_mail
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
 from origenlab_worker.storage import StorageError
 from origenlab_worker.triage_model import (
+    DEFAULT_MODEL,
     LinkedCase,
     ModelReader,
     ModelReading,
     ModelRefused,
+    ModelSender,
+    build_people_request,
     build_request,
+    parse_people,
     parse_reading,
+    usage_tokens,
 )
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
@@ -178,9 +189,11 @@ select exists (select 1 from crm.opportunity_evidence oe
 """
 #: The cases an email could belong to: open, or closed in the last 120 days, never one an undo or a
 #: person discarded. What a person would look at to place an email: who is asking (institution and
-#: its domains), the quote numbers, every address seen on the case's Gmail threads, and the products.
+#: its domains), the quote numbers, every address seen on the case's Gmail threads, the products, and
+#: the persons on the case (current participants, named directly or through their contact point; a merged
+#: person walked up to the person it was merged into).
 CASE_CARDS_SQL = """
-with threads as (
+with recursive threads as (
   select oe.opportunity_id, sr.payload ->> 'gmail_thread_id' as thread_id
     from crm.opportunity_evidence oe
     join evidence.source_record sr on sr.id = oe.source_record_id
@@ -191,6 +204,18 @@ with threads as (
     join crm.quote q on q.id = qr.quote_id
     join evidence.source_record sr on sr.id = qr.origin_source_record_id
    where sr.payload ->> 'gmail_thread_id' is not null
+),
+people (opportunity_id, person_id, depth) as (
+  select pa.opportunity_id, coalesce(pa.person_id, cp.person_id), 0
+    from crm.opportunity_participant pa
+    left join crm.contact_point cp on cp.id = pa.contact_point_id
+   where (pa.valid_to is null or pa.valid_to > current_date)
+     and coalesce(pa.person_id, cp.person_id) is not null
+  union all
+  select pe.opportunity_id, p.merged_into_person_id, pe.depth + 1
+    from people pe
+    join crm.person p on p.id = pe.person_id
+   where p.merged_into_person_id is not null and pe.depth < 20
 )
 select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
        org.name as institution,
@@ -201,7 +226,10 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
        coalesce((select array_agg(distinct t.thread_id) from threads t where t.opportunity_id = o.id), '{}') as threads,
        coalesce(a.addresses, '{}') as addresses,
        coalesce((select array_agg(coalesce(i.model_text, i.description)) from crm.opportunity_interest i
-                  where i.opportunity_id = o.id), '{}') as interests
+                  where i.opportunity_id = o.id), '{}') as interests,
+       coalesce((select array_agg(distinct pe.person_id::text) from people pe
+                   join crm.person p on p.id = pe.person_id and p.merged_into_person_id is null
+                  where pe.opportunity_id = o.id), '{}') as person_ids
   from crm.opportunity o
   left join crm.organization org on org.id = o.organization_id
   -- Every address seen on the case's threads, in one grouped join (not one scan of comms.message per case).
@@ -218,9 +246,35 @@ select o.id::text, o.title, o.stage, o.created_at, o.closed_at, o.close_reason,
  limit 300
 """
 _KNOWN_QUOTE_NUMBERS = "select quote_number from crm.quote"
+#: The person behind a sender's address: an active email contact point a person owns (never a shared
+#: mailbox or an address whose owner is unknown — those have no person), merges followed to the winner.
+_SENDER_PERSON = """
+with recursive chain (person_id, depth) as (
+  select cp.person_id, 0
+    from crm.contact_point cp
+   where cp.kind = 'email' and cp.value_norm = %s and cp.status = 'active' and cp.person_id is not null
+     and cp.usage not in ('shared_mailbox', 'individual_owner_unknown', 'unattributed')
+  union all
+  select p.merged_into_person_id, c.depth + 1
+    from chain c
+    join crm.person p on p.id = c.person_id
+   where p.merged_into_person_id is not null and c.depth < 20
+)
+select c.person_id::text
+  from chain c
+  join crm.person p on p.id = c.person_id and p.merged_into_person_id is null
+ limit 1
+"""
 _RECIPIENTS = """
 select p.address_norm from comms.message_participant p
  where p.message_id = %s and p.role in ('to', 'cc') order by 1
+"""
+#: Who is on one message, for `people:v1`: the `from` address with its header display name, and the
+#: `to`/`cc` addresses in header-capture order.
+_PEOPLE_PARTICIPANTS = """
+select p.role, p.address_norm, p.display_name from comms.message_participant p
+ where p.message_id = %s and p.role in ('from', 'to', 'cc')
+ order by case p.role when 'from' then 0 when 'to' then 1 else 2 end, p.created_at, p.address_norm
 """
 #: Attachment names of the other emails on the same Gmail thread.
 _THREAD_ATTACHMENTS = """
@@ -351,6 +405,15 @@ class TriageDb:
             cur.execute(_KNOWN_QUOTE_NUMBERS)
             return [r[0] for r in cur.fetchall()]
 
+    def sender_person(self, address: str | None) -> str | None:
+        """The person behind the sender's address (`_SENDER_PERSON`), read-only; None when unknown."""
+        if not address:
+            return None
+        with self._tx() as cur:
+            cur.execute(_SENDER_PERSON, (address.strip().lower(),))
+            row = cur.fetchone()
+        return row[0] if row else None
+
     def case_context(self, message: PendingMessage) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """(recipients, attachment names of the thread's other emails) of one message."""
         with self._tx() as cur:
@@ -361,6 +424,43 @@ class TriageDb:
                 cur.execute(_THREAD_ATTACHMENTS, (message.thread_id, message.message_id))
                 names = tuple(r[0] for r in cur.fetchall())
         return recipients, names
+
+    def message_people(self, message_id: str) -> tuple[str | None, dict[str, str], tuple[str, ...]]:
+        """(the `from` address, address → header display name, the `to`+`cc` addresses outside our
+        domains (`people_reading.OWN_DOMAINS`) and other than the sender) of one message, read-only."""
+        with self._tx() as cur:
+            cur.execute(_PEOPLE_PARTICIPANTS, (message_id,))
+            rows = cur.fetchall()
+        sender = next((addr for role, addr, _ in rows if role == "from"), None)
+        names = {addr: name.strip() for _, addr, name in rows if name and name.strip()}
+        co: list[str] = []
+        for role, addr, _ in rows:
+            if role != "from" and addr != sender and addr not in co and not is_own_address(addr):
+                co.append(addr)
+        return sender, names, tuple(co)
+
+    def record_people(self, source_record_id: str, value: dict[str, Any]) -> None:
+        """`people:v1` — who wrote this email (`people_reading.py`). Once per email."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", PEOPLE_VALUE_NORM, Jsonb(value)))
+
+    def pending_people(self, *, since_days: int, limit: int) -> list[str]:
+        """Inbound emails of the last days whose latest triage reading (any `triage:v<N>`) is of a
+        class a person writes, with no `people:v1` yet — what `people-backfill` reads, newest first.
+        A forward is skipped in Python."""
+        with self._tx() as cur:
+            cur.execute(_PEOPLE_PENDING, (since_days, sorted(NO_PEOPLE_CLASSES), PEOPLE_VALUE_NORM, limit))
+            return [row[0] for row in cur.fetchall()]
+
+    def latest_triage_class(self, source_record_id: str) -> str | None:
+        """The class of the email's latest triage reading of any version (`triage:v<N>`), or None
+        when it has none."""
+        with self._tx() as cur:
+            cur.execute(_LATEST_TRIAGE_CLASS, (source_record_id,))
+            row = cur.fetchone()
+        return (row[0] or "") if row else None
 
     def past_decisions(self, sender: str | None, limit: int = 6) -> list[PastDecision]:
         if not sender or "@" not in sender:
@@ -549,12 +649,13 @@ class TriageDb:
 
 def case_row(c: tuple) -> dict[str, Any]:
     """One `CASE_CARDS_SQL` row as a plain dict (the shape of the eval's `cases.jsonl`)."""
-    oid, title, stage, created, closed, reason, institution, domains, quotes, threads, addresses, interests = c
+    (oid, title, stage, created, closed, reason, institution, domains, quotes, threads, addresses, interests,
+     people) = c
     iso = lambda v: v.isoformat() if v is not None else None  # noqa: E731
     return {"opportunity_id": oid, "title": title, "stage": stage, "created_at": iso(created), "closed_at": iso(closed),
             "close_reason": reason, "institution": institution, "domains": list(domains or []),
             "quote_numbers": list(quotes or []), "threads": list(threads or []), "addresses": list(addresses or []),
-            "interests": [i for i in (interests or []) if i]}
+            "interests": [i for i in (interests or []) if i], "person_ids": sorted(people or [])}
 
 
 def match_message(db: Any, message: PendingMessage, mail: MailText,
@@ -569,6 +670,8 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
             recipients, thread_names = db.case_context(message)
             cards = db.case_cards()
             known = db.known_quote_numbers()
+            # Only a client's email is placed by its person: our own outbound sender is no client.
+            person = db.sender_person(mail.sender) if message.direction == "inbound" else None
     except Exception:  # noqa: BLE001 - a suggestion never takes the triage down with it
         return None
     if held_by_tender:
@@ -576,7 +679,7 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
         none = MatchResult("none", (), (), None)
         return none, {**none.as_json(), "pick_state": "not_needed", "held_by": "tender"}
     inp = MatchInput(mail.sender, recipients, message.thread_id, message.direction, mail.subject, mail.body,
-                     mail.attachment_names, message.sent_at, thread_names)
+                     mail.attachment_names, message.sent_at, thread_names, sender_person_id=person)
     result = match_case(inp, cards, known)
     value: dict[str, Any] = result.as_json()
     if settings is None or settings.reader is None:
@@ -760,12 +863,119 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     written = db.record(message.source_record_id, value, mentions, requester, match_value)
     if verdict.triage_class == "bounce":
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
+    record_people_reading(db, message, mail, reading, verdict.triage_class)
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     record_quote_refs(db, message.source_record_id, mail)
     if verdict.triage_class in HUMAN_CLASSES and (match is None or match.decision != "rejected"):
         record_memory_reading(db, message, match, mail.body, cases)
     decision = match.decision if match else ("unavailable" if verdict.triage_class in HUMAN_CLASSES else None)
     return TriageResult("recorded", verdict.triage_class, state, written, decision)
+
+
+def record_people_reading(db: Any, message: PendingMessage, mail: MailText, reading: ModelReading | None,
+                          triage_class: str | None) -> bool:
+    """`people:v1` (`people_reading.py`): who wrote an inbound email a person wrote — never machine
+    mail (`NO_PEOPLE_CLASSES`). The model's `sender` when it ran, otherwise only the header name and
+    the delimited signature. Isolated like the quote-number reading: a failure is logged by class
+    and swallowed, never the triage's. True when written."""
+    if message.direction != "inbound" or triage_class in NO_PEOPLE_CLASSES:
+        return False
+    try:
+        value = _people_value(message, mail, db.message_people(message.message_id),
+                              reading.sender if reading is not None else None)
+        if value is None:
+            return False
+        db.record_people(message.source_record_id, value)
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("people reading skipped: %s", type(exc).__name__)
+        return False
+
+
+def _people_value(message: PendingMessage, mail: MailText, people: tuple[str | None, dict[str, str], tuple[str, ...]],
+                  sender: ModelSender | None, *, empty_ok: bool = False) -> dict[str, Any] | None:
+    """The one place a `people:v1` value is built — the triage and the backfill write the same.
+    ``empty_ok`` (the backfill, after a paid model call) keeps a reading that knows only the address."""
+    address, names, co = people
+    return people_value(direction=message.direction, sender_address=address, header_names=names,
+                        reading_sender=sender, signature_text=mail.signature_text, co_addresses=co,
+                        forwarded=is_forward_subject(mail.subject), empty_ok=empty_ok)
+
+
+def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source_record_ids: Sequence[str], *,
+                    apply: bool, sample: int | None, model: str = DEFAULT_MODEL) -> dict[str, int]:
+    """`people:v1` for emails triaged before the reading existed (`TriageDb.pending_people`): one
+    people-only model call each (`build_people_request`), then the very value the triage writes.
+
+    Never re-runs the triage. Skips mail the triage would skip (not inbound, no triage reading, a
+    class no person writes, a forward, our own sender) without calling the model. A plain dry run
+    reads and counts and calls no model; ``sample`` reads only the first N emails and calls the model
+    for them, so their token totals price the whole run; only ``apply`` writes. Resumable: a written
+    email leaves `pending_people`. An email the model was asked about is always written — when
+    nothing is known of the writer, as a reading with only the address (the people rules plan
+    nothing for it) — so a rerun never pays for it twice. A refused answer or a permanent API error
+    is written without a signature, as the triage does; a passing outage raises `ModelUnavailable`
+    carrying the counts so far (`.counts`; run it again later).
+
+    The triage reading may be of any version (`triage:v<N>`, its latest): mail triaged before the
+    current `TRIAGE_VERSION` is in the 90 days too.
+    """
+    counts = {"found": len(source_record_ids), "read": 0, "model_calls": 0, "written": 0, "skipped": 0,
+              "input_tokens": 0, "output_tokens": 0}
+    ids = list(source_record_ids)[:sample] if sample is not None else list(source_record_ids)
+    ask = reader is not None and (apply or sample is not None)
+    for sid in ids:
+        loaded = db.load(sid)
+        if loaded is None:
+            counts["skipped"] += 1
+            continue
+        message = loaded[0]
+        triage_class = db.latest_triage_class(sid) if message.direction == "inbound" else None
+        if (triage_class is None or message.direction != "inbound" or triage_class in NO_PEOPLE_CLASSES
+                or not message.eml_storage_path):
+            counts["skipped"] += 1
+            continue
+        try:
+            mail = parse_mail(store.get(storage_key(message.eml_storage_path)))
+        except Exception:  # noqa: BLE001 - one unreadable message is skipped, never fatal
+            counts["skipped"] += 1
+            continue
+        people = db.message_people(message.message_id)
+        if is_forward_subject(mail.subject) or not people[0] or is_own_address(people[0]):
+            counts["skipped"] += 1
+            continue
+        counts["read"] += 1
+        sender: ModelSender | None = None
+        if ask:
+            assert reader is not None
+            counts["model_calls"] += 1
+            try:
+                answer = reader(build_people_request(mail, model=model))
+            except Exception as exc:  # noqa: BLE001 - reported by class only, never message text
+                if not is_permanent_api_error(exc):
+                    counts["model_calls"] -= 1
+                    counts["read"] -= 1
+                    unavailable = ModelUnavailable(type(exc).__name__)
+                    unavailable.counts = counts  # type: ignore[attr-defined]
+                    raise unavailable from None
+                answer = None
+            if answer is not None:
+                tokens_in, tokens_out = usage_tokens(answer)
+                counts["input_tokens"] += tokens_in
+                counts["output_tokens"] += tokens_out
+                try:
+                    sender, _ = parse_people(answer)
+                except ModelRefused:
+                    sender = None
+        if not apply:
+            continue
+        value = _people_value(message, mail, people, sender, empty_ok=ask)
+        if value is None:
+            counts["skipped"] += 1
+            continue
+        db.record_people(sid, value)
+        counts["written"] += 1
+    return counts
 
 
 def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:
@@ -805,6 +1015,37 @@ _INSERT_FORWARD = """
 insert into evidence.source_record (kind, dedupe_key, payload)
 values ('forwarded_request', %s, %s)
 on conflict (dedupe_key) do nothing
+"""
+
+#: `people-backfill`'s list: inbound, parsed, stored, of the last days; its latest triage reading
+#: (any `triage:v<N>`, ruling R11) of a class a person writes; no `people:v1` yet.
+_PEOPLE_PENDING = """
+select sr.id::text
+  from comms.message m
+  join evidence.source_record sr on sr.dedupe_key = 'gmail_message:' || m.provider_message_id
+ where sr.kind = 'gmail_message'
+   and m.direction = 'inbound'
+   and m.parse_status = 'parsed'
+   and m.eml_storage_path is not null
+   and m.internal_date >= now() - make_interval(days => %s)
+   and exists (select 1 from (select a.value->>'class' as c from evidence.assertion a
+                               where a.source_record_id = sr.id and a.kind = 'message_triage'
+                                 and a.value_norm ~ '^triage:v[0-9]+$'
+                               order by substring(a.value_norm from 9)::int desc
+                               limit 1) latest
+                where not (coalesce(latest.c, '') = any(%s)))
+   and not exists (select 1 from evidence.assertion p
+                    where p.source_record_id = sr.id and p.kind = 'message_triage' and p.value_norm = %s)
+ order by m.internal_date desc
+ limit %s
+"""
+
+_LATEST_TRIAGE_CLASS = """
+select a.value->>'class'
+  from evidence.assertion a
+ where a.source_record_id = %s and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
+ order by substring(a.value_norm from 9)::int desc
+ limit 1
 """
 
 _QUOTE_REFS_PENDING = """

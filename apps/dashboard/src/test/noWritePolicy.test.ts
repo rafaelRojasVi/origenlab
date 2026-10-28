@@ -42,7 +42,7 @@ describe("dashboard read-only policy", () => {
   //    it as a permanent unsubscribe; an admin dismisses a false positive), and the admin-only
   //    *block* / *unblock*, which place or lift a campaign safety block that only refuses. None
   //    approves, schedules or sends anything, and none lifts a confirmed unsubscribe.
-  //  - crmAuthoringApi.ts's POST to the 29 CRM authoring commands: freeform create/update/archive
+  //  - crmAuthoringApi.ts's POST to the 31 CRM authoring commands: freeform create/update/archive
   //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
   //    and notes. All go through the API's Deciding role check (sales or admin).
   //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
@@ -185,6 +185,9 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/add-note",
     "/v2/commands/revise-note",
     "/v2/commands/archive-note",
+    // People first (2026-10-28): «Sí» / «No» on a «¿Es …?» guess, «Confirmar» on a learned fact.
+    "/v2/commands/answer-person-guess",
+    "/v2/commands/confirm-person-fact",
   ];
 
   it("allows only the logout POST, the campaign-command POST, the CRM authoring POST, the email-rules POST and the case-command POST", () => {

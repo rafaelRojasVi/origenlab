@@ -284,9 +284,14 @@ insert into expected_policies values
     -- 20261028100000: crm.todo — api select/insert/update, no worker policy.
     ('crm', 'todo', 'origenlab_api', 'SELECT'),
     ('crm', 'todo', 'origenlab_api', 'INSERT'),
-    ('crm', 'todo', 'origenlab_api', 'UPDATE');
+    ('crm', 'todo', 'origenlab_api', 'UPDATE'),
+    -- 20261029100000: crm.person_name — api select/insert/update, worker select.
+    ('crm', 'person_name', 'origenlab_api', 'SELECT'),
+    ('crm', 'person_name', 'origenlab_api', 'INSERT'),
+    ('crm', 'person_name', 'origenlab_api', 'UPDATE'),
+    ('crm', 'person_name', 'origenlab_worker', 'SELECT');
 
-select is((select count(*)::int from expected_policies), 226, 'the matrix implies 226 policies');
+select is((select count(*)::int from expected_policies), 230, 'the matrix implies 230 policies');
 
 -- Posture.
 select is(

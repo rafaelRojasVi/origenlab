@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
@@ -22,7 +22,10 @@ const RESPONSE: CaseThreadsResponse = {
       thread_id: "t2", subject: "Precio equipo", kind: "proveedor", count: 1, last_at: "2026-09-01T12:00:00Z",
       url: "https://mail.google.com/mail/u/0/#all/s1",
       messages: [{ message_id: "s1", sent_at: "2026-09-01T12:00:00Z", direction: "inbound", from: "fabricante-ficticio.example",
-        subject: "Precio equipo", has_pdf: false, url: "https://mail.google.com/mail/u/0/#all/s1" }],
+        subject: "Precio equipo", has_pdf: false, url: "https://mail.google.com/mail/u/0/#all/s1",
+        person_guesses: [{ guess_id: "g1:p1", address: "x@fabricante-ficticio.example", person_id: "p1",
+          person_name: "Pedro Soto", organization_name: "Universidad Ficticia", reasons: ["mismo apellido"],
+          question_es: "¿Es Pedro Soto (Universidad Ficticia)?" }] }],
     },
   ],
 };
@@ -102,5 +105,30 @@ describe("Correos del caso as cadenas", () => {
     const [client] = await screen.findAllByTestId("case-thread");
     expect(within(client).queryAllByRole("button", { name: /Ana Ficticia/ })).toHaveLength(0);
     expect(within(client).getAllByRole("link").length).toBeGreaterThan(1);
+  });
+
+  it("shows the «¿Es …?» guess under the sender, and «Sí» posts the answer and clears it", async () => {
+    const posts: { path: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      posts.push({ path: new URL(url, "http://localhost").pathname, body: JSON.parse(String(init?.body ?? "{}")) });
+      return Promise.resolve(new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    const { CaseThreads } = await import("./CaseThreads");
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <CaseThreads opportunityId="case-1" />
+      </AuthSessionContext.Provider>,
+    );
+    const threads = await screen.findAllByTestId("case-thread");
+    const guess = within(threads[1]).getByTestId("person-guess");
+    expect(guess).toHaveTextContent("¿Es Pedro Soto (Universidad Ficticia)?");
+    expect(within(threads[0]).queryByTestId("person-guess")).toBeNull();
+    fireEvent.click(within(guess).getByRole("button", { name: "Sí" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].path).toBe("/v2/commands/answer-person-guess");
+    expect(posts[0].body).toMatchObject({ guess_id: "g1:p1", answer: "si" });
+    await waitFor(() => expect(within(threads[1]).queryByTestId("person-guess")).toBeNull());
+    vi.unstubAllGlobals();
   });
 });

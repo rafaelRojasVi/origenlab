@@ -30,6 +30,8 @@ import {
 import { ContactPointList } from "./ContactPointList";
 import { NoteList } from "./NoteList";
 import { MergePeopleDialog } from "./MergePeopleDialog";
+import { PersonGuessRow } from "./PersonGuessRow";
+import { OtherNames, ProvenanceList } from "./PersonProvenance";
 import { isAdmin } from "./authoring";
 import { useAuthSession } from "../../context/AuthSessionContext";
 
@@ -157,6 +159,19 @@ function PersonDrawerBody({
           </dl>
         )}
       </Section>
+
+      {/* People first: other names, where each fact came from, and who-is-this guesses */}
+      <OtherNames names={data.other_names ?? []} />
+      {(data.guesses ?? []).length > 0 ? (
+        <Section title="¿Es esta persona?">
+          <div className="space-y-2">
+            {(data.guesses ?? []).map((g) => (
+              <PersonGuessRow key={g.guess_id} guess={g} mayAnswer={mayAuthor && person.status === "active"} onAnswered={onRefresh} />
+            ))}
+          </div>
+        </Section>
+      ) : null}
+      <ProvenanceList items={data.provenance ?? []} mayAuthor={mayAuthor && person.status === "active"} onChanged={onRefresh} />
 
       {/* Contact points */}
       <ContactPointList

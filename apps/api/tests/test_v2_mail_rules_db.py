@@ -648,6 +648,7 @@ def test_a_stage_a_person_set_afterwards_is_not_corrected_and_the_refusal_is_a_4
 # acted on by a pass — the assertions name this test's own emails only.
 
 
+@pytest.mark.serial_db  # run_once scans the whole shared cluster: a parallel test's mail would be applied
 def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays_undoable(db, world) -> None:
     from origenlab_api.v2.commands import CommandRefused
     from origenlab_api.v2.mail_rules_auto import AutoMailRules

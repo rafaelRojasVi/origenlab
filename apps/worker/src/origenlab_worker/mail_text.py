@@ -20,6 +20,12 @@ from email.utils import parseaddr
 #: few hundred characters; anything past this is history the quote markers missed.
 MAX_BODY_CHARS = 6000
 
+#: The longest signature block kept (name, title, institution, phone fit well inside).
+MAX_SIGNATURE_CHARS = 800
+
+#: How many trailing non-empty body lines are kept as `tail_text` (signatures without a delimiter).
+TAIL_LINES = 12
+
 #: Headers that machine mail sets (RFC 3834, mailing lists, bulk senders). Lower-case names.
 MACHINE_HEADERS: tuple[str, ...] = (
     "auto-submitted", "x-autoreply", "x-autorespond", "x-auto-response-suppress", "precedence",
@@ -60,6 +66,11 @@ class MailText:
     body_truncated: bool = False
     #: The Reply-To address (lower-cased bare address), when present; None otherwise.
     reply_to: str | None = None
+    #: The lines after the first signature delimiter inside the reply part, at most
+    #: MAX_SIGNATURE_CHARS. Never taken from quoted history.
+    signature_text: str = ""
+    #: The last TAIL_LINES non-empty lines of `body`; signatures without a delimiter live here.
+    tail_text: str = ""
 
 
 def html_to_text(markup: str) -> str:
@@ -74,25 +85,40 @@ def _normalise(text: str) -> str:
     return _BLANKS.sub("\n\n", "\n".join(lines)).strip()
 
 
-def reply_text(text: str) -> str:
-    """`text` cut at the first quoted-history marker or signature delimiter; `>` lines dropped."""
+def _is_quote_start(lines: list[str], i: int) -> bool:
+    """True when `lines[i]` opens the quoted history (the «De:» rule included)."""
+    line = lines[i]
+    if not _QUOTE_STARTS.match(line):
+        return False
+    # «De: X» alone is a sentence («De: nuestra parte…») unless Outlook's next header follows.
+    if re.match(r"^\s*(?:de|from)\s*:", line, re.IGNORECASE):
+        following = next((nxt for nxt in lines[i + 1:i + 4] if nxt.strip()), "")
+        return bool(_OUTLOOK_NEXT.match(following))
+    return True
+
+
+def split_reply(text: str) -> tuple[str, str]:
+    """`(reply, signature)`: the reply cut at the first signature delimiter or quoted-history
+    marker (`>` lines dropped), and the lines after that delimiter up to the quoted history."""
     kept: list[str] = []
+    signature: list[str] = []
+    in_signature = False
     lines = text.split("\n")
     for i, line in enumerate(lines):
         if line.lstrip().startswith(">"):
             continue
-        if _SIGNATURE.match(line.strip()):
+        if not in_signature and _SIGNATURE.match(line.strip()):
+            in_signature = True
+            continue
+        if _is_quote_start(lines, i):
             break
-        if _QUOTE_STARTS.match(line):
-            # «De: X» alone is a sentence («De: nuestra parte…») unless Outlook's next header follows.
-            if re.match(r"^\s*(?:de|from)\s*:", line, re.IGNORECASE):
-                following = next((nxt for nxt in lines[i + 1:i + 4] if nxt.strip()), "")
-                if not _OUTLOOK_NEXT.match(following):
-                    kept.append(line)
-                    continue
-            break
-        kept.append(line)
-    return _normalise("\n".join(kept))
+        (signature if in_signature else kept).append(line)
+    return _normalise("\n".join(kept)), _normalise("\n".join(signature))
+
+
+def reply_text(text: str) -> str:
+    """`text` cut at the first quoted-history marker or signature delimiter; `>` lines dropped."""
+    return split_reply(text)[0]
 
 
 def _body_part(msg: EmailMessage) -> str:
@@ -126,13 +152,14 @@ def parse_mail(raw: bytes) -> MailText:
             names.append(" ".join(filename.split()))
     reply_to_raw = str(msg.get("Reply-To", ""))
     reply_to_addr = parseaddr(reply_to_raw)[1].strip().lower() or None
-    body = reply_text(_normalise(_body_part(msg)))
+    body, signature = split_reply(_normalise(_body_part(msg)))
     truncated = len(body) > MAX_BODY_CHARS
+    tail = "\n".join([ln for ln in body[:MAX_BODY_CHARS].split("\n") if ln.strip()][-TAIL_LINES:])
     return MailText(
         sender=sender, subject=subject, machine_headers=machine, content_types=tuple(types),
         attachment_names=tuple(names), body=body[:MAX_BODY_CHARS], body_truncated=truncated,
-        reply_to=reply_to_addr,
+        reply_to=reply_to_addr, signature_text=signature[:MAX_SIGNATURE_CHARS], tail_text=tail,
     )
 
 
-__all__ = ["MAX_BODY_CHARS", "MACHINE_HEADERS", "MailText", "html_to_text", "parse_mail", "reply_text"]
+__all__ = ["MAX_BODY_CHARS", "MAX_SIGNATURE_CHARS", "TAIL_LINES", "split_reply", "MACHINE_HEADERS", "MailText", "html_to_text", "parse_mail", "reply_text"]

@@ -127,6 +127,7 @@ def test_a_captured_request_is_pending_then_recorded_once(dsn, target, mailbox_i
     )
     assert rows == [
         ("message_triage", CASE_MATCH_VALUE_NORM, "unresolved", None, None, None),
+        ("message_triage", "people:v1", "unresolved", None, None, None),
         ("message_triage", "quote_refs:v1", "unresolved", None, None, None),
         ("message_triage", REQUESTER_VALUE_NORM, "unresolved", None, None, "none"),
         ("message_triage", VALUE_NORM, "unresolved", "quote_request", "off", None),
@@ -426,6 +427,57 @@ def test_the_case_snapshot_leaves_out_discarded_and_long_closed_cases_and_the_re
     assert value["candidates"][0] == {"opportunity_id": live, "score": 8, "signals": ["thread_pdf_quote"]}
 
 
+def test_the_case_snapshot_reads_each_cases_people_and_the_senders_person_follows_merges(dsn, target) -> None:
+    """People first: a case's `person_ids` are its current participants' persons (named directly or
+    through their contact point), a merged person read as the person it was merged into; the sender's
+    person comes from an active, owned address only."""
+    tag = uuid.uuid4().hex[:6]
+    operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
+                               "values (gen_random_uuid(), %s, 'Op', 'sales', 'active') returning id::text",
+                          (f"op-p-{tag}@example.test",))[0][0]
+
+    def person(name: str) -> str:
+        return owner_rows(dsn, "insert into crm.person (display_name, confirmation) values (%s, 'machine_proposed') "
+                               "returning id::text", (f"{name} {tag}",))[0][0]
+
+    def address(value: str, who: str | None, usage: str = "personal", org: str | None = None) -> str:
+        return owner_rows(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, "
+                               "organization_id, usage, confirmation) values ('email', %s, %s, %s, %s, %s, "
+                               "'machine_proposed') returning id::text", (value, value, who, org, usage))[0][0]
+
+    winner, loser, bruno, gone = person("Ana"), person("Ana duplicada"), person("Bruno"), person("Carla")
+    owner_rows(dsn, "update crm.person set merged_into_person_id = %s where id = %s returning id", (winner, loser))
+    org = owner_rows(dsn, "insert into crm.organization (kind, name, confirmation) values ('institution', %s, "
+                          "'confirmed') returning id::text", (f"Instituto Personas {tag}",))[0][0]
+    ana_old = f"ana.antigua-{tag}@cliente.invalid"
+    address(ana_old, loser)
+    bruno_cp = address(f"bruno-{tag}@cliente.invalid", bruno)
+    desk = f"compras-{tag}@cliente.invalid"
+    address(desk, None, "shared_mailbox", org)
+    owner_unknown = f"lab-{tag}@cliente.invalid"
+    address(owner_unknown, None, "individual_owner_unknown", org)
+    unattributed = f"info-{tag}@cliente.invalid"
+    address(unattributed, None, "unattributed")
+    retired = f"ana.retirada-{tag}@cliente.invalid"
+    address(retired, winner)
+    owner_rows(dsn, "update crm.contact_point set status = 'inactive', deactivated_at = now(), "
+                    "deactivated_by_operator_id = %s where value_norm = %s returning id", (operator, retired))
+    oid = owner_rows(dsn, "insert into crm.opportunity (title, stage, owner_operator_id) values (%s, 'lead', %s) "
+                          "returning id::text", (f"Caso personas {tag}", operator))[0][0]
+    for who, cp, valid_to in ((loser, None, None), (None, bruno_cp, None), (gone, None, "2026-02-01")):
+        owner_rows(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, contact_point_id, role, "
+                        "valid_from, valid_to, confirmation) values (%s, %s, %s, 'end_user', '2026-01-01', %s, "
+                        "'machine_proposed') returning id", (oid, who, cp, valid_to))
+    with triage_conn(target) as conn:
+        db = TriageDb(conn)
+        card = next(c for c in db.case_cards() if c.opportunity_id == oid)
+        senders = {a: db.sender_person(a) for a in (ana_old, ana_old.upper(), desk, owner_unknown, unattributed,
+                                                     retired, f"nadie-{tag}@cliente.invalid", None)}
+    assert sorted(card.person_ids) == sorted([winner, bruno])
+    assert senders == {ana_old: winner, ana_old.upper(): winner, desk: None, owner_unknown: None,
+                       unattributed: None, retired: None, f"nadie-{tag}@cliente.invalid": None, None: None}
+
+
 def test_past_decisions_read_links_and_rejected_suggestions_for_the_senders_domain(dsn, target, mailbox_id) -> None:
     tag = uuid.uuid4().hex[:6]
     operator = owner_rows(dsn, "insert into platform.operator (auth_user_id, email_norm, display_name, role, status) "
@@ -630,3 +682,35 @@ def test_a_tender_is_never_a_triage_case_a_matcher_candidate_or_a_memory(dsn, ta
     assert linked == {"sale": [cases["sale"]], "tender": []}
     assert past == {cases["sale"]}
     assert emails["sale"] in pending and emails["tender"] not in pending
+
+
+def test_who_wrote_an_inbound_email_is_read_from_its_participants_into_people_v1(dsn, target, mailbox_id) -> None:
+    from origenlab_worker.people_reading import PEOPLE_VALUE_NORM
+
+    store = Store()
+    raw = make_raw(frm="Juan Pedro Soto Rivas <pjsoto@hotmail.invalid>",
+                   to=f"{MAILBOX}, compras@ficticia.invalid",
+                   cc="Persona Ficticia <persona.ficticia@origenlab.cl>, Otra Ficticia <contacto@labdelivery.cl>, lab@ficticia.invalid",
+                   subject="Consulta de equipos", message_id=f"<{uuid.uuid4().hex}@hotmail.invalid>")
+    sid = source_record(dsn, capture(target, mailbox_id, store, f"pp-{uuid.uuid4().hex[:8]}", raw))
+    before = business_rows(dsn)
+    with triage_conn(target) as conn:
+        triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+    [(value,)] = owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s "
+                                 "and kind = 'message_triage' and value_norm = %s", (sid, PEOPLE_VALUE_NORM))
+    assert value == {"version": 1, "sender_address": "pjsoto@hotmail.invalid", "header_name": "Juan Pedro Soto Rivas",
+                     "signature": None, "co_addresses": ["compras@ficticia.invalid", "lab@ficticia.invalid"],
+                     "signature_raw": ""}
+    assert business_rows(dsn) == before  # nothing in crm.* or outbound.*
+
+
+def test_a_bounce_gets_no_people_reading_on_a_real_database(dsn, target, mailbox_id) -> None:
+    from origenlab_worker.people_reading import PEOPLE_VALUE_NORM
+
+    store = Store()
+    sid = source_record(dsn, capture(target, mailbox_id, store, f"pb-{uuid.uuid4().hex[:8]}",
+                                     ndr_raw("550 5.1.1 User unknown", failed="dead@cliente.invalid")))
+    with triage_conn(target) as conn:
+        assert triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL)).triage_class == "bounce"
+    assert owner_rows(dsn, "select 1 from evidence.assertion where source_record_id = %s and value_norm = %s",
+                      (sid, PEOPLE_VALUE_NORM)) == []

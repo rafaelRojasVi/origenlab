@@ -537,6 +537,7 @@ export async function markCaseWon(
 /* ── refusals, in Spanish ─────────────────────────────────────────────────── */
 
 const REFUSAL_ES: Record<string, string> = {
+  changed_since: "Alguien cambió este contacto después; revisa la ficha antes de quitarlo.",
   case_version_conflict: "Otra persona cambió este caso mientras lo veías. Se recargó: revisa y vuelve a intentarlo.",
   case_organization_not_found: "Ya no se encuentra la mención de esta institución en el caso.",
   case_organization_already_closed: "La mención ya fue resuelta. Recarga el caso.",

@@ -7,6 +7,7 @@
 
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import { refusalOfError } from "../../api/refusalEnvelope";
+import type { PersonGuess } from "../crmTypes";
 
 /* ── command paths ─────────────────────────────────────────────────────── */
 
@@ -46,6 +47,9 @@ export const CRM_COMMAND_PATHS = {
   addNote: "/v2/commands/add-note",
   reviseNote: "/v2/commands/revise-note",
   archiveNote: "/v2/commands/archive-note",
+  // people first
+  answerPersonGuess: "/v2/commands/answer-person-guess",
+  confirmPersonFact: "/v2/commands/confirm-person-fact",
 } as const;
 
 /* ── read paths ─────────────────────────────────────────────────────────── */
@@ -139,6 +143,30 @@ export interface PersonAuthoringResponse {
   references: PersonReferences;
   removal: { allowed: false; reasons: string[] };
   authoring: { enabled: boolean; may_author: boolean; may_archive: boolean };
+  /** People first: absent from an older API. */
+  other_names?: OtherName[];
+  provenance?: ProvenanceItem[];
+  guesses?: PersonGuess[];
+}
+
+export interface OtherName {
+  id: string;
+  name: string;
+  source: string | null;
+  confirmation: string;
+  machine: boolean;
+}
+
+/** One learned name, address or institution and where it came from; `source_es` is any sentence. */
+export interface ProvenanceItem {
+  kind: "name" | "address" | "affiliation";
+  id: string;
+  label: string;
+  source_es: string;
+  machine: boolean;
+  receipt_id: string | null;
+  /** «Quitar» undoes the rule that created the whole person (P3): it archives the contact. */
+  quitar_archives_person?: boolean;
 }
 
 export interface IdentifierRow {
@@ -331,6 +359,22 @@ export const fetchMergePreview = (loser: string, winner: string) =>
 
 export const fetchPersonSuggestions = () =>
   fetchJsonGet<PersonSuggestionsResponse>(operatorApiUrl(CRM_READ_PATHS.personSuggestions()));
+
+/** One Sí / No on a «¿Es …?» guess (sales or admin). */
+export function answerPersonGuess(
+  body: { guess_id: string; answer: "si" | "no" },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<unknown> {
+  return postCommand(CRM_COMMAND_PATHS.answerPersonGuess, { ...body, idempotency_key: idempotencyKey }, idempotencyKey);
+}
+
+/** «Confirmar» on a learned name, address or institution (sales or admin). */
+export function confirmPersonFact(
+  body: { kind: ProvenanceItem["kind"]; id: string },
+  idempotencyKey: string = newIdempotencyKey(),
+): Promise<unknown> {
+  return postCommand(CRM_COMMAND_PATHS.confirmPersonFact, { ...body, idempotency_key: idempotencyKey }, idempotencyKey);
+}
 
 /* ── person commands ─────────────────────────────────────────────────────── */
 

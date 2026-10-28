@@ -237,6 +237,10 @@ class Settings(BaseSettings):
     confirmed, renamed from its quote PDF when named after its domain, once a quote stood 3 days).
     Default **false**, like R14's; false keeps it for «Aplicar» only."""
     v2_auto_rule_r15_enabled: bool = False
+    """Kill flag for the people pass of the automatic timer (`v2/people_rules_repository.py`: who
+    wrote each email — new people, addresses, names, institutions, certain merges — applied before
+    the mail rules). Default **false**: nothing is learned by itself until the owner turns it on."""
+    v2_auto_people_enabled: bool = False
     """Mount POST /v2/commands/{create,save}-campaign-draft (writes outbound.campaign drafts).
 
     Default **false** and separate from `v2_commands_enabled`: writing email copy and recording

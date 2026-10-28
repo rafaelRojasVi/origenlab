@@ -135,8 +135,10 @@ def get_merge_preview(
 
 @workspace_router.get("/people/{person_id}")
 def get_person_authoring(person_id: UUID, operator: Operator, repo: Repo, request: Request) -> Any:
-    """Full authoring view of one person: contact points, affiliations, notes, references."""
-    body = repo.person_authoring(str(person_id))
+    """Full authoring view of one person: contact points, affiliations, notes, references, other
+    names, provenance and the «¿Es …?» guesses about them (people first)."""
+    people = getattr(request.app.state, "people_rules_repository", None)
+    body = repo.person_authoring(str(person_id), guesses=people.guesses_for_person if people is not None else None)
     if body is None:
         raise HTTPException(status_code=404, detail="no such person")
     enabled = bool(getattr(request.app.state, "crm_authoring_enabled", False))
@@ -180,10 +182,13 @@ def get_opportunity_notes(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
 
 
 @workspace_router.get("/opportunities/{opportunity_id}/threads")
-def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo, request: Request) -> Any:
     """The case's emails as Gmail cadenas, newest activity first, for the drawer's «Correos del
-    caso». A read only; senders by name or domain, never the full address."""
-    body = repo.opportunity_threads(str(opportunity_id))
+    caso». A read only; senders by name or domain, never the full address — except the address a
+    «¿Es …?» guess asks about (`person_guesses`), masked for a viewer like every other read."""
+    people = getattr(request.app.state, "people_rules_repository", None)
+    body = repo.opportunity_threads(str(opportunity_id),
+                                    person_guesses=people.guesses_for_case if people is not None else None)
     if body is None:
         raise HTTPException(status_code=404, detail="no such case")
     return body

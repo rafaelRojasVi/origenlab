@@ -46,6 +46,14 @@ class FakeDb:
         self.cards = list(cards)
         self.tender_threads: set[str] = set()
         self.case_matches: list[tuple[str, dict]] = []
+        self.people = ("ana@cliente.invalid", {"ana@cliente.invalid": "Ana Pérez"}, ("lab@cliente.invalid",))
+        self.people_recorded: list[tuple[str, dict]] = []
+
+    def message_people(self, message_id):
+        return self.people
+
+    def record_people(self, sid, value):
+        self.people_recorded.append((sid, value))
 
     def load(self, sid):
         if sid != "sr-1":
@@ -64,6 +72,10 @@ class FakeDb:
 
     def known_quote_numbers(self):
         return []
+
+    def sender_person(self, address):
+        self.person_asked = address
+        return {"ana@cliente.invalid": "p-ana"}.get(address or "")
 
     def past_decisions(self, sender):
         self.past_asked = sender
@@ -478,6 +490,18 @@ def test_a_failed_pick_call_never_blocks_the_triage() -> None:
     assert result.outcome == "recorded" and db.case_matches[0][1]["pick_state"] == "unavailable"
 
 
+def test_the_senders_person_reaches_the_matcher() -> None:
+    from origenlab_worker.case_match import CaseCard
+
+    mine = CaseCard("o-ana", "Caso", "quoting", None, None, (), (), (), (), ("Balanza XB3100",), ("p-ana",))
+    db = FakeDb(cards=[mine])
+    triage_one(db, FakeStore(make_raw(subject="Consulta XB3100")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    value = db.case_matches[0][1]
+    assert db.person_asked == "ana@cliente.invalid"
+    assert value["candidates"][0]["opportunity_id"] == "o-ana"
+    assert set(value["candidates"][0]["signals"]) == {"person_on_case", "product"}
+
+
 def test_a_database_failure_in_the_matcher_never_blocks_the_triage() -> None:
     class Broken(FakeDb):
         def case_cards(self):
@@ -487,3 +511,76 @@ def test_a_database_failure_in_the_matcher_never_blocks_the_triage() -> None:
     result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
     assert result.outcome == "recorded" and len(db.recorded) == 1 and db.case_matches == []
     assert result.case_match == "unavailable"
+
+
+PEOPLE_READING = {**READING, "sender": {"name": "Ana Pérez", "title": "Jefa de laboratorio",
+                                        "institution": "Universidad Ficticia", "phone": None}}
+
+
+def test_who_wrote_the_email_is_recorded_as_people_v1_with_the_model_signature() -> None:
+    from origenlab_worker.people_reading import PEOPLE_VALUE_NORM
+
+    db = FakeDb(candidates=[CAND])
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(Reader(PEOPLE_READING), DEFAULT_MODEL))
+    [(sid, value)] = db.people_recorded
+    assert sid == "sr-1" and PEOPLE_VALUE_NORM == "people:v1"
+    assert value["sender_address"] == "ana@cliente.invalid" and value["header_name"] == "Ana Pérez"
+    assert value["signature"] == PEOPLE_READING["sender"]
+    assert value["co_addresses"] == ["lab@cliente.invalid"]
+    assert value["signature_raw"] == ""  # no delimiter: the tail went to the model but is never stored
+
+
+def test_with_the_model_off_the_header_name_is_still_read() -> None:
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    [(_, value)] = db.people_recorded
+    assert value["signature"] is None and value["header_name"] == "Ana Pérez"
+
+
+def test_a_delimited_signature_is_stored_raw() -> None:
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "Ana Pérez <ana@cliente.invalid>", "contacto@origenlab.cl", "Consulta"
+    msg.set_content("Hola, ¿tienen stock?\n\n-- \nAna Pérez\nUniversidad Ficticia\n")
+    db = FakeDb()
+    triage_one(db, FakeStore(msg.as_bytes()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.people_recorded[0][1]["signature_raw"] == "Ana Pérez\nUniversidad Ficticia"
+
+
+def test_machine_mail_gets_no_people_reading() -> None:
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw(subject="Respuesta automática: Solicitud de cotización")), "sr-1",
+               ModelSettings(None, DEFAULT_MODEL))
+    assert db.recorded and db.people_recorded == []
+    bounce = (
+        b"From: Mail Delivery Subsystem <mailer-daemon@googlemail.invalid>\r\n"
+        b"To: contacto@origenlab.cl\r\n"
+        b"Subject: Delivery Status Notification (Failure)\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n\r\n"
+        b"Final-Recipient: rfc822; dead@cliente.invalid\r\n"
+        b"Status: 5.1.1\r\n550 5.1.1 User unknown; address does not exist.\r\n"
+    )
+    db = FakeDb()
+    db.people = ("mailer-daemon@googlemail.invalid", {"mailer-daemon@googlemail.invalid": "Mail Delivery Subsystem"}, ())
+    result = triage_one(db, FakeStore(bounce), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.triage_class == "bounce" and db.people_recorded == []
+
+
+def test_outbound_and_forwarded_mail_get_no_people_reading() -> None:
+    db = FakeDb(direction="outbound")
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.people_recorded == []
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw(subject="RV: Solicitud de cotización")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.people_recorded == []
+
+
+def test_a_failing_people_write_never_breaks_the_triage() -> None:
+    class Broken(FakeDb):
+        def record_people(self, sid, value):
+            raise RuntimeError("boom")
+
+    db = Broken()
+    assert triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "recorded"
+    assert db.recorded

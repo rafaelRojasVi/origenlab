@@ -184,3 +184,81 @@ def test_a_viewer_cannot_remove_and_a_key_is_required() -> None:
     assert _client(repo, "viewer").post(REMOVE, json={"receipt_id": RECEIPT}, headers=KEY).status_code == 403
     assert _client(repo, "sales").post(REMOVE, json={"receipt_id": RECEIPT}, headers=HEADERS).status_code in (400, 422, 428)
     assert repo.calls == []
+
+
+PEOPLE_RECEIPT = "00000000-0000-4000-8000-0000000000bb"
+
+
+class _FakePeople:
+    def __init__(self):
+        self.calls = []
+
+    def recent_automatic(self, hours=48, limit=50):
+        self.calls.append(("recent", hours))
+        return [{"receipt_id": PEOPLE_RECEIPT, "rule_id": "P2", "applied_at": "2099-01-01T00:00:00+00:00",
+                 "person_id": "p-1", "what": "Pedro Soto: nuevo correo pjsoto@hotmail.invalid"}]
+
+    def has_receipt(self, receipt_id):
+        return receipt_id == PEOPLE_RECEIPT
+
+    def remove_automatic(self, operator, receipt_id):
+        self.calls.append(("remove", operator.role, receipt_id))
+        return {"undoes_receipt_id": receipt_id}
+
+
+def _people_client(repo, people, role="admin"):
+    client = _client(repo, role)
+    client.app.state.people_rules_repository = people
+    return client
+
+
+def test_automatic_actions_include_people_rows() -> None:
+    repo, people = _FakeRepo(), _FakePeople()
+    body = _people_client(repo, people).get(AUTOMATIC, headers=HEADERS).json()
+    assert [i["receipt_id"] for i in body["items"]] == [PEOPLE_RECEIPT, RECEIPT]  # newest first
+    row = body["items"][0]
+    assert row["source"] == "people" and row["rule_id"] == "P2" and row["person_id"] == "p-1"
+    assert row["what"] == "Pedro Soto: nuevo correo pjsoto@hotmail.invalid"
+    assert body["items"][1]["rule_id"] == "R11"  # the mail rows keep their shape
+
+
+def test_remove_automatic_action_undoes_people_receipt() -> None:
+    repo, people = _FakeRepo(), _FakePeople()
+    client = _people_client(repo, people, "sales")
+    assert client.post(REMOVE, json={"receipt_id": PEOPLE_RECEIPT}, headers=KEY).status_code == 200
+    assert people.calls == [("remove", "sales", PEOPLE_RECEIPT)] and repo.calls == []
+    assert client.post(REMOVE, json={"receipt_id": RECEIPT}, headers=KEY).status_code == 200
+    assert repo.calls == [("remove", "sales", RECEIPT)]
+
+
+def test_people_receipts_keep_the_not_automatic_and_not_found_answers() -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    class _Strict(_FakePeople):
+        def remove_automatic(self, operator, receipt_id):
+            raise CommandRefused(403, "not_automatic", "only what the system did by itself is removed from Hoy")
+
+    client = _people_client(_FakeRepo(), _Strict(), "sales")
+    r = client.post(REMOVE, json={"receipt_id": PEOPLE_RECEIPT}, headers=KEY)
+    assert r.status_code == 403 and "not_automatic" in r.text
+
+    class _Missing(_FakeRepo):
+        def remove_automatic(self, operator, receipt_id):
+            raise CommandRefused(404, "applied_action_not_found", "no applied email action with that receipt")
+
+    other = "00000000-0000-4000-8000-0000000000cc"
+    r = _people_client(_Missing(), _FakePeople()).post(REMOVE, json={"receipt_id": other}, headers=KEY)
+    assert r.status_code == 404
+
+
+def test_rows_of_both_producers_order_by_the_instant() -> None:
+    class _Mixed(_FakeRepo):
+        def recent_automatic(self, hours=48):
+            return [{"receipt_id": RECEIPT, "rule_id": "R11", "applied_at": "2099-01-01T00:30:00+00:00"}]
+
+    class _P(_FakePeople):
+        def recent_automatic(self, hours=48, limit=50):
+            return [{"receipt_id": PEOPLE_RECEIPT, "rule_id": "P2", "applied_at": "2099-01-01T01:00:00+01:00"}]
+
+    items = _people_client(_Mixed(), _P()).get(AUTOMATIC, headers=HEADERS).json()["items"]
+    assert [i["receipt_id"] for i in items] == [RECEIPT, PEOPLE_RECEIPT]  # 00:30Z is after 00:00Z
