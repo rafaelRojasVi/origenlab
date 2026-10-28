@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ExternalLink, isSafeExternalHref } from "./ui";
+import { ExternalLink, fmtDate, isSafeExternalHref } from "./ui";
 
 describe("ExternalLink", () => {
   it("renders an https link with noopener noreferrer in a new tab", () => {
@@ -60,5 +60,13 @@ describe("toast", () => {
     expect(screen.queryByRole("status")).toBeNull();
     act(() => toast("No se pudo guardar.", "bad"));
     expect(screen.getByRole("alert")).toHaveTextContent("No se pudo guardar.");
+  });
+});
+
+describe("fmtDate", () => {
+  it("reads a bare day as that calendar day, in any time zone", () => {
+    expect(fmtDate("2026-10-09")).toBe(new Date(2026, 9, 9).toLocaleDateString("es-CL", { day: "2-digit", month: "short", year: "numeric" }));
+    expect(fmtDate("2026-10-09")).toMatch(/^09/);
+    expect(fmtDate("nope")).toBe("—");
   });
 });

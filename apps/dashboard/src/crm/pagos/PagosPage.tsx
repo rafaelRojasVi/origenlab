@@ -19,6 +19,7 @@ import {
   type InvoiceList,
   type InvoiceStatus,
 } from "./invoiceApi";
+import { InvoiceSheet, purchaseOrders } from "./InvoiceSheet";
 
 /**
  * «Pagos»: the facturas Tatiana issued on the SII portal, the case each belongs to, and what is still
@@ -27,7 +28,8 @@ import {
  * factura's case (the client by RUT or name; the quote with its neto, else the client's only won
  * case) and tries again on later uploads; the rest say «Asignar caso…». SII never knows whether a client paid: «Pagada» (with the day) is a person's act.
  *
- * A row reads client → amount owed → how old, the three things a collector looks for; «Por cobrar»
+ * A row reads client → amount owed → how old, the three things a collector looks for; its folio
+ * opens the factura itself («InvoiceSheet»: amounts, detail, the case's OC and quotation). «Por cobrar»
  * lists the oldest first. Every amount is the API's (notas de crédito are netted into their factura's
  * saldo there). Age is flagged in words as well as colour. At phone width a row stacks its cells;
  * nothing scrolls sideways.
@@ -201,6 +203,7 @@ function Register({
   navigate: Navigate;
 }) {
   const { summary } = data;
+  const [openId, setOpenId] = useState<string | null>(null);
   if (data.items.length === 0) {
     return (
       <EmptyState title="Todavía no hay facturas">
@@ -223,6 +226,8 @@ function Register({
   if (filter === "por_cobrar") shown.sort((a, b) => b.days_open - a.days_open || a.folio - b.folio);
   const count = (f: Filter) => data.items.filter(pick[f]).length;
   const late = (summary.by_age["61-90"] ?? 0) + (summary.by_age["90+"] ?? 0);
+  const opened = openId ? data.items.find((i) => i.invoice_id === openId) ?? null : null;
+  const cardOf = (i: Invoice) => (i.opportunity ? cases.find((c) => c.opportunity_id === i.opportunity!.id) ?? null : null);
 
   return (
     <>
@@ -271,11 +276,23 @@ function Register({
         ) : (
           <ul aria-label="Facturas">
             {shown.map((i) => (
-              <InvoiceRow key={i.invoice_id} i={i} today={data.today} showStatus={filter !== "por_cobrar"} cases={cases} may={may} reload={reload} navigate={navigate} />
+              <InvoiceRow
+                key={i.invoice_id}
+                i={i}
+                today={data.today}
+                showStatus={filter !== "por_cobrar"}
+                cases={cases}
+                card={cardOf(i)}
+                may={may}
+                reload={reload}
+                navigate={navigate}
+                onOpen={() => setOpenId(i.invoice_id)}
+              />
             ))}
           </ul>
         )}
       </Panel>
+      {opened ? <InvoiceSheet invoice={opened} card={cardOf(opened)} onClose={() => setOpenId(null)} navigate={navigate} /> : null}
     </>
   );
 }
@@ -293,18 +310,23 @@ function InvoiceRow({
   today,
   showStatus,
   cases,
+  card,
   may,
   reload,
   navigate,
+  onOpen,
 }: {
   i: Invoice;
   today: string;
   /** Off inside «Por cobrar», where every row would say the same. */
   showStatus: boolean;
   cases: OpportunityCardData[];
+  /** The case's card, for its purchase order. */
+  card: OpportunityCardData | null;
   may: boolean;
   reload: () => void;
   navigate: Navigate;
+  onOpen: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -384,12 +406,16 @@ function InvoiceRow({
       <div className="min-w-0 flex-1 space-y-1">
         <p className="break-words text-[13.5px] font-semibold text-ink">{i.organization?.name ?? i.client_name}</p>
         <p className="text-[12px] text-ink-muted">
-          <span className="text-ink">{label}</span> · {fmtDate(i.issued_on)}
+          <button type="button" className={`${LINK_ACTION} font-medium text-accent`} onClick={onOpen} aria-label={`Ver la ${label}`}>
+            {label}
+          </button>{" "}
+          · {fmtDate(i.issued_on)}
           {i.status === "unpaid" ? <> · <Age days={i.days_open} /></> : null}
         </p>
         <p className="text-[11.5px] text-ink-faint">
           RUT {i.client_rut}
           {i.organization ? "" : " · no está en Organizaciones"}
+          {purchaseOrders(card).map((d) => (d.document_number ? ` · OC ${d.document_number}` : " · con OC")).join("")}
         </p>
         {caseLine ? <div>{caseLine}</div> : null}
         {picking ? (
