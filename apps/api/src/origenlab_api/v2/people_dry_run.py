@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any
 
+from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS
 from origenlab_api.v2.people_rules import RULE_IDS, PeopleAction, PeopleSnapshot, plan_people
 
 SAMPLE_ACTIONS = 20
@@ -87,20 +89,28 @@ def report(snap: PeopleSnapshot, actions: Sequence[PeopleAction], *, samples: in
     return "\n".join(lines)
 
 
-def dry_run(connect: Any, dsn: str, statement_timeout_ms: int | None = None) -> str:
-    """Read the snapshot in a read-only transaction, plan it, roll back, and return the report."""
-    from origenlab_api.v2.people_rules_repository import PeopleRulesRepository
-
-    kwargs = {} if statement_timeout_ms is None else {"statement_timeout_ms": statement_timeout_ms}
-    repo = PeopleRulesRepository(connect, dsn, **kwargs)
+@contextmanager
+def read_only(connect: Any, dsn: str, statement_timeout_ms: int) -> Iterator[Any]:
+    """One cursor in a `set transaction read only` transaction that is always rolled back: any
+    write attempted in it fails (`ReadOnlySqlTransaction`)."""
     with connect(dsn, autocommit=False) as conn:
         try:
             with conn.cursor() as cur:
                 cur.execute("set transaction read only")
-                cur.execute("set local statement_timeout = 120000")
-                snap = repo.read_snapshot(cur)
+                cur.execute(f"set local statement_timeout = {int(statement_timeout_ms)}")
+                yield cur
         finally:
             conn.rollback()
+
+
+def dry_run(connect: Any, dsn: str, statement_timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS) -> str:
+    """Read the snapshot read-only, plan it, roll back, and return the report. The statement timeout
+    is four times the command one, as the repository's own snapshot read."""
+    from origenlab_api.v2.people_rules_repository import PeopleRulesRepository
+
+    repo = PeopleRulesRepository(connect, dsn, statement_timeout_ms)
+    with read_only(connect, dsn, int(statement_timeout_ms) * 4) as cur:
+        snap = repo.read_snapshot(cur)
     return report(snap, plan_people(snap))
 
 

@@ -326,6 +326,17 @@ def test_own_domain_and_no_name_do_nothing():
     assert plan_people(snap) == []
 
 
+def test_an_address_only_reading_plans_nothing_even_on_a_known_address():
+    # `people-backfill` keeps a reading with only the address when the model found nothing (R12).
+    snap = snapshot(
+        [reading("pedro.soto@ficticia.invalid", n=1), reading("nuevo@hotmail.invalid", n=2)],
+        persons=[person("p1", "Pedro Soto")],
+        contact_points=[cp("c1", "pedro.soto@ficticia.invalid", "p1", organization_id=UF)],
+        affiliations={"p1": {UF}},
+    )
+    assert plan_people(snap) == []
+
+
 def test_free_mail_domain_never_names_institution():
     # Even a bad exclusive-domain row for a free-mail domain never gives the institution.
     snap = snapshot(

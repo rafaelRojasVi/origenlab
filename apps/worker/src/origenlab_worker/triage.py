@@ -447,12 +447,20 @@ class TriageDb:
             cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", PEOPLE_VALUE_NORM, Jsonb(value)))
 
     def pending_people(self, *, since_days: int, limit: int) -> list[str]:
-        """Inbound emails of the last days with a triage reading of a class a person writes and no
-        `people:v1` yet — what `people-backfill` reads, newest first. A forward is skipped in Python."""
+        """Inbound emails of the last days whose latest triage reading (any `triage:v<N>`) is of a
+        class a person writes, with no `people:v1` yet — what `people-backfill` reads, newest first.
+        A forward is skipped in Python."""
         with self._tx() as cur:
-            cur.execute(_PEOPLE_PENDING, (since_days, VALUE_NORM, sorted(NO_PEOPLE_CLASSES), PEOPLE_VALUE_NORM,
-                                          limit))
+            cur.execute(_PEOPLE_PENDING, (since_days, sorted(NO_PEOPLE_CLASSES), PEOPLE_VALUE_NORM, limit))
             return [row[0] for row in cur.fetchall()]
+
+    def latest_triage_class(self, source_record_id: str) -> str | None:
+        """The class of the email's latest triage reading of any version (`triage:v<N>`), or None
+        when it has none."""
+        with self._tx() as cur:
+            cur.execute(_LATEST_TRIAGE_CLASS, (source_record_id,))
+            row = cur.fetchone()
+        return (row[0] or "") if row else None
 
     def past_decisions(self, sender: str | None, limit: int = 6) -> list[PastDecision]:
         if not sender or "@" not in sender:
@@ -885,12 +893,13 @@ def record_people_reading(db: Any, message: PendingMessage, mail: MailText, read
 
 
 def _people_value(message: PendingMessage, mail: MailText, people: tuple[str | None, dict[str, str], tuple[str, ...]],
-                  sender: ModelSender | None) -> dict[str, Any] | None:
-    """The one place a `people:v1` value is built — the triage and the backfill write the same."""
+                  sender: ModelSender | None, *, empty_ok: bool = False) -> dict[str, Any] | None:
+    """The one place a `people:v1` value is built — the triage and the backfill write the same.
+    ``empty_ok`` (the backfill, after a paid model call) keeps a reading that knows only the address."""
     address, names, co = people
     return people_value(direction=message.direction, sender_address=address, header_names=names,
                         reading_sender=sender, signature_text=mail.signature_text, co_addresses=co,
-                        forwarded=is_forward_subject(mail.subject))
+                        forwarded=is_forward_subject(mail.subject), empty_ok=empty_ok)
 
 
 def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source_record_ids: Sequence[str], *,
@@ -902,8 +911,14 @@ def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source
     class no person writes, a forward, our own sender) without calling the model. A plain dry run
     reads and counts and calls no model; ``sample`` reads only the first N emails and calls the model
     for them, so their token totals price the whole run; only ``apply`` writes. Resumable: a written
-    email leaves `pending_people`. A refused answer or a permanent API error is written without a
-    signature, as the triage does; a passing outage raises `ModelUnavailable` (run it again later).
+    email leaves `pending_people`. An email the model was asked about is always written — when
+    nothing is known of the writer, as a reading with only the address (the people rules plan
+    nothing for it) — so a rerun never pays for it twice. A refused answer or a permanent API error
+    is written without a signature, as the triage does; a passing outage raises `ModelUnavailable`
+    carrying the counts so far (`.counts`; run it again later).
+
+    The triage reading may be of any version (`triage:v<N>`, its latest): mail triaged before the
+    current `TRIAGE_VERSION` is in the 90 days too.
     """
     counts = {"found": len(source_record_ids), "read": 0, "model_calls": 0, "written": 0, "skipped": 0,
               "input_tokens": 0, "output_tokens": 0}
@@ -914,8 +929,9 @@ def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source
         if loaded is None:
             counts["skipped"] += 1
             continue
-        message, done, triage_class = loaded[0], loaded[1], loaded[2]
-        if (not done or message.direction != "inbound" or triage_class in NO_PEOPLE_CLASSES
+        message = loaded[0]
+        triage_class = db.latest_triage_class(sid) if message.direction == "inbound" else None
+        if (triage_class is None or message.direction != "inbound" or triage_class in NO_PEOPLE_CLASSES
                 or not message.eml_storage_path):
             counts["skipped"] += 1
             continue
@@ -937,7 +953,11 @@ def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source
                 answer = reader(build_people_request(mail, model=model))
             except Exception as exc:  # noqa: BLE001 - reported by class only, never message text
                 if not is_permanent_api_error(exc):
-                    raise ModelUnavailable(type(exc).__name__) from None
+                    counts["model_calls"] -= 1
+                    counts["read"] -= 1
+                    unavailable = ModelUnavailable(type(exc).__name__)
+                    unavailable.counts = counts  # type: ignore[attr-defined]
+                    raise unavailable from None
                 answer = None
             if answer is not None:
                 tokens_in, tokens_out = usage_tokens(answer)
@@ -949,7 +969,7 @@ def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source
                     sender = None
         if not apply:
             continue
-        value = _people_value(message, mail, people, sender)
+        value = _people_value(message, mail, people, sender, empty_ok=ask)
         if value is None:
             counts["skipped"] += 1
             continue
@@ -997,8 +1017,8 @@ values ('forwarded_request', %s, %s)
 on conflict (dedupe_key) do nothing
 """
 
-#: `people-backfill`'s list: inbound, parsed, stored, of the last days; triaged (this triage version)
-#: as a class a person writes; no `people:v1` yet.
+#: `people-backfill`'s list: inbound, parsed, stored, of the last days; its latest triage reading
+#: (any `triage:v<N>`, ruling R11) of a class a person writes; no `people:v1` yet.
 _PEOPLE_PENDING = """
 select sr.id::text
   from comms.message m
@@ -1008,13 +1028,24 @@ select sr.id::text
    and m.parse_status = 'parsed'
    and m.eml_storage_path is not null
    and m.internal_date >= now() - make_interval(days => %s)
-   and exists (select 1 from evidence.assertion a
-                where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = %s
-                  and not (coalesce(a.value->>'class', '') = any(%s)))
+   and exists (select 1 from (select a.value->>'class' as c from evidence.assertion a
+                               where a.source_record_id = sr.id and a.kind = 'message_triage'
+                                 and a.value_norm ~ '^triage:v[0-9]+$'
+                               order by substring(a.value_norm from 9)::int desc
+                               limit 1) latest
+                where not (coalesce(latest.c, '') = any(%s)))
    and not exists (select 1 from evidence.assertion p
                     where p.source_record_id = sr.id and p.kind = 'message_triage' and p.value_norm = %s)
  order by m.internal_date desc
  limit %s
+"""
+
+_LATEST_TRIAGE_CLASS = """
+select a.value->>'class'
+  from evidence.assertion a
+ where a.source_record_id = %s and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
+ order by substring(a.value_norm from 9)::int desc
+ limit 1
 """
 
 _QUOTE_REFS_PENDING = """

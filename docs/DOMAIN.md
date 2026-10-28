@@ -178,12 +178,29 @@ a fifth subject requires a migration adding a fifth typed FK, not a text
 
 ### 2.7 Merges
 
-An organization or person merge sets `merged_into` on the loser, repoints
-every FK and every external identifier inside the same transaction, and writes
+An organization or person merge sets `merged_into` on the loser, archives it,
+moves the loser's rows to the winner inside the same transaction, and writes
 one merge domain event. Merges are performed by an operator command, or by
 people rule P5 when one address and a signature prove two proposed records are
 the same person (never two confirmed ones). P5 records every moved row so
-«Quitar» restores them exactly (§3.6.6, owner-approved 2026-10-27). A merge can never collide on `(kind, value_norm)` in
+«Quitar» restores them exactly (§3.6.6, owner-approved 2026-10-27).
+
+What a person merge moves:
+
+- **Operator `merge-people`:** repoints contact points, case participants,
+  campaign recipients and person notes; an open affiliation the winner already
+  has at the same organization is closed on the loser, any other is repointed
+  to the winner. A frozen campaign recipient cannot be rewritten
+  (`campaign_recipient_snapshot_guard`), and `origenlab_api` holds no UPDATE
+  on `crm.affiliation.person_id`, so the command is refused today when the
+  loser has a frozen recipient or an affiliation the winner lacks.
+- **P5:** repoints contact points, case participants, *unfrozen* campaign
+  recipients and person notes; a frozen recipient keeps the loser. Each of the
+  loser's open affiliations is closed (`valid_to = greatest(today,
+  valid_from + 1)`) and, when the winner lacks it, the same affiliation is
+  opened for the winner — never repointed.
+
+A merge can never collide on `(kind, value_norm)` in
 `contact_point`, because that value was already globally unique before the
 merge. `outbound.contact_control` is keyed by normalized text, deliberately
 not by FK, so safety facts survive every merge.

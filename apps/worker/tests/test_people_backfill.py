@@ -59,6 +59,9 @@ class FakeDb:
         msg = PendingMessage(sid, f"m-{sid}", direction, ("INBOX",), PATH.format(sid=sid), f"t-{sid}", None)
         return msg, triage_class is not None, triage_class, False, False, True
 
+    def latest_triage_class(self, sid):
+        return self.messages[sid][1] if sid in self.messages else None
+
     def message_people(self, message_id):
         return self.people
 
@@ -176,9 +179,32 @@ def test_a_refused_or_permanently_failing_answer_is_written_without_a_signature_
 
 def test_a_passing_model_outage_stops_the_run_so_it_resumes_later() -> None:
     db, store = _world({"sr-1": "quote_request"})
-    with pytest.raises(ModelUnavailable):
+    with pytest.raises(ModelUnavailable) as raised:
         backfill_people(db, store, Reader(error=TimeoutError()), ["sr-1"], apply=True, sample=None)
-    assert db.recorded == []
+    assert db.recorded == [] and raised.value.counts["model_calls"] == 0
+
+
+def test_an_email_the_model_was_asked_about_is_written_even_when_nothing_is_known() -> None:
+    db, store = _world({"sr-1": "quote_request"})
+    db.people = ("pedro@cliente.invalid", {}, ())
+    raw_key = "contacto@origenlab.cl/2026/10/sr-1.eml"
+    store.raws[raw_key] = make_raw(frm="pedro@cliente.invalid", subject="Consulta")
+    reader = Reader(sender=None)
+    counts = backfill_people(db, store, reader, ["sr-1"], apply=True, sample=None)
+    assert counts["written"] == 1 and len(reader.requests) == 1
+    [(_, value)] = db.recorded
+    assert value["sender_address"] == "pedro@cliente.invalid"
+    assert (value["header_name"], value["signature"]) == (None, None)
+    # The live triage writes nothing for the same email: the shared builder only keeps it on request.
+    twin = FakeDb({"sr-1": ("inbound", "quote_request")})
+    twin.people = db.people
+    msg = twin.load("sr-1")[0]
+    mail = parse_mail(store.raws[raw_key])
+    assert not record_people_reading(twin, msg, mail, None, "quote_request") and twin.recorded == []
+    # Without a model nothing was paid for: no address-only row, a later run with the model reads it.
+    off, off_store = _world({"sr-1": "quote_request"})
+    off.people, off_store.raws[raw_key] = db.people, store.raws[raw_key]
+    assert backfill_people(off, off_store, None, ["sr-1"], apply=True, sample=None)["written"] == 0
 
 
 def test_without_a_model_the_backfill_writes_the_header_name_alone() -> None:
@@ -231,6 +257,13 @@ def test_backfill_skips_messages_with_reading_on_a_real_database(dsn) -> None:
     named = capture(make_raw(frm="Ana Pérez <ana@cliente.invalid>", message_id=mid()))
     bare = capture(make_raw(frm="pedro@cliente.invalid", message_id=mid()))
     untriaged = capture(make_raw(frm="luis@cliente.invalid", message_id=mid()))
+    older = capture(make_raw(frm="Rosa Mora <rosa@cliente.invalid>", message_id=mid()))
+    older_bounce = capture(make_raw(frm="mailer@cliente.invalid", message_id=mid()))
+    # Mail triaged by an earlier triage version only (ruling R11): in the 90 days too.
+    for sid, cls in ((older, "business_other"), (older_bounce, "bounce")):
+        owner_rows(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                        "values (%s, 'message_triage', 'triage:v3', jsonb_build_object('class', %s::text))",
+                   (sid, cls))
     store = FakeStore(raws)
     with open_verified_connection(target, application_name="test-people-backfill",
                                   privileges=TRIAGE_REQUIRED_PRIVILEGES,
@@ -239,13 +272,15 @@ def test_backfill_skips_messages_with_reading_on_a_real_database(dsn) -> None:
         for sid in (named, bare):  # triaged with the model off: `named` gets people:v1, `bare` nothing
             triage_one(db, store, sid, ModelSettings(None, DEFAULT_MODEL))
         pending = db.pending_people(since_days=36500, limit=500)
-        assert bare in pending and named not in pending and untriaged not in pending
+        assert bare in pending and older in pending
+        assert named not in pending and untriaged not in pending and older_bounce not in pending
         reader = Reader()
         assert backfill_people(db, store, reader, pending, apply=False, sample=1)["written"] == 0
         assert db.pending_people(since_days=36500, limit=500) == pending
-        counts = backfill_people(db, store, reader, [bare], apply=True, sample=None)
-        assert counts["written"] == 1
-        assert bare not in db.pending_people(since_days=36500, limit=500)  # resumable: a second run skips it
+        counts = backfill_people(db, store, reader, [bare, older, older_bounce, untriaged], apply=True, sample=None)
+        assert (counts["written"], counts["skipped"]) == (2, 2)
+        left = db.pending_people(since_days=36500, limit=500)
+        assert bare not in left and older not in left  # resumable: a second run skips them
     [(value,)] = owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s "
                                  "and kind = 'message_triage' and value_norm = %s", (bare, PEOPLE_VALUE_NORM))
     assert value["sender_address"] == "pedro@cliente.invalid" and value["signature"] == SENDER
@@ -324,3 +359,37 @@ def test_a_model_run_needs_its_key_but_a_plain_dry_run_does_not(capsys) -> None:
     assert _run(args, CLI_ENV, db, store, Reader()) == 0
     line = _cli_line(capsys)
     assert (line["mode"], line["read"], line["model_calls"]) == ("dry_run", 1, 0) and db.recorded == []
+
+
+def test_the_estimate_prices_skipped_mail_as_free_and_says_when_the_limit_cut_the_list(capsys) -> None:
+    # sr-0 is ours (skipped, no model), sr-1 is read: half the sample costs nothing.
+    db, store = _world({f"sr-{i}": "quote_request" for i in range(4)})
+    people = db.people
+
+    def message_people(message_id):
+        return ("ana@origenlab.cl", {}, ()) if message_id == "m-sr-0" else people
+    db.message_people = message_people
+    env = {**CLI_ENV, "ORIGENLAB_WORKER_ANTHROPIC_API_KEY": "k"}
+    assert _run(SimpleNamespace(apply=False, since_days=90, limit=4, sample=2), env, db, store, Reader()) == 0
+    line = _cli_line(capsys)
+    assert (line["read"], line["skipped"], line["model_calls"]) == (1, 1, 1)
+    assert float(line["estimated_usd_all"]) == pytest.approx(float(line["sample_usd"]) / 2 * 4, abs=1e-4)
+    assert line["limit_reached"] is True
+    assert _run(SimpleNamespace(apply=False, since_days=90, limit=5000, sample=2), env, db, store, Reader()) == 0
+    assert _cli_line(capsys)["limit_reached"] is False
+
+
+def test_a_model_outage_mid_run_keeps_the_counts_on_the_line(capsys) -> None:
+    db, store = _world({"sr-0": "quote_request", "sr-1": "quote_request"})
+    calls = []
+
+    def reader(request):
+        calls.append(request)
+        if len(calls) == 2:
+            raise TimeoutError()
+        return Reader()(request)
+    env = {**CLI_ENV, "ORIGENLAB_WORKER_ANTHROPIC_API_KEY": "k"}
+    assert _run(SimpleNamespace(apply=True, since_days=90, limit=5000, sample=None), env, db, store, reader) == 1
+    line = _cli_line(capsys)
+    assert (line["mode"], line["error"]) == ("failed", "ModelUnavailable")
+    assert (line["written"], line["model_calls"], line["input_tokens"]) == (1, 1, 1200)

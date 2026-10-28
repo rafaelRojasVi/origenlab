@@ -211,13 +211,10 @@ def run_people_backfill(args: Any, env: Mapping[str, str], started: float, *,
 
     Plain run: counts only, no model, nothing written. `--sample N`: the model reads the first N
     pending emails and the line prices them (`sample_usd`) and the whole list (`estimated_usd_all`,
-    the sample's average times `found`); written only with `--apply`. `--apply` alone: every pending
+    `_price_people_run`; `limit_reached` when `--limit` cut the list); written only with `--apply`.
+    A model outage mid-run ends `failed` with the counts so far. `--apply` alone: every pending
     email. Resumable — rerun it after a stop. Needs `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` whenever
     the model runs; `ORIGENLAB_WORKER_TRIAGE_MODEL` picks the model (default as the triage)."""
-    from decimal import Decimal
-
-    from origenlab_api.v2.model_spend import UnpricedModel, cost_usd
-
     sample = None if args.sample is None else max(1, min(int(args.sample), 1000))
     mode = "apply" if args.apply else ("sample" if sample is not None else "dry_run")
     line: dict[str, Any] = {"event": "people_backfill", "mode": mode, "exit": EXIT_OK, "error": None}
@@ -241,22 +238,39 @@ def run_people_backfill(args: Any, env: Mapping[str, str], started: float, *,
         line.update(model=model, since_days=since)
         with open_connection(database) as conn:
             db = TriageDb(conn)
-            counts = backfill_people(db, store, reader, db.pending_people(since_days=since, limit=limit),
-                                     apply=bool(args.apply), sample=sample, model=model)
+            pending = db.pending_people(since_days=since, limit=limit)
+            # `limit_reached`: the list was cut at `--limit` — more mail is pending than `found`, the
+            # estimate covers only `found`, and `--apply` needs another pass.
+            line["limit_reached"] = len(pending) >= limit
+            counts = backfill_people(db, store, reader, pending, apply=bool(args.apply), sample=sample, model=model)
         line.update(counts)
-        if counts["model_calls"]:
-            try:
-                spent = cost_usd(model, input_tokens=counts["input_tokens"], output_tokens=counts["output_tokens"])
-                line["sample_usd"] = str(spent)
-                if counts["read"]:
-                    line["estimated_usd_all"] = str((spent / counts["read"] * counts["found"]).quantize(Decimal("0.0001")))
-            except UnpricedModel:
-                line["sample_usd"] = "unpriced"
+        _price_people_run(line, counts, model)
     except ConfigRefused as exc:
         line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
     except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(getattr(exc, "counts", None) or {})
         line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
     return _emit(line, started)
+
+
+def _price_people_run(line: dict[str, Any], counts: dict[str, int], model: str) -> None:
+    """`sample_usd` (what the model calls cost) and `estimated_usd_all`: the cost per email looked
+    at — skipped ones count as free — times `found`, so mail the run will skip is not priced."""
+    from decimal import Decimal
+
+    from origenlab_api.v2.model_spend import UnpricedModel, cost_usd
+
+    if not counts["model_calls"]:
+        return
+    try:
+        spent = cost_usd(model, input_tokens=counts["input_tokens"], output_tokens=counts["output_tokens"])
+    except UnpricedModel:
+        line["sample_usd"] = "unpriced"
+        return
+    line["sample_usd"] = str(spent)
+    looked_at = counts["read"] + counts["skipped"]
+    if looked_at:
+        line["estimated_usd_all"] = str((spent / looked_at * counts["found"]).quantize(Decimal("0.0001")))
 
 
 def _run_backfill(event: str, pending: str, backfill: Callable[..., dict[str, int]], args: Any,

@@ -44,11 +44,14 @@ def _domain(address: str) -> str:
 
 def people_value(*, direction: str, sender_address: str | None, header_names: dict[str, str],
                  reading_sender: ModelSender | None, signature_text: str, co_addresses: Sequence[str],
-                 forwarded: bool) -> dict[str, Any] | None:
+                 forwarded: bool, empty_ok: bool = False) -> dict[str, Any] | None:
     """The `people:v1` value of one email, or ``None`` when there is no outside writer to read.
 
     ``header_names`` maps an address to the display name its header gave; ``signature_text`` is the
-    delimiter-cut signature block (`MailText.signature_text`), possibly empty.
+    delimiter-cut signature block (`MailText.signature_text`), possibly empty. When nothing at all is
+    known of the writer the value is ``None`` — unless ``empty_ok`` (only `people-backfill`, after a
+    paid model call: the row marks the email read), then a value with only the address. The live
+    triage never passes it.
     """
     if direction != "inbound" or forwarded or not sender_address:
         return None
@@ -60,7 +63,7 @@ def people_value(*, direction: str, sender_address: str | None, header_names: di
     if reading_sender is not None and any(getattr(reading_sender, f) for f in SENDER_FIELDS):
         signature = reading_sender.as_json()
     raw = (signature_text or "")[:MAX_SIGNATURE_RAW]
-    if header_name is None and signature is None and not raw.strip():
+    if header_name is None and signature is None and not raw.strip() and not empty_ok:
         return None
     return {
         "version": PEOPLE_VERSION,

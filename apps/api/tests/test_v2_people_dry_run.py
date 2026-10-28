@@ -136,3 +136,16 @@ def test_main_without_a_database_url_fails_closed(monkeypatch, capsys) -> None:
     finally:
         get_settings.cache_clear()
     assert "ORIGENLAB_V2_DATABASE_URL" in capsys.readouterr().err
+
+
+@needs_db
+def test_the_dry_run_transaction_is_read_only_and_honours_the_timeout(db) -> None:
+    import psycopg
+
+    from origenlab_api.v2.people_dry_run import read_only
+
+    with read_only(psycopg.connect, runtime_dsn(db), 4321) as cur:
+        cur.execute("show statement_timeout")
+        assert cur.fetchone()[0] == "4321ms"
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            cur.execute("insert into platform.command_receipt (command_name) values ('x')")

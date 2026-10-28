@@ -349,7 +349,7 @@ def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandi
 
 #: The people backfill's request (`build_people_request`): only who wrote the email, for mail the
 #: triage read before `sender` was part of its answer. The same `sender` bullet as `SYSTEM_PROMPT`.
-PEOPLE_MAX_TOKENS = 1000
+PEOPLE_MAX_TOKENS = MAX_TOKENS  # as the triage: adaptive thinking needs the room
 PEOPLE_SYSTEM_PROMPT = """You read one email received by OrigenLab, a Chilean company that sells \
 laboratory equipment. An operator reads your answer; nothing you say is acted on automatically.
 
