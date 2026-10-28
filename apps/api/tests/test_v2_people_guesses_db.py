@@ -100,7 +100,7 @@ def _guess_world(db, w, first="Pedro"):
     signature: only a W1 guess."""
     name = f"{first} {w['sur']}"
     pid, _cp = _person(db, name, org=w["org"])
-    address = f"{first.lower()}.{w['tag']}@gmail.com"
+    address = f"{first.lower()}.{w['tag']}@gmail.invalid"
     mail = _mail(db, address, header=name)
     return pid, name, address, mail
 
@@ -267,7 +267,7 @@ def test_provenance_says_where_each_fact_was_learned_and_confirm_makes_it_a_pers
     address_item = items[("address", created["contact_point_id"])]
     assert address_item == {"kind": "address", "id": created["contact_point_id"], "label": address,
                             "source_es": "firma del correo 21 oct", "machine": True,
-                            "receipt_id": applied["command_receipt_id"]}
+                            "receipt_id": applied["command_receipt_id"], "quitar_archives_person": True}
     aff_item = items[("affiliation", created["affiliation_id"])]
     assert (aff_item["label"], aff_item["source_es"], aff_item["machine"], aff_item["receipt_id"]) == (
         world["org_name"], "firma del correo 21 oct", True, applied["command_receipt_id"])
@@ -327,3 +327,54 @@ def test_undo_refused_once_a_learned_name_was_confirmed(db, world) -> None:
     assert exc.value.code == "changed_since"
     assert _one(db, "select removed_at from crm.person_name where id = %s", p1b["created"]["person_name_id"])[0] is None
     assert pid
+
+
+@pytest.mark.parametrize("takes_the_lock", [True, False])
+def test_a_si_racing_the_timer_on_the_same_address_is_refused_409(db, world, takes_the_lock) -> None:
+    """The timer's P2 (or any other writer) attaches the address while a «Sí» is on its way: the «Sí»
+    waits, then is refused `contact_point_taken` — a 409, never a 500 from the unique index."""
+    import threading
+    import time
+
+    import psycopg
+
+    from origenlab_api.v2.commands import CommandRefused
+
+    pid, _name, address, _mail_row = _guess_world(db, world, first="Lidia" if takes_the_lock else "Marisol")
+    repo = _repo(db)
+    (guess,) = repo.guesses_for_person(pid)
+    other, _cp = _person(db, f"Otra {world['sur']}")
+    writer = psycopg.connect(db)
+    writer.execute("set role origenlab_owner")
+    if takes_the_lock:
+        writer.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"people-address:{address}",))
+    writer.execute("insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                   "values ('email', %s, %s, %s, 'personal', 'machine_proposed')", (address, address, other))
+    out: dict = {}
+
+    def answer() -> None:
+        try:
+            out["ok"] = repo.answer_guess(_operator(world["admin"]), guess["guess_id"], "si", f"k-{uuid.uuid4().hex}")
+        except CommandRefused as exc:
+            out["refused"] = exc
+
+    thread = threading.Thread(target=answer)
+    thread.start()
+    time.sleep(0.5)
+    writer.commit()
+    writer.close()
+    thread.join(20)
+    assert "ok" not in out
+    assert out["refused"].status_code == 409 and out["refused"].code == "contact_point_taken"
+    assert _one(db, "select person_id::text from crm.contact_point where value_norm = %s", address)[0] == other
+
+
+def test_provenance_says_which_quitar_archives_the_whole_person(db, world) -> None:
+    from test_v2_people_rules_db import _apply_all
+
+    _name, _address, reading = _new_person_reading(db, world, first="Victoria")
+    (result,) = _apply_all(_repo(db), world, reading)
+    pid = result["created"]["person_id"]
+    rows = _workspace(db).person_authoring(pid)["provenance"]
+    assert {r["kind"] for r in rows} == {"address", "affiliation"}
+    assert all(r["receipt_id"] == result["command_receipt_id"] and r["quitar_archives_person"] for r in rows)

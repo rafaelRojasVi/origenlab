@@ -650,7 +650,8 @@ def person_provenance(cur: Any, person_id: str) -> tuple[list[dict[str, Any]], l
     """(other names, provenance) of one person: every live name, active address and open
     institution, where it was learned, whether the machine proposed it (`machine` — «Quitar» and
     «Confirmar» apply) and the people-rule receipt that made it (`receipt_id`, null when none or
-    undone)."""
+    undone). `quitar_archives_person` says that receipt created the whole person (P3): its «Quitar»
+    archives the contact, not just that row."""
     cur.execute(
         """
         select 'name' as kind, n.id::text as id, n.name_display as label, n.confirmation, n.source,
@@ -672,11 +673,12 @@ def person_provenance(cur: Any, person_id: str) -> tuple[list[dict[str, Any]], l
     facts = cur.fetchall()
     ids = [f[1] for f in facts]
     receipts: dict[str, str] = {}
+    creates_person: set[str] = set()
     sent: dict[str, Any] = {}
     if ids:
         cur.execute(
             """
-            select r.id::text, x.fact_id
+            select r.id::text, x.fact_id, r.response_body ->> 'rule_id'
               from platform.command_receipt r
              cross join lateral (values (r.response_body -> 'created' ->> 'person_name_id'),
                                         (r.response_body -> 'created' ->> 'contact_point_id'),
@@ -688,7 +690,9 @@ def person_provenance(cur: Any, person_id: str) -> tuple[list[dict[str, Any]], l
             """,
             {"apply": _PEOPLE_APPLY, "undo": _PEOPLE_UNDO, "ids": ids},
         )
-        receipts = {fact_id: rid for rid, fact_id in cur.fetchall()}
+        found = cur.fetchall()
+        receipts = {fact_id: rid for rid, fact_id, _rule in found}
+        creates_person = {fact_id for _rid, fact_id, rule in found if rule == "P3"}
         origins = sorted({f[5] for f in facts if f[5]})
         if origins:
             cur.execute("select id::text, coalesce(payload ->> 'sent_at', created_at::text) "
@@ -703,6 +707,7 @@ def person_provenance(cur: Any, person_id: str) -> tuple[list[dict[str, Any]], l
             "source_es": learned_from(machine=machine, by_rules=fact_id in receipts, name_source=source,
                                       sent=sent.get(origin) if origin else None),
             "machine": machine, "receipt_id": receipts.get(fact_id),
+            "quitar_archives_person": fact_id in creates_person,
         })
         if kind == "name":
             names.append({"id": fact_id, "name": label, "source": source, "confirmation": confirmation,

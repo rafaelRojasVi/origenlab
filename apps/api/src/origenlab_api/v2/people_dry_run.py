@@ -5,7 +5,8 @@
 
 Reads the same snapshot the automatic run reads (`PeopleRulesRepository.read_snapshot`) inside a
 `set transaction read only` transaction that is rolled back, plans it with `people_rules.plan_people`,
-and prints counts per rule and tier and up to 20 sample actions. **Never writes**: no command, no
+and prints counts per rule and tier and up to 20 sample actions — up to 4 of each rule that changes
+something (P5, P3, P2, P4, P1b) and of the W1 guesses first, P1 only to fill the rest. **Never writes**: no command, no
 receipt, no row. Addresses are masked (`p***@hotmail…`) and person names cut to initials, so the
 output can be read with someone else in the room; institutions are named.
 
@@ -25,6 +26,11 @@ from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS
 from origenlab_api.v2.people_rules import RULE_IDS, PeopleAction, PeopleSnapshot, plan_people
 
 SAMPLE_ACTIONS = 20
+#: Up to this many samples of each rule before P1 fills the rest: after a backfill almost every
+#: action is a P1, and the owner must see the merges, new persons and guesses.
+SAMPLES_PER_RULE = 4
+#: The order the samples are shown in: the costliest mistakes first.
+SAMPLE_ORDER = ("P5", "P3", "P2", "P4", "P1b", "W1")
 
 
 def mask_address(address: str | None) -> str:
@@ -70,6 +76,17 @@ def _what(action: PeopleAction, snap: PeopleSnapshot) -> str:
     }.get(action.rule_id, action.rule_id)
 
 
+def samples_by_rule(actions: Sequence[PeopleAction], samples: int = SAMPLE_ACTIONS) -> list[PeopleAction]:
+    """Up to `SAMPLES_PER_RULE` actions of each rule in `SAMPLE_ORDER`, then P1 (and any rule not
+    yet shown) to fill up to `samples`."""
+    chosen: list[int] = []
+    for rule in SAMPLE_ORDER:
+        chosen += [i for i, a in enumerate(actions) if a.rule_id == rule][:SAMPLES_PER_RULE]
+    taken = set(chosen)
+    chosen += [i for i in range(len(actions)) if i not in taken]
+    return [actions[i] for i in chosen[:samples]]
+
+
 def report(snap: PeopleSnapshot, actions: Sequence[PeopleAction], *, samples: int = SAMPLE_ACTIONS) -> str:
     """The dry run's text: readings, counts per rule and tier, then sample actions — masked."""
     counts = Counter((a.rule_id, a.tier) for a in actions)
@@ -83,8 +100,9 @@ def report(snap: PeopleSnapshot, actions: Sequence[PeopleAction], *, samples: in
     order = {r: i for i, r in enumerate(RULE_IDS)}
     for (rule, tier), n in sorted(counts.items(), key=lambda kv: (order.get(kv[0][0], 99), kv[0][1])):
         lines.append(f"  {rule} {tier}: {n}")
-    lines.append(f"sample actions (first {min(samples, len(actions))}):")
-    for a in actions[:samples]:
+    shown = samples_by_rule(actions, samples)
+    lines.append(f"sample actions ({len(shown)}, up to {SAMPLES_PER_RULE} per rule, P1 last):")
+    for a in shown:
         lines.append(f"  - {a.rule_id} {a.tier} {mask_address(a.address)} · {_who(a, snap)} · {_what(a, snap)}")
     return "\n".join(lines)
 

@@ -351,7 +351,7 @@ def test_undo_refused_when_person_edited_since(db, world) -> None:
     with pytest.raises(CommandRefused) as refused:
         repo.undo(_operator(world["admin"]), result["command_receipt_id"], "Quitado de Hoy")
     assert refused.value.code == "changed_since"
-    assert refused.value.message == "Alguien cambió este contacto después; deshazlo desde la ficha"
+    assert refused.value.message == "Alguien cambió este contacto después; revisa la ficha antes de quitarlo."
     assert _one(db, "select status from crm.person where id = %s", pid)[0] == "active"
 
 
@@ -463,7 +463,7 @@ def test_undo_merge_refused_when_a_moved_row_was_moved_again(db, world) -> None:
     with pytest.raises(CommandRefused) as refused:
         repo.undo(_operator(world["admin"]), results[1]["command_receipt_id"], "no eran la misma persona")
     assert refused.value.code == "changed_since" and refused.value.message == (
-        "Alguien cambió este contacto después; deshazlo desde la ficha")
+        "Alguien cambió este contacto después; revisa la ficha antes de quitarlo.")
     # Nothing changed: the loser stays merged, every row where the merge left it.
     assert _one(db, "select merged_into_person_id::text from crm.person where id = %s", m["loser"])[0] == m["winner"]
     assert _all(db, "select id::text, person_id::text from crm.contact_point where person_id in (%s, %s) order by id",
@@ -489,3 +489,81 @@ def test_undo_p3_refused_when_the_person_gained_rows_since(db, world) -> None:
     assert refused.value.code == "changed_since"
     assert _one(db, "select status from crm.person where id = %s", pid)[0] == "active"
     assert _one(db, "select status from crm.contact_point where id = %s", result["created"]["contact_point_id"])[0] == "active"
+
+
+# ─────────────────────────────────────────────── final review: undo sticks, nothing is lost ──
+
+def test_quitar_sticks_when_the_same_address_writes_again(db, world) -> None:
+    op = _operator(world["admin"])
+    repo = _repo(db)
+
+    # P5: undo the merge; the next email signs the same name from the same address.
+    m = _merge_world(db, world)
+    results = _apply_all(repo, world, m["reading"])
+    repo.undo(op, results[1]["command_receipt_id"], "no eran la misma persona")
+    again = _reading(db, m["address"], sig_name=m["name"], institution=world["org_name"])
+    assert [(a.rule_id, a.tier) for a in _actions(repo, again)] == [("P1", "strong")]
+
+    # P1b: undo the name; the next email carries it again.
+    address = f"rsoto.{world['tag']}@{world['domain']}"
+    _person(db, f"Raul {world['sur']}", address=address, org=world["org"])
+    header = f"Juan Raul {world['sur']} Rivas"
+    results = _apply_all(repo, world, _reading(db, address, header=header))
+    assert [r["rule_id"] for r in results] == ["P1", "P1b"]
+    repo.undo(op, results[1]["command_receipt_id"], "no es su nombre")
+    assert [a.rule_id for a in _actions(repo, _reading(db, address, header=header))] == ["P1"]
+
+    # P4: undo the institution; the next email signs it again.
+    name = f"Nora {world['sur']}"
+    address = f"nora.{world['tag']}@{world['domain']}"
+    _person(db, name, address=address)
+    results = _apply_all(repo, world, _reading(db, address, sig_name=name, institution=world["org_name"]))
+    assert [r["rule_id"] for r in results] == ["P1", "P4"]
+    repo.undo(op, results[1]["command_receipt_id"], "no es de esa institución")
+    again = _reading(db, address, sig_name=name, institution=world["org_name"])
+    assert [a.rule_id for a in _actions(repo, again)] == ["P1"]
+
+
+def test_a_readings_unapplied_or_refused_action_stays_planned(db, world) -> None:
+    name = f"Olga {world['sur']}"
+    address = f"olga.{world['tag']}@{world['domain']}"
+    _person(db, name, address=address)
+    reading = _reading(db, address, sig_name=name, institution=world["org_name"])
+    repo, op = _repo(db), _operator(world["admin"])
+    p1, p4 = _actions(repo, reading)
+    assert (p1.rule_id, p4.rule_id) == ("P1", "P4")
+    # Only P1 is applied (a pass cap, or P4 refused): P4 is still planned on the next pass.
+    assert "code" not in repo.apply_planned(op, p1, automatic=True)
+    assert [a.rule_id for a in _actions(repo, reading)] == ["P4"]
+    # Refused (the affiliation appeared between plan and apply), then that row is closed again.
+    pid = p4.person_id
+    with _owner(db) as conn:
+        aff = conn.execute("insert into crm.affiliation (person_id, organization_id, valid_from, confirmation) "
+                           "values (%s, %s, '2026-01-01', 'machine_proposed') returning id",
+                           (pid, world["org"])).fetchone()[0]
+    refused = repo.apply_planned(op, p4, automatic=True)
+    assert refused.get("code") == "already_affiliated"
+    with _owner(db) as conn:
+        conn.execute("update crm.affiliation set valid_to = current_date where id = %s", (aff,))
+    (still,) = _actions(repo, reading)
+    assert still.rule_id == "P4"
+    assert "code" not in repo.apply_planned(op, still, automatic=True)
+    assert _actions(repo, reading) == []
+
+
+def test_a_merge_rechecks_confirmation_and_the_winner_when_applied(db, world) -> None:
+    m = _merge_world(db, world)
+    repo, op = _repo(db), _operator(world["admin"])
+    p1, p5 = _actions(repo, m["reading"])
+    assert p5.rule_id == "P5" and p5.fields["winner_person_id"] == m["winner"]
+    # A person confirms the planned loser between the plan and the apply: it must be kept instead.
+    with _owner(db) as conn:
+        conn.execute("update crm.person set confirmation = 'confirmed' where id = %s", (m["loser"],))
+    out = repo.apply_planned(op, p5, automatic=True)
+    assert out.get("code") == "plan_changed"
+    # Both confirmed: never merged by the machine.
+    with _owner(db) as conn:
+        conn.execute("update crm.person set confirmation = 'confirmed' where id = %s", (m["winner"],))
+    out = repo.apply_planned(op, p5, automatic=True)
+    assert out.get("code") == "plan_changed"
+    assert _one(db, "select merged_into_person_id from crm.person where id = %s", m["loser"])[0] is None

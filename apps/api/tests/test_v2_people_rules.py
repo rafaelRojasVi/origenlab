@@ -5,6 +5,7 @@ Every name, address and institution here is fictitious (`.invalid`, «Universida
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from origenlab_api.v2.people_rules import (
@@ -13,11 +14,14 @@ from origenlab_api.v2.people_rules import (
     PeopleSnapshot,
     PersonRow,
     Reading,
+    action_key,
     name_norm,
     names_match,
     names_overlap,
     org_key,
     plan_people,
+    readings_about,
+    same_signer,
 )
 
 UF = "org-uf"          # Universidad Ficticia, domain ficticia.invalid
@@ -317,7 +321,7 @@ def test_shared_mailbox_never_resolves():
 
 def test_own_domain_and_no_name_do_nothing():
     snap = snapshot(
-        [reading("ventas@origenlab.cl", sig_name="Pedro Soto", institution="Universidad Ficticia", n=1),
+        [reading("nadie.ficticio@origenlab.cl", sig_name="Pedro Soto", institution="Universidad Ficticia", n=1),
          reading("x@labdelivery.cl", sig_name="Pedro Soto", institution="Universidad Ficticia", n=2),
          reading("pedro.soto@ficticia.invalid", institution="Universidad Ficticia", n=3)],
         persons=[person("p1", "Pedro Soto")],
@@ -341,8 +345,8 @@ def test_free_mail_domain_never_names_institution():
     # Even a bad exclusive-domain row for a free-mail domain never gives the institution.
     snap = snapshot(
         [reading("pjsoto@hotmail.invalid", sig_name="Pedro Soto"),
-         reading("ana.diaz@gmail.com", sig_name="Ana Díaz", n=2)],
-        org_by_domain={"hotmail.invalid": UF, "gmail.com": UF},
+         reading("ana.ficticia@gmail.invalid", sig_name="Ana Díaz", n=2)],
+        org_by_domain={"hotmail.invalid": UF, "gmail.invalid": UF},
     )
     assert plan_people(snap) == []
 
@@ -506,3 +510,102 @@ def test_attach_needs_one_person_even_when_another_is_partly_named():
     assert rules(actions) == [("W1", "weak")]
     assert actions[0].person_id == "p1"
     assert any("parecido" in r for r in actions[0].reasons)
+
+
+# --- final review: undo sticks, settled keys, header names, scale ------------------------------
+
+def _merge_snapshot(**extra):
+    return snapshot(
+        [reading("psoto@ficticia.invalid", sig_name="Juan Pedro Soto Rivas", institution="Universidad Ficticia",
+                 n=7)],
+        persons=[person("p1", "Pedro Soto", created_at=NEW), person("p2", "Juan Pedro Soto Rivas", created_at=OLD)],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+        affiliations={"p1": {UF}, "p2": {UF}}, **extra,
+    )
+
+
+def test_an_undone_merge_is_never_planned_again_nor_asked():
+    snap = _merge_snapshot()
+    assert ("P5", "strong") in rules(plan_people(snap))
+    blocked = replace(snap, blocked_merges=frozenset({frozenset({"p1", "p2"})}))
+    assert rules(plan_people(blocked)) == [("P1", "strong")]
+
+
+def test_an_undone_name_or_institution_is_not_learned_again():
+    snap = snapshot(
+        [reading("psoto@ficticia.invalid", header="Juan Pedro Soto Rivas", n=8)],
+        persons=[person("p1", "Pedro Soto")],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+        affiliations={"p1": {UF}},
+    )
+    assert rules(plan_people(snap)) == [("P1", "strong"), ("P1b", "strong")]
+    blocked = replace(snap, blocked_names=frozenset({("p1", name_norm("Juan Pedro Soto Rivas"))}))
+    assert rules(plan_people(blocked)) == [("P1", "strong")]
+
+    snap = snapshot(
+        [reading("psoto@ficticia.invalid", sig_name="Pedro Soto", institution="Universidad Ficticia", n=9)],
+        persons=[person("p1", "Pedro Soto")],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+    )
+    assert rules(plan_people(snap)) == [("P1", "strong"), ("P4", "strong")]
+    blocked = replace(snap, blocked_affiliations=frozenset({("p1", UF)}))
+    assert rules(plan_people(blocked)) == [("P1", "strong")]
+
+
+def test_a_settled_action_drops_out_while_the_readings_other_actions_stay():
+    snap = _merge_snapshot()
+    p1, p5 = plan_people(snap)
+    assert rules(plan_people(replace(snap, settled=frozenset({action_key(p1)})))) == [("P5", "strong")]
+    assert plan_people(replace(snap, settled=frozenset({action_key(p1), action_key(p5)}))) == []
+
+
+def test_a_short_or_initial_header_name_is_the_same_signer():
+    for header in ("Pedro", "Pedro S.", "P. Soto"):
+        snap = snapshot([reading("pedro.soto@ficticia.invalid", header=header, sig_name="Pedro Soto Rivas",
+                                 institution="Universidad Ficticia")])
+        assert rules(plan_people(snap)) == [("P3", "strong")], header
+        assert same_signer(header, "Pedro Soto Rivas")
+    # Two people really writing from one address still count as two names.
+    assert not same_signer("Ana Díaz", "Pedro Soto Rivas")
+    snap = snapshot([reading("lab@ficticia.invalid", header="Ana Díaz", sig_name="Pedro Soto Rivas",
+                             institution="Universidad Ficticia")])
+    assert plan_people(snap) == []
+
+
+def test_a_person_or_case_cut_plans_the_same_guesses_as_the_whole_snapshot():
+    readings = [reading(f"x{i}@hotmail.invalid", header=h, n=i)
+                for i, h in enumerate(["Pedro", "Pedro Soto", "Ana", "Ana Díaz Rojas", "Pedro"])]
+    snap = snapshot(readings, persons=[person("p1", "Pedro Soto Rivas"), person("p2", "Ana Díaz")],
+                    affiliations={"p1": {UF}, "p2": {UF}})
+    full = [a for a in plan_people(snap) if a.rule_id == "W1"]
+    for pid, names in (("p1", ["Pedro Soto Rivas"]), ("p2", ["Ana Díaz"])):
+        cut = readings_about(snap, names=names)
+        assert [a for a in plan_people(cut) if a.rule_id == "W1" and a.person_id == pid] == [
+            a for a in full if a.person_id == pid]
+        assert len(cut.readings) < len(readings)
+    cut = readings_about(snap, addresses={"x1@hotmail.invalid"})
+    assert [r.sender for r in cut.readings] == ["x1@hotmail.invalid"]
+
+
+def test_planning_two_thousand_persons_and_readings_is_fast():
+    import time
+
+    given = ["Ana", "Pedro", "María", "Juan", "Carla", "Diego", "Elena", "Hugo", "Irene", "Julia"]
+    sur = [f"Apellido{chr(97 + i)}{chr(97 + j)}" for i in range(26) for j in range(26)]
+    persons = [person(f"p{i}", f"{given[i % 10]} {sur[i % len(sur)]} {sur[(i * 7) % len(sur)]}")
+               for i in range(2000)]
+    contact_points = [cp(f"c{i}", f"known{i}@ficticia.invalid", f"p{i}") for i in range(0, 2000, 2)]
+    readings = []
+    for i in range(2000):
+        p = persons[(i * 13) % 2000]
+        address = f"known{i}@ficticia.invalid" if i % 3 == 0 else f"nuevo{i}@hotmail.invalid"
+        readings.append(reading(address, header=given[i % 10], sig_name=p.display_name,
+                                institution="Universidad Ficticia", n=i))
+    snap = snapshot(readings, persons=persons, contact_points=contact_points,
+                    affiliations={f"p{i}": {UF} for i in range(0, 2000, 3)})
+    started = time.perf_counter()
+    actions = plan_people(snap)
+    elapsed = time.perf_counter() - started
+    assert actions
+    # Was ~45 s when every reading scanned every person; well under a second now. Generous bound.
+    assert elapsed < 3.0, elapsed

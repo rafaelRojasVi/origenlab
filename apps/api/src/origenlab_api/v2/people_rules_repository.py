@@ -7,8 +7,12 @@ as `origenlab_api`, the same way `mail_rules_repository.py` runs the email → c
 transaction under one `platform.command_receipt` (`apply_people_rule`, key
 `people-rule:<assertion id>:<rule id>`; a P1b adds its name's source, since one reading may teach
 both the header name and the signature name). A refused step rolls the whole action back, receipt
-included. A reading with any completed receipt is never planned again — an undone one included, so
-a person's «Quitar» is not overridden by the next run.
+included, and the action stays planned. An action whose key has a completed receipt is never
+planned again — an undone one included — while the reading's other actions still are; a reading
+whose new address was attached or created (P2, P3) leaves the snapshot. And what a «Quitar» took
+back is not learned again from the next email: an undone name, institution or merge is a block in
+the snapshot (`blocked_names`, `blocked_affiliations`, `blocked_merges`; an undone merge is also a
+«No» for its address).
 
 **The machine writes, `machine_proposed`.** Every row an action creates (person, contact point,
 affiliation, other name) is `confirmation = 'machine_proposed'` with the email it came from; every
@@ -57,10 +61,13 @@ from origenlab_api.v2.people_rules import (
     PeopleSnapshot,
     PersonRow,
     Reading,
+    _winner,
+    action_key,
     is_free_mail,
     name_norm,
     org_key,
     plan_people,
+    readings_about,
 )
 
 APPLY_COMMAND = "apply_people_rule"
@@ -76,7 +83,7 @@ STRONG_RULES = frozenset({"P1", "P1b", "P2", "P3", "P4", "P5"})
 #: Readings older than this are not planned any more (the backfill reads the same 90 days).
 READING_WINDOW_DAYS = 90
 REMOVED_FROM_HOY = "Quitado de Hoy"
-CHANGED_SINCE = "Alguien cambió este contacto después; deshazlo desde la ficha"
+CHANGED_SINCE = "Alguien cambió este contacto después; revisa la ficha antes de quitarlo."
 #: Rules that only resolve an email to a person already known: not listed on «Hoy».
 QUIET_RULES = frozenset({"P1"})
 _TITLE_MAX = 200
@@ -92,15 +99,15 @@ def _json(value: Any) -> Any:
 
 
 def idempotency_key(action: PeopleAction) -> str:
-    key = f"people-rule:{action.assertion_id}:{action.rule_id}"
-    return f"{key}:{action.fields.get('source')}" if action.rule_id == "P1b" else key
+    return action_key(action)
 
 
 # ─────────────────────────────────────────────────────────────── the snapshot ──
 
-#: The `people:v1` readings no apply receipt names yet (undone ones included), with the `from`
-#: participants of their message that carry the sender's address. The receipt anti-join is one
-#: hash anti-join over the completed `apply_people_rule` receipts.
+#: The `people:v1` readings of the window, with their Gmail message id and the `from` participants
+#: of their message that carry the sender's address — less the readings whose unknown address an
+#: applied P2/P3 already attached or created (undone ones included): planned again they would read
+#: as a known address. Every other reading stays; its applied actions drop out by key (`settled`).
 _READINGS_SQL = """
 select a.id::text as id, a.source_record_id::text as source_record_id, a.value,
        coalesce(array(select p.id::text
@@ -108,15 +115,33 @@ select a.id::text as id, a.source_record_id::text as source_record_id, a.value,
                         join comms.message_participant p on p.message_id = m.id
                        where m.provider_message_id = sr.payload ->> 'gmail_message_id'
                          and p.role = 'from' and p.address_norm = lower(btrim(a.value ->> 'sender_address'))
-                       order by p.id), '{}') as participant_ids
+                       order by p.id), '{}') as participant_ids,
+       sr.payload ->> 'gmail_message_id' as message_id
   from evidence.assertion a
   join evidence.source_record sr on sr.id = a.source_record_id
  where a.kind = 'message_triage' and a.value_norm = 'people:v1'
    and a.created_at > now() - make_interval(days => %s)
    and not exists (select 1 from platform.command_receipt r
                     where r.command_name = %s and r.status = 'completed'
-                      and r.response_body ->> 'assertion_id' = a.id::text)
+                      and r.response_body ->> 'assertion_id' = a.id::text
+                      and r.response_body ->> 'rule_id' in ('P2', 'P3'))
  order by a.created_at, a.id
+"""
+#: The keys of the strong actions already applied in the window (a receipt is completed after its
+#: reading was written, so the window bounds both).
+_SETTLED_SQL = """
+select idempotency_key from platform.command_receipt
+ where command_name = %s and status = 'completed' and completed_at > now() - make_interval(days => %s)
+"""
+#: Every applied P1b, P4 or P5 a person undid with «Quitar», with the name / institution it added.
+_UNDONE_SQL = """
+select r.response_body, pn.person_id::text, pn.name_display, af.person_id::text, af.organization_id::text
+  from platform.command_receipt r
+  join platform.command_receipt u on u.command_name = %s and u.status = 'completed'
+                                 and u.response_body ->> 'undoes_receipt_id' = r.id::text
+  left join crm.person_name pn on pn.id::text = r.response_body -> 'created' ->> 'person_name_id'
+  left join crm.affiliation af on af.id::text = r.response_body -> 'created' ->> 'affiliation_id'
+ where r.command_name = %s and r.status = 'completed' and r.response_body ->> 'rule_id' in ('P1b', 'P4', 'P5')
 """
 _PERSONS_SQL = """
 select id::text, display_name, confirmation, status, merged_into_person_id::text, created_at from crm.person
@@ -203,8 +228,9 @@ class PeopleRulesRepository(V2CaseCommandRepository):
     def read_snapshot(self, cur: Any) -> PeopleSnapshot:
         cur.execute(_READINGS_SQL, (READING_WINDOW_DAYS, APPLY_COMMAND))
         readings = tuple(Reading(assertion_id=aid, source_record_id=srid,
-                                 message_participant_ids=tuple(pids or ()), value=_json(value) or {})
-                         for aid, srid, value, pids in cur.fetchall())
+                                 message_participant_ids=tuple(pids or ()), value=_json(value) or {},
+                                 message_id=message_id)
+                         for aid, srid, value, pids, message_id in cur.fetchall())
 
         cur.execute(_PERSONS_SQL)
         persons = {pid: PersonRow(id=pid, display_name=name, confirmation=conf, status=status,
@@ -250,9 +276,43 @@ class PeopleRulesRepository(V2CaseCommandRepository):
                          if not is_free_mail(domain) and oid in organizations
                          and organizations[oid].status == "active"}
 
+        cur.execute(_SETTLED_SQL, (APPLY_COMMAND, READING_WINDOW_DAYS + 1))
+        settled = frozenset(r[0] for r in cur.fetchall())
+
+        answered = self.answered(cur)
+        blocked_names: set[tuple[str, str]] = set()
+        blocked_affiliations: set[tuple[str, str]] = set()
+        blocked_merges: set[frozenset[str]] = set()
+        cur.execute(_UNDONE_SQL, (UNDO_COMMAND, APPLY_COMMAND))
+        for body, name_person, name_display, aff_person, aff_org in cur.fetchall():
+            body = _json(body) or {}
+            rule = body.get("rule_id")
+            if rule == "P1b":
+                pid = _final(name_person or body.get("person_id"), merged)
+                norm = name_norm(name_display or body.get("name") or "")
+                if pid and norm:
+                    blocked_names.add((pid, norm))
+            elif rule == "P4":
+                pid = _final(aff_person or body.get("person_id"), merged)
+                if pid and aff_org:
+                    blocked_affiliations.add((pid, aff_org))
+            elif rule == "P5":
+                merge = body.get("merge") or {}
+                pair = [merge.get("winner_person_id"), merge.get("loser_person_id")]
+                if all(pair):
+                    blocked_merges.add(frozenset(pair))
+                    # An undone merge is a «No» for its address and both persons.
+                    address = (body.get("address") or "").strip().lower()
+                    for pid in pair:
+                        if address:
+                            answered[(address, pid)] = False
+
         return PeopleSnapshot(readings=readings, persons=persons, names=names, contact_points=contact_points,
                               affiliations=affiliations, organizations=organizations, org_by_name=org_by_name,
-                              org_by_domain=org_by_domain, answered=self.answered(cur))
+                              org_by_domain=org_by_domain, answered=answered, settled=settled,
+                              blocked_names=frozenset(blocked_names),
+                              blocked_affiliations=frozenset(blocked_affiliations),
+                              blocked_merges=frozenset(blocked_merges))
 
     def answered(self, cur: Any) -> dict[tuple[str, str], bool]:
         """(address, person id) → a person's Sí (True) or No (False) to a «¿Es …?» guess."""
@@ -271,21 +331,17 @@ class PeopleRulesRepository(V2CaseCommandRepository):
 
     # ------------------------------------------------------------------ weak guesses (W1)
 
-    def _guesses(self, keep: Any) -> list[dict[str, Any]]:
-        """The W1 guesses the rules plan right now, as the contact page and the case show them,
-        `keep(action)` choosing which. Planned at read time from the same snapshot the timer uses,
-        so an answered pair, or a reading already handled, is never shown."""
+    def _guesses(self, about: Any, keep: Any) -> list[dict[str, Any]]:
+        """The W1 guesses the rules plan right now, as the contact page and the case show them.
+        Planned at read time from the same snapshot the timer uses, so an answered pair, or a reading
+        already handled, is never shown — but only over the readings `about(snapshot)` keeps (a
+        person's or a case's, `readings_about`), and `keep(action)` choosing among their guesses."""
         with self._read() as cur:
-            snapshot = self.read_snapshot(cur)
-            weak = [a for a in plan_people(snapshot) if a.rule_id == "W1" and a.person_id and keep(a)]
-            messages: dict[str, str | None] = {}
-            if weak:
-                cur.execute(
-                    "select a.id::text, sr.payload ->> 'gmail_message_id' from evidence.assertion a "
-                    "join evidence.source_record sr on sr.id = a.source_record_id where a.id = any(%s::uuid[])",
-                    (sorted({a.assertion_id for a in weak}),),
-                )
-                messages = dict(cur.fetchall())
+            snapshot = about(self.read_snapshot(cur))
+        if not snapshot.readings:
+            return []
+        weak = [a for a in plan_people(snapshot) if a.rule_id == "W1" and a.person_id and keep(a)]
+        messages = {r.assertion_id: r.message_id for r in snapshot.readings}
         out = []
         for a in weak:
             pid = str(a.person_id)
@@ -303,16 +359,27 @@ class PeopleRulesRepository(V2CaseCommandRepository):
         return out
 
     def guesses_for_person(self, person_id: str) -> list[dict[str, Any]]:
-        """The «¿Es …?» guesses that name this person (contact page)."""
-        return self._guesses(lambda a: a.person_id == person_id)
+        """The «¿Es …?» guesses that name this person (contact page): planned only over the
+        addresses that wrote a name sharing a word with one of the person's names."""
+        def about(snap: PeopleSnapshot) -> PeopleSnapshot:
+            person = snap.persons.get(person_id)
+            if person is None:
+                return readings_about(snap)
+            names = {person.display_name} | {n for n, ids in snap.names.items() if person_id in ids}
+            return readings_about(snap, names=names)
+        return self._guesses(about, lambda a: a.person_id == person_id)
 
     def guesses_for_case(self, message_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """Gmail message id → the guesses about who wrote that email (the case's «Correos»)."""
         wanted = {m for m in message_ids if m}
         if not wanted:
             return {}
+        def about(snap: PeopleSnapshot) -> PeopleSnapshot:
+            senders = {r.sender for r in snap.readings if r.message_id in wanted}
+            return readings_about(snap, addresses=senders)
+
         out: dict[str, list[dict[str, Any]]] = {}
-        for guess in self._guesses(lambda a: True):
+        for guess in self._guesses(about, lambda a: True):
             if guess["message_id"] in wanted:
                 out.setdefault(guess["message_id"], []).append(guess)
         return out
@@ -370,7 +437,18 @@ class PeopleRulesRepository(V2CaseCommandRepository):
                                          "Esa dirección ya es de otra persona; únelas desde la ficha"
                                          if owner[0] != person_id else "Esa dirección ya es de esta persona")
                 usage, organization_id = self._guess_usage(cur, address, person_id)
-                self._attach_address(ctx, address, person_id, usage, organization_id)
+                try:
+                    self._attach_address(ctx, address, person_id, usage, organization_id)
+                except CommandRefused as exc:
+                    if exc.code != "contact_point_taken":
+                        raise
+                    raise CommandRefused(409, "contact_point_taken",
+                                         "Esa dirección ya es de otra persona; únelas desde la ficha") from exc
+                except Exception as exc:  # a writer the lock does not cover: the unique index decides
+                    if not _is_unique_violation(exc):
+                        raise
+                    raise CommandRefused(409, "contact_point_taken",
+                                         "Esa dirección ya es de otra persona; únelas desde la ficha") from exc
                 cur.execute(
                     "select coalesce(array(select p.id::text from evidence.source_record sr "
                     "join comms.message m on m.provider_message_id = sr.payload ->> 'gmail_message_id' "
@@ -673,6 +751,9 @@ class PeopleRulesRepository(V2CaseCommandRepository):
 
     def _new_contact_point(self, ctx: "_Ctx", address: str, person_id: str, organization_id: str | None,
                            usage: str) -> None:
+        # One claim on an address at a time (the timer's P2/P3 and a person's «Sí»): the second
+        # waits here, then sees the first's row and is refused by name instead of by the unique index.
+        ctx.cur.execute("select pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"people-address:{address}",))
         ctx.cur.execute("select 1 from crm.contact_point where kind = 'email' and value_norm = %s for update",
                         (address,))
         if ctx.cur.fetchone() is not None:
@@ -763,8 +844,8 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             raise CommandRefused(409, "same_person", "loser and winner must be different people")
         cur.execute(
             "select id::text, status, version, merged_into_person_id::text, archived_at, "
-            "archived_by_operator_id::text, archive_reason from crm.person where id = any(%s::uuid[]) "
-            "order by id for update",
+            "archived_by_operator_id::text, archive_reason, display_name, confirmation, created_at "
+            "from crm.person where id = any(%s::uuid[]) order by id for update",
             (sorted([winner_id, loser_id]),),
         )
         rows = {r[0]: r for r in cur.fetchall()}
@@ -775,6 +856,13 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             raise CommandRefused(409, "merged_person", "a person of the merge was already merged")
         if winner[1] != "active" or loser[1] != "active":
             raise CommandRefused(409, "archived_subject", "a person of the merge is archived")
+        # Re-checked under the row locks: a «Confirmar» between the plan and now changes the answer.
+        if winner[8] == "confirmed" and loser[8] == "confirmed":
+            raise CommandRefused(409, "plan_changed", "both persons are confirmed now; only a person merges them")
+        as_row = {i: PersonRow(id=i, display_name=r[7], confirmation=r[8], status=r[1], merged_into=r[3],
+                               created_at=r[9]) for i, r in rows.items()}
+        if _winner(as_row[winner_id], as_row[loser_id])[0].id != winner_id:
+            raise CommandRefused(409, "plan_changed", "the person to keep is not the planned one any more")
         loser_prior = {"status": loser[1], "version": int(loser[2]), "merged_into_person_id": loser[3],
                        "archived_at": loser[4].isoformat() if loser[4] else None,
                        "archived_by_operator_id": loser[5], "archive_reason": loser[6]}
@@ -1040,6 +1128,14 @@ class _Ctx:
         return self.repo._append_event(self.cur, aggregate_kind=kind, aggregate_id=aggregate_id,
                                        event_type=event_type, payload=payload, operator=self.operator,
                                        receipt_id=self.receipt_id)
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    try:
+        from psycopg import errors
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(exc, errors.UniqueViolation)
 
 
 def _is_database_error(exc: Exception) -> bool:

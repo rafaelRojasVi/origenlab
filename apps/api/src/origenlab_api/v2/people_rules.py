@@ -20,7 +20,9 @@ two different names.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Literal
 
@@ -54,6 +56,11 @@ class Reading:
     source_record_id: str
     message_participant_ids: tuple[str, ...]
     value: dict[str, Any]
+    message_id: str | None = None   # the Gmail message id (the case's «Correos» look guesses up by it)
+
+    @property
+    def sender(self) -> str:
+        return (self.value.get("sender_address") or "").strip().lower()
 
 
 @dataclass(frozen=True)
@@ -94,6 +101,15 @@ class PeopleSnapshot:
     org_by_name: dict[str, set[str]]              # org_key(name) -> org ids
     org_by_domain: dict[str, str]                 # exclusive, non-free domain -> org id
     answered: dict[tuple[str, str], bool]         # (address, person id) -> Sí/No
+    #: Idempotency keys (`action_key`) of strong actions already applied — undone ones included —
+    #: so an applied action is never planned again while its reading's other actions still are.
+    settled: frozenset[str] = frozenset()
+    #: What a person's «Quitar» took back, so the next email does not learn it again:
+    #: (person id, name_norm) of an undone P1b, (person id, org id) of an undone P4, and the
+    #: person pair of an undone P5 (that pair is also «No» for the address, via `answered`).
+    blocked_names: frozenset[tuple[str, str]] = frozenset()
+    blocked_affiliations: frozenset[tuple[str, str]] = frozenset()
+    blocked_merges: frozenset[frozenset[str]] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -105,6 +121,13 @@ class PeopleAction:
     person_id: str | None
     fields: dict[str, Any]
     reasons: tuple[str, ...]
+
+
+def action_key(action: PeopleAction) -> str:
+    """The idempotency key one strong action is applied under (one per reading and rule; a P1b
+    adds its name's source, since one reading may teach both the header and the signature name)."""
+    key = f"people-rule:{action.assertion_id}:{action.rule_id}"
+    return f"{key}:{action.fields.get('source')}" if action.rule_id == "P1b" else key
 
 
 # --- names --------------------------------------------------------------------------------------
@@ -129,7 +152,10 @@ def names_match(a: str, b: str) -> bool:
     given name never matches. «Pedro Soto» vs «Pedro Soto Rivas» does not either («Soto» may be a
     second given name); it is only a partial match (`names_overlap`), enough for a guess.
     """
-    ta, tb = name_norm(a).split(), name_norm(b).split()
+    return _match_tokens(name_norm(a).split(), name_norm(b).split())
+
+
+def _match_tokens(ta: list[str], tb: list[str]) -> bool:
     if len(ta) < 2 or len(tb) < 2:
         return False
     if ta == tb:
@@ -145,10 +171,25 @@ def names_overlap(a: str, b: str) -> bool:
 
     Used only to block (no new person, no alias, no merge) and to guess — never to act alone.
     """
-    ta, tb = set(name_norm(a).split()), set(name_norm(b).split())
+    return _overlap_tokens(set(name_norm(a).split()), set(name_norm(b).split()))
+
+
+def _overlap_tokens(ta: set[str] | frozenset[str], tb: set[str] | frozenset[str]) -> bool:
     if len(ta) < 2 or len(tb) < 2:
         return False
     return ta <= tb or tb <= ta
+
+
+def same_signer(a: str, b: str) -> bool:
+    """Whether two names one address writes with can be the same person's: one name's words all
+    inside the other's, a one-letter word standing for a word of the other («Pedro» and «Pedro S.»
+    beside «Pedro Soto Rivas»). Only used to tell an address that signs with two people.
+    """
+    ta, tb = name_norm(a).split(), name_norm(b).split()
+    if not ta or not tb or ta == tb:
+        return True
+    short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return all(t in long_ or (len(t) == 1 and any(w.startswith(t) for w in long_)) for t in short)
 
 
 # --- addresses and institutions ----------------------------------------------------------------
@@ -178,14 +219,38 @@ def _is_generic_mailbox(address: str) -> bool:
 # --- the planner --------------------------------------------------------------------------------
 
 class _Planner:
+    """Plans one snapshot. Every lookup a reading needs is indexed once here (names by word, first
+    names, names per address), so planning grows with the readings and persons, not their product."""
+
     def __init__(self, snap: PeopleSnapshot) -> None:
         self.snap = snap
         self.actions: list[PeopleAction] = []
-        self.person_names: dict[str, set[str]] = {}
+        aliases: dict[str, set[str]] = {}
         for norm, ids in snap.names.items():
             for pid in ids:
-                self.person_names.setdefault(pid, set()).add(norm)
-        self.names_by_address = self._names_by_address()
+                aliases.setdefault(pid, set()).add(norm)
+        self.person_names = aliases
+        # Every person's names (aliases and display name), normalised once.
+        self._names: dict[str, frozenset[str]] = {
+            pid: frozenset(aliases.get(pid, set()) | {name_norm(p.display_name)}) for pid, p in snap.persons.items()
+        }
+        self._tokens = {norm: norm.split() for names in self._names.values() for norm in names}
+        # Live persons by each word of their names, and by the first word of each name.
+        self._by_word: dict[str, set[str]] = {}
+        self._by_first: dict[str, set[str]] = {}
+        for pid, names in self._names.items():
+            if self.live(pid) is None:
+                continue
+            for norm in names:
+                words = self._tokens[norm]
+                for w in set(words):
+                    self._by_word.setdefault(w, set()).add(pid)
+                if words:
+                    self._by_first.setdefault(words[0], set()).add(pid)
+        self._matching: dict[str, list[str]] = {}
+        self._overlapping: dict[str, list[str]] = {}
+        self._names_by_address = self._names_per_address()
+        self._two_names: dict[str, bool] = {}
         # Once per run: an address gets one attach/create, a person one affiliation, a name one alias.
         self.planned_addresses: set[str] = set()
         self.planned_new_names: set[str] = set()
@@ -195,20 +260,23 @@ class _Planner:
         self.planned_guesses: set[tuple[str, str]] = set()
 
     # helpers ---------------------------------------------------------------------------------
-    def _names_by_address(self) -> dict[str, list[str]]:
-        out: dict[str, list[str]] = {}
+    def _names_per_address(self) -> dict[str, set[str]]:
+        """The distinct names (normalised) each address writes with, over the whole snapshot."""
+        out: dict[str, set[str]] = {}
         for r in self.snap.readings:
-            address = (r.value.get("sender_address") or "").strip().lower()
             for name in (r.value.get("header_name"), (r.value.get("signature") or {}).get("name")):
-                if name and name_norm(name):
-                    out.setdefault(address, []).append(name)
+                norm = name_norm(name) if name else ""
+                if norm:
+                    out.setdefault(r.sender, set()).add(norm)
         return out
 
     def two_names(self, address: str) -> bool:
-        """Whether the address signs with two names that are not the same person's."""
-        names = self.names_by_address.get(address, [])
-        return any(name_norm(a) != name_norm(b) and not names_overlap(a, b)
-                   for i, a in enumerate(names) for b in names[i + 1:])
+        """Whether the address signs with two names that cannot be the same person's."""
+        if address not in self._two_names:
+            names = sorted(self._names_by_address.get(address, set()))
+            self._two_names[address] = any(not same_signer(a, b)
+                                           for i, a in enumerate(names) for b in names[i + 1:])
+        return self._two_names[address]
 
     def live(self, pid: str) -> PersonRow | None:
         p = self.snap.persons.get(pid)
@@ -216,17 +284,37 @@ class _Planner:
             return None
         return p
 
-    def names_of(self, pid: str) -> set[str]:
-        p = self.snap.persons[pid]
-        return self.person_names.get(pid, set()) | {name_norm(p.display_name)}
+    def names_of(self, pid: str) -> frozenset[str]:
+        return self._names[pid]
+
+    def _candidates(self, words: list[str]) -> list[str]:
+        """Live persons sharing at least two distinct words with a name (one, if the name has only
+        one distinct word): every person `names_match` or `names_overlap` can accept, and few more."""
+        distinct = set(words)
+        need = min(2, len(distinct))
+        hits: Counter[str] = Counter()
+        for w in distinct:
+            hits.update(self._by_word.get(w, ()))
+        return sorted(pid for pid, n in hits.items() if n >= need)
 
     def matching_persons(self, name: str) -> list[str]:
-        return sorted(pid for pid in self.snap.persons if self.live(pid)
-                      and any(names_match(name, n) for n in self.names_of(pid)))
+        norm = name_norm(name)
+        if norm not in self._matching:
+            words = norm.split()
+            self._matching[norm] = [] if len(words) < 2 else [
+                pid for pid in self._candidates(words)
+                if any(_match_tokens(words, self._tokens[n]) for n in self._names[pid])]
+        return self._matching[norm]
 
     def overlapping_persons(self, name: str) -> list[str]:
-        return sorted(pid for pid in self.snap.persons if self.live(pid)
-                      and any(names_overlap(name, n) for n in self.names_of(pid)))
+        norm = name_norm(name)
+        if norm not in self._overlapping:
+            words = norm.split()
+            mine = frozenset(words)
+            self._overlapping[norm] = [] if len(mine) < 2 else [
+                pid for pid in self._candidates(words)
+                if any(_overlap_tokens(mine, frozenset(self._tokens[n])) for n in self._names[pid])]
+        return self._overlapping[norm]
 
     def is_owner_name(self, pid: str, name: str | None) -> bool:
         """Whether a name is surely this person's (or an alias planned for them this run)."""
@@ -237,8 +325,7 @@ class _Planner:
         tokens = name_norm(name).split()
         if len(tokens) != 1:
             return []
-        return sorted(pid for pid in self.snap.persons if self.live(pid)
-                      and any(n.split()[:1] == tokens for n in self.names_of(pid)))
+        return sorted(self._by_first.get(tokens[0], set()))
 
     def institution_orgs(self, address: str, institution: str | None) -> set[str]:
         """Orgs the signature institution resolves to: exact name, or the exclusive domain."""
@@ -255,9 +342,12 @@ class _Planner:
 
     def emit(self, rule_id: str, tier: Tier, r: Reading, address: str, person_id: str | None,
              fields: dict[str, Any], *reasons: str) -> None:
-        self.actions.append(PeopleAction(rule_id=rule_id, tier=tier, assertion_id=r.assertion_id,
-                                         address=address, person_id=person_id, fields=fields,
-                                         reasons=tuple(reasons)))
+        action = PeopleAction(rule_id=rule_id, tier=tier, assertion_id=r.assertion_id, address=address,
+                              person_id=person_id, fields=fields, reasons=tuple(reasons))
+        # Already applied (or applied and undone): planned for the run's bookkeeping, never again.
+        if tier == "strong" and action_key(action) in self.snap.settled:
+            return
+        self.actions.append(action)
 
     def guess(self, r: Reading, address: str, pid: str, *reasons: str) -> None:
         if (address, pid) in self.snap.answered or (address, pid) in self.planned_guesses:
@@ -271,7 +361,7 @@ class _Planner:
     # one reading -----------------------------------------------------------------------------
     def plan(self, r: Reading) -> None:
         value = r.value
-        address = (value.get("sender_address") or "").strip().lower()
+        address = r.sender
         if not address or "@" not in address or _is_own(_domain(address)):
             return
         signature = value.get("signature") or {}
@@ -316,6 +406,7 @@ class _Planner:
         # P4: a person with no open affiliation, a signature naming exactly one institution, and
         # the email surely written by this person (its name is theirs, the address one signer).
         if (not self.affiliated(pid) and len(orgs) == 1 and pid not in self.planned_affiliations
+                and (pid, next(iter(orgs))) not in self.snap.blocked_affiliations
                 and not two_names and self.is_owner_name(pid, sig_name or header_name)):
             self.planned_affiliations.add(pid)
             org = next(iter(orgs))
@@ -326,6 +417,8 @@ class _Planner:
         norm = name_norm(name)
         if len(norm.split()) < 2 or norm in self.names_of(pid) or (pid, norm) in self.planned_aliases:
             return
+        if (pid, norm) in self.snap.blocked_names:
+            return  # a person took this name off the contact with «Quitar»
         if any(o != pid for o in self.overlapping_persons(name)):
             return  # the name may be another person's: never an alias by itself (P5 or W1 decide)
         p = self.snap.persons[pid]
@@ -348,6 +441,8 @@ class _Planner:
         """P5 when the signature names another person of the same institution; W1 otherwise."""
         if (address, other) in self.snap.answered and self.snap.answered[(address, other)] is False:
             return False
+        if frozenset({pid, other}) in self.snap.blocked_merges:
+            return False  # a person undid this merge with «Quitar»: same as a «No»
         p, q = self.snap.persons[pid], self.snap.persons[other]
         reasons: list[str] = []
         if two_names:
@@ -469,13 +564,33 @@ def _winner(p: PersonRow, q: PersonRow) -> tuple[PersonRow, PersonRow]:
 
 
 def plan_people(snapshot: PeopleSnapshot) -> list[PeopleAction]:
-    """The identity actions for every reading in the snapshot, in reading order."""
+    """The identity actions for every reading in the snapshot, in reading order — a strong action
+    whose key is `settled` left out."""
     planner = _Planner(snapshot)
     for r in snapshot.readings:
         planner.plan(r)
     return planner.actions
 
 
+def readings_about(snapshot: PeopleSnapshot, *, addresses: Iterable[str] = (),
+                   names: Iterable[str] = ()) -> PeopleSnapshot:
+    """The snapshot cut to the readings a contact page or a case can show a guess from: every
+    reading of the given sender addresses, and of any address that wrote a name sharing a word
+    with one of the given names (a person's names). Whole addresses are kept, so what is planned
+    for one of them — its signers, its one attach per run, its one guess per person — is what the
+    whole snapshot plans for it."""
+    words = {w for n in names for w in name_norm(n).split()}
+    wanted = {a for a in addresses if a}
+    if words:
+        for r in snapshot.readings:
+            for name in (r.value.get("header_name"), (r.value.get("signature") or {}).get("name")):
+                if name and words & set(name_norm(name).split()):
+                    wanted.add(r.sender)
+    kept = tuple(r for r in snapshot.readings if r.sender in wanted)
+    return replace(snapshot, readings=kept)
+
+
 __all__ = ["ContactPointRow", "FREE_MAIL_PROVIDERS", "OrgRow", "PeopleAction", "PeopleSnapshot",
-           "PersonRow", "RULE_IDS", "Reading", "SHARED_USAGES", "TITLES", "is_free_mail", "name_norm",
-           "names_match", "names_overlap", "org_key", "plan_people"]
+           "PersonRow", "RULE_IDS", "Reading", "SHARED_USAGES", "TITLES", "action_key", "is_free_mail",
+           "name_norm", "names_match", "names_overlap", "org_key", "plan_people", "readings_about",
+           "same_signer"]

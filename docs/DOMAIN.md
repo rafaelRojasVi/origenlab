@@ -749,7 +749,10 @@ receipt (`apply_people_rule`); every row it creates is `machine_proposed`,
 every event `actor_kind = 'worker'` with `payload.attribution.source =
 people_rules`; Hoy lists it in «Hecho automáticamente» (P1 is not listed) and
 «Quitar» undoes exactly the recorded rows, refusing when a person edited one
-since. A **weak** one is a «¿Es …?» guess with Sí/No and writes nothing until
+since; what it took back is not learned again from the next email (an undone
+name, institution or merge blocks that name for that person, that institution
+for that person, or that pair of persons; an undone merge is also a «No» for
+its address). A **weak** one is a «¿Es …?» guess with Sí/No and writes nothing until
 answered. Shared mailboxes, `individual_owner_unknown` addresses, our own
 domains, generic mailboxes and readings without a name get nothing; an address
 that signs with two different names never gets a strong action; a free-mail

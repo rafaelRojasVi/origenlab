@@ -91,6 +91,23 @@ def test_the_report_shows_at_most_twenty_sample_actions() -> None:
     assert text.count("\n  - ") == 20
 
 
+def test_the_samples_show_every_rule_before_p1() -> None:
+    from origenlab_api.v2.people_dry_run import samples_by_rule
+    from origenlab_api.v2.people_rules import PeopleAction
+
+    def act(rule: str, n: int) -> PeopleAction:
+        return PeopleAction(rule_id=rule, tier="weak" if rule == "W1" else "strong", assertion_id=f"a-{rule}-{n}",
+                            address=f"x{n}@ficticia.invalid", person_id=None, fields={}, reasons=())
+
+    actions = [act("P1", n) for n in range(200)] + [act(r, n) for r in ("P1b", "P2", "P3", "P4", "P5", "W1")
+                                                    for n in range(10)]
+    shown = samples_by_rule(actions)
+    assert len(shown) == 20
+    assert [a.rule_id for a in shown] == ["P5"] * 4 + ["P3"] * 4 + ["P2"] * 4 + ["P4"] * 4 + ["P1b"] * 4
+    few = [act("P1", n) for n in range(30)] + [act("P5", 1), act("W1", 1)]
+    assert [a.rule_id for a in samples_by_rule(few)] == ["P5", "W1"] + ["P1"] * 18
+
+
 @needs_db
 def test_the_dry_run_reads_a_real_database_in_a_read_only_transaction_and_writes_nothing(db) -> None:
     import json
