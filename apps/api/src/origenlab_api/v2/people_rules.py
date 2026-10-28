@@ -26,6 +26,8 @@ from typing import Any, Literal
 
 from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, fold
 from origenlab_api.v2.person_suggestions import GENERIC_LOCAL_PARTS, OWN_DOMAINS
+# The compact fold (no spaces, no punctuation) is the form `GENERIC_LOCAL_PARTS` is written in;
+# names and institutions use `mail_rules.fold`, which keeps the spaces between words.
 from origenlab_api.v2.person_suggestions import fold as fold_compact
 
 #: Courtesy titles dropped from a name before comparing («Dra. María González» = «María González»).
@@ -118,26 +120,35 @@ def org_key(name: str) -> str:
     return fold(name)
 
 
-def _surname_tokens(tokens: list[str]) -> set[str]:
-    """Tokens that may be a surname: the last two, never the first (a given name)."""
-    return set(tokens[1:][-2:])
-
-
 def names_match(a: str, b: str) -> bool:
-    """Whether two names are the same person's: equal, or one's tokens inside the other's.
+    """Whether two names are surely the same person's — the match strong actions rely on.
 
-    At least two shared tokens and one of them a surname of the longer name («Pedro Soto» ⊆ «Juan
-    Pedro Soto Rivas»). A single shared given name never matches.
+    Equal names (≥ 2 words), or the shorter name's words all inside the longer one with the
+    shorter name's last word in a surname place of the longer (third word or later): «Pedro Soto»
+    ⊆ «Juan Pedro Soto Rivas». «Juan Carlos» never matches «Juan Carlos Pérez», and a single shared
+    given name never matches. «Pedro Soto» vs «Pedro Soto Rivas» does not either («Soto» may be a
+    second given name); it is only a partial match (`names_overlap`), enough for a guess.
     """
     ta, tb = name_norm(a).split(), name_norm(b).split()
     if len(ta) < 2 or len(tb) < 2:
         return False
-    if ta == tb or set(ta) == set(tb):
+    if ta == tb:
         return True
-    short, long_ = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
-    if not set(short) <= set(long_):
+    short, long_ = (ta, tb) if len(ta) < len(tb) else (tb, ta)
+    if len(short) == len(long_) or not set(short) <= set(long_):
         return False
-    return short[-1] in _surname_tokens(long_)
+    return long_.index(short[-1]) >= 2
+
+
+def names_overlap(a: str, b: str) -> bool:
+    """Whether two names may be the same person's: ≥ 2 words each, one's words inside the other's.
+
+    Used only to block (no new person, no alias, no merge) and to guess — never to act alone.
+    """
+    ta, tb = set(name_norm(a).split()), set(name_norm(b).split())
+    if len(ta) < 2 or len(tb) < 2:
+        return False
+    return ta <= tb or tb <= ta
 
 
 # --- addresses and institutions ----------------------------------------------------------------
@@ -196,7 +207,7 @@ class _Planner:
     def two_names(self, address: str) -> bool:
         """Whether the address signs with two names that are not the same person's."""
         names = self.names_by_address.get(address, [])
-        return any(name_norm(a) != name_norm(b) and not names_match(a, b)
+        return any(name_norm(a) != name_norm(b) and not names_overlap(a, b)
                    for i, a in enumerate(names) for b in names[i + 1:])
 
     def live(self, pid: str) -> PersonRow | None:
@@ -212,6 +223,15 @@ class _Planner:
     def matching_persons(self, name: str) -> list[str]:
         return sorted(pid for pid in self.snap.persons if self.live(pid)
                       and any(names_match(name, n) for n in self.names_of(pid)))
+
+    def overlapping_persons(self, name: str) -> list[str]:
+        return sorted(pid for pid in self.snap.persons if self.live(pid)
+                      and any(names_overlap(name, n) for n in self.names_of(pid)))
+
+    def is_owner_name(self, pid: str, name: str | None) -> bool:
+        """Whether a name is surely this person's (or an alias planned for them this run)."""
+        return bool(name) and (any(names_match(name, n) for n in self.names_of(pid))
+                               or (pid, name_norm(name)) in self.planned_aliases)
 
     def first_name_persons(self, name: str) -> list[str]:
         tokens = name_norm(name).split()
@@ -278,22 +298,25 @@ class _Planner:
         self.emit("P1", "strong", r, address, pid, {"contact_point_id": cp.id},
                   "esta dirección ya es de esta persona")
         orgs = self.institution_orgs(address, institution)
+        two_names = self.two_names(address)
 
-        # P5 / W1: the signature names another live person.
+        # P5 / W1: the signature may name another live person.
         merging = False
         if sig_name:
-            others = [o for o in self.matching_persons(sig_name) if o != pid]
+            others = [o for o in self.overlapping_persons(sig_name) if o != pid]
             if len(others) == 1:
-                merging = self.other_person(r, address, pid, others[0], sig_name, orgs)
+                merging = self.other_person(r, address, pid, others[0], sig_name, orgs, two_names)
 
-        # P1b: names this person is not yet known by.
-        if not merging:
+        # P1b: names this person is not yet known by — never on an address that signs two names.
+        if not merging and not two_names:
             for name, source in ((header_name, "display_name"), (sig_name, "signature")):
                 if name:
                     self.add_name(r, address, pid, name, source)
 
-        # P4: a person with no open affiliation, and a signature naming exactly one institution.
-        if not self.affiliated(pid) and len(orgs) == 1 and pid not in self.planned_affiliations:
+        # P4: a person with no open affiliation, a signature naming exactly one institution, and
+        # the email surely written by this person (its name is theirs, the address one signer).
+        if (not self.affiliated(pid) and len(orgs) == 1 and pid not in self.planned_affiliations
+                and not two_names and self.is_owner_name(pid, sig_name or header_name)):
             self.planned_affiliations.add(pid)
             org = next(iter(orgs))
             self.emit("P4", "strong", r, address, pid, {"organization_id": org},
@@ -303,13 +326,15 @@ class _Planner:
         norm = name_norm(name)
         if len(norm.split()) < 2 or norm in self.names_of(pid) or (pid, norm) in self.planned_aliases:
             return
-        if any(o != pid for o in self.matching_persons(name)):
-            return  # the name is also another person's: never an alias by itself (P5 or W1 decide)
+        if any(o != pid for o in self.overlapping_persons(name)):
+            return  # the name may be another person's: never an alias by itself (P5 or W1 decide)
         p = self.snap.persons[pid]
-        if any(names_match(name, n) for n in self.names_of(pid)):
+        display = name_norm(p.display_name).split()
+        no_name_yet = (not self.person_names.get(pid, set()) - {name_norm(p.display_name)}
+                       and not any(a == pid for a, _ in self.planned_aliases))
+        if self.matching_persons(name) == [pid]:
             reason = f"«{name}» es otra forma del nombre «{p.display_name}»"
-        elif (not self.person_names.get(pid, set()) - {name_norm(p.display_name)}
-              and ("@" in p.display_name or len(name_norm(p.display_name).split()) < 2)):
+        elif no_name_yet and ("@" in p.display_name or (len(display) == 1 and norm.split()[0] == display[0])):
             reason = f"la persona aún no tiene nombre (solo «{p.display_name}»)"
         else:
             return
@@ -319,14 +344,20 @@ class _Planner:
                   f"el nombre viene de {where}")
 
     def other_person(self, r: Reading, address: str, pid: str, other: str, sig_name: str,
-                     orgs: set[str]) -> bool:
+                     orgs: set[str], two_names: bool) -> bool:
         """P5 when the signature names another person of the same institution; W1 otherwise."""
         if (address, other) in self.snap.answered and self.snap.answered[(address, other)] is False:
             return False
         p, q = self.snap.persons[pid], self.snap.persons[other]
         reasons: list[str] = []
+        if two_names:
+            reasons.append("esta dirección firma con dos nombres distintos")
         if not any(names_match(sig_name, n) for n in self.names_of(pid)):
             reasons.append(f"la dirección ya es de {p.display_name}, pero la firma dice «{sig_name}»")
+        if not any(names_match(sig_name, n) for n in self.names_of(other)):
+            reasons.append(f"la firma «{sig_name}» coincide solo en parte con {q.display_name}")
+        if not any(names_match(a, b) for a in self.names_of(pid) for b in self.names_of(other)):
+            reasons.append(f"los nombres «{p.display_name}» y «{q.display_name}» no son seguro la misma persona")
         shared = self.affiliated(pid) & self.affiliated(other)
         if not orgs:
             reasons.append("la firma no dice una institución que esté en el CRM")
@@ -362,9 +393,10 @@ class _Planner:
         name = sig_name or header_name
         assert name is not None
         matches = self.matching_persons(name)
+        overlaps = self.overlapping_persons(name)
 
-        # P2: the signature names exactly one person of the institution it gives.
-        if sig_name and len(matches) == 1 and not two_names and len(orgs) == 1:
+        # P2: the signature surely names exactly one person, of the institution it gives.
+        if sig_name and len(matches) == 1 and overlaps == matches and not two_names and len(orgs) == 1:
             pid = matches[0]
             if orgs <= self.affiliated(pid) and self.snap.answered.get((address, pid)) is not False:
                 self.planned_addresses.add(address)
@@ -375,7 +407,7 @@ class _Planner:
 
         # P3: a full name nobody has, and an institution that is exactly one org.
         norm = name_norm(sig_name or "")
-        if (sig_name and len(norm.split()) >= 2 and not matches and not two_names and len(orgs) == 1
+        if (sig_name and len(norm.split()) >= 2 and not overlaps and not two_names and len(orgs) == 1
                 and norm not in self.planned_new_names):
             self.planned_addresses.add(address)
             self.planned_new_names.add(norm)
@@ -391,12 +423,19 @@ class _Planner:
         reasons: list[str] = []
         if len(matches) == 1:
             pid = matches[0]
-        else:
-            loose = self.first_name_persons(name) if not matches else []
+            if len(overlaps) > 1:
+                reasons.append(f"hay otra persona con un nombre parecido a «{name}»")
+        elif not matches and len(overlaps) == 1:
+            pid = overlaps[0]
+            reasons.append(f"«{name}» coincide solo en parte con {self.snap.persons[pid].display_name}")
+        elif not overlaps:
+            loose = self.first_name_persons(name)
             if len(loose) != 1:
                 return
             pid = loose[0]
             reasons.append(f"solo coincide el nombre de pila «{name}»")
+        else:
+            return  # the name fits several persons: no single guess to show
         if not sig_name:
             reasons.append("el correo no trae firma con nombre; solo el nombre del remitente")
         if two_names:
@@ -436,4 +475,4 @@ def plan_people(snapshot: PeopleSnapshot) -> list[PeopleAction]:
 
 __all__ = ["ContactPointRow", "FREE_MAIL_PROVIDERS", "OrgRow", "PeopleAction", "PeopleSnapshot",
            "PersonRow", "RULE_IDS", "Reading", "SHARED_USAGES", "TITLES", "is_free_mail", "name_norm",
-           "names_match", "org_key", "plan_people"]
+           "names_match", "names_overlap", "org_key", "plan_people"]

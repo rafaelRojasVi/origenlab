@@ -15,6 +15,7 @@ from origenlab_api.v2.people_rules import (
     Reading,
     name_norm,
     names_match,
+    names_overlap,
     org_key,
     plan_people,
 )
@@ -91,6 +92,11 @@ def test_names_match_rules():
     assert not names_match("Pedro", "Pedro")            # a single given name never matches
     assert not names_match("Pedro Rivas", "Pedro Soto")
     assert not names_match("Juan Pedro", "Pedro Juan Soto")
+    assert not names_match("Juan Carlos", "Juan Carlos Pérez")     # a compound given name alone
+    assert not names_match("Pedro Soto", "Pedro Soto Rivas")       # «Soto» may be a given name
+    assert names_overlap("Pedro Soto", "Pedro Soto Rivas")
+    assert names_overlap("Juan Carlos", "Juan Carlos Pérez")
+    assert not names_overlap("Pedro", "Pedro Soto")
 
 
 # --- strong rules -------------------------------------------------------------------------------
@@ -363,3 +369,129 @@ def test_merged_or_archived_persons_are_not_candidates():
         persons=[person("p1", "Pedro Soto", merged_into="p9"), person("p2", "Pedro Soto", status="archived")],
     )
     assert rules(plan_people(snap)) == [("P3", "strong")]
+
+
+# --- review probes (A–F): the known-address branch and partial names -----------------------------
+
+def test_probe_a_compound_given_name_never_merges():
+    snap = snapshot(
+        [reading("jcperez@ficticia.invalid", sig_name="Juan Carlos", institution="Universidad Ficticia")],
+        persons=[person("p1", "Juan Carlos Pérez"), person("p2", "Juan Carlos Rojas", created_at=NEW)],
+        contact_points=[cp("c1", "jcperez@ficticia.invalid", "p1")],
+        affiliations={"p1": {UF}, "p2": {UF}},
+    )
+    actions = plan_people(snap)
+    assert rules(actions) == [("P1", "strong"), ("W1", "weak")]
+    assert actions[1].person_id == "p2"
+
+
+def test_probe_b_two_maternal_surnames_never_merge():
+    snap = snapshot(
+        [reading("psoto@ficticia.invalid", sig_name="Pedro Soto", institution="Universidad Ficticia")],
+        persons=[person("p1", "Pedro Soto Muñoz"), person("p2", "Pedro Soto Rivas", created_at=NEW)],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+        affiliations={"p1": {UF}, "p2": {UF}},
+    )
+    actions = plan_people(snap)
+    assert rules(actions) == [("P1", "strong"), ("W1", "weak")]
+    assert any("misma persona" in r for r in actions[1].reasons)
+
+
+def test_probe_c_two_names_on_a_known_address_add_no_alias():
+    snap = snapshot(
+        [reading("lab.ficticia@hotmail.invalid", header="Pedro Soto", n=1),
+         reading("lab.ficticia@hotmail.invalid", header="Ana Díaz", n=2)],
+        persons=[person("p1", "lab.ficticia@hotmail.invalid")],
+        contact_points=[cp("c1", "lab.ficticia@hotmail.invalid", "p1", usage="personal")],
+    )
+    assert rules(plan_people(snap)) == [("P1", "strong"), ("P1", "strong")]
+
+
+def test_probe_c_no_name_yet_takes_one_alias_per_run():
+    # One person without a real name owns two addresses, each signing one name: the two-names
+    # rule does not see it (one name per address), yet only the first name becomes an alias.
+    snap = snapshot(
+        [reading("pjsoto@hotmail.invalid", header="Pedro Soto", n=1),
+         reading("otra@hotmail.invalid", header="Ana Díaz", n=2)],
+        persons=[person("p1", "pjsoto@hotmail.invalid")],
+        contact_points=[cp("c1", "pjsoto@hotmail.invalid", "p1", usage="personal"),
+                        cp("c2", "otra@hotmail.invalid", "p1", usage="personal")],
+    )
+    actions = plan_people(snap)
+    assert [a.fields.get("name") for a in actions if a.rule_id == "P1b"] == ["Pedro Soto"]
+
+
+def test_one_token_display_name_takes_only_a_matching_first_name():
+    snap = snapshot(
+        [reading("pedro@ficticia.invalid", header="Ana Díaz", n=1)],
+        persons=[person("p1", "Pedro")],
+        contact_points=[cp("c1", "pedro@ficticia.invalid", "p1")],
+        affiliations={"p1": {UF}},
+    )
+    assert rules(plan_people(snap)) == [("P1", "strong")]
+
+
+def test_probe_d_two_names_on_a_known_address_never_merge():
+    snap = snapshot(
+        [reading("psoto@ficticia.invalid", sig_name="Juan Pedro Soto Rivas", institution="Universidad Ficticia", n=1),
+         reading("psoto@ficticia.invalid", sig_name="Ana Díaz", institution="Universidad Ficticia", n=2)],
+        persons=[person("p1", "Pedro Soto", created_at=NEW), person("p2", "Juan Pedro Soto Rivas")],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+        affiliations={"p1": {UF}, "p2": {UF}},
+    )
+    actions = plan_people(snap)
+    assert rules(actions) == [("P1", "strong"), ("W1", "weak"), ("P1", "strong")]
+    assert any("dos nombres" in r for r in actions[1].reasons)
+
+
+def test_probe_e_someone_elses_signature_gives_no_affiliation():
+    snap = snapshot(
+        [reading("psoto@ficticia.invalid", sig_name="Ana Díaz", institution="Instituto Otro")],
+        persons=[person("p1", "Pedro Soto")],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+    )
+    assert rules(plan_people(snap)) == [("P1", "strong")]
+
+
+def test_probe_e_two_signers_give_no_affiliation():
+    snap = snapshot(
+        [reading("psoto@ficticia.invalid", sig_name="Pedro Soto", institution="Universidad Ficticia", n=1),
+         reading("psoto@ficticia.invalid", sig_name="Ana Díaz", n=2)],
+        persons=[person("p1", "Pedro Soto")],
+        contact_points=[cp("c1", "psoto@ficticia.invalid", "p1")],
+    )
+    assert "P4" not in [a.rule_id for a in plan_people(snap)]
+
+
+def test_probe_f_compound_given_name_only_guesses():
+    snap = snapshot(
+        [reading("jcarlos@hotmail.invalid", sig_name="Juan Carlos", institution="Universidad Ficticia")],
+        persons=[person("p1", "Juan Carlos Pérez")],
+        affiliations={"p1": {UF}},
+    )
+    actions = plan_people(snap)
+    assert rules(actions) == [("W1", "weak")]
+    assert actions[0].person_id == "p1"
+    assert any("solo en parte" in r for r in actions[0].reasons)
+
+
+def test_partial_name_blocks_a_new_person():
+    # «Pedro Soto» may be «Pedro Soto Rivas»: no new person, only a guess.
+    snap = snapshot(
+        [reading("pedro.soto@ficticia.invalid", sig_name="Pedro Soto", institution="Universidad Ficticia")],
+        persons=[person("p1", "Pedro Soto Rivas")],
+        affiliations={"p1": {UF}},
+    )
+    assert rules(plan_people(snap)) == [("W1", "weak")]
+
+
+def test_attach_needs_one_person_even_when_another_is_partly_named():
+    snap = snapshot(
+        [reading("pjsoto@hotmail.invalid", sig_name="Pedro Soto Rivas", institution="Universidad Ficticia")],
+        persons=[person("p1", "Pedro Soto Rivas"), person("p2", "Pedro Soto")],
+        affiliations={"p1": {UF}, "p2": {UF}},
+    )
+    actions = plan_people(snap)
+    assert rules(actions) == [("W1", "weak")]
+    assert actions[0].person_id == "p1"
+    assert any("parecido" in r for r in actions[0].reasons)
