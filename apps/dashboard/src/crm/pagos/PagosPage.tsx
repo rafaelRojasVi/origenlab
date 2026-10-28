@@ -23,9 +23,9 @@ import {
 /**
  * «Pagos»: the facturas Tatiana issued on the SII portal, the case each belongs to, and what is still
  * owed. SII has no API for the sales register, so the month's «Registro de Ventas» CSV is uploaded
- * here («Subir CSV del SII»); uploading a month again adds only the new folios. The upload attaches a
- * factura to its case when exactly one case of the client has a quote of that total; the rest say
- * «Asignar caso…». SII never knows whether a client paid: «Pagada» (with the day) is a person's act.
+ * here («Subir CSV del SII»); uploading a month again adds only the new folios. The upload guesses each
+ * factura's case (the client by RUT or name; the quote with its neto, else the client's only won
+ * case) and tries again on later uploads; the rest say «Asignar caso…». SII never knows whether a client paid: «Pagada» (with the day) is a person's act.
  *
  * A row reads client → amount owed → how old, the three things a collector looks for; «Por cobrar»
  * lists the oldest first. Every amount is the API's (notas de crédito are netted into their factura's
@@ -358,7 +358,7 @@ function InvoiceRow({
           {[i.opportunity.quote_number, i.opportunity.title].filter(Boolean).join(" · ")}
         </a>
         {i.case_link === "machine" ? (
-          <Badge tone="info" glyph={false} title="Lo asignó el sistema: el total coincide con la cotización del caso">
+          <Badge tone="info" glyph={false} title="Lo asignó el sistema: el neto calza con la cotización del caso, o es el único caso ganado del cliente">
             automático
           </Badge>
         ) : null}
