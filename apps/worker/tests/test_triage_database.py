@@ -690,7 +690,7 @@ def test_who_wrote_an_inbound_email_is_read_from_its_participants_into_people_v1
     store = Store()
     raw = make_raw(frm="Juan Pedro Soto Rivas <pjsoto@hotmail.invalid>",
                    to=f"{MAILBOX}, compras@ficticia.invalid",
-                   cc="Ana <ana@origenlab.cl>, Tatiana <contacto@labdelivery.cl>, lab@ficticia.invalid",
+                   cc="Persona Ficticia <persona.ficticia@origenlab.cl>, Otra Ficticia <contacto@labdelivery.cl>, lab@ficticia.invalid",
                    subject="Consulta de equipos", message_id=f"<{uuid.uuid4().hex}@hotmail.invalid>")
     sid = source_record(dsn, capture(target, mailbox_id, store, f"pp-{uuid.uuid4().hex[:8]}", raw))
     before = business_rows(dsn)

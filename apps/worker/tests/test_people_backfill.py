@@ -150,7 +150,7 @@ def test_backfill_skips_messages_with_reading_machine_mail_outbound_and_forwards
 
 def test_backfill_never_asks_the_model_about_our_own_sender() -> None:
     db, store = _world({"sr-1": "business_other"})
-    db.people = ("ana@origenlab.cl", {"ana@origenlab.cl": "Ana"}, ())
+    db.people = ("persona.ficticia@origenlab.cl", {"persona.ficticia@origenlab.cl": "Ana"}, ())
     reader = Reader()
     assert backfill_people(db, store, reader, ["sr-1"], apply=True, sample=None)["skipped"] == 1
     assert reader.requests == []
@@ -367,7 +367,7 @@ def test_the_estimate_prices_skipped_mail_as_free_and_says_when_the_limit_cut_th
     people = db.people
 
     def message_people(message_id):
-        return ("ana@origenlab.cl", {}, ()) if message_id == "m-sr-0" else people
+        return ("persona.ficticia@origenlab.cl", {}, ()) if message_id == "m-sr-0" else people
     db.message_people = message_people
     env = {**CLI_ENV, "ORIGENLAB_WORKER_ANTHROPIC_API_KEY": "k"}
     assert _run(SimpleNamespace(apply=False, since_days=90, limit=4, sample=2), env, db, store, Reader()) == 0

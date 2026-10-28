@@ -30,7 +30,7 @@ def test_forwarded_has_no_reading() -> None:
 
 
 def test_own_domain_sender_has_no_reading() -> None:
-    assert value(sender_address="ana@origenlab.cl", header_names={"ana@origenlab.cl": "Ana"}) is None
+    assert value(sender_address="persona.ficticia@origenlab.cl", header_names={"persona.ficticia@origenlab.cl": "Ana"}) is None
 
 
 def test_no_sender_address_has_no_reading() -> None:
@@ -71,11 +71,11 @@ def test_nothing_known_about_the_writer_is_no_reading() -> None:
 
 
 def test_a_labdelivery_sender_is_ours_and_has_no_reading() -> None:
-    assert value(sender_address="contacto@labdelivery.cl", header_names={"contacto@labdelivery.cl": "Tatiana"}) is None
+    assert value(sender_address="contacto@labdelivery.cl", header_names={"contacto@labdelivery.cl": "Otra Ficticia"}) is None
 
 
 def test_own_co_addresses_are_dropped() -> None:
-    co = ["contacto@labdelivery.cl", "lab@ficticia.invalid", "ana@origenlab.cl"]
+    co = ["contacto@labdelivery.cl", "lab@ficticia.invalid", "persona.ficticia@origenlab.cl"]
     assert value(co_addresses=co)["co_addresses"] == ["lab@ficticia.invalid"]
 
 
