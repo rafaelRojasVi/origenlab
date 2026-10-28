@@ -8,6 +8,10 @@ Writes, all `on conflict do nothing`, in one transaction per message:
   `value` (class, reasons, signals, candidates, the model's answer or why it did not run);
 * one `product_mention` assertion per product named — by the model when it ran, otherwise by an
   exact model-number match in the catalog;
+* for inbound mail from outside, one `message_triage` assertion `people:v1` (`people_reading.py`) —
+  who wrote it: the sender's address, the name in its header, what its signature states (the
+  model's `sender`, when the model ran) and who else was on it. Isolated: a failure never breaks
+  the triage;
 * for mail a person wrote (`HUMAN_CLASSES`), one `message_triage` assertion
   `case_match:v<CASE_MATCH_VERSION>` — which case it probably belongs to (`case_match.py`), or that it
   looks like a deal with no case. A person decides; nothing is linked here.
@@ -32,7 +36,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, fold
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, OWN_DOMAINS, fold
 from origenlab_worker.case_match import (
     CASE_MATCH_VALUE_NORM, CaseCard, MatchInput, MatchResult, match_case,
 )
@@ -40,7 +44,8 @@ from origenlab_worker.case_match_model import PastDecision, build_pick_request, 
 from origenlab_worker.bounce import BounceAnalysis, DELIVERY_FAILURE_VALUE_NORM, analyze_bounce
 from origenlab_worker.catalog_match import ProductCandidate, match_products, model_key
 from origenlab_worker.drive_filing import storage_key
-from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, read_forward
+from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, is_forward_subject, read_forward
+from origenlab_worker.people_reading import PEOPLE_VALUE_NORM, people_value
 from origenlab_worker.mail_text import MailText, parse_mail
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
 from origenlab_worker.storage import StorageError
@@ -51,6 +56,7 @@ from origenlab_worker.triage_model import (
     ModelRefused,
     build_request,
     parse_reading,
+    signature_for,
 )
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
@@ -222,6 +228,13 @@ _RECIPIENTS = """
 select p.address_norm from comms.message_participant p
  where p.message_id = %s and p.role in ('to', 'cc') order by 1
 """
+#: Who is on one message, for `people:v1`: the `from` address with its header display name, and the
+#: `to`/`cc` addresses in header-capture order.
+_PEOPLE_PARTICIPANTS = """
+select p.role, p.address_norm, p.display_name from comms.message_participant p
+ where p.message_id = %s and p.role in ('from', 'to', 'cc')
+ order by case p.role when 'from' then 0 when 'to' then 1 else 2 end, p.created_at, p.address_norm
+"""
 #: Attachment names of the other emails on the same Gmail thread.
 _THREAD_ATTACHMENTS = """
 select a.filename
@@ -361,6 +374,28 @@ class TriageDb:
                 cur.execute(_THREAD_ATTACHMENTS, (message.thread_id, message.message_id))
                 names = tuple(r[0] for r in cur.fetchall())
         return recipients, names
+
+    def message_people(self, message_id: str) -> tuple[str | None, dict[str, str], tuple[str, ...]]:
+        """(the `from` address, address → header display name, the `to`+`cc` addresses outside our
+        own domains and other than the sender) of one message, read-only."""
+        with self._tx() as cur:
+            cur.execute(_PEOPLE_PARTICIPANTS, (message_id,))
+            rows = cur.fetchall()
+        sender = next((addr for role, addr, _ in rows if role == "from"), None)
+        names = {addr: name.strip() for _, addr, name in rows if name and name.strip()}
+        co: list[str] = []
+        for role, addr, _ in rows:
+            if role != "from" and addr != sender and addr not in co \
+                    and addr.rsplit("@", 1)[-1] not in OWN_DOMAINS:
+                co.append(addr)
+        return sender, names, tuple(co)
+
+    def record_people(self, source_record_id: str, value: dict[str, Any]) -> None:
+        """`people:v1` — who wrote this email (`people_reading.py`). Once per email."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", PEOPLE_VALUE_NORM, Jsonb(value)))
 
     def past_decisions(self, sender: str | None, limit: int = 6) -> list[PastDecision]:
         if not sender or "@" not in sender:
@@ -760,12 +795,34 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     written = db.record(message.source_record_id, value, mentions, requester, match_value)
     if verdict.triage_class == "bounce":
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
+    record_people_reading(db, message, mail, reading)
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     record_quote_refs(db, message.source_record_id, mail)
     if verdict.triage_class in HUMAN_CLASSES and (match is None or match.decision != "rejected"):
         record_memory_reading(db, message, match, mail.body, cases)
     decision = match.decision if match else ("unavailable" if verdict.triage_class in HUMAN_CLASSES else None)
     return TriageResult("recorded", verdict.triage_class, state, written, decision)
+
+
+def record_people_reading(db: Any, message: PendingMessage, mail: MailText, reading: ModelReading | None) -> bool:
+    """`people:v1` (`people_reading.py`): who wrote an inbound email. The model's `sender` when it
+    ran, otherwise only the header name and the signature text. Isolated like the quote-number
+    reading: a failure is logged by class and swallowed, never the triage's. True when written."""
+    if message.direction != "inbound":
+        return False
+    try:
+        sender, names, co = db.message_people(message.message_id)
+        value = people_value(direction=message.direction, sender_address=sender, header_names=names,
+                             reading_sender=reading.sender if reading is not None else None,
+                             signature_text=signature_for(mail), co_addresses=co,
+                             forwarded=is_forward_subject(mail.subject))
+        if value is None:
+            return False
+        db.record_people(message.source_record_id, value)
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("people reading skipped: %s", type(exc).__name__)
+        return False
 
 
 def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:

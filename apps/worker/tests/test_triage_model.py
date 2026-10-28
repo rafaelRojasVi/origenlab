@@ -120,3 +120,55 @@ def test_linked_cases_reach_the_model_and_each_proposed_move_is_checked_against_
     assert jump.linked_cases[0]["transition_allowed"] is False  # quoting → won skips Conversación
     none = parse_reading(answer({**GOOD, "stage": "not_a_case"}), model=DEFAULT_MODEL, candidates=CANDIDATES, cases=cases[:1])
     assert none.linked_cases[0]["transition_allowed"] is False
+
+
+SENDER_GOOD = {**GOOD, "sender": {"name": "Pedro Soto", "title": "Jefe de laboratorio",
+                                  "institution": "Universidad Ficticia", "phone": None}}
+
+
+def test_schema_has_sender() -> None:
+    assert "sender" in OUTPUT_SCHEMA["required"]
+    sender = OUTPUT_SCHEMA["properties"]["sender"]["anyOf"]
+    assert sender[1] == {"type": "null"}
+    obj = sender[0]
+    assert obj["additionalProperties"] is False
+    assert obj["required"] == ["name", "title", "institution", "phone"]
+    assert "sender: the person who wrote this email as their signature or sign-off states it" in SYSTEM_PROMPT
+
+
+def test_parse_reading_reads_sender() -> None:
+    from origenlab_worker.triage_model import ModelSender
+
+    r = parse_reading(answer(SENDER_GOOD), model=DEFAULT_MODEL, candidates=CANDIDATES)
+    assert r.sender == ModelSender("Pedro Soto", "Jefe de laboratorio", "Universidad Ficticia", None)
+    assert r.as_json()["sender"] == SENDER_GOOD["sender"]
+    long = {**SENDER_GOOD, "sender": {**SENDER_GOOD["sender"], "name": "x" * 500}}
+    assert len(parse_reading(answer(long), model=DEFAULT_MODEL, candidates=CANDIDATES).sender.name) == 200
+
+
+def test_a_reading_without_sender_still_parses() -> None:
+    # An answer shaped before `sender` existed, or a null sender: no sender, never a refusal.
+    assert parse_reading(answer(GOOD), model=DEFAULT_MODEL, candidates=CANDIDATES).sender is None
+    assert parse_reading(answer({**GOOD, "sender": None}), model=DEFAULT_MODEL, candidates=CANDIDATES).sender is None
+    blank = {**GOOD, "sender": {"name": " ", "title": None, "institution": None, "phone": None}}
+    assert parse_reading(answer(blank), model=DEFAULT_MODEL, candidates=CANDIDATES).sender is None
+
+
+def test_signature_sent_inside_email_tags() -> None:
+    mail = MailText(sender="pjsoto@hotmail.invalid", subject="Consulta", body="Hola, ¿tienen stock?",
+                    signature_text="Pedro Soto\nUniversidad Ficticia", tail_text="Hola, ¿tienen stock?")
+    content = build_request(mail, VERDICT, CANDIDATES)["messages"][0]["content"]
+    assert content.endswith("\n\n<signature>\nPedro Soto\nUniversidad Ficticia\n</signature>\n</email>")
+    assert content.index("<email>") < content.index("<signature>")
+
+
+def test_without_a_delimited_signature_the_tail_is_sent() -> None:
+    mail = MailText(sender="pjsoto@hotmail.invalid", subject="Consulta", body="Hola\nPedro Soto",
+                    tail_text="Hola\nPedro Soto")
+    content = build_request(mail, VERDICT, CANDIDATES)["messages"][0]["content"]
+    assert content.endswith("\n\n<signature>\nHola\nPedro Soto\n</signature>\n</email>")
+
+
+def test_no_signature_and_no_tail_sends_no_signature_block() -> None:
+    content = build_request(MAIL, VERDICT, CANDIDATES)["messages"][0]["content"]
+    assert "<signature>" not in content and content.endswith("</email>")

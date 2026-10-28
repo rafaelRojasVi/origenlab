@@ -127,6 +127,7 @@ def test_a_captured_request_is_pending_then_recorded_once(dsn, target, mailbox_i
     )
     assert rows == [
         ("message_triage", CASE_MATCH_VALUE_NORM, "unresolved", None, None, None),
+        ("message_triage", "people:v1", "unresolved", None, None, None),
         ("message_triage", "quote_refs:v1", "unresolved", None, None, None),
         ("message_triage", REQUESTER_VALUE_NORM, "unresolved", None, None, "none"),
         ("message_triage", VALUE_NORM, "unresolved", "quote_request", "off", None),
@@ -630,3 +631,22 @@ def test_a_tender_is_never_a_triage_case_a_matcher_candidate_or_a_memory(dsn, ta
     assert linked == {"sale": [cases["sale"]], "tender": []}
     assert past == {cases["sale"]}
     assert emails["sale"] in pending and emails["tender"] not in pending
+
+
+def test_who_wrote_an_inbound_email_is_read_from_its_participants_into_people_v1(dsn, target, mailbox_id) -> None:
+    from origenlab_worker.people_reading import PEOPLE_VALUE_NORM
+
+    store = Store()
+    raw = make_raw(frm="Juan Pedro Soto Rivas <pjsoto@hotmail.invalid>",
+                   to=f"{MAILBOX}, compras@ficticia.invalid", cc="Ana <ana@origenlab.cl>, lab@ficticia.invalid",
+                   subject="Consulta de equipos", message_id=f"<{uuid.uuid4().hex}@hotmail.invalid>")
+    sid = source_record(dsn, capture(target, mailbox_id, store, f"pp-{uuid.uuid4().hex[:8]}", raw))
+    before = business_rows(dsn)
+    with triage_conn(target) as conn:
+        triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+    [(value,)] = owner_rows(dsn, "select value from evidence.assertion where source_record_id = %s "
+                                 "and kind = 'message_triage' and value_norm = %s", (sid, PEOPLE_VALUE_NORM))
+    assert value == {"version": 1, "sender_address": "pjsoto@hotmail.invalid", "header_name": "Juan Pedro Soto Rivas",
+                     "signature": None, "co_addresses": ["compras@ficticia.invalid", "lab@ficticia.invalid"],
+                     "signature_raw": "Hola,\nadjunto el documento."}
+    assert business_rows(dsn) == before  # nothing in crm.* or outbound.*

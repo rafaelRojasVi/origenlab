@@ -46,6 +46,14 @@ class FakeDb:
         self.cards = list(cards)
         self.tender_threads: set[str] = set()
         self.case_matches: list[tuple[str, dict]] = []
+        self.people = ("ana@cliente.invalid", {"ana@cliente.invalid": "Ana Pérez"}, ("lab@cliente.invalid",))
+        self.people_recorded: list[tuple[str, dict]] = []
+
+    def message_people(self, message_id):
+        return self.people
+
+    def record_people(self, sid, value):
+        self.people_recorded.append((sid, value))
 
     def load(self, sid):
         if sid != "sr-1":
@@ -487,3 +495,49 @@ def test_a_database_failure_in_the_matcher_never_blocks_the_triage() -> None:
     result = triage_one(db, FakeStore(make_raw(subject="Re: puntas")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
     assert result.outcome == "recorded" and len(db.recorded) == 1 and db.case_matches == []
     assert result.case_match == "unavailable"
+
+
+PEOPLE_READING = {**READING, "sender": {"name": "Ana Pérez", "title": "Jefa de laboratorio",
+                                        "institution": "Universidad Ficticia", "phone": None}}
+
+
+def test_who_wrote_the_email_is_recorded_as_people_v1_with_the_model_signature() -> None:
+    from origenlab_worker.people_reading import PEOPLE_VALUE_NORM
+
+    db = FakeDb(candidates=[CAND])
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(Reader(PEOPLE_READING), DEFAULT_MODEL))
+    [(sid, value)] = db.people_recorded
+    assert sid == "sr-1" and PEOPLE_VALUE_NORM == "people:v1"
+    assert value["sender_address"] == "ana@cliente.invalid" and value["header_name"] == "Ana Pérez"
+    assert value["signature"] == PEOPLE_READING["sender"]
+    assert value["co_addresses"] == ["lab@cliente.invalid"]
+    assert value["signature_raw"] == "Hola,\nadjunto el documento."  # no delimiter: the tail stands in
+
+
+def test_mail_the_model_never_reads_still_gets_the_header_name() -> None:
+    reader = Reader(READING)
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw(subject="Respuesta automática: Solicitud de cotización")), "sr-1",
+               ModelSettings(reader, DEFAULT_MODEL))
+    assert reader.requests == []
+    [(_, value)] = db.people_recorded
+    assert value["signature"] is None and value["header_name"] == "Ana Pérez"
+
+
+def test_outbound_and_forwarded_mail_get_no_people_reading() -> None:
+    db = FakeDb(direction="outbound")
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.people_recorded == []
+    db = FakeDb()
+    triage_one(db, FakeStore(make_raw(subject="RV: Solicitud de cotización")), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert db.people_recorded == []
+
+
+def test_a_failing_people_write_never_breaks_the_triage() -> None:
+    class Broken(FakeDb):
+        def record_people(self, sid, value):
+            raise RuntimeError("boom")
+
+    db = Broken()
+    assert triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "recorded"
+    assert db.recorded

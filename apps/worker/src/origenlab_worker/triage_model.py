@@ -77,18 +77,24 @@ invent an id.
 - requester_organization: the institution or company the sender writes for, only if the email \
 states it; otherwise null.
 - summary_es: one or two sentences in Spanish (Chile) saying what the sender wants.
-- needs_reply: true if a person at OrigenLab should answer this email."""
+- needs_reply: true if a person at OrigenLab should answer this email.
+- sender: the person who wrote this email as their signature or sign-off states it (name, job \
+title, institution, phone); null fields when not stated; never the name of someone quoted, \
+forwarded or copied."""
 
 
 def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
     return {"anyOf": [schema, {"type": "null"}]}
 
 
+#: What the model reads of the person who wrote the email (`sender`), in schema order.
+SENDER_FIELDS: tuple[str, ...] = ("name", "title", "institution", "phone")
+
 OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["intent", "stage", "urgency", "products", "requester_organization", "summary_es",
-                 "needs_reply"],
+                 "needs_reply", "sender"],
     "properties": {
         "intent": {"type": "string", "enum": list(INTENTS)},
         "stage": {"type": "string", "enum": list(STAGE_ANSWERS)},
@@ -106,6 +112,11 @@ OUTPUT_SCHEMA: dict[str, Any] = {
         "requester_organization": _nullable({"type": "string"}),
         "summary_es": {"type": "string"},
         "needs_reply": {"type": "boolean"},
+        "sender": _nullable({
+            "type": "object", "additionalProperties": False,
+            "required": list(SENDER_FIELDS),
+            "properties": {f: _nullable({"type": "string"}) for f in SENDER_FIELDS},
+        }),
     },
 }
 
@@ -128,6 +139,19 @@ class ModelProduct:
 
 
 @dataclass(frozen=True)
+class ModelSender:
+    """The writer as their signature or sign-off states it; every field may be unknown."""
+
+    name: str | None
+    title: str | None
+    institution: str | None
+    phone: str | None
+
+    def as_json(self) -> dict[str, str | None]:
+        return {"name": self.name, "title": self.title, "institution": self.institution, "phone": self.phone}
+
+
+@dataclass(frozen=True)
 class ModelReading:
     model: str
     intent: str
@@ -142,6 +166,9 @@ class ModelReading:
     #: The linked cases' current stages, and whether moving each to `stage` is a legal transition
     #: (`case_commands.STAGE_TRANSITIONS`). Empty when the thread is not on a case yet.
     linked_cases: tuple[dict[str, Any], ...] = ()
+    #: Who wrote the email (`people:v1` reads it). None when unstated — and for readings stored
+    #: before the field existed, which have no `sender` key.
+    sender: ModelSender | None = None
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -150,6 +177,7 @@ class ModelReading:
             "urgency": self.urgency, "requester_organization": self.requester_organization,
             "summary_es": self.summary_es, "needs_reply": self.needs_reply,
             "products": [p.__dict__ for p in self.products],
+            "sender": self.sender.as_json() if self.sender is not None else None,
             "usage": {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens},
         }
 
@@ -196,8 +224,19 @@ def user_content(mail: MailText, verdict: RuleVerdict, candidates: Sequence[Prod
     return (
         "CONTEXT\n" + json.dumps(context, ensure_ascii=False)
         + "\n\nCATALOG CANDIDATES\n" + json.dumps(catalog, ensure_ascii=False)
-        + "\n\n<email>\nSubject: " + mail.subject + "\n\n" + mail.body + "\n</email>"
+        + "\n\n<email>\nSubject: " + mail.subject + "\n\n" + mail.body + _signature_block(mail) + "\n</email>"
     )
+
+
+def signature_for(mail: MailText) -> str:
+    """The text that stands for the writer's signature: the delimited block when there is one,
+    otherwise the body's last lines (most signatures have no `-- ` delimiter). May be empty."""
+    return mail.signature_text or mail.tail_text
+
+
+def _signature_block(mail: MailText) -> str:
+    text = signature_for(mail)
+    return "\n\n<signature>\n" + text + "\n</signature>" if text else ""
 
 
 def build_request(mail: MailText, verdict: RuleVerdict, candidates: Sequence[ProductCandidate], *,
@@ -248,6 +287,16 @@ def _short(value: Any, limit: int) -> str | None:
     return value[:limit] if value else None
 
 
+def _sender(raw: Any) -> ModelSender | None:
+    """The `sender` object, each field cut to 200 characters; missing or all-blank is None."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ModelRefused("shape")
+    sender = ModelSender(*(_short(raw.get(f), 200) for f in SENDER_FIELDS))
+    return sender if any(getattr(sender, f) for f in SENDER_FIELDS) else None
+
+
 def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandidate],
                   cases: Sequence[LinkedCase] = ()) -> ModelReading:
     """The validated answer, or :class:`ModelRefused`. Checks `stop_reason` before the content."""
@@ -292,7 +341,7 @@ def parse_reading(message: Any, *, model: str, candidates: Sequence[ProductCandi
     return ModelReading(
         model=model, intent=raw["intent"], stage=stage, urgency=raw["urgency"], linked_cases=linked,
         products=tuple(products), requester_organization=_short(raw.get("requester_organization"), 200),
-        summary_es=summary, needs_reply=raw["needs_reply"],
+        summary_es=summary, needs_reply=raw["needs_reply"], sender=_sender(raw.get("sender")),
         input_tokens=getattr(usage, "input_tokens", None), output_tokens=getattr(usage, "output_tokens", None),
     )
 
@@ -310,5 +359,5 @@ def anthropic_reader(api_key: str, *, timeout_s: float = 60.0, max_retries: int 
 
 
 __all__ = ["DEFAULT_MODEL", "INTENTS", "STAGE_ANSWERS", "LinkedCase", "OUTPUT_SCHEMA", "SYSTEM_PROMPT", "URGENCIES",
-           "ModelProduct", "ModelReader", "ModelReading", "ModelRefused", "anthropic_reader", "build_request",
+           "ModelProduct", "ModelReader", "ModelSender", "SENDER_FIELDS", "signature_for", "ModelReading", "ModelRefused", "anthropic_reader", "build_request",
            "parse_reading", "user_content"]
