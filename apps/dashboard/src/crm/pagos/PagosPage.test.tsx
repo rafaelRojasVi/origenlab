@@ -121,8 +121,9 @@ describe("«Pagos»", () => {
 
   it("attaches a case from the client's own cases", async () => {
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Asignar caso…" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "Asignar caso…" }))[0]);
     const dialog = screen.getByRole("dialog", { name: "Asignar caso" });
+    expect(within(dialog).getByRole("searchbox", { name: "Buscar caso" })).toHaveFocus();
     fireEvent.click(within(dialog).getByRole("button", { name: /CN09876/ }));
     await waitFor(() => expect(setInvoiceCase).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, opportunity_id: CASE }));
     expect(toasts).toContain("Caso asignado");
@@ -130,10 +131,14 @@ describe("«Pagos»", () => {
 
   it("marks a factura paid on the day chosen", async () => {
     renderPage();
-    const row = (await screen.findByText("Factura 9001")).closest("div.flex") as HTMLElement;
-    fireEvent.click(within(row.parentElement as HTMLElement).getAllByRole("button", { name: "Pagada…" })[0]);
-    fireEvent.change(screen.getByLabelText("Día del pago"), { target: { value: "2026-10-27" } });
-    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    const row = (await screen.findAllByTestId("invoice-row")).find((r) => within(r).queryByText("Factura 9001")) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Marcar pagada…" }));
+    const day = within(row).getByLabelText("¿Qué día pagó?");
+    expect(day).toHaveFocus();
+    fireEvent.change(day, { target: { value: "2026-10-29" } }); // tomorrow: refused before any call
+    expect(within(row).getByRole("button", { name: "Guardar pago" })).toBeDisabled();
+    fireEvent.change(day, { target: { value: "2026-10-27" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Guardar pago" }));
     await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-27" }));
   });
 
@@ -143,6 +148,8 @@ describe("«Pagos»", () => {
     const input = await screen.findByLabelText("Archivo CSV del Registro de Ventas");
     fireEvent.change(input, { target: { files: [new File(["x"], "RCV_VENTA.csv", { type: "text/csv" })] } });
     await waitFor(() => expect(toasts).toContain("4 documentos nuevos · 1 ya estaba · 2 asignados a su caso"));
+    // The result stays on the page after the toast goes.
+    expect(screen.getByRole("status")).toHaveTextContent("Listo: 4 documentos nuevos · 1 ya estaba · 2 asignados a su caso.");
     importInvoices.mockRejectedValueOnce(new OperatorApiError(JSON.stringify({ detail: { code: "sii_file_invalid",
       message: "Este es el registro de COMPRAS. Sube el de VENTAS (RCV_VENTA_…)." } }), 422));
     fireEvent.change(input, { target: { files: [new File(["x"], "RCV_COMPRA.csv", { type: "text/csv" })] } });
@@ -154,7 +161,26 @@ describe("«Pagos»", () => {
     expect(await screen.findByText("Factura 9001")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Subir CSV del SII" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Asignar caso…" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Pagada…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Marcar pagada…" })).not.toBeInTheDocument();
+  });
+
+  it("lists what is owed oldest first, and «Sin caso» narrows to the facturas without one", async () => {
+    fetchInvoices.mockResolvedValue({ ...LIST, items: [invoice("i-1", 9001, { days_open: 5 }), invoice("i-5", 9005, { days_open: 95 }), ...LIST.items.slice(1)] });
+    renderPage();
+    const rows = await screen.findAllByTestId("invoice-row");
+    expect(within(rows[0]).getByText("Factura 9005")).toBeInTheDocument();
+    expect(within(rows[0]).getByText(/hace 95 días/)).toHaveClass("text-bad");
+    fireEvent.click(screen.getByRole("button", { name: /facturas sin caso/ }));
+    expect(screen.getAllByTestId("invoice-row")).toHaveLength(3); // the two unpaid ones and the paid 9004
+    expect(screen.queryByText("Factura 9002")).not.toBeInTheDocument();
+  });
+
+  it("keeps the download steps one click away when there are facturas", async () => {
+    renderPage();
+    const help = await screen.findByRole("button", { name: "¿Cómo descargo el archivo?" });
+    expect(help).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(help);
+    expect(screen.getByText(/Descargar Detalles/)).toBeInTheDocument();
   });
 
   it("explains how to download the register when there is nothing yet", async () => {
