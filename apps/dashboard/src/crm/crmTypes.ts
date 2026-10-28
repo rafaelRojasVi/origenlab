@@ -573,7 +573,6 @@ export interface HistoryResponse {
 }
 
 
-/** `GET /v2/workspace/opportunities/{id}/threads`: the case's emails as Gmail cadenas. */
 /** A «¿Es …?» guess about who wrote an email: `question_es` is the sentence to show. */
 export interface PersonGuess {
   guess_id: string;
@@ -609,6 +608,7 @@ export interface CaseThread {
   messages: CaseThreadMessage[];
 }
 
+/** `GET /v2/workspace/opportunities/{id}/threads`: the case's emails as Gmail cadenas. */
 export interface CaseThreadsResponse {
   opportunity_id: string;
   threads: CaseThread[];

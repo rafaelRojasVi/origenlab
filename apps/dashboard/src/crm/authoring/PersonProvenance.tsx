@@ -1,5 +1,5 @@
 /**
- * «También conocido como» and «Lo que sabemos» on the contact drawer: the other names this person
+ * «También conocido como» and «De dónde salió cada dato» on the contact drawer: the other names this person
  * writes under, and for each learned name, address and institution where it came from. What the
  * machine proposed can be taken back («Quitar», when a rule made it) or confirmed («Confirmar»).
  */
@@ -38,7 +38,7 @@ export function ProvenanceList({ items, mayAuthor, onChanged }: {
 }) {
   if (items.length === 0) return null;
   return (
-    <Section title="Lo que sabemos">
+    <Section title="De dónde salió cada dato">
       <ul className="divide-y divide-line rounded-md border border-line">
         {items.map((it) => (
           <ProvenanceRow key={`${it.kind}:${it.id}`} item={it} mayAuthor={mayAuthor} onChanged={onChanged} />
@@ -51,17 +51,20 @@ export function ProvenanceList({ items, mayAuthor, onChanged }: {
 function ProvenanceRow({ item, mayAuthor, onChanged }: { item: ProvenanceItem; mayAuthor: boolean; onChanged: () => void }) {
   const [busy, setBusy] = useState<"remove" | "confirm" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
   const keys = useRef({ remove: newIdempotencyKey(), confirm: newIdempotencyKey() });
 
   async function run(which: "remove" | "confirm") {
+    if (which === "remove" && !item.receipt_id) return; // nothing to undo: never a confirm instead
     setBusy(which);
     setError(null);
     try {
-      if (which === "remove" && item.receipt_id) {
-        await removeAutomaticAction({ receipt_id: item.receipt_id }, keys.current.remove);
+      if (which === "remove") {
+        await removeAutomaticAction({ receipt_id: item.receipt_id as string }, keys.current.remove);
       } else {
         await confirmPersonFact({ kind: item.kind, id: item.id }, keys.current.confirm);
       }
+      setAsking(false);
       onChanged();
     } catch (err) {
       setError(caseRefusalText(err));
@@ -90,13 +93,33 @@ function ProvenanceRow({ item, mayAuthor, onChanged }: { item: ProvenanceItem; m
               </Button>
             ) : null}
             {canRemove ? (
-              <Button variant="quiet" onClick={() => void run("remove")} busy={busy === "remove"} busyLabel="Quitando…" disabled={busy !== null}>
+              <Button
+                variant="quiet"
+                onClick={() => (item.quitar_archives_person ? setAsking(true) : void run("remove"))}
+                busy={busy === "remove"}
+                busyLabel="Quitando…"
+                disabled={busy !== null || asking}
+              >
                 Quitar
               </Button>
             ) : null}
           </div>
         ) : null}
       </div>
+      {asking ? (
+        <div data-testid="quitar-person-confirm" className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="flex-1 text-[11px] text-ink">
+            El sistema creó este contacto con este correo. Quitarlo archiva el contacto entero, con su correo y su
+            institución.
+          </p>
+          <Button variant="secondary" onClick={() => void run("remove")} busy={busy === "remove"} busyLabel="Quitando…" disabled={busy !== null}>
+            Archivar contacto
+          </Button>
+          <Button variant="quiet" onClick={() => setAsking(false)} disabled={busy !== null}>
+            Cancelar
+          </Button>
+        </div>
+      ) : null}
       {error ? <p role="alert" className="mt-1 text-[11px] text-bad">{error}</p> : null}
     </li>
   );

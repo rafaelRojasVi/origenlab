@@ -49,7 +49,7 @@ function stub(data = body()) {
       posts.push({ path, body: JSON.parse(String(init.body)), key: new Headers(init.headers).get("Idempotency-Key") });
       if (failPath === path) {
         return json({ error: { code: "conflict", message: "x", details: { code: "changed_since",
-          message: "Alguien cambió este contacto después; deshazlo desde la ficha" } } }, 409);
+          message: "Alguien cambió este contacto después; revisa la ficha antes de quitarlo." } } }, 409);
       }
       return json({ replayed: false });
     }
@@ -103,6 +103,35 @@ describe("PersonDrawer · people first", () => {
     expect(posts[0].path).toBe("/v2/commands/remove-automatic-action");
     expect(posts[0].body).toEqual({ receipt_id: RECEIPT });
     expect(posts[0].key).toBeTruthy();
+  });
+
+  it("titles the list «De dónde salió cada dato»", async () => {
+    stub();
+    renderDrawer();
+    expect(await screen.findByText("De dónde salió cada dato")).toBeInTheDocument();
+    expect(screen.queryByText("Lo que sabemos")).toBeNull();
+  });
+
+  it("«Quitar» on a row of a person the system created asks first: the whole contact is archived", async () => {
+    const created = body({ provenance: [
+      { kind: "address", id: "a1", label: "psoto@ficticia.example.invalid", source_es: "firma del correo",
+        machine: true, receipt_id: RECEIPT, quitar_archives_person: true },
+    ] });
+    stub(created);
+    renderDrawer();
+    const [row] = await screen.findAllByTestId("provenance-row");
+    fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
+    const ask = await screen.findByTestId("quitar-person-confirm");
+    expect(ask).toHaveTextContent("archiva el contacto entero");
+    expect(posts).toHaveLength(0);
+    fireEvent.click(within(ask).getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByTestId("quitar-person-confirm")).toBeNull();
+    expect(posts).toHaveLength(0);
+    fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
+    fireEvent.click(within(await screen.findByTestId("quitar-person-confirm")).getByRole("button", { name: "Archivar contacto" }));
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].path).toBe("/v2/commands/remove-automatic-action");
+    expect(posts[0].body).toEqual({ receipt_id: RECEIPT });
   });
 
   it("shows the API's Spanish message when «Quitar» is refused as changed since", async () => {

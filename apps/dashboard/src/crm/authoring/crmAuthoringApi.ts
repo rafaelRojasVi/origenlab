@@ -165,6 +165,8 @@ export interface ProvenanceItem {
   source_es: string;
   machine: boolean;
   receipt_id: string | null;
+  /** «Quitar» undoes the rule that created the whole person (P3): it archives the contact. */
+  quitar_archives_person?: boolean;
 }
 
 export interface IdentifierRow {
