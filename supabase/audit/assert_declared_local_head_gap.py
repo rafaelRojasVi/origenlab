@@ -83,6 +83,8 @@ EXPECTED_EXTRA_TABLES = {
     "todo",
     # 20261029100000_slice7_person_name.sql — DOMAIN.md §7 #69.
     "person_name",
+    # 20261030100000_slice7_invoice.sql — DOMAIN.md §7 #70.
+    "invoice",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -366,6 +368,10 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # so implied-partial — not counted unconditionally.
     "crm.person_name.person_name_person_id_fkey",
     "crm.person_name.person_name_origin_source_record_id_fkey",
+    # 20261030100000_slice7_invoice.sql — organization_id and opportunity_id are each covered by a
+    # partial index (WHERE ... IS NOT NULL), so implied-partial — not counted unconditionally.
+    "crm.invoice.invoice_organization_id_fkey",
+    "crm.invoice.invoice_opportunity_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -386,18 +392,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 66,
+        "relation_count": 67,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 65,
+        "table_count": 66,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 230,
+        "policy_count": 233,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -480,7 +486,7 @@ def main() -> int:
     # EXPECTED_EXTRA_TABLES: the three commercial-case tables,
     # outbound.campaign_block, the four sign-in tables, the four slice-6 tables,
     # the five slice-7 catalog and evidence tables, crm.notice_review, crm.prospect_review, crm.prospect_edit,
-    # evidence.prospect_search_run and crm.todo.
+    # evidence.prospect_search_run, crm.todo, crm.person_name and crm.invoice.
     a08_findings = checks["a08"].get("findings") or []
     if len(a08_findings) != 2:
         refuse(f"a08 has unexpected findings: {a08_findings!r}")
@@ -512,8 +518,8 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "32 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly thirty-two extra tables")
+    if "33 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly thirty-three extra tables")
 
     # The 93 policy additions must belong to those same twenty-nine reviewed tables, plus one each on
     # two existing tables (crm.quote_line and procurement.notice, below):
@@ -543,7 +549,8 @@ def main() -> int:
     # 20261025100000, three for prospect_edit (api select/insert, worker select); from
     # 20261026100000, five for prospect_search_run; and from 20261028100000, three for todo
     # (api select/insert/update); and from 20261029100000, four for person_name
-    # (api select/insert/update, worker select).
+    # (api select/insert/update, worker select); and from 20261030100000, three for invoice
+    # (api select/insert/update).
     a09_findings = checks["a09"].get("findings") or []
     if len(a09_findings) != 3:
         refuse(f"a09 has unexpected findings: {a09_findings!r}")
@@ -565,8 +572,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "105 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly one hundred and five extra policies")
+    if "108 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly one hundred and eight extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -590,7 +597,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 66, expected 34"],
+        "a04": ["relations in scope: observed 67, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "

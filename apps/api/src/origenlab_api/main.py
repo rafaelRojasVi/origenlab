@@ -683,6 +683,19 @@ def _mount_v2_command_boundary(
     )
     app.include_router(todo_command_router)
     app.include_router(todo_read_router)
+    # «Pagos» (the SII sales register and what is paid): same database, role and switch.
+    from origenlab_api.v2.invoices.reads import InvoiceReadRepository
+    from origenlab_api.v2.invoices.repository import V2InvoiceCommandRepository
+    from origenlab_api.v2.invoices.routes import invoice_command_router, invoice_read_router
+
+    app.state.v2_invoice_command_repository = V2InvoiceCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.v2_invoice_read_repository = InvoiceReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(invoice_command_router)
+    app.include_router(invoice_read_router)
     # «Licitaciones» (spec 2026-10-19 §6.10): tender cases, same database, role and switch. The
     # Mercado Público ticket reads a tender's detail by code; without one the operator types the buyer.
     from origenlab_api.v2.tenders.mercado_publico import resolve_ticket

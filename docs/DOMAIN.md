@@ -1383,8 +1383,24 @@ case's stage.
 Domain events added: aggregate kind `todo` with `todo.created`, `todo.updated`, `todo.moved`,
 `todo.completed`, `todo.reopened`, `todo.deleted`.
 
-Counts by schema: `crm` 29, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **65**.
+### 7.15 «Pagos» — built 2026-10-28
+
+The sales documents of the SII «Registro de Ventas», and whether each was paid. There is no SII
+API for the register: an operator downloads the month's CSV (sii.cl → Registro de Compras y
+Ventas → VENTA → «Descargar Detalles») and uploads it on «Pagos». SII never knows whether a client
+paid, so «Pagada» is an operator's act. Each document belongs to a case: the import attaches it
+when exactly one case of the client organization (found by RUT) has a quote whose total is the
+document's total; otherwise a person attaches it.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 70 | `crm.invoice` | one SII sales document (factura 33, exenta 34, nota de débito 56, nota de crédito 61) | (`doc_type`, `folio`) unique — a re-uploaded month adds nothing; CLP amounts ≥ 0; a nota names the document it adjusts (`reference_doc_type`, `reference_folio`); `opportunity_id` set ⇔ `case_link` ∈ {`machine`,`operator`}; `paid_on` only on a 33/34; `version` ≥ 1; **never physically deleted** (`platform.reject_mutation`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
+
+Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.case_set`,
+`invoice.paid`, `invoice.unpaid`.
+
+Counts by schema: `crm` 30, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **66**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

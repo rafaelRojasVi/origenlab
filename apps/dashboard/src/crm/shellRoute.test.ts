@@ -91,7 +91,8 @@ describe("Cotizador route", () => {
     expect(ids.indexOf("cotizador")).toBe(ids.indexOf("oportunidades") + 1);
     expect(ids.indexOf("licitaciones")).toBe(ids.indexOf("cotizador") + 1);
     expect(ids.indexOf("prospectos")).toBe(ids.indexOf("licitaciones") + 1);
-    expect(ids.indexOf("organizaciones")).toBe(ids.indexOf("prospectos") + 1);
+    expect(ids.indexOf("pagos")).toBe(ids.indexOf("prospectos") + 1);
+    expect(ids.indexOf("organizaciones")).toBe(ids.indexOf("pagos") + 1);
     expect(sectionTitle("cotizador")).toBe("Cotizador");
     expect(CRM_NAV.find((n) => n.id === "cotizador")?.quoting).toBe(true);
   });

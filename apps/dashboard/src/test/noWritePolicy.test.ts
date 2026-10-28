@@ -140,6 +140,10 @@ describe("dashboard read-only policy", () => {
   const TODO_API_PATHS = ["/v2/commands/complete-todo", "/v2/commands/create-todo",
     "/v2/commands/delete-todo", "/v2/commands/move-todo", "/v2/commands/reopen-todo",
     "/v2/commands/update-todo"];
+  // «Pagos» (SII sales register): the CSV upload and three commands, one POST site.
+  const PAGOS_API_FILE = "../crm/pagos/invoiceApi.ts";
+  const PAGOS_API_PATHS = ["/v2/commands/import-invoices", "/v2/commands/mark-invoice-paid",
+    "/v2/commands/mark-invoice-unpaid", "/v2/commands/set-invoice-case"];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -264,6 +268,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === PAGOS_API_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...PAGOS_API_PATHS].sort())) {
+          hits.push(`${path} (pagos command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path === TODO_API_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -331,7 +346,7 @@ describe("dashboard read-only policy", () => {
   });
 
   it("names no V2 command outside the campaign, CRM authoring, email-rules, case-command and quote clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE, TODO_API_FILE]);
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE, TODO_API_FILE, PAGOS_API_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);

@@ -84,6 +84,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // «Pendientes», the shared to-do list on Hoy (`apps/api` v2/todos/routes.py): one literal path,
   // GET-only, `?done_days=` the only query. Its six commands are in `CASE_COMMAND_POST_PATHS`.
   /^\/v2\/workspace\/todos$/,
+  // «Pagos», the SII sales register (`apps/api` v2/invoices/routes.py): one literal path, GET-only,
+  // `?opportunity_id=` the only query. Its three JSON commands are in `CASE_COMMAND_POST_PATHS`, the
+  // CSV upload in `CATALOG_UPLOAD_POST_PATHS`.
+  /^\/v2\/workspace\/invoices$/,
   // CRM authoring reads (ContactRedactingRoute; viewer sees addresses masked as ***@domain).
   // Three exact paths: person detail, organization authoring detail, and merge preview (with
   // query string). Named individually — not `/v2/workspace/.+` — so nothing else becomes
@@ -330,8 +334,9 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * lost case is `advance-case-stage` on that same case. «Adjuntar OC» copies a purchase order from a
  * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). The six
  * «Pendientes» commands of Hoy (`create-todo`, `update-todo`, `move-todo`, `complete-todo`,
- * `reopen-todo`, `delete-todo`) ride the same list: a todo never changes a case. Twenty-two
- * exact paths, and only twenty-two. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * `reopen-todo`, `delete-todo`) ride the same list: a todo never changes a case, and so do the three
+ * «Pagos» commands (`set-invoice-case`, `mark-invoice-paid`, `mark-invoice-unpaid`). Twenty-five
+ * exact paths, and only twenty-five. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -368,6 +373,10 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/complete-todo$/,
   /^\/v2\/commands\/reopen-todo$/,
   /^\/v2\/commands\/delete-todo$/,
+  // «Pagos»: a document's case, «Pagada» and its undo (`apps/api` v2/invoices). The version shown is the document's.
+  /^\/v2\/commands\/set-invoice-case$/,
+  /^\/v2\/commands\/mark-invoice-paid$/,
+  /^\/v2\/commands\/mark-invoice-unpaid$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
@@ -568,21 +577,27 @@ export const BIDDER_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/add-bidder-docum
 /** A tender's anexos (`attach-tender-annexes`): up to 20 files or a zip, 60 MiB in all. */
 export const TENDER_ANNEXES_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-tender-annexes$/;
 
+/** «Pagos»: one month's SII «Registro de Ventas» CSV (`import-invoices`), at most 2 MiB. */
+export const SII_SALES_UPLOAD_PATH_RE = /^\/v2\/commands\/import-invoices$/;
+
 export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-product-image$/,
   CASE_DOCUMENT_UPLOAD_PATH_RE,
   BIDDER_DOCUMENT_UPLOAD_PATH_RE,
   TENDER_ANNEXES_UPLOAD_PATH_RE,
+  SII_SALES_UPLOAD_PATH_RE,
 ];
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
 export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
 export const TENDER_ANNEXES_UPLOAD_MAX_BYTES = 62_914_560 + 65_536;
+export const SII_SALES_UPLOAD_MAX_BYTES = 2_097_152 + 65_536;
 
 /** The body limit for one catalog command path: the upload's, a quote draft's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (TENDER_ANNEXES_UPLOAD_PATH_RE.test(pathOnly)) return TENDER_ANNEXES_UPLOAD_MAX_BYTES;
+  if (SII_SALES_UPLOAD_PATH_RE.test(pathOnly)) return SII_SALES_UPLOAD_MAX_BYTES;
   if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly) || BIDDER_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) {
     return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
   }
