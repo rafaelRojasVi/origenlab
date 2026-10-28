@@ -217,13 +217,13 @@ describe("«Pagos»", () => {
     expect(await within(row).findByText(/OC 4500012345/)).toBeInTheDocument();
     fireEvent.click(within(row).getByRole("button", { name: "Ver la Factura 9002" }));
     const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9002" });
-    expect(within(sheet).getByTestId("folio-box")).toHaveTextContent("Nº 9002");
-    expect(within(sheet).getByText("RUT 12345678-5")).toBeInTheDocument();
+    expect(within(sheet).getByTestId("invoice-summary")).toHaveTextContent("Te debe$ 100.000");
+    expect(within(sheet).getByText(/RUT 12345678-5/)).toBeInTheDocument();
     expect(within(sheet).getByText(/Marca · BX-1 · Balanza ficticia/)).toBeInTheDocument();
-    expect(within(sheet).getByText(/mismo neto que la factura/)).toBeInTheDocument();
-    expect(within(sheet).getByText(/el neto calza con la cotización/)).toBeInTheDocument();
+    expect(within(sheet).getByText("Mismo neto que la factura")).toBeInTheDocument();
+    expect(within(sheet).getByText(/asignado solo: el neto calza con la cotización/)).toBeInTheDocument();
     expect(within(sheet).getByText("$ 15.966")).toBeInTheDocument();
-    fireEvent.click(within(sheet).getByRole("button", { name: "Ver la OC Nº 4500012345" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Ver la orden de compra 4500012345" }));
     await waitFor(() => expect(tab.location.href).toBe("https://example.invalid/oc.pdf"));
     expect(caseDocuments.fetchCaseDocumentUrl).toHaveBeenCalledWith(CASE, "d-1");
   });
@@ -232,9 +232,19 @@ describe("«Pagos»", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Ver la Factura 9001" }));
     const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9001" });
-    expect(within(sheet).getByText(/Sin caso: no hay orden de compra/)).toBeInTheDocument();
-    expect(within(sheet).getByText(/no trae los productos/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/Sin caso todavía/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/no envía los productos/)).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: /Nº 9001/ })).not.toBeInTheDocument();
+  });
+
+  it("marks it paid from the factura itself", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Ver la Factura 9001" }));
+    const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9001" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Marcar pagada…" }));
+    fireEvent.change(within(sheet).getByLabelText("¿Qué día pagó?"), { target: { value: "2026-10-27" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Guardar pago" }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-27" }));
   });
 });

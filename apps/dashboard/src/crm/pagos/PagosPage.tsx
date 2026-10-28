@@ -292,7 +292,9 @@ function Register({
           </ul>
         )}
       </Panel>
-      {opened ? <InvoiceSheet invoice={opened} card={cardOf(opened)} onClose={() => setOpenId(null)} navigate={navigate} /> : null}
+      {opened ? (
+        <InvoiceSheet invoice={opened} card={cardOf(opened)} today={data.today} may={may} onClose={() => setOpenId(null)} onChanged={reload} navigate={navigate} />
+      ) : null}
     </>
   );
 }
@@ -367,7 +369,7 @@ function InvoiceRow({
   if (i.opportunity) {
     caseLine = (
       <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-[12px] text-ink-faint">Caso:</span>
+        <span className="text-[13px] text-ink-muted">Caso:</span>
         <a
           href={crmHash("oportunidades", i.opportunity.id)}
           className={`${LINK_ACTION} min-w-0 break-words text-left text-accent`}
@@ -404,15 +406,15 @@ function InvoiceRow({
   return (
     <li data-testid="invoice-row" aria-label={`${label}, ${i.organization?.name ?? i.client_name}`} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-start sm:gap-6">
       <div className="min-w-0 flex-1 space-y-1">
-        <p className="break-words text-[13.5px] font-semibold text-ink">{i.organization?.name ?? i.client_name}</p>
-        <p className="text-[12px] text-ink-muted">
-          <button type="button" className={`${LINK_ACTION} font-medium text-accent`} onClick={onOpen} aria-label={`Ver la ${label}`}>
+        <p className="break-words text-base font-semibold text-ink">{i.organization?.name ?? i.client_name}</p>
+        <p className="text-sm text-ink-muted">
+          <button type="button" className={`${LINK_ACTION} text-sm font-semibold text-accent`} onClick={onOpen} aria-label={`Ver la ${label}`}>
             {label}
           </button>{" "}
           · {fmtDate(i.issued_on)}
           {i.status === "unpaid" ? <> · <Age days={i.days_open} /></> : null}
         </p>
-        <p className="text-[11.5px] text-ink-faint">
+        <p className="text-[13px] text-ink-muted">
           RUT {i.client_rut}
           {i.organization ? "" : " · no está en Organizaciones"}
           {purchaseOrders(card).map((d) => (d.document_number ? ` · OC ${d.document_number}` : " · con OC")).join("")}
@@ -445,9 +447,9 @@ function InvoiceRow({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 sm:w-60 sm:shrink-0 sm:flex-col sm:flex-nowrap sm:items-end sm:justify-start">
         <div className="sm:text-right">
-          <p className="text-[15px] font-semibold tabular-nums text-ink">{clp(i.balance ?? i.total_amount)}</p>
+          <p className="text-lg font-semibold tabular-nums text-ink">{clp(i.balance ?? i.total_amount)}</p>
           {i.balance != null && i.balance !== i.total_amount ? (
-            <p className="text-[11px] tabular-nums text-ink-faint">de {clp(i.total_amount)} facturados</p>
+            <p className="text-[13px] tabular-nums text-ink-muted">de {clp(i.total_amount)} facturados</p>
           ) : null}
         </div>
         {showStatus ? (
