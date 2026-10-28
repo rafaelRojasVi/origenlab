@@ -156,7 +156,7 @@ def test_new_hotmail_attaches_when_signature_names_person_and_institution():
     actions = plan_people(snap)
     assert rules(actions) == [("P2", "strong")]
     assert actions[0].person_id == "p1"
-    assert actions[0].fields == {"person_id": "p1", "usage": "personal"}
+    assert actions[0].fields == {"person_id": "p1", "usage": "personal", "organization_id": None}
     assert actions[0].address == "pjsoto@hotmail.invalid"
 
 

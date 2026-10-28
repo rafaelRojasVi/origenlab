@@ -400,7 +400,10 @@ class _Planner:
             pid = matches[0]
             if orgs <= self.affiliated(pid) and self.snap.answered.get((address, pid)) is not False:
                 self.planned_addresses.add(address)
-                self.emit("P2", "strong", r, address, pid, {"person_id": pid, "usage": usage},
+                # `organization_id` is the institution a work address belongs to (none on free mail).
+                self.emit("P2", "strong", r, address, pid,
+                          {"person_id": pid, "usage": usage,
+                           "organization_id": None if free else next(iter(orgs))},
                           f"la firma dice «{sig_name}» de «{institution}»",
                           f"{self.snap.persons[pid].display_name} ya es de esa institución")
                 return
