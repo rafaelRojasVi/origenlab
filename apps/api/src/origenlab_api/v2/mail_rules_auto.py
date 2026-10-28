@@ -198,6 +198,7 @@ class AutoMailRules:
         people = result["people"]
         try:
             strong = [a for a in self._people_repo.plan() if a.tier == "strong"]
+            people["pending"] = max(0, len(strong) - MAX_PEOPLE_ACTIONS_PER_PASS)
             for action in strong[:MAX_PEOPLE_ACTIONS_PER_PASS]:
                 outcome = self._people_repo.apply_planned(operator, action, automatic=True)
                 people["refused" if outcome.get("code") else "applied"] += 1
@@ -206,14 +207,16 @@ class AutoMailRules:
             people["skipped"] = "error"
 
     def run_once(self) -> dict[str, Any]:
-        """Apply every safe automatic R1/R2/R7 action the rules plan now, if the switch is on."""
+        """One pass, if the switch is on: first the people pass (strong actions, when its flag is on),
+        then every automatic mail-rule action the rules plan now. The result counts both; the
+        people part carries its own `applied`, `refused`, `pending` and `skipped`."""
         started = datetime.now(UTC)
         with self._repo._read() as cur:
             switch = read_switch(cur)
         operator: OperatorIdentity | None = switch["operator"]
         result: dict[str, Any] = {"at": started.isoformat(), "applied": 0, "refused": 0, "pending": 0,
                                   "skipped": None, "refusals": [],
-                                  "people": {"applied": 0, "refused": 0, "skipped": None}}
+                                  "people": {"applied": 0, "refused": 0, "pending": 0, "skipped": None}}
         if not switch["enabled"] or operator is None:
             result["skipped"] = "off"
         elif not _is_active_admin(operator):

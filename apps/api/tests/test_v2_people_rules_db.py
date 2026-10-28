@@ -294,6 +294,8 @@ def test_auto_merge_records_ids_and_undo_restores_exactly(db, world) -> None:
     assert [r["rule_id"] for r in results] == ["P1", "P5"]
     merge = results[1]["merge"]
     assert (merge["winner_person_id"], merge["loser_person_id"]) == (winner, loser)
+    line = [r["what"] for r in repo.recent_automatic() if r["receipt_id"] == results[1]["command_receipt_id"]]
+    assert len(line) == 1 and line[0].endswith(": fusionados") and " ↔ " in line[0]
     assert sorted(merge["moved"]["contact_point_ids"]) == sorted([loser_cp, loser_cp2])
     assert merge["moved"]["affiliation_ids"] == [other_aff]
     assert merge["moved"]["closed_affiliation_ids"] == [dup_aff]
@@ -366,7 +368,8 @@ def test_events_carry_worker_attribution(db, world) -> None:
                                "assertion_id": reading["assertion"]}
     recent = [r for r in repo.recent_automatic() if r["receipt_id"] == result["command_receipt_id"]]
     assert recent and recent[0]["rule_id"] == "P3"
-    assert recent[0]["what"] == f"{recent[0]['person_name']}: persona nueva ({recent[0]['address']})"
+    assert recent[0]["what"] == (f"{recent[0]['person_name']}: persona nueva en "
+                                 f"{world['org_name']} ({recent[0]['address']})")
 
 
 def test_hoy_lines_and_quitar_dispatch_by_receipt(db, world) -> None:
@@ -382,6 +385,34 @@ def test_hoy_lines_and_quitar_dispatch_by_receipt(db, world) -> None:
     with pytest.raises(CommandRefused) as refused:
         repo.remove_automatic(_operator(world["admin"]), str(uuid.uuid4()))
     assert refused.value.status_code == 404
+
+
+def _line(repo, result):
+    (row,) = [r for r in repo.recent_automatic() if r["receipt_id"] == result["command_receipt_id"]]
+    return row["what"]
+
+
+def test_hoy_lines_name_what_changed(db, world) -> None:
+    address = f"dsoto.{world['tag']}@{world['domain']}"
+    _person(db, f"Diego {world['sur']}", address=address, org=world["org"])
+    repo = _repo(db)
+    results = _apply_all(repo, world, _reading(db, address, header=f"Juan Diego {world['sur']} Rivas"))
+    assert _line(repo, results[1]) == f"Diego {world['sur']}: también se llama Juan Diego {world['sur']} Rivas"
+    # A receipt written before the texts were stored reads them from the rows it created.
+    with _owner(db) as conn:
+        conn.execute("update platform.command_receipt set response_body = response_body - 'name' where id = %s",
+                     (results[1]["command_receipt_id"],))
+    assert _line(repo, results[1]) == f"Diego {world['sur']}: también se llama Juan Diego {world['sur']} Rivas"
+
+    name = f"Irene {world['sur']}"
+    address = f"irene.{world['tag']}@{world['domain']}"
+    _person(db, name, address=address)
+    results = _apply_all(repo, world, _reading(db, address, sig_name=name, institution=world["org_name"]))
+    assert _line(repo, results[1]) == f"{name}: trabaja en {world['org_name']}"
+    with _owner(db) as conn:
+        conn.execute("update platform.command_receipt set response_body = response_body - 'organization_name' "
+                     "where id = %s", (results[1]["command_receipt_id"],))
+    assert _line(repo, results[1]) == f"{name}: trabaja en {world['org_name']}"
 
 
 def test_p2_attaches_a_work_address_and_undo_deactivates_it(db, world) -> None:

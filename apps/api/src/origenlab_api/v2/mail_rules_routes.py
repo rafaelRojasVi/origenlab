@@ -17,6 +17,7 @@ process's last automatic pass (absent where the commands are not mounted). A `sa
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -171,6 +172,15 @@ class RemoveAutomaticActionBody(BaseModel):
     receipt_id: Annotated[str, Field(min_length=36, max_length=36)]
 
 
+def _when(value: Any) -> datetime:
+    """An ISO timestamp as an aware datetime, so rows of both producers order by the instant."""
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 @mail_rules_preview_router.get("/automatic-actions")
 def automatic_actions(_: Operator, repo: Repo, people: People) -> dict[str, Any]:
     """«Hecho automáticamente» on Hoy: what the automatic run did in the last two days, not undone.
@@ -179,7 +189,7 @@ def automatic_actions(_: Operator, repo: Repo, people: People) -> dict[str, Any]
     if people is not None:
         items = items + [{**row, "source": "people", "kind": "person"}
                          for row in people.recent_automatic(hours=48)]
-        items.sort(key=lambda row: row.get("applied_at") or "", reverse=True)
+        items.sort(key=lambda row: _when(row.get("applied_at")), reverse=True)
     return {"items": items}
 
 

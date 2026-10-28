@@ -152,12 +152,15 @@ def describe(row: dict[str, Any], names: dict[str, str]) -> str:
         return f"{winner} ↔ {loser}: fusionados"
     if rule == "P2":
         return f"{who}: nuevo correo {row.get('address')}"
+    org = row.get("organization_name")
     if rule == "P3":
-        return f"{who}: persona nueva ({row.get('address')})"
+        return f"{who}: persona nueva en {org} ({row.get('address')})" if org else \
+            f"{who}: persona nueva ({row.get('address')})"
     if rule == "P1b":
-        return f"{who}: nombre nuevo"
+        also = row.get("name")
+        return f"{who}: también se llama {also}" if also else f"{who}: nombre nuevo"
     if rule == "P4":
-        return f"{who}: institución nueva"
+        return f"{who}: trabaja en {org}" if org else f"{who}: institución nueva"
     return f"{who}: {rule}"
 
 
@@ -271,7 +274,21 @@ class PeopleRulesRepository(V2CaseCommandRepository):
                     "assertion_id": body.get("assertion_id"), "address": body.get("address"),
                     "person_id": body.get("person_id"), "person_name": person_name,
                     "created": body.get("created") or {}, "merge": body.get("merge"),
+                    "name": body.get("name"), "organization_name": body.get("organization_name"),
                 })
+            # Receipts written before the texts were stored: read them from the rows they created.
+            for row in out:
+                created = row["created"]
+                if row["rule_id"] == "P1b" and not row["name"] and created.get("person_name_id"):
+                    cur.execute("select name_display from crm.person_name where id = %s",
+                                (created["person_name_id"],))
+                    found = cur.fetchone()
+                    row["name"] = found[0] if found else None
+                if row["rule_id"] in ("P3", "P4") and not row["organization_name"] and created.get("affiliation_id"):
+                    cur.execute("select o.name from crm.affiliation a join crm.organization o "
+                                "on o.id = a.organization_id where a.id = %s", (created["affiliation_id"],))
+                    found = cur.fetchone()
+                    row["organization_name"] = found[0] if found else None
             merged = [m for row in out if (m := row["merge"])]
             names: dict[str, str] = {}
             if merged:
@@ -371,6 +388,13 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             }
             if merge is not None:
                 response["merge"] = merge
+            if action.rule_id == "P1b":
+                response["name"] = fields["name"].strip()
+            elif action.rule_id in ("P3", "P4"):
+                cur.execute("select name from crm.organization where id = %s", (fields["organization_id"],))
+                found = cur.fetchone()
+                if found is not None:
+                    response["organization_name"] = found[0]
             self._complete_receipt(cur, receipt_id, response)
             return response
 

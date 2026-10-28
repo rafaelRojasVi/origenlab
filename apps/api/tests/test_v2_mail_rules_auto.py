@@ -118,7 +118,7 @@ def test_people_pass_runs_before_mail_rules() -> None:
     auto = AutoMailRules(_OrderRepo(calls), people_repo=_People(calls), people_enabled=True)
     result = auto.run_once()
     assert calls == ["people.plan", ("people.apply", "P2", True), ("people.apply", "P5", True), "mail.plan"]
-    assert result["people"] == {"applied": 1, "refused": 1, "skipped": None}
+    assert result["people"] == {"applied": 1, "refused": 1, "pending": 0, "skipped": None}
 
 
 def test_people_pass_off_by_default() -> None:
@@ -157,4 +157,24 @@ def test_people_pass_takes_at_most_fifty_strong_actions() -> None:
             return [SimpleNamespace(rule_id="P2", tier="strong")] * 60
 
     result = AutoMailRules(_OrderRepo(calls), people_repo=_Many(calls), people_enabled=True).run_once()
-    assert result["people"]["applied"] == 50
+    assert result["people"]["applied"] == 50 and result["people"]["pending"] == 10
+
+
+def test_the_people_flag_is_wired_from_settings(monkeypatch) -> None:
+    from origenlab_api.main import create_app
+    from origenlab_api.settings import get_settings
+
+    monkeypatch.setenv("ORIGENLAB_DISABLE_DOTENV", "1")
+    monkeypatch.setenv("ORIGENLAB_V2_DATABASE_URL", "postgresql://u:p@127.0.0.1:54332/unused")
+    monkeypatch.delenv("ORIGENLAB_V2_JWKS_URL", raising=False)
+    monkeypatch.delenv("ORIGENLAB_ENV", raising=False)
+    monkeypatch.setenv("ORIGENLAB_GOOGLE_AUTH_ENABLED", "false")
+    monkeypatch.setenv("ORIGENLAB_DEV_LOGIN_ENABLED", "true")
+    monkeypatch.setenv("ORIGENLAB_V2_COMMANDS_ENABLED", "true")
+    get_settings.cache_clear()
+    assert create_app().state.auto_mail_rules.people_enabled is False
+    monkeypatch.setenv("ORIGENLAB_V2_AUTO_PEOPLE_ENABLED", "true")
+    get_settings.cache_clear()
+    app = create_app()
+    assert app.state.auto_mail_rules.people_enabled is True and app.state.people_rules_repository is not None
+    get_settings.cache_clear()
