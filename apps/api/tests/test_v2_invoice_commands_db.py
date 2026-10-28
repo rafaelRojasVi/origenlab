@@ -1,7 +1,9 @@
 """The «Pagos» invoice commands and read against PostgreSQL (opt-in: `ORIGENLAB_V2_TEST_DSN`).
 
 Runs in a disposable database (`tests/v2_command_harness.py`) as `origenlab_api`: an import adds new
-folios only, finds the client by RUT and attaches the one case whose quote has the document's total,
+folios only, finds the client by RUT (or an earlier document, or the name) and attaches the one case
+whose quote has the document's neto (authored or read off the PDF), else the client's only won case,
+and guesses again on a later import unless a person set or cleared the case;
 a stale version writes nothing, «Pagada» and its undo, and the read's balance and age buckets.
 Every name, RUT and amount is fictitious.
 """
@@ -48,15 +50,17 @@ def _owner(world_or_db, sql, *params):
         return cur.fetchall() if cur.description else None
 
 
-def _case_with_quote(db, operator_id, organization_id, total, tag):
-    """A case of the organization (its confirmed requesting institution) with one approved CLP quote."""
+def _case_with_quote(db, operator_id, organization_id, total, tag, stage="lead", pdf_net=None):  # noqa: PLR0913
+    """A case of the organization (its confirmed requesting institution) with one approved CLP quote of
+    `total`, or — `total` None — one historical revision whose only amount is `pdf_net`, the neto read off
+    its PDF (none at all when that is None too). `stage='won'` closes it on that quote."""
     import psycopg
 
-    net = round(total / 1.19)
     with psycopg.connect(db) as conn, conn.cursor() as cur:  # one transaction: the institution check is deferred
         cur.execute("set role origenlab_owner")
-        cur.execute("insert into crm.opportunity (title, stage, owner_operator_id, organization_id) "
-                    "values (%s, 'lead', %s, %s) returning id::text", (f"Caso ficticio {tag}", operator_id, organization_id))
+        cur.execute("insert into crm.opportunity (title, stage, owner_operator_id, organization_id) values "
+                    "(%s, %s, %s, %s) returning id::text",
+                    (f"Caso ficticio {tag}", "lead", operator_id, organization_id))
         case_id = cur.fetchone()[0]
         cur.execute("insert into crm.opportunity_organization (opportunity_id, organization_id, role, valid_from, "
                     "confirmation, confirmed_by_operator_id) values (%s, %s, 'requesting_institution', current_date, "
@@ -64,12 +68,31 @@ def _case_with_quote(db, operator_id, organization_id, total, tag):
         cur.execute("insert into crm.quote (opportunity_id, quote_number, created_by_operator_id) "
                     "values (%s, %s, %s) returning id", (case_id, f"CN9{uuid.uuid4().hex[:8]}", operator_id))
         quote_id = cur.fetchone()[0]
-        cur.execute(
-            "insert into crm.quote_revision (quote_id, revision_no, status, quote_currency, price_decimals, "
-            "subtotal, discount_total, tax_base, tax_total, grand_total, totals_computed_at, "
-            "approved_at, approved_by_operator_id, party_snapshot, party_snapshot_version) "
-            "values (%s, 1, 'approved', 'CLP', 0, %s, 0, %s, %s, %s, now(), now(), %s, '{}'::jsonb, 1)",
-            (quote_id, net, net, total - net, total, operator_id))
+        if total is None:
+            sha = uuid.uuid4().hex * 2
+            cur.execute("insert into evidence.source_record (kind, dedupe_key, payload, review_status) values "
+                        "('gmail_message', %s, '{}'::jsonb, 'pending') returning id", (f"gmail_message:{sha}",))
+            mail = cur.fetchone()[0]
+            if pdf_net is not None:
+                cur.execute("insert into evidence.source_record (kind, dedupe_key, payload) values ('quote_document', "
+                            "%s, jsonb_build_object('currency', 'CLP', 'net_total', %s::text))",
+                            (f"quote_document:{sha}", pdf_net))
+            cur.execute("insert into crm.quote_revision (quote_id, revision_no, status, origin, pdf_sha256, sent_at, "
+                        "origin_source_record_id) values (%s, 1, 'sent', 'historical_import', %s, now(), %s)",
+                        (quote_id, sha, mail))
+        else:
+            net = round(total / 1.19)
+            cur.execute(
+                "insert into crm.quote_revision (quote_id, revision_no, status, quote_currency, price_decimals, "
+                "subtotal, discount_total, tax_base, tax_total, grand_total, totals_computed_at, "
+                "approved_at, approved_by_operator_id, party_snapshot, party_snapshot_version) "
+                "values (%s, 1, 'approved', 'CLP', 0, %s, 0, %s, %s, %s, now(), now(), %s, '{}'::jsonb, 1)",
+                (quote_id, net, net, total - net, total, operator_id))
+        if stage == "won":  # a case opens at lead and walks the transition table
+            for step in ("qualifying", "qualified", "quoting", "negotiating"):
+                cur.execute("update crm.opportunity set stage = %s where id = %s", (step, case_id))
+            cur.execute("update crm.opportunity set stage = 'won', closed_at = now(), won_quote_id = %s, "
+                        "won_revision_no = 1 where id = %s", (quote_id, case_id))
     return case_id
 
 
@@ -114,10 +137,10 @@ def _reads(world):
     return InvoiceReadRepository(psycopg.connect, runtime_dsn(world["db"]))
 
 
-def _doc(world, doc_type=33, folio=None, total=119000, rut=None, issued_on=None, ref=None):
+def _doc(world, doc_type=33, folio=None, total=119000, rut=None, issued_on=None, ref=None, name="INSTITUTO FICTICIO"):
     return {"doc_type": doc_type, "folio": folio or next(_FOLIOS),
             "issued_on": (issued_on or date.today()).isoformat(), "client_rut": rut or world["rut"],
-            "client_name": "INSTITUTO FICTICIO", "exempt_amount": 0, "net_amount": round(total / 1.19),
+            "client_name": name, "exempt_amount": 0, "net_amount": round(total / 1.19),
             "vat_amount": total - round(total / 1.19), "total_amount": total,
             "reference_doc_type": ref[0] if ref else None, "reference_folio": ref[1] if ref else None}
 
@@ -235,3 +258,78 @@ def test_the_read_nets_notas_into_the_balance_and_buckets_by_age(world) -> None:
     assert summary["by_age"]["31-60"] == 100000 and summary["by_age"]["0-30"] == 50000
     one_case = _reads(world).list(world["case_a"])
     assert {i["folio"] for i in one_case["items"]} == {old["folio"]}
+
+
+def _client_without_rut(world, name):
+    [(org_id,)] = _owner(world, "insert into crm.organization (kind, name, confirmation) "
+                                "values ('company', %s, 'confirmed') returning id::text", name)
+    return org_id
+
+
+def test_name_key_drops_the_legal_form_and_the_domain_ending() -> None:
+    from origenlab_api.v2.invoices.repository import name_key
+
+    assert name_key("LABORATORIO FICTICIO S.A.") == name_key("laboratorioficticio.cl") == name_key("Laboratorio Ficticio SA") == "laboratorioficticio"
+    assert name_key("AGRICOLA Y GANADERA FICTICIA LIMITADA") == name_key("Agrícola y Ganadera Ficticia")
+    assert name_key("S.A.") == ""  # nothing left to tell clients apart
+
+
+@needs_db
+def test_a_client_without_rut_is_found_by_name_and_its_case_by_the_neto_read_off_the_pdf(world) -> None:
+    tag = uuid.uuid4().hex[:8]
+    org = _client_without_rut(world, f"lab{tag}ficticio.cl")
+    case = _case_with_quote(world["db"], world["operator_id"], org, None, tag, stage="won", pdf_net=397000)
+    _case_with_quote(world["db"], world["operator_id"], org, None, tag + "x", stage="won")  # a second won case
+    doc = _doc(world, total=472430, rut=f"{next(_RUTS)}-1", name=f"LAB{tag.upper()} FICTICIO S.A.")
+    doc["net_amount"], doc["vat_amount"] = 397000, 75430
+    assert _import(world, doc)["attached_to_case"] == 1
+    inv = _invoice(world, doc["folio"])
+    assert (inv["organization_id"], inv["opportunity_id"], inv["case_link"]) == (org, case, "machine")
+
+
+@needs_db
+def test_no_matching_quote_falls_back_to_the_clients_only_won_case(world) -> None:
+    tag = uuid.uuid4().hex[:8]
+    org = _client_without_rut(world, f"Agrícola Ficticia {tag}")
+    won = _case_with_quote(world["db"], world["operator_id"], org, None, tag, stage="won")
+    _case_with_quote(world["db"], world["operator_id"], org, 555000, tag + "q")  # still quoting, another amount
+    doc = _doc(world, total=1500000, rut=f"{next(_RUTS)}-2", name=f"AGRICOLA FICTICIA {tag.upper()} LIMITADA")
+    _import(world, doc)
+    assert _invoice(world, doc["folio"])["opportunity_id"] == won
+
+
+@needs_db
+def test_a_later_import_guesses_again_unless_a_person_set_or_cleared_the_case(world) -> None:
+    tag = uuid.uuid4().hex[:8]
+    org = _client_without_rut(world, f"Planta Ficticia {tag}")
+    name = f"PLANTA FICTICIA {tag.upper()} SPA"
+    early, cleared = _doc(world, total=900000, rut=f"{next(_RUTS)}-3", name=name), _doc(world, total=800000,
+                                                                                       rut=f"{next(_RUTS)}-4", name=name)
+    _import(world, early, cleared)  # no won case yet
+    assert _invoice(world, early["folio"])["opportunity_id"] is None
+    inv = _invoice(world, cleared["folio"])
+    _run(world, SET_INVOICE_CASE, SetInvoiceCaseBody(invoice_id=inv["id"], invoice_version=inv["version"],
+                                                    opportunity_id=None, note="no tiene caso"))
+    won = _case_with_quote(world["db"], world["operator_id"], org, None, tag, stage="won")
+    again = _import(world, early, cleared, sha="c" * 64)
+    assert (again["imported"], again["already_on_record"], again["attached_to_case"]) == (0, 2, 1)
+    assert (_invoice(world, early["folio"])["opportunity_id"], _invoice(world, early["folio"])["case_link"]) == (won, "machine")
+    assert _invoice(world, cleared["folio"])["opportunity_id"] is None  # a person's «Quitar» stands
+
+
+@needs_db
+def test_a_case_set_by_hand_teaches_the_rut_to_the_next_document(world) -> None:
+    tag = uuid.uuid4().hex[:8]
+    org = _client_without_rut(world, f"Nombre Distinto {tag}")
+    case = _case_with_quote(world["db"], world["operator_id"], org, 333000, tag)
+    rut = f"{next(_RUTS)}-5"
+    first = _doc(world, total=111000, rut=rut, name="RAZON SOCIAL QUE NO CALZA")
+    _import(world, first)
+    inv = _invoice(world, first["folio"])
+    assert inv["organization_id"] is None
+    _run(world, SET_INVOICE_CASE, SetInvoiceCaseBody(invoice_id=inv["id"], invoice_version=inv["version"],
+                                                    opportunity_id=case, note="es este"))
+    assert _invoice(world, first["folio"])["organization_id"] == org
+    second = _doc(world, total=333000, rut=rut, name="RAZON SOCIAL QUE NO CALZA")
+    _import(world, second)
+    assert _invoice(world, second["folio"])["opportunity_id"] == case

@@ -8,13 +8,22 @@ three. What it writes is `crm.invoice` and its `invoice.*` events — nothing el
 **The import adds, never rewrites.** A document already on record (same type and folio) is left
 exactly as it is — its case, its «Pagada» — so uploading the same month twice, or a month that
 overlaps, is harmless. A new document gets its client organization from the RUT
-(`crm.external_identifier`, scheme `rut`, followed through a merge), and its case when exactly one
-case of that organization has a live CLP quote revision whose total is the document's total
-(within a peso): `case_link = 'machine'`. Anything less certain is left for a person.
+(`crm.external_identifier`, scheme `rut`, followed through a merge), else from an earlier document
+of the same RUT that has one, else from the name: «LABORATORIO FICTICIO S.A.» is the organization
+`laboratorioficticio.cl` once the legal form and the domain ending are dropped. Its case, among that
+client's cases: the one quote whose neto is the document's neto (within a peso) — the authored
+amount, or the one the quote reader read off the PDF — else the client's only won case. Either is
+`case_link = 'machine'`; anything less certain is left for a person.
+
+A factura still without a case that no person has touched is tried again on every import, so a
+case won (or a quote read) after the upload still finds it. One a person set — or cleared — is never
+guessed over.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any
 
 from origenlab_api.v2.command_core import CommandTransaction
@@ -34,18 +43,54 @@ select coalesce(o.merged_into_organization_id, o.id)::text as organization_id
  where ei.scheme = 'rut' and ei.value_norm = %s
 """
 
-# Cases of the organization with a live CLP revision of the document's total (±1 peso).
-_CASES_BY_TOTAL = """
+# An earlier document of the same RUT already tied to a client (a person's «Asignar caso» sets it).
+_ORGANIZATION_BY_EARLIER_INVOICE = """
+select coalesce(o.merged_into_organization_id, o.id)::text as organization_id
+  from crm.invoice i
+  join crm.organization o on o.id = i.organization_id
+ where i.client_rut = %s
+ order by i.issued_on desc
+ limit 1
+"""
+
+_ORGANIZATIONS = """
+select id::text as organization_id, name from crm.organization where merged_into_organization_id is null
+"""
+
+# Cases of the organizations with a live CLP revision whose neto is the document's (±1 peso): the
+# Cotizador's own amount, or the neto the quote reader read off the PDF.
+_CASES_BY_NET = """
 select distinct q.opportunity_id::text as opportunity_id
   from crm.quote q
   join crm.quote_revision qr on qr.quote_id = q.id
   join crm.opportunity op on op.id = q.opportunity_id
- where op.organization_id = %s
+  left join evidence.source_record qd
+         on qd.dedupe_key = 'quote_document:' || lower(qr.pdf_sha256) and qd.kind = 'quote_document'
+ where op.organization_id = any(%s::uuid[])
    and qr.status <> 'void'
-   and qr.quote_currency = 'CLP'
-   and qr.grand_total is not null
-   and abs(qr.grand_total - %s) <= 1
+   and abs(coalesce(
+         case when qr.quote_currency = 'CLP' then qr.tax_base end,
+         case when qd.payload ->> 'currency' = 'CLP'
+                   and qd.payload ->> 'net_total' ~ '^[0-9]+(\\.[0-9]+)?$'
+              then (qd.payload ->> 'net_total')::numeric end) - %s) <= 1
 """
+
+_WON_CASES = """
+select id::text as opportunity_id from crm.opportunity where organization_id = any(%s::uuid[]) and stage = 'won'
+"""
+
+# A legal form or a filler word never tells two clients apart.
+_NAME_NOISE = frozenset({"s", "a", "sa", "spa", "ltda", "limitada", "eirl", "cia", "y", "de", "del", "la", "el",
+                         "los", "las"})
+
+
+def name_key(name: str | None) -> str:
+    """«LABORATORIO FICTICIO S.A.», «Laboratorio Ficticio SA» and `laboratorioficticio.cl` → `laboratorioficticio`; '' when too short to trust."""
+    text = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode().lower().strip()
+    if re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", text):  # an organization known only by its domain
+        text = text.split(".")[0]
+    key = "".join(w for w in re.findall(r"[a-z0-9]+", text) if w not in _NAME_NOISE)
+    return key if len(key) >= 4 else ""
 
 
 class V2InvoiceCommandRepository(CommandTransaction):
@@ -53,17 +98,79 @@ class V2InvoiceCommandRepository(CommandTransaction):
 
     # ------------------------------------------------------------------ helpers
 
-    def _organization_for(self, cur: Any, rut: str) -> str | None:
-        cur.execute(_ORGANIZATION_BY_RUT, (rut,))
-        row = self._row(cur)
-        return None if row is None else row["organization_id"]
+    def _organizations_for(self, cur: Any, rut: str, name: str, by_name: dict[str, list[str]]) -> list[str]:
+        """The client: by RUT, else an earlier document of that RUT, else every organization of that name."""
+        for sql in (_ORGANIZATION_BY_RUT, _ORGANIZATION_BY_EARLIER_INVOICE):
+            cur.execute(sql, (rut,))
+            row = self._row(cur)
+            if row is not None:
+                return [row["organization_id"]]
+        return by_name.get(name_key(name), [])
 
-    def _case_for(self, cur: Any, organization_id: str | None, total: int) -> str | None:
-        if organization_id is None or total <= 0:
+    def _organizations_by_name(self, cur: Any) -> dict[str, list[str]]:
+        cur.execute(_ORGANIZATIONS)
+        by_name: dict[str, list[str]] = {}
+        for organization_id, name in cur.fetchall():
+            if key := name_key(name):
+                by_name.setdefault(key, []).append(organization_id)
+        return by_name
+
+    def _case_for(self, cur: Any, organization_ids: list[str], net: int) -> str | None:
+        """The one case whose quote has the document's neto, else the client's only won case."""
+        if not organization_ids:
             return None
-        cur.execute(_CASES_BY_TOTAL, (organization_id, total))
+        if net > 0:
+            cur.execute(_CASES_BY_NET, (organization_ids, net))
+            rows = cur.fetchall()
+            if rows:
+                return rows[0][0] if len(rows) == 1 else None
+        cur.execute(_WON_CASES, (organization_ids,))
         rows = cur.fetchall()
         return rows[0][0] if len(rows) == 1 else None
+
+    def _guess(self, cur: Any, doc: dict[str, Any], by_name: dict[str, list[str]]) -> tuple[str | None, str | None]:
+        """(organization, case) for a document; a nota never gets a case of its own."""
+        organization_ids = self._organizations_for(cur, doc["client_rut"], doc["client_name"], by_name)
+        organization_id = organization_ids[0] if len(organization_ids) == 1 else None
+        if doc["doc_type"] not in (33, 34):
+            return organization_id, None
+        opportunity_id = self._case_for(cur, organization_ids, doc["net_amount"] + doc["exempt_amount"])
+        if opportunity_id is not None and organization_id is None:
+            cur.execute("select organization_id::text from crm.opportunity where id = %s", (opportunity_id,))
+            organization_id = cur.fetchone()[0]
+        return organization_id, opportunity_id
+
+    def _retry_guess(
+        self, cur: Any, operator: OperatorIdentity, receipt_id: str, doc: dict[str, Any],
+        by_name: dict[str, list[str]], note: str,
+    ) -> str | None:
+        """A factura on record with no case that no person touched: guess again; the event id when attached."""
+        cur.execute(
+            """
+            select i.id::text as id, i.opportunity_id::text as opportunity_id, i.version
+              from crm.invoice i
+             where i.doc_type = %s and i.folio = %s and i.opportunity_id is null and i.doc_type in (33, 34)
+               and not exists (select 1 from crm.domain_event e
+                                where e.aggregate_kind = 'invoice' and e.aggregate_id = i.id
+                                  and e.event_type = 'invoice.case_set')
+               for update
+            """,
+            (doc["doc_type"], doc["folio"]),
+        )
+        invoice = self._row(cur)
+        if invoice is None:
+            return None
+        organization_id, opportunity_id = self._guess(cur, doc, by_name)
+        if opportunity_id is None:
+            return None
+        result = self._change(
+            cur, operator, receipt_id, invoice,
+            command=IMPORT_INVOICES, event_type="invoice.case_set",
+            assignments={"organization_id": organization_id, "opportunity_id": opportunity_id, "case_link": "machine"},
+            payload={"opportunity_id": opportunity_id, "previous_opportunity_id": None, "case_link": "machine",
+                     "note": note},
+        )
+        return result["event_ids"][0]
 
     def _require_case(self, cur: Any, opportunity_id: str | None) -> None:
         if opportunity_id is None:
@@ -77,7 +184,7 @@ class V2InvoiceCommandRepository(CommandTransaction):
         cur.execute(
             """
             select id::text as id, doc_type, folio, opportunity_id::text as opportunity_id, case_link,
-                   paid_on, version
+                   organization_id::text as organization_id, paid_on, version
               from crm.invoice
              where id = %s
                for update
@@ -140,9 +247,9 @@ class V2InvoiceCommandRepository(CommandTransaction):
     ) -> dict[str, Any]:
         imported = already = attached = without_organization = 0
         event_ids: list[str] = []
+        by_name = self._organizations_by_name(cur)
         for doc in fields["documents"]:
-            organization_id = self._organization_for(cur, doc["client_rut"])
-            opportunity_id = self._case_for(cur, organization_id, doc["total_amount"]) if doc["doc_type"] in (33, 34) else None
+            organization_id, opportunity_id = self._guess(cur, doc, by_name)
             cur.execute(
                 """
                 insert into crm.invoice
@@ -162,6 +269,10 @@ class V2InvoiceCommandRepository(CommandTransaction):
             row = self._row(cur)
             if row is None:
                 already += 1
+                retried = self._retry_guess(cur, operator, receipt_id, doc, by_name, fields["note"])
+                if retried is not None:
+                    attached += 1
+                    event_ids.append(retried)
                 continue
             imported += 1
             attached += opportunity_id is not None
@@ -199,10 +310,16 @@ class V2InvoiceCommandRepository(CommandTransaction):
         invoice = self._lock_invoice(cur, fields)
         self._require_case(cur, fields["opportunity_id"])
         opportunity_id = fields["opportunity_id"]
+        assignments: dict[str, Any] = {"opportunity_id": opportunity_id,
+                                       "case_link": "operator" if opportunity_id else None}
+        if opportunity_id is not None and invoice["organization_id"] is None:
+            # The case names the client: the next document of this RUT finds it.
+            cur.execute("select organization_id::text from crm.opportunity where id = %s", (opportunity_id,))
+            assignments["organization_id"] = cur.fetchone()[0]
         return self._change(
             cur, operator, receipt_id, invoice,
             command=SET_INVOICE_CASE, event_type="invoice.case_set",
-            assignments={"opportunity_id": opportunity_id, "case_link": "operator" if opportunity_id else None},
+            assignments=assignments,
             payload={"opportunity_id": opportunity_id, "previous_opportunity_id": invoice["opportunity_id"],
                      "note": fields["note"]},
         )

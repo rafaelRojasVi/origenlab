@@ -1388,9 +1388,11 @@ Domain events added: aggregate kind `todo` with `todo.created`, `todo.updated`, 
 The sales documents of the SII «Registro de Ventas», and whether each was paid. There is no SII
 API for the register: an operator downloads the month's CSV (sii.cl → Registro de Compras y
 Ventas → VENTA → «Descargar Detalles») and uploads it on «Pagos». SII never knows whether a client
-paid, so «Pagada» is an operator's act. Each document belongs to a case: the import attaches it
-when exactly one case of the client organization (found by RUT) has a quote whose total is the
-document's total; otherwise a person attaches it.
+paid, so «Pagada» is an operator's act. Each document belongs to a case. The import finds the
+client organization by RUT, else by an earlier document of that RUT, else by name, and attaches
+the one case whose quote has the document's neto (authored, or read off the PDF), else the
+client's only won case; otherwise a person attaches it. A document no person has touched is
+guessed again on every later import.
 
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
