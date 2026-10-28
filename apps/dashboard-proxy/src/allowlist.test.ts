@@ -512,8 +512,12 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/complete-todo",
       "/v2/commands/reopen-todo",
       "/v2/commands/delete-todo",
+      // «Pagos»: a document's case, «Pagada» and its undo (2026-10-28).
+      "/v2/commands/set-invoice-case",
+      "/v2/commands/mark-invoice-paid",
+      "/v2/commands/mark-invoice-unpaid",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(22);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(25);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -696,6 +700,26 @@ describe("V2 durable read boundary allowlist", () => {
     ]) {
       expect(isAllowedPostPath(path), path).toBe(false);
     }
+  });
+});
+
+describe("«Pagos» (invoices) allowlist", () => {
+  it("allows GET of the register only, its three JSON commands and the CSV upload as exact POST paths", async () => {
+    const { isAllowedCatalogUploadPostPath, isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/invoices")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/invoices?opportunity_id=aaaaaaaa-1111-4111-8111-111111111111")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/invoices")).toBe(false);
+    for (const path of ["/v2/workspace/invoices/1", "/v2/workspace/invoices/", "/v2/workspace/invoicesx"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+    for (const path of ["/v2/commands/set-invoice-case", "/v2/commands/mark-invoice-paid",
+      "/v2/commands/mark-invoice-unpaid", "/v2/commands/import-invoices"]) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(`${path}/x`), `${path}/x`).toBe(false);
+    }
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/import-invoices")).toBe(true);
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/mark-invoice-paid")).toBe(false);
   });
 });
 

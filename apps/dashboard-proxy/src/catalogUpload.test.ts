@@ -287,6 +287,31 @@ describe("bidder document upload guard (2026-10-19)", () => {
   });
 });
 
+describe("SII sales register upload guard (2026-10-28)", () => {
+  const SII_UPLOAD = `${DASHBOARD}/api/v2/commands/import-invoices`;
+
+  it("caps the CSV at 2 MiB + 64 KiB", async () => {
+    const { SII_SALES_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    expect(catalogCommandMaxBytes("/v2/commands/import-invoices")).toBe(SII_SALES_UPLOAD_MAX_BYTES);
+    expect(SII_SALES_UPLOAD_MAX_BYTES).toBe(2 * 1024 * 1024 + 65_536);
+  });
+
+  it("forwards a multipart upload, refuses JSON, an oversize body and a missing key", async () => {
+    const fetchMock = stubUpstream();
+    const ok = await handleRequest(post(SII_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, "--x"), TEST_ENV);
+    expect(ok.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    fetchMock.mockClear();
+    expect((await handleRequest(post(SII_UPLOAD, { ...GOOD, "Content-Type": "application/json" }), TEST_ENV)).status).toBe(415);
+    const { SII_SALES_UPLOAD_MAX_BYTES } = await import("./allowlist");
+    const big = new ArrayBuffer(SII_SALES_UPLOAD_MAX_BYTES + 1);
+    expect((await handleRequest(post(SII_UPLOAD, { ...GOOD, "Content-Type": MULTIPART }, big), TEST_ENV)).status).toBe(413);
+    const { "Idempotency-Key": _k, ...noKey } = GOOD;
+    expect((await handleRequest(post(SII_UPLOAD, { ...noKey, "Content-Type": MULTIPART }, "--x"), TEST_ENV)).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("tender annexes upload guard (2026-10-19)", () => {
   const ANNEXES_UPLOAD = `${DASHBOARD}/api/v2/commands/attach-tender-annexes`;
 

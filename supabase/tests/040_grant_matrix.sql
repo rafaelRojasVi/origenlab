@@ -202,9 +202,13 @@ insert into expected values
     -- removed_by_operator_id); worker select. No DELETE.
     -- 20261029110000 adds confirmation (the contact page's «Confirmar»).
     ('crm', 'person_name', 'origenlab_api', 'SI', array['confirmation', 'removed_at', 'removed_by_operator_id'], 'SIU'),
-    ('crm', 'person_name', 'origenlab_worker', 'S', null, 'S');
+    ('crm', 'person_name', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261030100000: crm.invoice — «Pagos»; api select/insert/update (an SII document is never
+    -- deleted: no DELETE grant), no worker access at all.
+    ('crm', 'invoice', 'origenlab_api', 'SIU', null, 'SIU'),
+    ('crm', 'invoice', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 130, 'the matrix covers all 65 tables for both runtime roles');
+select is((select count(*)::int from expected), 132, 'the matrix covers all 66 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

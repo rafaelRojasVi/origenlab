@@ -44,6 +44,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/advance-case-stage`, `/v2/commands/record-case-won`, `/v2/commands/resolve-current-revision`, `/v2/commands/record-case-quotation` | The case drawer's «Cambiar etapa», «Marcar ganada», «Elegir revisión vigente» and «Registrar cotización» / «Nueva revisión» (`CASE_COMMAND_POST_PATHS`). Upstream: active `sales`/`admin` operator, `Idempotency-Key`, the case version shown, a note; mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the marketing commands, body ≤ 16 KiB. `open-commercial-case` is also allowed (owner decision 2026-10-10): «Abrir caso» on a «Correos sin caso» row opens a case at `lead` whose origin is that email; upstream requires the origin record, a title and a note. «Reabrir» on a reply to a lost case is `advance-case-stage` on that same case (2026-10-10). `record-case-interest` stays refused |
 | `/v2/commands/create-task`, `/v2/commands/complete-task`, `/v2/commands/cancel-task` | The W11 tasks behind «En pausa hasta…» (create), «Hecho» (complete) and «Retomar ahora» (cancel), in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the task version shown, not the case's). A task never changes the case's stage or version |
 | `/v2/commands/create-todo`, `/v2/commands/update-todo`, `/v2/commands/move-todo`, `/v2/commands/complete-todo`, `/v2/commands/reopen-todo`, `/v2/commands/delete-todo` | «Pendientes», the shared to-do list on Hoy, in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the line's version shown). A todo never changes a case's stage or version |
+| `/v2/commands/set-invoice-case`, `/v2/commands/mark-invoice-paid`, `/v2/commands/mark-invoice-unpaid` | «Pagos»: a factura's case, «Pagada» and its undo, in the same `CASE_COMMAND_POST_PATHS` list and under the same guard (the document's version shown). The SII CSV upload `/v2/commands/import-invoices` is multipart and listed with the other uploads (`CATALOG_UPLOAD_POST_PATHS`, at most 2 MiB + 64 KiB) |
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/{create-quote,save-quote-draft,approve-quote-revision,void-quote-revision,create-quote-revision}` | Cotizador commands: 5 exact paths, JSON, same guards as the catalog commands (`save-quote-draft` body ≤ 256 KiB, the rest 64 KiB) — see *Cotizador* below |
@@ -57,12 +58,13 @@ All other POST requests, and all `PUT`, `PATCH`, and `DELETE` requests, return *
 
 ## CRM card reads
 
-Six exact GET paths (`src/allowlist.ts`), nothing under or beside them:
+Seven exact GET paths (`src/allowlist.ts`), nothing under or beside them:
 
 | Method | Upstream path | Upstream behaviour |
 |---|---|---|
 | GET | `/v2/workspace/providers` | the six catalogue brands as the supplier directory, then the machine-detected candidates (hints only, never promoted) |
 | GET | `/v2/workspace/todos` | «Pendientes»: the open lines of the shared to-do list in order, and those done in the last `done_days` (1–31, default 7) days. Exact path; the only query is `done_days` |
+| GET | `/v2/workspace/invoices` | «Pagos»: every SII sales document with its saldo and case, and the por-cobrar totals by age. Exact path; the only query is `opportunity_id` |
 | GET | `/v2/workspace/equipment-interests` | observed equipment interests per line, institution and destination; CRM people apart from address-only evidence |
 | GET | `/v2/workspace/person-suggestions` | people the quote emails name and the CRM does not hold yet (name, address, institution, quotes, last date); addresses masked for `viewer`; creates nothing |
 | GET | `/v2/workspace/opportunities/<uuid>/notes` | the notes on one case, for the case drawer's «Registrar seguimiento» (same shape as person/organization notes); writing one is `add-note` |
