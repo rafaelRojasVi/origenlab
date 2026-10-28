@@ -45,9 +45,9 @@ create table crm.invoice (
   constraint invoice_amounts_nonnegative check (
     exempt_amount >= 0 and net_amount >= 0 and vat_amount >= 0 and total_amount >= 0),
   -- A case is attached by the import ('machine') or by a person ('operator'), never without saying which.
-  constraint invoice_case_link_shape check (
-    (opportunity_id is null and case_link is null)
-    or (opportunity_id is not null and case_link in ('machine', 'operator'))),
+  -- Written NULL-proof: a CHECK that evaluates to NULL passes.
+  constraint invoice_case_link_check check (case_link in ('machine', 'operator')),
+  constraint invoice_case_link_shape check ((opportunity_id is null) = (case_link is null)),
   -- Only a factura or factura exenta is collected; a nota adjusts the document it references.
   constraint invoice_paid_only_facturas check (paid_on is null or doc_type in (33, 34)),
   constraint invoice_version_positive check (version >= 1)
