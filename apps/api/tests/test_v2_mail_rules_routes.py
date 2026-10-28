@@ -184,3 +184,48 @@ def test_a_viewer_cannot_remove_and_a_key_is_required() -> None:
     assert _client(repo, "viewer").post(REMOVE, json={"receipt_id": RECEIPT}, headers=KEY).status_code == 403
     assert _client(repo, "sales").post(REMOVE, json={"receipt_id": RECEIPT}, headers=HEADERS).status_code in (400, 422, 428)
     assert repo.calls == []
+
+
+PEOPLE_RECEIPT = "00000000-0000-4000-8000-0000000000bb"
+
+
+class _FakePeople:
+    def __init__(self):
+        self.calls = []
+
+    def recent_automatic(self, hours=48, limit=50):
+        self.calls.append(("recent", hours))
+        return [{"receipt_id": PEOPLE_RECEIPT, "rule_id": "P2", "applied_at": "2099-01-01T00:00:00+00:00",
+                 "person_id": "p-1", "what": "Pedro Soto: nuevo correo pjsoto@hotmail.invalid"}]
+
+    def has_receipt(self, receipt_id):
+        return receipt_id == PEOPLE_RECEIPT
+
+    def remove_automatic(self, operator, receipt_id):
+        self.calls.append(("remove", operator.role, receipt_id))
+        return {"undoes_receipt_id": receipt_id}
+
+
+def _people_client(repo, people, role="admin"):
+    client = _client(repo, role)
+    client.app.state.people_rules_repository = people
+    return client
+
+
+def test_automatic_actions_include_people_rows() -> None:
+    repo, people = _FakeRepo(), _FakePeople()
+    body = _people_client(repo, people).get(AUTOMATIC, headers=HEADERS).json()
+    assert [i["receipt_id"] for i in body["items"]] == [PEOPLE_RECEIPT, RECEIPT]  # newest first
+    row = body["items"][0]
+    assert row["source"] == "people" and row["rule_id"] == "P2" and row["person_id"] == "p-1"
+    assert row["what"] == "Pedro Soto: nuevo correo pjsoto@hotmail.invalid"
+    assert body["items"][1]["rule_id"] == "R11"  # the mail rows keep their shape
+
+
+def test_remove_automatic_action_undoes_people_receipt() -> None:
+    repo, people = _FakeRepo(), _FakePeople()
+    client = _people_client(repo, people, "sales")
+    assert client.post(REMOVE, json={"receipt_id": PEOPLE_RECEIPT}, headers=KEY).status_code == 200
+    assert people.calls == [("remove", "sales", PEOPLE_RECEIPT)] and repo.calls == []
+    assert client.post(REMOVE, json={"receipt_id": RECEIPT}, headers=KEY).status_code == 200
+    assert repo.calls == [("remove", "sales", RECEIPT)]

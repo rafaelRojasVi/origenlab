@@ -141,6 +141,26 @@ select r.id::text as receipt_id, r.completed_at, r.response_body, p.display_name
 """
 
 
+def describe(row: dict[str, Any], names: dict[str, str]) -> str:
+    """The short Spanish line «Hecho automáticamente» shows for one people action."""
+    who = row.get("person_name") or "Una persona"
+    rule = row.get("rule_id")
+    if rule == "P5" and row.get("merge"):
+        merge = row["merge"]
+        winner = names.get(merge.get("winner_person_id")) or who
+        loser = names.get(merge.get("loser_person_id")) or "otra ficha"
+        return f"{winner} ↔ {loser}: fusionados"
+    if rule == "P2":
+        return f"{who}: nuevo correo {row.get('address')}"
+    if rule == "P3":
+        return f"{who}: persona nueva ({row.get('address')})"
+    if rule == "P1b":
+        return f"{who}: nombre nuevo"
+    if rule == "P4":
+        return f"{who}: institución nueva"
+    return f"{who}: {rule}"
+
+
 def _final(pid: str | None, merged: dict[str, str | None]) -> str | None:
     """The person a merge chain ends at."""
     seen: set[str] = set()
@@ -252,7 +272,37 @@ class PeopleRulesRepository(V2CaseCommandRepository):
                     "person_id": body.get("person_id"), "person_name": person_name,
                     "created": body.get("created") or {}, "merge": body.get("merge"),
                 })
-            return out
+            merged = [m for row in out if (m := row["merge"])]
+            names: dict[str, str] = {}
+            if merged:
+                ids = sorted({i for m in merged for i in (m.get("winner_person_id"), m.get("loser_person_id")) if i})
+                cur.execute("select id::text, display_name from crm.person where id = any(%s::uuid[])", (ids,))
+                names = dict(cur.fetchall())
+        for row in out:
+            row["what"] = describe(row, names)
+        return out
+
+    def has_receipt(self, receipt_id: str) -> bool:
+        """Whether `receipt_id` is a completed people-rule application (not a mail rule's)."""
+        receipt_id = as_uuid(receipt_id, "receipt_id")
+        with self._read() as cur:
+            cur.execute("select 1 from platform.command_receipt where id = %s and command_name = %s "
+                        "and status = 'completed'", (receipt_id, APPLY_COMMAND))
+            return cur.fetchone() is not None
+
+    def remove_automatic(self, operator: OperatorIdentity, receipt_id: str) -> dict[str, Any]:
+        """«Quitar» on Hoy (sales or admin): undo one people action the automatic run took. A
+        person's own «Aplicar» is not removed here."""
+        receipt_id = as_uuid(receipt_id, "receipt_id")
+        with self._read() as cur:
+            cur.execute("select response_body ->> 'trigger' from platform.command_receipt "
+                        "where id = %s and command_name = %s and status = 'completed'", (receipt_id, APPLY_COMMAND))
+            row = cur.fetchone()
+        if row is None:
+            raise CommandRefused(404, "applied_action_not_found", "no applied people action with that receipt")
+        if row[0] != "automatic":
+            raise CommandRefused(403, "not_automatic", "only what the system did by itself is removed from Hoy")
+        return self.undo(operator, receipt_id, REMOVED_FROM_HOY)
 
     # ------------------------------------------------------------------ apply
 

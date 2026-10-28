@@ -67,6 +67,8 @@ DEFAULT_INTERVAL_SECONDS = 300
 #: At most this many actions per pass; the next pass takes the rest.
 MAX_ACTIONS_PER_PASS = 100
 MAX_NOTE_CHARS = 2000
+#: At most this many people actions per pass (strong ones only); the next pass takes the rest.
+MAX_PEOPLE_ACTIONS_PER_PASS = 50
 
 
 def _digest(value: dict[str, Any]) -> str:
@@ -114,8 +116,13 @@ class AutoMailRules:
     """The switch and one automatic pass, over a :class:`MailRulesRepository`."""
 
     def __init__(self, repo: Any, *, interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
-                 disabled_rules: frozenset[str] = frozenset()) -> None:
+                 disabled_rules: frozenset[str] = frozenset(), people_repo: Any = None,
+                 people_enabled: bool = False) -> None:
         self._repo = repo
+        #: «Who wrote each email» (`people_rules_repository.py`): runs before the mail rules, only
+        #: while `ORIGENLAB_V2_AUTO_PEOPLE_ENABLED` is on and the same switch is on.
+        self._people_repo = people_repo
+        self.people_enabled = bool(people_enabled)
         self.interval_seconds = int(interval_seconds)
         #: Rules a deploy flag keeps out of the automatic pass (`FLAGGED_RULES`).
         self.rules: frozenset[str] = AUTOMATIC_RULES - frozenset(disabled_rules)
@@ -185,6 +192,19 @@ class AutoMailRules:
 
     # ------------------------------------------------------------------ one pass
 
+    def _people_pass(self, operator: OperatorIdentity, result: dict[str, Any]) -> None:
+        """Apply the strong people actions first, so the mail rules see who wrote each email. A
+        failed people pass never stops the mail rules."""
+        people = result["people"]
+        try:
+            strong = [a for a in self._people_repo.plan() if a.tier == "strong"]
+            for action in strong[:MAX_PEOPLE_ACTIONS_PER_PASS]:
+                outcome = self._people_repo.apply_planned(operator, action, automatic=True)
+                people["refused" if outcome.get("code") else "applied"] += 1
+        except Exception:
+            logger.exception("auto mail rules: the people pass failed")
+            people["skipped"] = "error"
+
     def run_once(self) -> dict[str, Any]:
         """Apply every safe automatic R1/R2/R7 action the rules plan now, if the switch is on."""
         started = datetime.now(UTC)
@@ -192,12 +212,19 @@ class AutoMailRules:
             switch = read_switch(cur)
         operator: OperatorIdentity | None = switch["operator"]
         result: dict[str, Any] = {"at": started.isoformat(), "applied": 0, "refused": 0, "pending": 0,
-                                  "skipped": None, "refusals": []}
+                                  "skipped": None, "refusals": [],
+                                  "people": {"applied": 0, "refused": 0, "skipped": None}}
         if not switch["enabled"] or operator is None:
             result["skipped"] = "off"
         elif not _is_active_admin(operator):
             result["skipped"] = "operator_not_admin"
+        if result["skipped"] is not None:
+            result["people"]["skipped"] = result["skipped"]
+        elif self._people_repo is None or not self.people_enabled:
+            result["people"]["skipped"] = "disabled"
         else:
+            self._people_pass(operator, result)
+        if result["skipped"] is None:
             actions, _display, _snapshot = self._repo.plan()
             eligible = [a for a in actions if a.mode == AUTO and a.rule_id in self.rules]
             result["pending"] = max(0, len(eligible) - MAX_ACTIONS_PER_PASS)
@@ -246,6 +273,8 @@ class AutoMailRulesRunner:
             except Exception:  # the timer must outlive one bad pass
                 logger.exception("auto mail rules: the pass failed")
                 continue
-            if result["applied"] or result["refused"]:
-                logger.info("auto mail rules: applied=%d refused=%d pending=%d",
-                            result["applied"], result["refused"], result["pending"])
+            people = result.get("people") or {}
+            if result["applied"] or result["refused"] or people.get("applied") or people.get("refused"):
+                logger.info("auto mail rules: applied=%d refused=%d pending=%d people_applied=%d people_refused=%d",
+                            result["applied"], result["refused"], result["pending"],
+                            people.get("applied", 0), people.get("refused", 0))

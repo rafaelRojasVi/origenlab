@@ -739,8 +739,14 @@ def _mount_v2_command_boundary(
     from origenlab_api.v2.mail_rules_auto import AutoMailRules, AutoMailRulesRunner
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
 
+    from origenlab_api.v2.people_rules_repository import PeopleRulesRepository
+
+    app.state.people_rules_repository = PeopleRulesRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
     app.state.auto_mail_rules = AutoMailRules(
         app.state.mail_rules_repository,
+        people_repo=app.state.people_rules_repository,
+        people_enabled=settings.v2_auto_people_enabled,
         interval_seconds=settings.v2_auto_mail_rules_interval_seconds,
         disabled_rules=frozenset(rule for rule, on in (("R14", settings.v2_auto_rule_r14_enabled),
                                                        ("R15", settings.v2_auto_rule_r15_enabled)) if not on),

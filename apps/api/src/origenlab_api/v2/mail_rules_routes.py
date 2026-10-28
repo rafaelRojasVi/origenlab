@@ -48,6 +48,12 @@ def get_auto_mail_rules(request: Request) -> AutoMailRules | None:
     return getattr(request.app.state, "auto_mail_rules", None)
 
 
+def get_people_rules_repository(request: Request) -> Any:
+    """The people rules (`people_rules_repository.py`), or None where they are not mounted."""
+    return getattr(request.app.state, "people_rules_repository", None)
+
+
+People = Annotated[Any, Depends(get_people_rules_repository)]
 Repo = Annotated[MailRulesRepository, Depends(get_mail_rules_repository)]
 Auto = Annotated[AutoMailRules | None, Depends(get_auto_mail_rules)]
 
@@ -166,9 +172,15 @@ class RemoveAutomaticActionBody(BaseModel):
 
 
 @mail_rules_preview_router.get("/automatic-actions")
-def automatic_actions(_: Operator, repo: Repo) -> dict[str, Any]:
-    """«Hecho automáticamente» on Hoy: what the automatic run did in the last two days, not undone."""
-    return {"items": repo.recent_automatic(hours=48)}
+def automatic_actions(_: Operator, repo: Repo, people: People) -> dict[str, Any]:
+    """«Hecho automáticamente» on Hoy: what the automatic run did in the last two days, not undone.
+    People rows (`source: "people"`, rule `P<n>`) are listed with the mail rows, newest first."""
+    items = repo.recent_automatic(hours=48)
+    if people is not None:
+        items = items + [{**row, "source": "people", "kind": "person"}
+                         for row in people.recent_automatic(hours=48)]
+        items.sort(key=lambda row: row.get("applied_at") or "", reverse=True)
+    return {"items": items}
 
 
 @mail_rules_command_router.post("/remove-automatic-action")
@@ -176,12 +188,16 @@ def remove_automatic_action(
     body: RemoveAutomaticActionBody,
     operator: Deciding,
     repo: Repo,
+    people: People,
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
     """«Quitar» (sales or admin): undo one action the automatic run took (owner, 2026-10-14: the
-    system acts, a person removes what is wrong). A person's «Aplicar» is not removed here."""
+    system acts, a person removes what is wrong). A person's «Aplicar» is not removed here. A
+    receipt of the people rules goes to the people repository, any other to the mail rules."""
     try:
         require_idempotency_key(idempotency_key)
+        if people is not None and people.has_receipt(body.receipt_id):
+            return people.remove_automatic(operator, body.receipt_id)
         return repo.remove_automatic(operator, body.receipt_id)
     except CommandRefused as exc:
         raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc

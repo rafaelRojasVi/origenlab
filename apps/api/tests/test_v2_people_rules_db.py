@@ -366,6 +366,22 @@ def test_events_carry_worker_attribution(db, world) -> None:
                                "assertion_id": reading["assertion"]}
     recent = [r for r in repo.recent_automatic() if r["receipt_id"] == result["command_receipt_id"]]
     assert recent and recent[0]["rule_id"] == "P3"
+    assert recent[0]["what"] == f"{recent[0]['person_name']}: persona nueva ({recent[0]['address']})"
+
+
+def test_hoy_lines_and_quitar_dispatch_by_receipt(db, world) -> None:
+    from origenlab_api.v2.commands import CommandRefused
+
+    _name, _address, reading = _new_person_reading(db, world, first="Ines")
+    repo = _repo(db)
+    (result,) = _apply_all(repo, world, reading)
+    receipt = result["command_receipt_id"]
+    assert repo.has_receipt(receipt) and not repo.has_receipt(str(uuid.uuid4()))
+    repo.remove_automatic(_operator(world["admin"]), receipt)
+    assert all(r["receipt_id"] != receipt for r in repo.recent_automatic())
+    with pytest.raises(CommandRefused) as refused:
+        repo.remove_automatic(_operator(world["admin"]), str(uuid.uuid4()))
+    assert refused.value.status_code == 404
 
 
 def test_p2_attaches_a_work_address_and_undo_deactivates_it(db, world) -> None:
