@@ -110,8 +110,10 @@ _NOTIFICATION_SENDERS = re.compile(
 #: Courier and autoresponder domains checked early, before business signals (owner 2026-10-29).
 _NOTIFICATION_DOMAINS: frozenset[str] = frozenset({"dhl.com", "icliente.com"})
 #: Loose no-reply applied to the full address: catches «drive-shares-dm-noreply@» and
-#: «no_responder@» that `_NOTIFICATION_SENDERS` (anchored at the local-part start) misses.
-_LOOSE_NO_REPLY = re.compile(r"(?:^|[-_.])no[-_.]?(?:reply|responder)(?:[-_.+]|@|$)")
+#: «no_responder@» / «no-responder@» that `_NOTIFICATION_SENDERS` (anchored at start) misses.
+#: Intentionally does NOT match plain «noreply@» / «no-reply@» at the local-part start so
+#: that a portal PO sent from noreply@ still reaches the purchase-order business signal.
+_LOOSE_NO_REPLY = re.compile(r"(?:^no[-_.]responder|[-_.]no[-_.]?(?:reply|responder))(?:[-_.+]|@|$)")
 _BULK_LABELS: frozenset[str] = frozenset({"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"})
 _UPDATE_LABELS: frozenset[str] = frozenset({"CATEGORY_UPDATES"})
 #: A CN quote number as OrigenLab prints it: «CN 1234», «CN-1234-26», «cn_998».

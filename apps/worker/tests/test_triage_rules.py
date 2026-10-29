@@ -70,13 +70,14 @@ def test_a_purchase_order_from_a_bulk_sender_is_purchase_order() -> None:
     assert v.triage_class == "purchase_order" and v.needs_model
 
 
-def test_a_noreply_sender_with_oc_subject_is_notification_not_purchase_order() -> None:
-    # The early notification check (step 4b) fires before business signals: a noreply sender is
-    # noise even when the subject contains «OC» (owner 2026-10-29).
+def test_a_purchase_order_beats_a_no_reply_portal_sender() -> None:
+    # Business signals (step 5) beat a plain noreply@ sender: only NOTIFICATION_DOMAINS and
+    # non-start-of-local no-reply forms (drive-shares-dm-noreply@, no_responder@) are
+    # caught early (step 4b); noreply@/no-reply@ at the local-part start falls through.
     m = mail(sender="noreply@portal.invalid", subject="Orden de Compra 4500123 emitida",
              headers={"list-unsubscribe": "<x>"})
     v = classify(TriageInput("inbound", ("INBOX",), m))
-    assert v.triage_class == "notification"
+    assert v.triage_class == "purchase_order"
 
 
 def test_an_oc_attachment_is_a_purchase_order_and_its_number_is_kept() -> None:
