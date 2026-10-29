@@ -24,6 +24,7 @@ from origenlab_api.v2.triage_review import (
     REVIEW_TRIAGE,
     TRIAGE_STAGES,
     ReviewTriageBody,
+    _LIST_SQL,
     validated_review,
 )
 
@@ -75,6 +76,15 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
     if key is not None:
         headers["Idempotency-Key"] = key
     return headers
+
+
+def test_list_sql_aliases_po_refs_column() -> None:
+    """_LIST_SQL lateral join must alias a.value as 'po_refs' so row.get('po_refs') is non-None.
+
+    Without the alias psycopg names the column 'value', and po_quote_numbers /
+    purchase_order_numbers are silently empty for every row.
+    """
+    assert "a.value as po_refs" in _LIST_SQL
 
 
 def test_a_verdict_reaches_the_repository_and_a_viewer_may_only_read() -> None:

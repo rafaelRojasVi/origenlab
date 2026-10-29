@@ -13,7 +13,11 @@ Order of the checks, first match wins:
    model never reads it.
    **tender_notice** — a tender alert (Wherex, Mercado Público): a lead for the procurement
    pipeline, structured already, so not for the model.
-5. Business signals, in this order, **before** the bulk and notification checks, because a
+4b.**notification** (early) — known courier/autoresponder domains (`dhl.com` and its subdomains,
+   `icliente.com`) or the looser no-reply pattern applied to the full address
+   (`(?:^|[-_.])no[-_.]?(?:reply|responder)(?:[-_.+]|@|$)`); checked before business signals so a
+   DHL shipping notice with «OC» in its subject is never a purchase order (owner 2026-10-29).
+5. Business signals, in this order, **before** the remaining bulk and notification checks, because a
    purchase order or a quotation from a portal often arrives from a no-reply sender:
    **lost** (a lost phrase, or a subject that announces a cancellation — «Anulación OC …» carries
    an OC number and is still a loss), **purchase_order**, **quote_followup** (a CN quote number),
@@ -23,7 +27,7 @@ Order of the checks, first match wins:
    forward (own text empty) is read whole. Numbers (CN, OC) are still taken from the whole
    message and the file names: they link, they do not classify.
 6. **bulk** — mailing-list and bulk headers, Gmail's Promotions / Social / Forums tabs.
-7. **notification** — no-reply and notification senders, Gmail's Updates tab.
+7. **notification** — remaining no-reply senders (`_NOTIFICATION_SENDERS`), Gmail's Updates tab.
 8. **business_other** — a person wrote and nothing above matched: the model reads it.
 9. **empty** — nothing to read at all.
 
@@ -103,6 +107,13 @@ _NOTIFICATION_SENDERS = re.compile(
     r"^(?:no[\-_.]?reply|do[\-_.]?not[\-_.]?reply|notifica(?:tion|cion|ciones)s?|alerts?|news(?:letter)?|"
     r"marketing|mailer)(?:[+.\-]|@)"
 )
+#: Courier and autoresponder domains checked early, before business signals (owner 2026-10-29).
+_NOTIFICATION_DOMAINS: frozenset[str] = frozenset({"dhl.com", "icliente.com"})
+#: Loose no-reply applied to the full address: catches «drive-shares-dm-noreply@» and
+#: «no_responder@» / «no-responder@» that `_NOTIFICATION_SENDERS` (anchored at start) misses.
+#: Intentionally does NOT match plain «noreply@» / «no-reply@» at the local-part start so
+#: that a portal PO sent from noreply@ still reaches the purchase-order business signal.
+_LOOSE_NO_REPLY = re.compile(r"(?:^no[-_.]responder|[-_.]no[-_.]?(?:reply|responder))(?:[-_.+]|@|$)")
 _BULK_LABELS: frozenset[str] = frozenset({"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"})
 _UPDATE_LABELS: frozenset[str] = frozenset({"CATEGORY_UPDATES"})
 #: A CN quote number as OrigenLab prints it: «CN 1234», «CN-1234-26», «cn_998».
@@ -172,6 +183,13 @@ def _first_line_is_baja(own: str) -> bool:
     unsubscribe reading for a person to confirm, instead of a quote request."""
     first = next((line.strip() for line in own.split("\n") if line.strip()), "")
     return first.upper() in ACCEPTED_FORMS and first != own.strip()
+
+
+def _is_notification_domain(d: str | None) -> bool:
+    """True for known courier/autoresponder domains and all their subdomains."""
+    if d is None:
+        return False
+    return d in _NOTIFICATION_DOMAINS or any(d.endswith("." + nd) for nd in _NOTIFICATION_DOMAINS)
 
 
 def _machine_header_reason(headers: dict[str, str]) -> str | None:
@@ -265,6 +283,13 @@ def classify(item: TriageInput) -> RuleVerdict:
     if _contains_any(subject, _TENDER_SUBJECTS) is not None:
         return verdict("tender_notice", "subject:tender_alert")
 
+    # Early notification check: known courier/autoresponder domains and the loose no-reply
+    # pattern, before business signals — a DHL OC notice must not reach a person (owner 2026-10-29).
+    if _is_notification_domain(domain):
+        return verdict("notification", "sender:notification_domain")
+    if _LOOSE_NO_REPLY.search(sender):
+        return verdict("notification", "sender:no-reply-pattern")
+
     # The reply's own words; a pure forward (nothing above the forwarded header) is read whole.
     own_text = fold(own) or body
     fresh_subject = not _REPLY_PREFIX.match(mail.subject or "")
@@ -318,4 +343,5 @@ def classify(item: TriageInput) -> RuleVerdict:
 
 
 __all__ = ["CLASSES", "NEEDS_MODEL", "NOISE_CLASSES", "ROUTED_CLASSES", "SIGNAL_CLASSES", "TRIAGE_VERSION", "WEB_QUOTE_ORIGIN",
-           "RuleVerdict", "TriageInput", "classify"]
+           "RuleVerdict", "TriageInput", "classify",
+           "_NOTIFICATION_DOMAINS", "_LOOSE_NO_REPLY", "_is_notification_domain"]

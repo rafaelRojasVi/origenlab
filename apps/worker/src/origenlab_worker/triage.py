@@ -37,7 +37,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, fold
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, PURCHASE_ORDER_FILENAME, PURCHASE_ORDER_NUMBER, fold, quote_number_tokens
 from origenlab_worker.case_match import (
     CASE_MATCH_VALUE_NORM, CaseCard, MatchInput, MatchResult, match_case,
 )
@@ -48,6 +48,7 @@ from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, is_forward_subject, read_forward
 from origenlab_worker.people_reading import NO_PEOPLE_CLASSES, PEOPLE_VALUE_NORM, is_own_address, people_value
 from origenlab_worker.mail_text import MailText, parse_mail
+from origenlab_worker.quote_reader import pdf_text
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
 from origenlab_worker.storage import StorageError
 from origenlab_worker.triage_model import (
@@ -66,8 +67,15 @@ from origenlab_worker.triage_model import (
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
 logger = logging.getLogger(__name__)
+#: Extracts a PO number from full-phrase PDF body text: «ORDEN DE COMPRA N° 4500012345» or
+#: «Purchase Order 4500012345» — as a complement to `PURCHASE_ORDER_NUMBER` which only handles
+#: the compact OC-prefix form.
+_PO_PHRASE_NUMBER = re.compile(
+    r"(?:orden\s+de\s+compra|purchase\s+order)\s+(?:n[°ºo]?\.?\s*)?(\d{4,})",
+)
 VALUE_NORM = f"triage:v{TRIAGE_VERSION}"
 REQUESTER_VALUE_NORM = "requester:v1"
+PO_REFS_VALUE_NORM = "po_refs:v1"
 #: Mail a person wrote about a deal: the context matcher places it on a case.
 HUMAN_CLASSES: tuple[str, ...] = ("purchase_order", "lost", "quote_followup", "quote_request", "business_other")
 #: The periodic sweep looks this far back; `triage-once --since-days` reaches further on purpose.
@@ -522,6 +530,16 @@ class TriageDb:
             cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", QUOTE_REFS_VALUE_NORM,
                                             Jsonb({"version": 1, "tokens": list(tokens)})))
 
+    def record_po_refs(self, source_record_id: str, tokens: Sequence[str],
+                       purchase_order_numbers: Sequence[str]) -> None:
+        """Quote tokens and PO numbers extracted from OC PDF attachments — possibly empty."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", PO_REFS_VALUE_NORM,
+                                            Jsonb({"version": 1, "tokens": list(tokens),
+                                                   "purchase_order_numbers": list(purchase_order_numbers)})))
+
     def pending_forwards(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
             cur.execute(_FORWARD_PENDING, (since_days, limit))
@@ -866,6 +884,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     record_people_reading(db, message, mail, reading, verdict.triage_class)
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     record_quote_refs(db, message.source_record_id, mail)
+    if message.direction == "inbound":
+        record_po_refs(db, message.source_record_id, raw)
     if verdict.triage_class in HUMAN_CLASSES and (match is None or match.decision != "rejected"):
         record_memory_reading(db, message, match, mail.body, cases)
     decision = match.decision if match else ("unavailable" if verdict.triage_class in HUMAN_CLASSES else None)
@@ -986,6 +1006,111 @@ def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
         logger.warning("quote reference reading skipped: %s", type(exc).__name__)
+        return False
+
+
+def _is_oc_pdf(filename: str) -> bool:
+    """True when an attachment looks like a purchase-order PDF.
+
+    Accepts OC/O.C. and PO/P.O. prefixes, and Spanish/English long-form names anywhere in the
+    stem.  Only `.pdf` files — never Word documents, spreadsheets, etc.  All matching is done on
+    the folded (lowercase) name, matching `PURCHASE_ORDER_FILENAME`'s convention.
+
+    This is intentionally broader than the API's `PURCHASE_ORDER_FILENAME` (which is used for the
+    R5 «purchase_order» triage-class signal and must stay narrow).  Real-world OCs seen so far:
+    «OC 4500000123.pdf», «4521-2026 Orden de compra Proveedor Ficticio.pdf», «PO_4500012345.pdf»,
+    «Purchase Order 123.pdf».
+    """
+    import re as _re
+    name = fold(filename)
+    if not name.endswith(".pdf"):
+        return False
+    return bool(
+        PURCHASE_ORDER_FILENAME.match(name)               # ^oc / ^o.c. (existing)
+        or _re.match(r"^p\.?o(?![a-z])", name)            # PO_ / PO4500
+        or "orden de compra" in name
+        or "orden_de_compra" in name
+        or _re.search(r"purchase[\s_]order", name)        # "purchase order" or "purchase_order"
+    )
+
+
+def _po_refs_from_text(text: str) -> tuple[list[str], list[str]]:
+    """Extract quote tokens and PO numbers from plain text (already extracted from a PDF).
+
+    Applies `fold()` so uppercase PDF text («OC 4500123», «CN09876») is matched correctly by the
+    lowercase-only regexes.  Returns (tokens, po_numbers).
+    """
+    folded = fold(text)
+    tokens: list[str] = []
+    po_numbers: list[str] = []
+    for t in quote_number_tokens(folded):
+        if t not in tokens:
+            tokens.append(t)
+    for m in PURCHASE_ORDER_NUMBER.finditer(folded):
+        n = m.group(1)
+        if n not in po_numbers:
+            po_numbers.append(n)
+    # Also capture PO numbers from full-phrase form: «ORDEN DE COMPRA N° 4500012345»
+    for m in _PO_PHRASE_NUMBER.finditer(folded):
+        n = m.group(1)
+        if n not in po_numbers:
+            po_numbers.append(n)
+    return tokens, po_numbers
+
+
+def _po_refs_from_raw(raw: bytes) -> tuple[list[str], list[str]]:
+    """Extract quote tokens and PO numbers from OC PDF attachments in a raw EML.
+
+    Parses the EML for parts whose filename passes `_is_oc_pdf`, extracts the PDF text layer, and
+    returns (tokens, po_numbers).  Empty lists when nothing is found or pdftotext is not available
+    (non-OCR; scanned OC PDFs yield no tokens).  Logs a warning on unexpected errors.
+    """
+    from email import policy
+    from email.message import EmailMessage
+    from email.parser import BytesParser
+
+    tokens: list[str] = []
+    po_numbers: list[str] = []
+    try:
+        msg = BytesParser(policy=policy.default).parsebytes(raw)
+        if not isinstance(msg, EmailMessage):
+            raise TypeError(f"unexpected parser result: {type(msg).__name__}")
+        if msg.defects:
+            raise ValueError(f"malformed EML: {type(msg.defects[0]).__name__}")
+        for part in msg.walk():
+            filename = part.get_filename()
+            if not filename or not _is_oc_pdf(filename):
+                continue
+            data = part.get_payload(decode=True)
+            if not isinstance(data, bytes) or not data:
+                continue
+            text = pdf_text(data)
+            if not text:
+                continue
+            part_tokens, part_pos = _po_refs_from_text(text)
+            for t in part_tokens:
+                if t not in tokens:
+                    tokens.append(t)
+            for n in part_pos:
+                if n not in po_numbers:
+                    po_numbers.append(n)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("po reference reading skipped: %s", type(exc).__name__)
+    return tokens, po_numbers
+
+
+def record_po_refs(db: Any, source_record_id: str, raw: bytes) -> bool:
+    """`po_refs:v1`: quote tokens and PO numbers from OC PDF attachments. Isolated — a failure is
+    logged by class and swallowed, never the triage's.  Only written when at least one OC PDF
+    attachment yielded a token or PO number — ordinary mail (no OC PDF) produces no row."""
+    try:
+        tokens, po_numbers = _po_refs_from_raw(raw)
+        if not tokens and not po_numbers:
+            return False
+        db.record_po_refs(source_record_id, tokens, po_numbers)
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("po reference reading skipped: %s", type(exc).__name__)
         return False
 
 
@@ -1271,8 +1396,8 @@ class SweepCounts:
             self.model[result.model] = self.model.get(result.model, 0) + 1
 
 
-__all__ = ["CASE_CARDS_SQL", "HUMAN_CLASSES", "case_row", "match_message", "DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "REQUESTER_VALUE_NORM", "ModelSettings",
-           "backfill_quote_refs", "record_quote_refs",
+__all__ = ["CASE_CARDS_SQL", "HUMAN_CLASSES", "case_row", "match_message", "DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "REQUESTER_VALUE_NORM", "PO_REFS_VALUE_NORM", "ModelSettings",
+           "backfill_quote_refs", "record_quote_refs", "record_po_refs",
            "backfill_forwards", "record_forward_reading",
            "record_memory_reading",
            "ModelUnavailable", "is_permanent_api_error", "PendingMessage", "SweepCounts", "TriageDb",
