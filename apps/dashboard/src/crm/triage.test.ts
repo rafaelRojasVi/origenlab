@@ -157,12 +157,15 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     const { ask, hidden } = sortInbox([
       r("dhl", { sender: "tracking@dhl.com", class: "purchase_order" }),
       r("dhl-sub", { sender: "cl@express.dhl.com", class: "business_other" }),
+      // Deep subdomain: tracking.express.dhl.com — NOTIFICATION_DOMAIN must allow any depth.
+      // Use a neutral local part so the catch is NOTIFICATION_DOMAIN, not AUTOMATIC_SENDER.
+      r("dhl-deep", { sender: "tracking@tracking.express.dhl.com", class: "business_other" }),
       r("icliente", { sender: "no_responder@icliente.com", class: "business_other" }),
       r("noreply-loose", { sender: "drive-shares-dm-noreply@google.com", class: "business_other" }),
       r("real", {}),
     ]);
     expect(ask.map((x) => x.assertion_id)).toEqual(["real"]);
-    expect(hidden).toEqual({ "aviso automático": 4 });
+    expect(hidden).toEqual({ "aviso automático": 5 });
   });
 
   it("hides an email older than 14 days that contacto@ already answered on its thread (2026-10-19)", () => {
@@ -290,11 +293,16 @@ describe("wonProposal — po_quote_numbers filter (goal 2)", () => {
   });
 
   it("with po_quote_numbers, keeps only revisions whose quote_number matches", () => {
-    const twoRevisions = card({}, [revision(1), revision(2)]);
-    // revision() uses quote_number "01253-26"; token "CN01253" matches by correlative (year=0)
-    expect(wonProposal({ ...po, po_quote_numbers: ["CN01253"] }, byId(twoRevisions))?.revisions.length).toBe(2);
-    // Token "01253-26" matches by (year=26, correlative=1253)
-    expect(wonProposal({ ...po, po_quote_numbers: ["01253-26"] }, byId(twoRevisions))?.revisions.length).toBe(2);
+    // Use two revisions with DIFFERENT quote numbers so the filter selects, not a no-op
+    const twoRevisions = card({}, [revision(1), { ...revision(2), quote_number: "01254-26" }]);
+    // "CN01253" matches correlative 1253 — only revision(1) with quote_number "01253-26"
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01253"] }, byId(twoRevisions))?.revisions.length).toBe(1);
+    // "01253-26" matches (year=26, correlative=1253) — only revision(1)
+    expect(wonProposal({ ...po, po_quote_numbers: ["01253-26"] }, byId(twoRevisions))?.revisions.length).toBe(1);
+    // "CN01254" matches correlative 1254 — only revision(2)
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01254"] }, byId(twoRevisions))?.revisions.length).toBe(1);
+    // Both tokens present → both revisions pass the filter
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01253", "CN01254"] }, byId(twoRevisions))?.revisions.length).toBe(2);
   });
 
   it("returns null when po_quote_numbers is set but no revision matches (wrong quote)", () => {

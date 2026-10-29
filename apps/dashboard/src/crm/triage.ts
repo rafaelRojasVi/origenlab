@@ -359,10 +359,12 @@ export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "r
 export const ANSWERED_HIDE_DAYS = 14;
 
 const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|marketing|notifications?|info|customer\.assistance|gemini-notes)$/;
-/** Courier and autoresponder domains: dhl.com, any subdomain, icliente.com (owner 2026-10-29). */
-const NOTIFICATION_DOMAIN = /^(dhl\.com|[^.]+\.dhl\.com|icliente\.com)$/;
-/** Looser no-reply pattern for the full local part: catches «drive-shares-dm-noreply@», «no_responder@». */
-const LOOSE_NO_REPLY_LOCAL = /(?:^|[-_.])no[-_.]?(?:reply|responder)(?:[-_.+]|$)/;
+/** Courier and autoresponder domains: dhl.com, any subdomain depth, icliente.com (owner 2026-10-29). */
+const NOTIFICATION_DOMAIN = /^(dhl\.com|(?:[^.]+\.)*dhl\.com|icliente\.com)$/;
+/** Looser no-reply pattern for the full local part: catches «drive-shares-dm-noreply@» (non-start)
+ *  and «no_responder@» / «no-responder@» (Spanish form at start). Does NOT match plain «noreply» /
+ *  «no-reply» at the local-part start — those fall through to AUTOMATIC_SENDER. */
+const LOOSE_NO_REPLY_LOCAL = /(?:^no[-_.]responder|[-_.]no[-_.]?(?:reply|responder))(?:[-_.+]|$)/;
 const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
