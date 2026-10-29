@@ -28,6 +28,7 @@ import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +45,7 @@ class SentCampaignRefused(Exception):
 @dataclass(frozen=True)
 class SentRecipient:
     address_norm: str
-    v2_state: str  # 'sent' | 'bounced'
+    v2_state: str  # always 'sent' (bounces live in outbound.contact_control)
 
 
 @dataclass(frozen=True)
@@ -120,9 +121,12 @@ def extract_sent_campaign(sqlite_path: Path, v1_campaign_id: str) -> SentCampaig
     name, subject, sender, target = row
     recipients: dict[str, str] = {}
     out_attempts: list[SentAttempt] = []
-    for email_norm, attempted_at, gmail_id, state in attempts:
+    for email_norm, attempted_at, gmail_id, _v1_state in attempts:
         address = _address(email_norm)
-        recipients[address] = "bounced" if (state or "").lower() == "bounced" else "sent"
+        # Always «sent»: V1 flips a recipient to «bounced» after later reconciles, and a stored
+        # state must never change (the archived trigger forbids it). Bounces are read from the
+        # block list (outbound.contact_control), which is where they are reliable anyway.
+        recipients[address] = "sent"
         out_attempts.append(SentAttempt(address, attempted_at, gmail_id or None))
     return SentCampaign(
         v1_campaign_id=v1_campaign_id, name=name, subject=subject, sender_email=_address(sender),
@@ -130,3 +134,136 @@ def extract_sent_campaign(sqlite_path: Path, v1_campaign_id: str) -> SentCampaig
         recipients=tuple(SentRecipient(a, s) for a, s in sorted(recipients.items())),
         attempts=tuple(sorted(out_attempts, key=lambda a: (a.address_norm, a.accepted_at))),
     )
+
+
+@dataclass
+class ImportResult:
+    dry_run: bool
+    campaign_id: str | None = None
+    inserted: dict[str, int] = field(default_factory=dict)
+    already_present: dict[str, int] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"dry_run": self.dry_run, "campaign_id": self.campaign_id,
+                "inserted": self.inserted, "already_present": self.already_present}
+
+
+def _instant(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC)
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(UTC)
+
+
+def apply_sent_campaign(conn: Any, campaign: SentCampaign, *, dry_run: bool = True) -> ImportResult:
+    """Load ``campaign`` through ``conn`` in one transaction; roll it back when ``dry_run``.
+
+    ``conn`` is a psycopg connection with autocommit off whose login may ``set role``
+    :data:`IMPORT_ROLE`. Inserts only what the target lacks; refuses when anything stored
+    disagrees with the extraction.
+    """
+    result = ImportResult(dry_run=dry_run)
+    try:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(f"set local role {IMPORT_ROLE}")
+            except Exception as exc:  # noqa: BLE001 - re-raised as this boundary's refusal
+                raise SentCampaignRefused(
+                    f"cannot take the {IMPORT_ROLE} role on this target ({exc.__class__.__name__}); connect as a "
+                    "login holding SET membership of it (origenlab_migrator)") from exc
+            cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (campaign.dedupe_key(),))
+            _apply(cur, campaign, result)
+    except Exception:
+        conn.rollback()
+        raise
+    if dry_run:
+        conn.rollback()
+    else:
+        conn.commit()
+    return result
+
+
+def _apply(cur: Any, campaign: SentCampaign, result: ImportResult) -> None:
+    cur.execute("select id from comms.mailbox where address_norm = %s", (campaign.sender_email,))
+    mailbox = cur.fetchone()
+    if mailbox is None:
+        raise SentCampaignRefused("the campaign's sender mailbox is not in the target")
+    mailbox_id = mailbox[0]
+    cur.execute(
+        "select c.id from outbound.campaign c join evidence.source_record s on s.id = c.origin_source_record_id "
+        "where s.kind = 'migration_manifest' and s.payload->>'v1_campaign_id' = %s and s.dedupe_key <> %s",
+        (campaign.v1_campaign_id, campaign.dedupe_key()),
+    )
+    if cur.fetchone() is not None:
+        raise SentCampaignRefused("this V1 campaign is already in the target under another import; refusing a second copy")
+
+    manifest = campaign.manifest()
+    sha = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode("utf-8")).hexdigest()
+    cur.execute("select id from evidence.source_record where dedupe_key = %s", (campaign.dedupe_key(),))
+    found = cur.fetchone()
+    inserted = {"evidence.source_record": 0, "outbound.campaign": 0,
+                "outbound.campaign_recipient": 0, "outbound.send_attempt": 0}
+    present = {"outbound.campaign_recipient": 0, "outbound.send_attempt": 0}
+    if found is None:
+        # The manifest records what the first import saw; later waves append under it.
+        cur.execute(
+            "insert into evidence.source_record (kind, dedupe_key, payload, payload_sha256, review_status) "
+            "values ('migration_manifest', %s, %s, %s, 'pending') returning id",
+            (campaign.dedupe_key(), json.dumps({**manifest, "sha256": sha}), sha),
+        )
+        source_id = cur.fetchone()[0]
+        inserted["evidence.source_record"] = 1
+    else:
+        source_id = found[0]
+
+    cur.execute("select id, name, status from outbound.campaign where origin_source_record_id = %s", (source_id,))
+    rows = cur.fetchall()
+    if len(rows) > 1:
+        raise SentCampaignRefused("the target holds two campaigns for this manifest")
+    if rows:
+        campaign_id, name, status = rows[0]
+        if (name, status) != (campaign.name, "archived"):
+            raise SentCampaignRefused("the stored campaign differs from the extraction (name or status)")
+    else:
+        cur.execute(
+            "insert into outbound.campaign (name, subject, status, mailbox_id, max_sends, recontact_interval_days, "
+            "policy_include_suppliers, origin_source_record_id) values (%s, %s, 'archived', %s, %s, null, false, %s) "
+            "returning id",
+            (campaign.name, campaign.subject, mailbox_id, campaign.target_attempt_count, source_id),
+        )
+        campaign_id = cur.fetchone()[0]
+        inserted["outbound.campaign"] = 1
+    result.campaign_id = str(campaign_id)
+
+    cur.execute("select address_norm, state, id from outbound.campaign_recipient where campaign_id = %s", (campaign_id,))
+    stored = {a: (s, i) for a, s, i in cur.fetchall()}
+    planned = {r.address_norm: r.v2_state for r in campaign.recipients}
+    if set(stored) - set(planned) or any(stored[a][0] != planned[a] for a in stored):
+        raise SentCampaignRefused("the stored audience differs from the extraction")
+    recipient_ids = {a: i for a, (_, i) in stored.items()}
+    for address, state in sorted(planned.items()):
+        if address in stored:
+            present["outbound.campaign_recipient"] += 1
+            continue
+        cur.execute(
+            "insert into outbound.campaign_recipient (campaign_id, address_norm, state, exclusion_reasons) "
+            "values (%s, %s, %s, '{}') returning id", (campaign_id, address, state))
+        recipient_ids[address] = cur.fetchone()[0]
+        inserted["outbound.campaign_recipient"] += 1
+
+    cur.execute(
+        "select address_norm, accepted_at, provider_message_id from outbound.send_attempt "
+        "where campaign_id = %s and origin_source_record_id = %s", (campaign_id, source_id))
+    existing = Counter((a, _instant(t), m) for a, t, m in cur.fetchall())
+    wanted = Counter((a.address_norm, _instant(a.accepted_at), a.gmail_message_id) for a in campaign.attempts)
+    if existing - wanted:
+        raise SentCampaignRefused("the stored send ledger differs from the extraction")
+    present["outbound.send_attempt"] = sum(existing.values())
+    for (address, at, gmail_id), n in sorted((wanted - existing).items()):
+        for _ in range(n):
+            cur.execute(
+                "insert into outbound.send_attempt (purpose, campaign_id, campaign_recipient_id, mailbox_id, address_norm, "
+                "submission_state, delivery_state, accepted_at, provider_message_id, origin_source_record_id) "
+                "values ('marketing', %s, %s, %s, %s, 'accepted', 'pending', %s, %s, %s)",
+                (campaign_id, recipient_ids[address], mailbox_id, address, at, gmail_id, source_id))
+            inserted["outbound.send_attempt"] += 1
+    result.inserted, result.already_present = inserted, present

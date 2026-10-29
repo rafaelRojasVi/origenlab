@@ -87,7 +87,7 @@ def test_extract_keeps_only_accepted_live_attempts(tmp_path: Path) -> None:
     states: dict[str, int] = {}
     for r in c.recipients:
         states[r.v2_state] = states.get(r.v2_state, 0) + 1
-    assert states == {"sent": 2, "bounced": 1}
+    assert states == {"sent": 3}  # V1 «bounced» is a later reconcile, not a send fact
     assert c.name == "Promo Ficticia" and c.subject == "Asunto ficticio"
     assert {a.gmail_message_id for a in c.attempts} == {"g1", "g2", "g3"}
 
@@ -127,3 +127,153 @@ def test_sqlite_opened_read_only(tmp_path: Path) -> None:
     before = (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest())
     extract_sent_campaign(p, CID)
     assert (p.stat().st_mtime_ns, hashlib.sha256(p.read_bytes()).hexdigest()) == before
+
+
+# --------------------------------------------------------------------------- database (opt-in)
+
+import uuid  # noqa: E402
+
+from v2_command_harness import build_disposable_database, needs_db, runtime_dsn  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def disposable_database():
+    yield from build_disposable_database()
+
+
+@pytest.fixture(scope="module")
+def mailbox(disposable_database) -> str:
+    import psycopg
+
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("insert into comms.mailbox (address_norm) values ('contacto@origenlab.cl') returning id::text")
+        return cur.fetchone()[0]
+
+
+def _apply(dsn: str, campaign, *, dry_run: bool = False):
+    import psycopg
+
+    from origenlab_api.v2.v1_sent_campaign_import import apply_sent_campaign
+
+    with psycopg.connect(dsn, autocommit=False) as conn:
+        return apply_sent_campaign(conn, campaign, dry_run=dry_run)
+
+
+def _counts(dsn: str, campaign_name: str) -> dict[str, int]:
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "select (select count(*) from outbound.campaign where name = %(n)s), "
+            "(select count(*) from outbound.campaign_recipient r join outbound.campaign c on c.id = r.campaign_id where c.name = %(n)s), "
+            "(select count(*) from outbound.send_attempt a join outbound.campaign c on c.id = a.campaign_id where c.name = %(n)s)",
+            {"n": campaign_name})
+        c, r, a = cur.fetchone()
+    return {"campaign": c, "recipients": r, "attempts": a}
+
+
+def _wave(tmp_path: Path, cid: str, n_waves: int) -> Path:
+    path = tmp_path / f"{cid}-{n_waves}.sqlite"
+    recipients, attempts = [], []
+    for w in range(1, n_waves + 1):
+        for i in range(3):
+            a = f"w{w}-p{i}@instituto.invalid"
+            recipients.append((a, "sent"))
+            attempts.append((a, f"2026-10-2{w}T13:0{i}:00Z", "live", "accepted", f"g-{cid}-{w}-{i}"))
+    return _v1(path, recipients, attempts, campaign_id=cid)
+
+
+def _named(campaign, name: str):
+    from dataclasses import replace
+
+    return replace(campaign, name=name)
+
+
+@needs_db
+def test_apply_creates_archived_imported_campaign(disposable_database, mailbox, tmp_path: Path) -> None:
+    import psycopg
+
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    c = _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}")
+    result = _apply(disposable_database, c)
+    assert result.inserted == {"evidence.source_record": 1, "outbound.campaign": 1,
+                               "outbound.campaign_recipient": 3, "outbound.send_attempt": 3}
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("select c.status, c.subject, s.dedupe_key, s.kind from outbound.campaign c "
+                    "join evidence.source_record s on s.id = c.origin_source_record_id where c.id = %s",
+                    (result.campaign_id,))
+        assert cur.fetchone() == ("archived", "Asunto ficticio", c.dedupe_key(), "migration_manifest")
+        cur.execute("select distinct purpose, submission_state, delivery_state from outbound.send_attempt "
+                    "where campaign_id = %s", (result.campaign_id,))
+        assert cur.fetchall() == [("marketing", "accepted", "pending")]
+        cur.execute("select count(*) from outbound.send_attempt where campaign_id = %s and provider_message_id like 'g-%%' "
+                    "and accepted_at is not null and campaign_recipient_id is not null", (result.campaign_id,))
+        assert cur.fetchone()[0] == 3
+
+
+@needs_db
+def test_dry_run_writes_nothing(disposable_database, mailbox, tmp_path: Path) -> None:
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    c = _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}")
+    result = _apply(disposable_database, c, dry_run=True)
+    assert result.dry_run and result.inserted["outbound.send_attempt"] == 3
+    assert _counts(disposable_database, c.name) == {"campaign": 0, "recipients": 0, "attempts": 0}
+
+
+@needs_db
+def test_apply_twice_appends_only_new_wave(disposable_database, mailbox, tmp_path: Path) -> None:
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    first = _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}")
+    both = _named(extract_sent_campaign(_wave(tmp_path, cid, 2), cid), f"Promo {cid}")
+    r1 = _apply(disposable_database, first)
+    r2 = _apply(disposable_database, both)
+    assert r2.campaign_id == r1.campaign_id
+    assert r2.inserted["outbound.campaign_recipient"] == 3 and r2.already_present["outbound.campaign_recipient"] == 3
+    assert r2.inserted["outbound.send_attempt"] == 3 and r2.already_present["outbound.send_attempt"] == 3
+    r3 = _apply(disposable_database, both)
+    assert r3.inserted == {"evidence.source_record": 0, "outbound.campaign": 0,
+                           "outbound.campaign_recipient": 0, "outbound.send_attempt": 0}
+    assert _counts(disposable_database, both.name) == {"campaign": 1, "recipients": 6, "attempts": 6}
+
+
+@needs_db
+def test_apply_refuses_changed_history(disposable_database, mailbox, tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from origenlab_api.v2.v1_sent_campaign_import import SentAttempt, SentRecipient
+
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    c = _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}")
+    _apply(disposable_database, c)
+    flipped = replace(c, recipients=(SentRecipient(c.recipients[0].address_norm, "bounced"), *c.recipients[1:]))
+    with pytest.raises(SentCampaignRefused, match="differs"):
+        _apply(disposable_database, flipped)
+    moved = replace(c, attempts=(SentAttempt(c.attempts[0].address_norm, "2026-10-01T00:00:00Z",
+                                             c.attempts[0].gmail_message_id), *c.attempts[1:]))
+    with pytest.raises(SentCampaignRefused, match="differs"):
+        _apply(disposable_database, moved)
+    assert _counts(disposable_database, c.name) == {"campaign": 1, "recipients": 3, "attempts": 3}
+
+
+@needs_db
+def test_apply_refuses_without_owner_role(disposable_database, mailbox, tmp_path: Path) -> None:
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    c = extract_sent_campaign(_wave(tmp_path, cid, 1), cid)
+    with pytest.raises(SentCampaignRefused, match="origenlab_owner"):
+        _apply(runtime_dsn(disposable_database), c)
+
+
+@needs_db
+def test_v1_later_bounce_does_not_block_the_next_wave(disposable_database, mailbox, tmp_path: Path) -> None:
+    import sqlite3 as _sq
+
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    _apply(disposable_database, _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}"))
+    later = _wave(tmp_path, cid, 2)
+    with _sq.connect(later) as conn:  # V1's reconcile marks a wave-1 recipient bounced
+        conn.execute("update outbound_campaign_recipient set state = 'bounced' where email_norm = 'w1-p0@instituto.invalid'")
+    r = _apply(disposable_database, _named(extract_sent_campaign(later, cid), f"Promo {cid}"))
+    assert r.inserted["outbound.campaign_recipient"] == 3
