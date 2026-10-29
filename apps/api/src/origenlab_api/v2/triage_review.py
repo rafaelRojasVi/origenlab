@@ -200,7 +200,7 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
   left join lateral (select p.address_norm from comms.message_participant p
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
-  left join lateral (select a.value from evidence.assertion a
+  left join lateral (select a.value as po_refs from evidence.assertion a
                       where a.source_record_id = r.source_record_id and a.kind = 'message_triage'
                         and a.value_norm = 'po_refs:v1' limit 1) po_refs on true
  where coalesce((r.value ->> 'needs_model')::boolean, false)
