@@ -107,3 +107,17 @@ def test_card_reports_no_reply_until_undone(world) -> None:
     assert _inbound(dsn, case_id)["no_reply"] is True
     repo.undo(admin, applied["applied"][0]["command_receipt_id"], "sí había que responder")
     assert "no_reply" not in _inbound(dsn, case_id)
+
+
+def test_r18_applies_in_the_same_pass_r17_moves_the_case(world) -> None:
+    # The first «gracias» after a quote: R17 (→ «Conversación») and R18 plan together; both apply.
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_id, answer = _closing(world, admin)
+    repo = _mail_rules(dsn)
+    actions = [a for a in repo.plan()[0] if a.evidence_id == answer]
+    assert sorted(a.rule_id for a in actions) == ["R17", "R18"]
+    for a in sorted(actions, key=lambda x: x.rule_id):
+        repo.apply_planned(admin, a, automatic=True)
+    assert _stage(dsn, case_id) == "negotiating"
+    assert _inbound(dsn, case_id)["no_reply"] is True

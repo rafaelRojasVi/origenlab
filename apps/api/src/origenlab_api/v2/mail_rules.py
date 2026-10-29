@@ -562,12 +562,19 @@ class _Index:
         self.late_quote_since = snapshot.late_quote_since
         self.reply_since = snapshot.reply_since
         self.cases = {c.id: c for c in snapshot.cases}
-        #: Per case, the newest inbound email linked to it (R19 acts only on that one).
+        #: Per case, the newest email a person sent us on it — linked to it, or on one of its threads
+        #: and not linked yet (R1 may link it this very pass). R19 acts only on that one.
         self.newest_inbound: dict[str, datetime] = {}
+        case_ids_by_thread: dict[str, set[str]] = {}
+        for c in snapshot.cases:
+            for t in c.thread_ids:
+                case_ids_by_thread.setdefault(t, set()).add(c.id)
         for ev in snapshot.evidence:
             human = ev.direction == "inbound" and not is_automatic_mail(ev.sender, ev.triage_class)
             at = _instant(ev.sent_at) if human else None
-            for cid in ev.linked_case_ids if at is not None else ():
+            if at is None:
+                continue
+            for cid in set(ev.linked_case_ids) | case_ids_by_thread.get(ev.thread_id or "", set()):
                 if cid not in self.newest_inbound or self.newest_inbound[cid] < at:
                     self.newest_inbound[cid] = at
         self.by_thread: dict[str, list[CaseState]] = {}
@@ -1627,9 +1634,10 @@ def _closing_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     summary = " ".join((e.model_summary or "").split())[:SUMMARY_CHARS]
     reasons = [f"el cliente cerró la conversación: «{summary}»" if summary else "el cliente cerró la conversación",
                "no requiere respuesta"]
+    # No `from_stage`: R18 writes nothing, so a case R17 (or a person) moved since still takes it.
     return PlannedAction(e.id, "R18", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id,
-                         context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+                         context={"case": c.id, "case_version": c.version})
 
 
 #: R19's close reason: the AI read it in the client's email, no phrase list matched it.

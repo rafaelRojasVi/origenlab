@@ -172,3 +172,10 @@ def test_the_timer_runs_r18_and_r19() -> None:
     from origenlab_api.v2.mail_rules_auto import AUTOMATIC_RULES
 
     assert {"R18", "R19"} <= AUTOMATIC_RULES
+
+
+def test_r19_sees_a_newer_email_on_the_thread_not_linked_yet() -> None:
+    # «Compramos a otro» read late; meanwhile «¿y si bajan el precio?» arrived on the same thread and
+    # R1 links it this very pass. The newer question decides: the case stays open.
+    newer = thanks(id="e-10", sent_at="2026-10-27T16:00:00+00:00", model_needs_reply=True, linked_case_ids=())
+    assert planned("R19", lost(), newer, cases=(case(stage="negotiating"),)) == []
