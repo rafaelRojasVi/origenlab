@@ -25,7 +25,7 @@ const HISTORICAL: CampaignSummary = {
   last_sent_at: "2026-09-03T19:00:00Z",
   recipients_by_state: { sent: 95, bounced: 9, excluded: 10, snapshotted: 6 },
   send_attempts: [{ submission_state: "accepted", delivery_state: "pending", count: 104 }],
-  responded: null,
+
   send_batches: [],
   origin: "imported_v1",
   totals: TOTALS,

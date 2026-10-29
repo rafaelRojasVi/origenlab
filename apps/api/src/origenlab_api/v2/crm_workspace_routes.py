@@ -337,11 +337,11 @@ def get_marketing(operator: Operator, repo: Repo, request: Request) -> Any:
     # The email preview comes from outside the repository (it carries contact addresses).
     content_dir = getattr(request.app.state, "v1_lane_content_dir", None)
     # Once its sends are imported (v1_sent_campaign_import) the CRM row is the campaign: the
-    # plan card would show it twice, once as plan and once as fact.
+    # plan is kept for the calendar (waves not sent yet) and marked, so the list shows it once.
     imported = {c.get("v1_campaign_key") for c in body["campaigns"]} - {None}
     body["v1_lane_campaigns"] = [
-        v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir))
-        for c in load_v1_lane_campaigns() if c.key not in imported
+        {**v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)), "imported": c.key in imported}
+        for c in load_v1_lane_campaigns()
     ]
     body["test_send"] = {
         "enabled": bool(getattr(request.app.state, "campaign_test_send_enabled", False)),

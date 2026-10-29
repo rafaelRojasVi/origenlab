@@ -21,7 +21,7 @@ const ARCHIVED: CampaignSummary = {
   campaign_id: "a0000000-0000-4000-8000-000000000001", name: "Histórica ficticia", status: "archived", subject: null,
   approved_at: null, created_at: "2026-09-01T12:00:00Z", first_sent_at: "2026-09-02T13:00:00Z", last_sent_at: "2026-09-02T14:00:00Z",
   recipients_by_state: { sent: 2, excluded: 1 }, send_attempts: [{ submission_state: "accepted", delivery_state: "pending", count: 2 }],
-  responded: null, send_batches: [], origin: "imported_v1", totals: TOTALS, replies: REPLIES, subject_state: "not_imported",
+  send_batches: [], origin: "imported_v1", totals: TOTALS, replies: REPLIES, subject_state: "not_imported",
   attempt_totals: {
     attempts: 2, accepted: 2, rejected: 0, other: 0, delivery_confirmed: 0, delivery_pending: 2, delivery_bounced: 0,
     rejected_undated: 0, with_provider_id: 0, first_accepted_at: "2026-09-02T13:00:00Z", last_accepted_at: "2026-09-02T14:00:00Z",

@@ -75,7 +75,8 @@ def world(disposable_database) -> dict[str, Any]:
     import psycopg
 
     tag = uuid.uuid4().hex[:6]
-    a = {k: f"{k}-{tag}@instituto.invalid" for k in ("a1", "a2", "a3", "a4", "a5", "a7", "a8", "a9", "a10", "c1")}
+    a = {k: f"{k}-{tag}@instituto.invalid" for k in ("a1", "a2", "a3", "a4", "a5", "a7", "a8", "a9", "a10", "c1", "a12", "a14")}
+    a["a13"] = f"a13@sub.dominio-{tag}.invalid"
     a["a6"] = f"a6@dominio-{tag}.invalid"
     a["a11"] = f"a11@proveedor-{tag}.invalid"
     w: dict[str, Any] = {"a": a, "tag": tag}
@@ -85,11 +86,12 @@ def world(disposable_database) -> dict[str, Any]:
                        "values (gen_random_uuid(), %s, 'Op', 'admin', 'active') returning id", (f"op-{tag}@example.invalid",))
         mb = _one(cur, "insert into comms.mailbox (address_norm) values (%s) returning id", (f"ventas-{tag}@example.invalid",))
         camp = {}
-        for name in ("A", "B", "C"):
+        for name in ("A", "B", "C", "E"):
             camp[name] = _one(cur, "insert into outbound.campaign (name, status, mailbox_id, max_sends) "
                                    "values (%s, 'archived', %s, 100) returning id", (f"{name} {tag}", mb))
         w["camp"] = {k: str(v) for k, v in camp.items()}
-        when = {"A": "2026-10-05T12:00:00Z", "B": "2026-10-20T12:00:00Z", "C": "2026-09-01T12:00:00Z"}
+        when = {"A": "2026-10-05T12:00:00Z", "B": "2026-10-20T12:00:00Z", "C": "2026-09-01T12:00:00Z",
+                "E": "2026-10-20T12:00:00Z"}
 
         def send(c: str, key: str) -> str:
             rid = _one(cur, "insert into outbound.campaign_recipient (campaign_id, address_norm, state) "
@@ -104,7 +106,7 @@ def world(disposable_database) -> dict[str, Any]:
                         "internal_date) values (%s, %s, %s, 'outbound', %s)", (mb, pmid, f"th-{c}-{key}-{tag}", when[c]))
             return pmid
 
-        for c, keys in (("A", ("a1", "a2", "a3", "a4")), ("B", ("a1", "a5", "a6")), ("C", ("c1",))):
+        for c, keys in (("A", ("a1", "a2", "a3", "a4")), ("B", ("a1", "a5", "a6")), ("C", ("c1",)), ("E", ("a12", "a13"))):
             for k in keys:
                 send(c, k)
 
@@ -162,6 +164,20 @@ def world(disposable_database) -> dict[str, Any]:
             return oid
 
         w["case_p1"] = str(case(p1, "2026-10-22T10:00:00Z"))
+        # P5 (a12, campaign E): a case a backfill created on 22 Oct from an email of 1 Sep — the
+        # request predates the campaign, so it is not a case the campaign produced.
+        p5 = person("P5", "a12")
+        old_pmid = f"old-{tag}"
+        cur.execute("insert into comms.message (mailbox_id, provider_message_id, direction, internal_date) "
+                    "values (%s, %s, 'inbound', '2026-09-01T09:00:00Z')", (mb, old_pmid))
+        osr = _one(cur, "insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', %s, '{}') "
+                        "returning id", (f"gmail_message:{old_pmid}",))
+        late = case(p5, "2026-10-22T11:00:00Z")
+        cur.execute("update crm.opportunity set origin_source_record_id = %s where id = %s", (osr, late))
+        # P6: only an inactive address — no longer offered as a destination, so not in coverage.
+        person("P6", "a14")
+        cur.execute("update crm.contact_point set status = 'inactive', deactivated_at = now(), deactivated_by_operator_id = %s "
+                    "where value_norm = %s", (op, a["a14"]))
         c4 = case(p4, "2026-09-10T10:00:00Z")
         cur.execute("insert into crm.task (opportunity_id, owner_operator_id, title, due_at) "
                     "values (%s, %s, 'Volver a llamar', now() + interval '10 days')", (c4, op))
@@ -234,10 +250,10 @@ def test_bounces_and_bajas_are_attributed_per_campaign(world) -> None:
 @needs_db
 def test_overview_writable_is_reached_minus_blocked_address_or_domain(world) -> None:
     o = _analytics(world)["overview"]
-    assert o["reached"] == 7  # a1..a6 + c1
-    assert (o["bounced"], o["baja"]) == (2, 1)
-    assert o["writable"] == 4
-    assert o["with_open_case"] == 1  # a1 (P1's open case)
+    assert o["reached"] == 9  # a1..a6, c1, a12, a13
+    assert (o["bounced"], o["baja"]) == (3, 1)  # a4, a6 (domain), a13 (subdomain of a6's domain); a5
+    assert o["writable"] == 5
+    assert o["with_open_case"] == 2  # a1 (P1's case) and a12 (P5's)
 
 
 @needs_db
@@ -246,7 +262,7 @@ def test_coverage_rows_add_up(world) -> None:
     assert set(cov) == set(SEGMENTS)
     for r in cov.values():
         assert r["contacted"] + r["not_contacted"] + r["blocked"] == r["people"]
-    assert cov["solicitada"]["contacted"] == 1  # P1
+    assert cov["solicitada"]["contacted"] == 2  # P1 and P5
     assert cov["pausa"] == {"segment": "pausa", "people": 1, "contacted": 0, "not_contacted": 1, "blocked": 0}
 
 
@@ -369,13 +385,48 @@ def test_analytics_routes_are_get_only() -> None:
 
 
 @needs_db
-def test_campaign_list_carries_measured_responses(world) -> None:
+def test_campaign_list_does_not_run_the_analytics(world) -> None:
     import psycopg
 
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
 
+    # The list no longer runs the analytics query: one slow or failing figure cannot take the
+    # campaign list, the calendar and the controls down with it. The dashboard reads the
+    # measured figures from /marketing/analytics.
     body = CrmWorkspaceRepository(psycopg.connect, world["dsn"]).marketing()
     rows = {c["campaign_id"]: c for c in body["campaigns"]}
-    assert rows[world["camp"]["B"]]["responded"] == 1
-    assert rows[world["camp"]["C"]]["responded"] is None
+    assert "responded" not in rows[world["camp"]["B"]]
     assert "replies_recorded" not in rows[world["camp"]["B"]] and "replies_note" not in body
+
+
+@needs_db
+def test_mail_metrics_none_for_a_campaign_sent_before_continuous_capture(world, monkeypatch) -> None:
+    import origenlab_api.v2.marketing_analytics as ma
+
+    monkeypatch.setattr(ma, "MAIL_CAPTURE_FROM", "2026-10-10T00:00:00+00:00")
+    a, b = _figs(world, "A"), _figs(world, "B")
+    assert a["responded"] is None and a["quote_request"] is None and a["ndr_unblocked"] is None
+    assert b["responded"] == 1
+
+
+@needs_db
+def test_people_list_is_not_measured_when_the_figure_is_not(world) -> None:
+    page = _people(world, metric="responded", campaign_id=world["camp"]["C"])
+    assert page["total"] is None and page["rows"] == []
+
+
+@needs_db
+def test_cases_after_uses_the_request_date_not_the_row_date(world) -> None:
+    assert _figs(world, "E")["cases_after"] == 0
+
+
+@needs_db
+def test_subdomain_of_a_blocked_domain_is_blocked(world) -> None:
+    rows = _people(world, metric="bounced", campaign_id=world["camp"]["E"])["rows"]
+    assert [r["address_norm"] for r in rows] == [world["a"]["a13"]]
+
+
+@needs_db
+def test_inactive_addresses_are_not_in_coverage(world) -> None:
+    rows = _people(world, segment="total")["rows"]
+    assert world["a"]["a14"] not in {r["address_norm"] for r in rows}

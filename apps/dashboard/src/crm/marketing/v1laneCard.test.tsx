@@ -82,7 +82,7 @@ describe("V1-lane campaign card", () => {
 
 const base = {
   status: "archived", subject: null, preheader: null, has_html: false, version: 1, approved_at: null,
-  created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z", responded: null,
+  created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z",
 };
 const SENT_V1 = {
   ...base, campaign_id: "c0000000-0000-4000-8000-000000000011", name: "Ola enviada", origin: "imported_v1",

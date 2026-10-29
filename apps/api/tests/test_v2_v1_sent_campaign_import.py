@@ -307,3 +307,32 @@ def test_imported_campaign_lists_with_its_v1_key_for_the_runtime_role(disposable
     row = next(x for x in body["campaigns"] if x["campaign_id"] == r.campaign_id)
     assert row["v1_campaign_key"] == cid and row["origin"] == "imported_v1"
     assert row["totals"]["sent"] == 3
+
+
+def test_cli_reports_a_database_error_without_its_detail(tmp_path: Path, monkeypatch, capsys) -> None:
+    import importlib.util
+
+    import psycopg
+
+    spec = importlib.util.spec_from_file_location("v1_import_cli", Path(__file__).parents[1] / "scripts" / "v1_sent_campaign_import.py")
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)  # type: ignore[union-attr]
+
+    class _Conn:
+        autocommit = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def boom(*a, **k):
+        raise psycopg.errors.UniqueViolation("duplicate key: (address_norm)=(uno@instituto.invalid)")
+
+    monkeypatch.setattr(cli, "_connect", lambda args: _Conn())
+    monkeypatch.setattr(cli, "apply_sent_campaign", boom)
+    code = cli.main(["--sqlite", str(_three(tmp_path)), "--campaign-id", CID])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "UniqueViolation" in out and "@" not in out

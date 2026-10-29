@@ -148,5 +148,9 @@ def test_imported_v1_lane_campaign_is_not_listed_twice() -> None:
     client = _client()
     client.app.state.crm_workspace = _ImportedRepo()
     body = client.get("/v2/workspace/marketing", headers=HEADERS).json()
-    assert [c["key"] for c in body["v1_lane_campaigns"]] == ["ohaus-2026-10"]
+    # The plan stays (the calendar still needs the waves not sent yet) but says it is in the CRM,
+    # so the list shows the campaign once: its real row.
+    plans = {c["key"]: c for c in body["v1_lane_campaigns"]}
+    assert set(plans) == {"cyber-2026-10", "ohaus-2026-10"}
+    assert plans["cyber-2026-10"]["imported"] is True and plans["ohaus-2026-10"]["imported"] is False
     assert body["campaigns"][0]["v1_campaign_key"] == "cyber-2026-10"

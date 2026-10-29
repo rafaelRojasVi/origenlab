@@ -8,8 +8,8 @@
 Without ``--authorize-hosted-connection`` the target is the loopback DSN in
 ``ORIGENLAB_V2_IMPORT_DSN``. With it, the hosted project, through the same target file and
 ``OL_HOSTED_PASSWORD`` (the migrator login) the hosted data load uses — nothing is read from the
-repository but the target file. Prints counts only, never an address. Exit 0 ok, 2 refused,
-3 connection failed. The wave runner calls it after each wave, non-fatal.
+repository but the target file. Prints counts only, never an address. Exit 0 ok, 2 refused or
+failed (a database error prints its class and SQLSTATE only), 3 connection failed. The wave runner calls it after each wave, non-fatal.
 """
 
 from __future__ import annotations
@@ -70,6 +70,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"campaign": c.v1_campaign_id, **result.as_dict()}, ensure_ascii=False))
             except SentCampaignRefused as exc:
                 print(json.dumps({"campaign": c.v1_campaign_id, "refused": str(exc)}, ensure_ascii=False))
+                status = 2
+            except Exception as exc:  # noqa: BLE001 - a database error's detail may quote an address
+                sqlstate = getattr(exc, "sqlstate", None)
+                print(json.dumps({"campaign": c.v1_campaign_id, "failed": exc.__class__.__name__, "sqlstate": sqlstate}))
                 status = 2
     return status
 

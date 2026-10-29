@@ -1662,8 +1662,6 @@ class CrmWorkspaceRepository:
             cur.execute("select kind, scope, count(*) from outbound.contact_control group by 1, 2 order by 1, 2")
             controls = [{"kind": r[0], "scope": r[1], "count": int(r[2])} for r in cur.fetchall()]
             holds = read_campaign_holds(cur)
-            # The measured response count (14-day window): the one reply figure every screen shows.
-            measured = read_analytics(cur)["campaigns"]
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
             # Campaign-content presence: override has_html and provide html_state for lists
@@ -1673,8 +1671,6 @@ class CrmWorkspaceRepository:
             c["hold"] = campaign_hold(holds, c["campaign_id"])
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
-            figures = measured.get(c["campaign_id"])
-            c["responded"] = figures["responded"] if figures else None
             c["send_batches"] = batches.get(c["campaign_id"], [])
             c["attempts_without_date"] = undated.get(c["campaign_id"], 0)
             t = totals.get(c["campaign_id"])

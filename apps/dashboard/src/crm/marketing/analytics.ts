@@ -39,7 +39,8 @@ export interface PeopleRow {
 }
 
 export interface PeoplePage {
-  total: number;
+  /** null: the CRM cannot measure this figure (no captured mail for the period). */
+  total: number | null;
   rows: PeopleRow[];
   limit: number;
   offset: number;

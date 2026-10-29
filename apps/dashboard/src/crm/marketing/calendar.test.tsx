@@ -37,7 +37,7 @@ const base: CampaignSummary = {
   last_sent_at: null,
   recipients_by_state: {},
   send_attempts: [],
-  responded: null,
+
   send_batches: [],
   origin: "native_v2",
   equipment_lines: [],

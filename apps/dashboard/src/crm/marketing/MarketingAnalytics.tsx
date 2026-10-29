@@ -39,13 +39,12 @@ export function AnalyticsAlert({ data }: { data: Analytics }) {
 /** Five figures, the lead one first, each opening the people it counts. */
 export function AnalyticsKpis({ data, onOpen }: { data: Analytics; onOpen: OpenPeople }) {
   const o = data.overview;
-  const sent = Object.values(data.campaigns).reduce((n, c) => n + (c.sent ?? 0), 0);
   return (
     <dl className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5" data-testid="analytics-kpis">
       {KPI_ORDER.map((m) => {
         const lead = m === "writable";
         const tone = m === "bounced" ? "text-bad" : lead ? "text-accent-strong" : "text-ink";
-        const share = m === "bounced" ? pct(o.bounced, sent) : null;
+        const share = m === "bounced" ? pct(o.bounced, o.reached) : null;
         return (
           <button
             key={m}
@@ -59,7 +58,7 @@ export function AnalyticsKpis({ data, onOpen }: { data: Analytics; onOpen: OpenP
             <dt className="text-[11px] font-medium text-ink-faint">{OVERVIEW_LABEL[m]}</dt>
             <dd className={`mt-1 text-2xl font-bold tabular-nums tracking-tight ${tone}`}>{fmtInt(o[m])}</dd>
             <p className="mt-1 text-[11px] leading-4 text-ink-faint">
-              {share ? `${share} de lo enviado · ` : ""}
+              {share ? `${share} de las alcanzadas · ` : ""}
               {KPI_HINT[m]}
             </p>
           </button>

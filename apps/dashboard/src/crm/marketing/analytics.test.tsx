@@ -13,7 +13,7 @@ const SENT: CampaignSummary = {
   campaign_id: ID, name: "Balanzas (ficticia)", status: "archived", subject: "Asunto ficticio", approved_at: null,
   created_at: "2026-10-19T12:00:00Z", first_sent_at: "2026-10-20T13:00:00Z", last_sent_at: "2026-10-27T14:00:00Z",
   recipients_by_state: { sent: 400 }, send_attempts: [{ submission_state: "accepted", delivery_state: "pending", count: 400 }],
-  responded: 12, send_batches: [], origin: "imported_v1",
+  send_batches: [], origin: "imported_v1",
   totals: { audience: 400, included: 400, sent: 400, excluded: 0, blocked: 0, unsent: 0, rejected: 0, bounced: 0, responses: 0 },
 };
 
@@ -48,7 +48,13 @@ const LEGACY_HOLDS = {
   active: [], recently_lifted: [], by_campaign: {}, effect: "x", expires: false, commands_enabled: false, may_decide: false,
 };
 
-function stub({ data = analytics(), campaign = SENT }: { data?: MarketingAnalytics; campaign?: CampaignSummary } = {}) {
+const PLAN = {
+  key: "balanzas-ficticia", name: "Balanzas (ficticia)", channel: "v1", send_days: ["2026-10-20", "2026-11-03"],
+  send_time: "09:30", promo_until: "2026-11-10", clients_per_day: [200, 200], total_clients: 400, audience_rule: "x",
+  html: null, subject: "Asunto ficticio", imported: true,
+};
+
+function stub({ data = analytics(), campaign = SENT, plans = [] as unknown[] }: { data?: MarketingAnalytics; campaign?: CampaignSummary; plans?: unknown[] } = {}) {
   const calls: URL[] = [];
   vi.stubGlobal(
     "fetch",
@@ -58,10 +64,13 @@ function stub({ data = analytics(), campaign = SENT }: { data?: MarketingAnalyti
       const json = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
       const p = url.pathname;
       if (p.endsWith("/v2/workspace/marketing")) {
-        return json({ campaigns: [campaign], contact_controls: [], authoring: {}, storage: { table: "outbound.campaign", database: "origenlab_clean" } });
+        return json({ campaigns: [campaign], contact_controls: [], authoring: {}, storage: { table: "outbound.campaign", database: "origenlab_clean" }, v1_lane_campaigns: plans });
       }
       if (p.endsWith("/marketing/taxonomy")) return json(taxonomyJson);
       if (p.endsWith("/marketing/analytics")) return json(data);
+      if (p.endsWith("/marketing/analytics/people") && url.searchParams.get("metric") === "responded") {
+        return json({ total: null, limit: 50, offset: 0, rows: [] });
+      }
       if (p.endsWith("/marketing/analytics/people")) {
         return json({ total: 1, limit: 50, offset: 0, rows: [{ address_norm: "ana@instituto.invalid", opportunity_id: null, person_id: null,
           name: "Ana Ficticia", organization: "Instituto Ficticio", case_stage: null, case_title: null }] });
@@ -183,5 +192,31 @@ describe("sendRange", () => {
     expect(sendRange("2026-09-17T13:00:00Z", "2026-09-17T15:00:00Z")).toBe("17 sep");
     expect(sendRange("2026-09-28T13:00:00Z", "2026-10-03T15:00:00Z")).toBe("28 sep – 3 oct");
     expect(sendRange(null, null)).toBe("—");
+  });
+});
+
+describe("review fixes", () => {
+  it("the bounce share is over the people reached, not over every send", async () => {
+    stub();
+    render(<MarketingPage />);
+    expect(await screen.findByTestId("kpi-bounced")).toHaveTextContent("14 % de las alcanzadas");
+  });
+
+  it("an imported V1 plan shows as its row, not a second card, and keeps its days in the calendar", async () => {
+    stub({ plans: [PLAN] });
+    render(<MarketingPage />);
+    await screen.findByTestId("campaign-row");
+    expect(screen.queryByTestId("v1-lane-card")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Calendario" }));
+    await waitFor(() => expect(document.body.textContent).toContain("Balanzas (ficticia)"));
+  });
+
+  it("a figure the CRM cannot measure opens «Aún no medido», not an empty list", async () => {
+    stub();
+    render(<MarketingPage />);
+    const row = await screen.findByTestId("campaign-row");
+    fireEvent.click(row);
+    fireEvent.click(await screen.findByRole("button", { name: "Respuestas" }));
+    expect(await screen.findByTestId("people-unmeasured")).toHaveTextContent("Aún no medido");
   });
 });

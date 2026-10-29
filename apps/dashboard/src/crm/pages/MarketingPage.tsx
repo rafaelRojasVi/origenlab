@@ -307,7 +307,7 @@ function Body({
   const fixture = storage ? /^origenlab_test_/.test(storage.database) : false;
   const today = todayInSantiago();
   // V1-lane plans the CRM has not imported yet (the API drops a plan once its sends are in).
-  const v1All = data.v1_lane_campaigns ?? [];
+  const v1All = (data.v1_lane_campaigns ?? []).filter((c) => !c.imported);
   const v1Lane = v1All
     .filter((c) => !isV1LaneFinished(c, today))
     .map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />);

@@ -15,7 +15,7 @@ export function PeopleList({ title, query, onClose, closable = true }: { title: 
   return (
     <Panel
       title={title}
-      note={state.kind === "ready" ? `${fmtInt(state.data.total)} en total` : undefined}
+      note={state.kind === "ready" && state.data.total !== null ? `${fmtInt(state.data.total)} en total` : undefined}
       aside={
         closable ? (
           <button type="button" onClick={onClose} className="text-xs font-medium text-accent hover:underline">
@@ -27,7 +27,11 @@ export function PeopleList({ title, query, onClose, closable = true }: { title: 
     >
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
         {(page) =>
-          page.total === 0 ? (
+          page.total === null ? (
+            <p className="px-3 py-3 text-xs text-ink-muted" data-testid="people-unmeasured">
+              Aún no medido: el CRM no tiene el correo de ese período.
+            </p>
+          ) : page.total === 0 ? (
             <p className="px-3 py-3 text-xs text-ink-muted" data-testid="people-empty">Nadie en esta cifra.</p>
           ) : (
             <>

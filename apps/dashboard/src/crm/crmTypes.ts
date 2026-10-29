@@ -348,8 +348,6 @@ export interface CampaignSummary {
   last_sent_at: string | null;
   recipients_by_state: Record<string, number>;
   send_attempts: { submission_state: string; delivery_state: string; count: number }[];
-  /** Recipients who wrote within the reply window (marketing analytics); null = not measurable. */
-  responded?: number | null;
   /** Accepted attempts grouped by the day (America/Santiago) they were accepted on. */
   send_batches?: SendBatch[];
   /** Attempts with no acceptance date (rejected, never submitted). */
@@ -424,6 +422,8 @@ export interface V1LaneCampaign {
   /** The email as sent, when the API has it (kept outside the repository). */
   html?: string | null;
   subject?: string | null;
+  /** Its sends are already in the CRM: the campaign row is the campaign, the plan feeds the calendar. */
+  imported?: boolean;
 }
 
 export interface MarketingResponse {

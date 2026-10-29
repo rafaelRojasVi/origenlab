@@ -33,8 +33,14 @@ import re
 from typing import Any, Literal
 
 REPLY_WINDOW_DAYS = 14
-#: Triage classes that are never a person answering (``apps/worker`` ``NOISE_CLASSES``).
-NOISE_CLASSES = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification")
+#: Since when the CRM's mail capture is continuous (the catch-up from 25 Sep 2026; older mail in
+#: ``comms.message`` is a scattered backfill). A mail figure for a campaign sent earlier would
+#: count a handful of stray messages as if they were the replies: it is ``None`` instead.
+MAIL_CAPTURE_FROM = "2026-09-25T00:00:00+00:00"
+#: Triage classes that are never a person answering (``apps/worker`` ``NOISE_CLASSES`` plus the
+#: routed tender alerts and our own outbound copies).
+NOISE_CLASSES = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty",
+                 "tender_notice", "outbound")
 INTERNAL_DOMAINS = ("origenlab.cl",)
 
 METRICS = ("sent", "new_people", "bounced", "baja", "responded", "quote_request", "cases_after", "ndr_unblocked")
@@ -101,7 +107,9 @@ address_blocks as (
     from known k join blocks b on b.scope = 'address' and b.value_norm = k.address_norm
   union all
   select k.address_norm, b.category, b.created_at
-    from known k join blocks b on b.scope = 'domain' and b.value_norm = split_part(k.address_norm, '@', 2)
+    from known k join blocks b on b.scope = 'domain'
+     and (b.value_norm = split_part(k.address_norm, '@', 2)
+          or right(split_part(k.address_norm, '@', 2), length(b.value_norm) + 1) = '.' || b.value_norm)
 ),
 blocked as (
   select address_norm,
@@ -139,26 +147,53 @@ responses as (
 ),
 entity_points as (
   select cp.id as contact_point_id, cp.value_norm as address_norm, cp.person_id, cp.organization_id,
+         cp.status = 'active' as active,
          coalesce(cp.person_id::text, 'cp:' || cp.id::text) as entity
     from crm.contact_point cp
     left join crm.person pe on pe.id = cp.person_id
    where cp.kind = 'email' and pe.merged_into_person_id is null
 ),
-case_links as (
-  select o.id as opportunity_id, ep.entity, ep.address_norm, o.created_at, o.stage
+-- When a case was asked for: the date of the email it was opened from. A case a backfill or an
+-- import created later from an older email is not one a campaign produced; a case with any other
+-- origin (an import manifest) has no request date and is never «después».
+opportunities as (
+  select o.id, o.organization_id, o.stage,
+         case when o.origin_source_record_id is null then o.created_at else m.internal_date end as requested_at
     from crm.opportunity o
+    left join evidence.source_record sr on sr.id = o.origin_source_record_id
+    left join comms.message m on sr.dedupe_key like 'gmail_message:%%'
+                              and m.provider_message_id = substr(sr.dedupe_key, 15)
+),
+case_links as (
+  select o.id as opportunity_id, ep.entity, ep.address_norm, o.requested_at, o.stage
+    from opportunities o
     join crm.opportunity_participant op on op.opportunity_id = o.id
-    join entity_points ep on ep.contact_point_id = op.contact_point_id or ep.person_id = op.person_id
+    join entity_points ep on ep.contact_point_id = op.contact_point_id
   union
-  select o.id, ep.entity, ep.address_norm, o.created_at, o.stage
-    from crm.opportunity o join entity_points ep on ep.organization_id = o.organization_id
+  select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
+    from opportunities o
+    join crm.opportunity_participant op on op.opportunity_id = o.id
+    join entity_points ep on ep.person_id = op.person_id
+  union
+  select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
+    from opportunities o join entity_points ep on ep.organization_id = o.organization_id
+  union
+  select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
+    from opportunities o
+    join crm.opportunity_organization oo on oo.opportunity_id = o.id
+         and oo.role not in ('supplier', 'manufacturer') and (oo.valid_to is null or oo.valid_to > current_date)
+    join entity_points ep on ep.organization_id = oo.organization_id
 ),
 cases_after as (
   select distinct on (cl.opportunity_id) s.campaign_id, cl.address_norm, cl.opportunity_id
     from case_links cl
-    join seq s on s.address_norm = cl.address_norm and s.sent_at < cl.created_at
-                and cl.created_at <= s.sent_at + {_WINDOW}
+    join seq s on s.address_norm = cl.address_norm and s.sent_at < cl.requested_at
+                and cl.requested_at <= s.sent_at + {_WINDOW}
    order by cl.opportunity_id, s.sent_at desc
+),
+paused as (
+  select t.opportunity_id from crm.task t where t.status = 'open'
+   group by 1 having min(t.due_at) > now()
 ),
 campaign_threads as (
   select distinct a.campaign_id, a.address_norm, m.provider_thread_id
@@ -201,7 +236,7 @@ supplier_domains as (
 ),
 coverage_points as (
   select ep.* from entity_points ep
-   where split_part(ep.address_norm, '@', 2) not in ({_INTERNAL})
+   where ep.active and split_part(ep.address_norm, '@', 2) not in ({_INTERNAL})
      and (ep.organization_id is null or ep.organization_id not in (select id from supplier_orgs))
      and split_part(ep.address_norm, '@', 2) not in (select domain_norm from supplier_domains)
 ),
@@ -213,13 +248,11 @@ entity_state as (
     from coverage_points cp group by 1
 ),
 entity_cases as (
-  select distinct on (cl.entity) cl.entity, cl.stage,
-         (select min(t.due_at) from crm.task t where t.opportunity_id = cl.opportunity_id and t.status = 'open') > now()
-           as paused
-    from case_links cl
+  select distinct on (cl.entity) cl.entity, cl.stage, (p.opportunity_id is not null) as paused
+    from case_links cl left join paused p on p.opportunity_id = cl.opportunity_id
    order by cl.entity, (cl.stage not in ('won', 'lost', 'abandoned')) desc,
             case cl.stage when 'negotiating' then 4 when 'quoting' then 3 when 'won' then 2 else 1 end desc,
-            cl.created_at desc
+            cl.requested_at desc nulls last
 ),
 coverage as (
   select es.entity, es.address_norm,
@@ -253,6 +286,15 @@ select json_build_object(
 """
 
 
+def _mail_measurable(first_sent: Any, mail_from: Any) -> bool:
+    """Whether the captured mail covers a campaign's whole reply window."""
+    from datetime import datetime
+
+    if first_sent is None or mail_from is None:
+        return False
+    return mail_from <= first_sent and datetime.fromisoformat(MAIL_CAPTURE_FROM) <= first_sent
+
+
 def read_analytics(cur: Any) -> dict[str, Any]:
     """Every figure the Marketing page shows. ``None`` = not measurable, never 0."""
     from datetime import datetime
@@ -267,9 +309,8 @@ def read_analytics(cur: Any) -> dict[str, Any]:
     mf = _ts(mail_from)
     campaigns: dict[str, dict[str, int | None]] = {}
     for cid, first in (raw["first_sent"] or {}).items():
-        fs = _ts(first)
-        campaigns[cid] = {m: (0 if (m not in MAIL_METRICS or (mf is not None and fs is not None and mf <= fs)) else None)
-                          for m in METRICS}
+        measurable = _mail_measurable(_ts(first), mf)
+        campaigns[cid] = {m: (0 if (m not in MAIL_METRICS or measurable) else None) for m in METRICS}
     for row in raw["campaign_metrics"]:
         figures = campaigns.setdefault(row["campaign_id"], {m: 0 for m in METRICS})
         if figures.get(row["metric"]) is not None:
@@ -313,6 +354,17 @@ select r.address_norm, r.opportunity_id::text,
 """
 
 
+def _campaign_mail_measurable(cur: Any, campaign_id: str) -> bool:
+    cur.execute(
+        "select (select min(accepted_at) from outbound.send_attempt where campaign_id = %s::uuid "
+        "and purpose = 'marketing' and accepted_at is not null), "
+        "(select min(internal_date) from comms.message where direction = 'inbound')",
+        (campaign_id,),
+    )
+    first, mail_from = cur.fetchone()
+    return _mail_measurable(first, mail_from)
+
+
 class UnknownFigure(ValueError):
     """The metric, campaign or segment asked for is not one this module computes."""
 
@@ -341,6 +393,8 @@ def read_people(cur: Any, *, metric: str | None = None, campaign_id: str | None 
         inner = ("select address_norm, null::uuid as opportunity_id from coverage"
                  + (" where " + " and ".join(where) if where else ""))
     elif metric in METRICS and campaign_id is not None:
+        if metric in MAIL_METRICS and not _campaign_mail_measurable(cur, campaign_id):
+            return {"total": None, "rows": [], "limit": params["limit"], "offset": params["offset"]}
         params.update(metric=metric, campaign_id=campaign_id)
         inner = ("select address_norm, opportunity_id from facts "
                  "where metric = %(metric)s and campaign_id = %(campaign_id)s::uuid")

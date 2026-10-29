@@ -183,7 +183,7 @@ function jsonResponse(body: unknown, status = 200) {
 const ARCHIVED = {
   campaign_id: "c0000000-0000-4000-8000-000000000001", name: "Campaña archivada", status: "archived", subject: null, preheader: null,
   has_html: false, version: 1, approved_at: null, created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z",
-  first_sent_at: "2026-03-02T00:00:00Z", last_sent_at: "2026-03-02T00:00:00Z", recipients_by_state: { sent: 10 }, send_attempts: [], responded: null,
+  first_sent_at: "2026-03-02T00:00:00Z", last_sent_at: "2026-03-02T00:00:00Z", recipients_by_state: { sent: 10 }, send_attempts: [],
 };
 const DRAFT = {
   ...ARCHIVED, campaign_id: "c0000000-0000-4000-8000-000000000002", name: "Borrador IKA", status: "draft", subject: "Dispersores IKA",
