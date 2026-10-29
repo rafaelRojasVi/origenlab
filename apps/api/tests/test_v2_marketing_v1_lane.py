@@ -131,3 +131,22 @@ def test_marketing_has_no_email_without_a_content_directory() -> None:
 def test_marketing_says_the_test_send_is_off_when_unset() -> None:
     body = _client().get("/v2/workspace/marketing", headers=HEADERS).json()
     assert body["test_send"] == {"enabled": False, "per_hour": 10, "per_day": 30, "sender": "contacto@origenlab.cl"}
+
+
+class _ImportedRepo(_MarketingRepo):
+    """The CRM already holds the Cyber sends (imported from the V1 ledger)."""
+
+    def marketing(self) -> dict:
+        body = super().marketing()
+        body["campaigns"] = [{"campaign_id": "00000000-0000-0000-0000-000000000001", "name": "Cyber OrigenLab 2026",
+                              "status": "archived", "origin": "imported_v1", "v1_campaign_key": "cyber-2026-10",
+                              "audience_criteria": None}]
+        return body
+
+
+def test_imported_v1_lane_campaign_is_not_listed_twice() -> None:
+    client = _client()
+    client.app.state.crm_workspace = _ImportedRepo()
+    body = client.get("/v2/workspace/marketing", headers=HEADERS).json()
+    assert [c["key"] for c in body["v1_lane_campaigns"]] == ["ohaus-2026-10"]
+    assert body["campaigns"][0]["v1_campaign_key"] == "cyber-2026-10"

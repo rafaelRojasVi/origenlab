@@ -292,3 +292,18 @@ def test_apply_refuses_campaign_already_imported_by_another_importer(disposable_
     with pytest.raises(SentCampaignRefused, match="already in the target"):
         _apply(disposable_database, c)
     assert _counts(disposable_database, c.name)["recipients"] == 0
+
+
+@needs_db
+def test_imported_campaign_lists_with_its_v1_key_for_the_runtime_role(disposable_database, mailbox, tmp_path: Path) -> None:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    c = _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}")
+    r = _apply(disposable_database, c)
+    body = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database)).marketing()
+    row = next(x for x in body["campaigns"] if x["campaign_id"] == r.campaign_id)
+    assert row["v1_campaign_key"] == cid and row["origin"] == "imported_v1"
+    assert row["totals"]["sent"] == 3

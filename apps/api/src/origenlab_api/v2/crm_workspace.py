@@ -1602,9 +1602,13 @@ class CrmWorkspaceRepository:
                        c.audience_frozen_at::text, c.content_frozen_at::text, c.content_sha256,
                        c.audience_criteria,
                        case when c.origin_source_record_id is not null then 'imported_v1' else 'native_v2' end as origin,
+                       case when sr.dedupe_key like 'migration_manifest:v1-sent-campaign:%'
+                            then substr(sr.dedupe_key, length('migration_manifest:v1-sent-campaign:') + 1) end
+                         as v1_campaign_key,
                        m.address_norm as sender_address, m.display_name as sender_name
                   from outbound.campaign c
                   left join comms.mailbox m on m.id = c.mailbox_id
+                  left join evidence.source_record sr on sr.id = c.origin_source_record_id
                  order by c.created_at desc
                 """
             )
