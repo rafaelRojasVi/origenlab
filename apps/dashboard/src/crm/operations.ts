@@ -200,6 +200,18 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "«Estamos evaluando la oferta, les aviso» en el hilo de la cotización 09876 → el caso pasa a «Conversación».",
   },
+  R18: {
+    cuando: "El cliente escribe en un caso abierto o ganado, en los últimos 14 días, y la lectura de la IA dice que nadie necesita responderle: agradece, avisa que está evaluando, acusa recibo. No cuenta un correo nuestro, de un proveedor, un rebote ni una respuesta automática.",
+    hace: "Saca el correo de «Responder»; el seguimiento (3 · 14 · 30 días) cuenta desde ese correo. No cambia nada en el caso. «Quitar» lo devuelve a «Responder».",
+    automatica: true,
+    ejemplo: "«Gracias, estamos analizando varias ofertas, te aviso» → sale de «Responder» y el seguimiento vuelve en 3 días.",
+  },
+  R19: {
+    cuando: "El correo más reciente del cliente en un caso abierto (que no está «En pausa») dice, según la lectura de la IA del texto, que no sigue: compró a otro proveedor, se canceló o lo verán el próximo año. El remitente debe ser de la institución del caso o escribir desde su propio hilo.",
+    hace: "Marca el caso «Perdida». Si el remitente no es de la institución del caso, queda como propuesta. «Quitar» reabre el caso donde estaba.",
+    automatica: true,
+    ejemplo: "«La compra ya se efectuó a otro proveedor» en el hilo de la cotización 09876 → el caso pasa a «Perdida».",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -220,6 +232,8 @@ const RULE_WHY: Record<string, string> = {
   R15: "cotización enviada hace 3 días o más",
   R16: "se envió el PDF del Cotizador",
   R17: "el cliente respondió a la cotización",
+  R18: "el cliente cerró la conversación",
+  R19: "el correo del cliente dice que no sigue",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -243,6 +257,10 @@ export function actionSentence(a: OpsAction): string {
     verb = `Marcó enviada ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
   } else if (rule === "R17") {
     verb = `Pasó a «Conversación» ${target}`;
+  } else if (rule === "R18") {
+    verb = `No requiere respuesta el correo de${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
+  } else if (rule === "R19") {
+    verb = `Marcó perdido ${target}`;
   } else if (rule === "R15") {
     verb = `Confirmó la institución${a.organization_name ? ` «${a.organization_name}»` : ""}`;
   } else {

@@ -164,3 +164,11 @@ def test_r19_a_later_bounce_does_not_hide_the_clients_no() -> None:
                   applied_evidence_ids=frozenset({"e-9", "e-10"}),
                   applied_pairs=frozenset({("e-9", "R1"), ("e-10", "R1")}))
     assert a.mode == "auto"
+
+
+def test_the_timer_runs_r18_and_r19() -> None:
+    # Owner 2026-10-29: both act by themselves and show in «Hecho automáticamente» with «Quitar» —
+    # R19 too, although R5/R6 (terminal) still wait for an admin.
+    from origenlab_api.v2.mail_rules_auto import AUTOMATIC_RULES
+
+    assert {"R18", "R19"} <= AUTOMATIC_RULES

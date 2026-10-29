@@ -196,6 +196,8 @@ export interface MailTouch {
   at: string;
   subject: string | null;
   url: string | null;
+  /** Inbound only: mail rule R18 read it as needing no answer («gracias, te aviso»); «Quitar» clears it. */
+  no_reply?: boolean;
 }
 
 export interface QuoteCard {

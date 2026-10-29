@@ -127,6 +127,8 @@ export function ageTone(days: number | null): Tone {
  * The one clock a case runs on: the last commercial touch after the latest quote went out.
  *
  * - `client`: the client's newest email, when it is newer than OrigenLab's.
+ * - `settled`: that email closed the loop — «gracias, te aviso» (mail rule R18): nobody owes an
+ *   answer, and the follow-up rhythm counts from it.
  * - `us`: OrigenLab's newest email on the case's threads after the quote.
  * - `quote`: nothing after the quote; the touch is the quote itself.
  * - `none`: no quote and no email.
@@ -135,7 +137,7 @@ export function ageTone(days: number | null): Tone {
  * with the client, so it never moves the clock (owner, 2026-10-12); a reminder for a later day is
  * a «Seguimiento …» task. Record edits (`updated_at`) are not a touch either.
  */
-export function lastTouch(card: OpportunityCardData): { by: "client" | "us" | "quote" | "none"; at: string | null; url: string | null } {
+export function lastTouch(card: OpportunityCardData): { by: "client" | "settled" | "us" | "quote" | "none"; at: string | null; url: string | null } {
   // The first quote is still in the Cotizador: no clock yet — finishing it is the next step.
   if (card.latest_revision && !isDelivered(card.latest_revision)) return { by: "none", at: null, url: null };
   const sent = card.latest_revision?.sent_at ?? null;
@@ -145,7 +147,7 @@ export function lastTouch(card: OpportunityCardData): { by: "client" | "us" | "q
   const clientAt = inbound && after(inbound.at) ? inbound.at : null;
   const mailAt = outbound && after(outbound.at) ? outbound.at : null;
   if (clientAt && (!mailAt || Date.parse(clientAt) >= Date.parse(mailAt))) {
-    return { by: "client", at: clientAt, url: inbound?.url ?? null };
+    return { by: inbound?.no_reply ? "settled" : "client", at: clientAt, url: inbound?.url ?? null };
   }
   if (mailAt) return { by: "us", at: mailAt, url: outbound?.url ?? null };
   if (sent) return { by: "quote", at: sent, url: card.latest_revision?.gmail?.url ?? null };
@@ -165,6 +167,9 @@ export function conversation(
   const days = daysSince(touch.at, now);
   if (touch.by === "client" && touch.at) {
     return { kind: "replied", text: `Respondió ${short(touch.at)} · te toca`, at: touch.at, url: touch.url, days };
+  }
+  if (touch.by === "settled" && touch.at) {
+    return { kind: "followed_up", text: `Cerró la conversación ${short(touch.at)} · ${days ?? 0} d`, at: touch.at, url: touch.url, days };
   }
   if (touch.by === "us" && touch.at) {
     const d = days ?? 0;
