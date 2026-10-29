@@ -133,6 +133,8 @@ def _json(value: Any) -> Any:
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
        requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent,
+       ai.stage as model_stage, ai.needs_reply as model_needs_reply, ai.summary as model_summary,
+       ai.triage_class,
        case_match.value as case_match, web_form.is_web_form, web_form.reply_to
   from evidence.source_record sr
   join lateral (select cm.id, cm.direction, cm.provider_thread_id from comms.message cm
@@ -153,8 +155,15 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         limit 1
   ) quote_refs on true
   left join lateral (
-       -- The newest triage reading's AI intent, when the model read the email.
-       select a.value -> 'reading' ->> 'intent' as intent from evidence.assertion a
+       -- The newest triage reading: the AI's intent, stage, needs_reply and summary when the model
+       -- read the email, and the rules' class (bounce, auto_reply, …) either way.
+       select a.value -> 'reading' ->> 'intent' as intent,
+              a.value -> 'reading' ->> 'stage' as stage,
+              case jsonb_typeof(a.value -> 'reading' -> 'needs_reply')
+                   when 'boolean' then (a.value -> 'reading' ->> 'needs_reply')::boolean end as needs_reply,
+              a.value -> 'reading' ->> 'summary_es' as summary,
+              a.value ->> 'class' as triage_class
+         from evidence.assertion a
         where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
         order by substring(a.value_norm from 9)::int desc
         limit 1
@@ -358,6 +367,10 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             requester_organization_name=(requester.get("organization_name") if requester_matched else None),
             body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
             model_intent=r.get("model_intent"),
+            model_stage=r.get("model_stage"),
+            model_needs_reply=r.get("model_needs_reply"),
+            model_summary=r.get("model_summary"),
+            triage_class=r.get("triage_class"),
             case_match=_json(r.get("case_match")) or None,
             extra_headers=({"x-origenlab-origin": WEB_QUOTE_ORIGIN} if r.get("is_web_form") else {}),
             reply_to=(r.get("reply_to") if r.get("is_web_form") else None),

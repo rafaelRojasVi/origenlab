@@ -162,6 +162,13 @@ class MailEvidence:
     #: «quote_request» lets R7 open a request whose subject has no quote word; «supplier_offer»
     #: keeps a supplier's own quotation from opening one.
     model_intent: str | None = None
+    #: The same reading's stage (the CRM stage key it reads, e.g. «lost»), whether a person should
+    #: answer the email, and its one-line summary: R18 and R19 read them (owner, 2026-10-29).
+    model_stage: str | None = None
+    model_needs_reply: bool | None = None
+    model_summary: str | None = None
+    #: The newest triage row's rule class (`bounce`, `auto_reply`, …), with or without a reading.
+    triage_class: str | None = None
     #: Lower-case machine headers set by OrigenLab on self-sent messages (e.g. x-origenlab-origin
     #: for web-quote-form messages). Absent on all normal inbound/outbound mail.
     extra_headers: Mapping[str, str] = field(default_factory=dict)
