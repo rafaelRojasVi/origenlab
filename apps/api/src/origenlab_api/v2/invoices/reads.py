@@ -1,8 +1,10 @@
 """Read-only query behind `GET /v2/workspace/invoices` («Pagos»). Same `(connect, dsn)` wiring as the other readers.
 
-A factura's **balance** is its total, less the notas de crédito and plus the notas de débito that
-reference it. It is **por cobrar** while it is not marked paid and its balance is above zero; the
-age is counted from its issue day in Santiago. Notas are listed under the factura they adjust.
+A factura's **billed** amount is its total, less the notas de crédito and plus the notas de débito
+that reference it; its **balance** is what is still owed: billed less its live payments (abonos,
+`crm.invoice_payment`). It is **por cobrar** while it is not «Pagada» and something is owed; the age
+is counted from its issue day in Santiago. Notas are listed under the factura they adjust. A
+factura marked «Pagada» before payments were recorded one by one owes nothing.
 """
 
 from __future__ import annotations
@@ -16,6 +18,12 @@ _ITEMS = """
 select i.id::text as invoice_id, i.version, i.doc_type, i.folio, i.issued_on, i.client_rut, i.client_name,
        i.net_amount, i.vat_amount, i.exempt_amount, i.total_amount,
        i.reference_doc_type, i.reference_folio, i.case_link, i.paid_on,
+       (select coalesce(json_agg(json_build_object(
+                 'payment_id', p.id, 'paid_on', p.paid_on, 'amount', p.amount, 'recorded_by', op.display_name)
+                 order by p.paid_on, p.created_at), '[]'::json)
+          from crm.invoice_payment p
+          left join platform.operator op on op.id = p.recorded_by_operator_id
+         where p.invoice_id = i.id and p.removed_at is null) as payments,
        org.id::text as org_id, org.name as org_name,
        o.id::text as o_id, o.title as o_title, o.stage as o_stage,
        (select q.quote_number from crm.quote q where q.opportunity_id = o.id
@@ -57,13 +65,18 @@ def shape(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
         if r["doc_type"] in (56, 61) and (r["reference_doc_type"], r["reference_folio"]) in facturas:
             continue  # listed under the factura it adjusts
         own = notes.get((r["doc_type"], r["folio"]), []) if r["doc_type"] in (33, 34) else []
-        balance = r["total_amount"] + sum(n["total_amount"] * (1 if n["doc_type"] == 56 else -1) for n in own)
+        billed = r["total_amount"] + sum(n["total_amount"] * (1 if n["doc_type"] == 56 else -1) for n in own)
+        payments = r.get("payments") or []
+        paid_amount = sum(int(p["amount"]) for p in payments)
+        if r["paid_on"] is not None and paid_amount == 0:
+            paid_amount = max(billed, 0)  # «Pagada» before payments were recorded one by one
+        balance = billed - paid_amount
         collectable = r["doc_type"] in (33, 34)
         if not collectable:
             status = "nota"
         elif r["paid_on"] is not None:
             status = "paid"
-        elif balance <= 0:
+        elif billed <= 0:
             status = "credited"
         else:
             status = "unpaid"
@@ -77,7 +90,10 @@ def shape(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
             "client_rut": r["client_rut"], "client_name": r["client_name"],
             "organization": {"id": r["org_id"], "name": r["org_name"]} if r["org_id"] else None,
             "net_amount": r["net_amount"], "vat_amount": r["vat_amount"], "exempt_amount": r["exempt_amount"],
-            "total_amount": r["total_amount"], "balance": balance if collectable else None,
+            "total_amount": r["total_amount"], "billed": billed if collectable else None,
+            "paid_amount": paid_amount if collectable else None, "balance": balance if collectable else None,
+            "payments": [{"payment_id": p["payment_id"], "paid_on": p["paid_on"], "amount": int(p["amount"]),
+                          "recorded_by": p["recorded_by"]} for p in payments],
             "reference": ({"doc_type": r["reference_doc_type"], "folio": r["reference_folio"]}
                           if r["reference_folio"] is not None else None),
             "notes": [{"invoice_id": n["invoice_id"], "doc_type": n["doc_type"], "folio": n["folio"],

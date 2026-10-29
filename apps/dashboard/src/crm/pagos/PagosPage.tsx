@@ -1,16 +1,15 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMayRunCaseCommands } from "../caseCommands";
 import { fetchPipeline } from "../crmApi";
 import { crmHash, type CrmSection } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
 import { formatMoney } from "../money";
-import { Badge, Button, EmptyState, buttonClass, PageHeader, Panel, ResourceGate, SearchInput, Segmented, Skeleton, StatLine, fmtDate, toast, type Tone } from "../ui";
+import { Badge, Button, EmptyState, PageHeader, Panel, ResourceGate, SearchInput, Segmented, Skeleton, StatLine, fmtDate, toast, type Tone } from "../ui";
 import { useResource } from "../useResource";
 import {
   fetchInvoices,
   importInvoices,
   invoiceRefusal,
-  markInvoicePaid,
   markInvoiceUnpaid,
   setInvoiceCase,
   type AgeBucket,
@@ -20,6 +19,8 @@ import {
   type InvoiceStatus,
 } from "./invoiceApi";
 import { InvoiceSheet, purchaseOrders } from "./InvoiceSheet";
+import { PayForm } from "./PayForm";
+import { PorFacturar, casesToInvoice } from "./PorFacturar";
 
 /**
  * «Pagos»: the facturas Tatiana issued on the SII portal, the case each belongs to, and what is still
@@ -67,7 +68,9 @@ function refusalText(err: unknown): string {
     case "invoice_already_paid":
       return "Esta factura ya estaba marcada como pagada.";
     case "invoice_not_paid":
-      return "Esta factura no estaba marcada como pagada.";
+      return "Esta factura no tiene pagos que deshacer.";
+    case "payment_exceeds_balance":
+      return "Ese monto es mayor que lo que falta por pagar.";
     case "invoice_not_collectable":
       return "Una nota de crédito o débito no se cobra: ajusta la factura que menciona.";
     case "paid_on_in_future":
@@ -231,6 +234,7 @@ function Register({
 
   return (
     <>
+      <PorFacturar cases={casesToInvoice(cases, data.items)} navigate={navigate} />
       <section aria-label="Resumen de lo que falta por cobrar" className="rounded-lg border border-line bg-canvas-raised px-4 py-3">
         <p className="text-xs text-ink-muted">Por cobrar</p>
         <p className="text-2xl font-semibold tabular-nums text-ink">{clp(summary.por_cobrar)}</p>
@@ -331,15 +335,10 @@ function InvoiceRow({
   onOpen: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const [paying, setPaying] = useState(false);
-  const [paidOn, setPaidOn] = useState(today);
   const [picking, setPicking] = useState(false);
-  const payButton = useRef<HTMLButtonElement>(null);
   const caseButton = useRef<HTMLButtonElement>(null);
-  const dateId = useId();
   const status = STATUS[i.status];
   const label = `${DOC_LABEL[i.doc_type] ?? `Documento ${i.doc_type}`} ${i.folio}`;
-  const validDay = /^\d{4}-\d{2}-\d{2}$/.test(paidOn) && paidOn <= today;
 
   async function run(action: () => Promise<unknown>, done: string) {
     setBusy(true);
@@ -350,7 +349,6 @@ function InvoiceRow({
       toast(refusalText(err), "bad");
     } finally {
       setBusy(false);
-      setPaying(false);
       setPicking(false);
       reload();
     }
@@ -359,10 +357,6 @@ function InvoiceRow({
   const closePicker = () => {
     setPicking(false);
     caseButton.current?.focus();
-  };
-  const cancelPaying = () => {
-    setPaying(false);
-    payButton.current?.focus();
   };
 
   let caseLine: ReactNode = null;
@@ -447,8 +441,12 @@ function InvoiceRow({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 sm:w-60 sm:shrink-0 sm:flex-col sm:flex-nowrap sm:items-end sm:justify-start">
         <div className="sm:text-right">
-          <p className="text-lg font-semibold tabular-nums text-ink">{clp(i.balance ?? i.total_amount)}</p>
-          {i.balance != null && i.balance !== i.total_amount ? (
+          <p className="text-lg font-semibold tabular-nums text-ink">{clp(i.status === "paid" ? i.billed ?? i.total_amount : i.balance ?? i.total_amount)}</p>
+          {i.status === "unpaid" && (i.paid_amount ?? 0) > 0 ? (
+            <p className="text-[13px] tabular-nums text-ink-muted">
+              <span className="font-medium text-good">abonado {clp(i.paid_amount ?? 0)}</span> de {clp(i.billed ?? i.total_amount)}
+            </p>
+          ) : i.balance != null && i.status === "unpaid" && i.balance !== i.total_amount ? (
             <p className="text-[13px] tabular-nums text-ink-muted">de {clp(i.total_amount)} facturados</p>
           ) : null}
         </div>
@@ -458,46 +456,7 @@ function InvoiceRow({
             {i.status === "paid" && i.paid_on ? ` el ${fmtDate(i.paid_on)}` : ""}
           </Badge>
         ) : null}
-        {may && i.status === "unpaid" && !paying ? (
-          <button ref={payButton} type="button" className={buttonClass()} disabled={busy} onClick={() => setPaying(true)}>
-            Marcar pagada…
-          </button>
-        ) : null}
-        {paying ? (
-          <form
-            className="flex w-full flex-col gap-2 rounded-md border border-line bg-canvas p-2.5 sm:items-end"
-            aria-label={`Pago de la ${label}`}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (validDay) void run(() => markInvoicePaid({ ...ref, paid_on: paidOn }), `${label} pagada`);
-            }}
-            onKeyDown={(e) => e.key === "Escape" && cancelPaying()}
-          >
-            <label htmlFor={dateId} className="text-[12px] font-medium text-ink">
-              ¿Qué día pagó?
-            </label>
-            <input
-              id={dateId}
-              name="paid_on"
-              type="date"
-              autoFocus
-              value={paidOn}
-              max={today}
-              onChange={(e) => setPaidOn(e.target.value)}
-              aria-invalid={!validDay || undefined}
-              className="h-8 w-full rounded-md border border-line bg-canvas-raised px-2 text-[13px] tabular-nums text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 sm:w-44"
-            />
-            {!validDay ? <p className="text-[11.5px] text-bad">Elige un día de hoy o antes.</p> : null}
-            <div className="flex gap-2">
-              <Button variant="quiet" disabled={busy} onClick={cancelPaying}>
-                Cancelar
-              </Button>
-              <Button type="submit" variant="primary" busy={busy} busyLabel="Guardando…" disabled={!validDay}>
-                Guardar pago
-              </Button>
-            </div>
-          </form>
-        ) : null}
+        {may && i.status === "unpaid" ? <PayForm invoice={i} today={today} onDone={reload} /> : null}
         {may && i.status === "paid" ? (
           <Button variant="quiet" busy={busy} onClick={() => void run(() => markInvoiceUnpaid(ref), `${label} vuelve a «Por cobrar»`)}>
             Deshacer pago

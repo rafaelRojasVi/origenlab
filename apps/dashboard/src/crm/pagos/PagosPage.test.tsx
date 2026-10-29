@@ -112,6 +112,7 @@ beforeEach(() => {
   vi.mocked(crmApi.fetchPipeline).mockResolvedValue({ items: [CARD], total: 1, drive_configured: false } as PipelineResponse);
   setInvoiceCase.mockResolvedValue({});
   markInvoicePaid.mockResolvedValue({});
+  vi.mocked(api.markInvoiceUnpaid).mockResolvedValue({});
 });
 
 afterEach(() => {
@@ -147,14 +148,51 @@ describe("«Pagos»", () => {
   it("marks a factura paid on the day chosen", async () => {
     renderPage();
     const row = (await screen.findAllByTestId("invoice-row")).find((r) => within(r).queryByText("Factura 9001")) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: "Marcar pagada…" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar pago…" }));
+    expect(within(row).getByLabelText(/¿Cuánto pagó\?/)).toHaveFocus();
+    expect(within(row).getByLabelText(/¿Cuánto pagó\?/)).toHaveValue("119.000"); // all that is left, by default
     const day = within(row).getByLabelText("¿Qué día pagó?");
-    expect(day).toHaveFocus();
     fireEvent.change(day, { target: { value: "2026-10-29" } }); // tomorrow: refused before any call
     expect(within(row).getByRole("button", { name: "Guardar pago" })).toBeDisabled();
     fireEvent.change(day, { target: { value: "2026-10-27" } });
     fireEvent.click(within(row).getByRole("button", { name: "Guardar pago" }));
     await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-27" }));
+  });
+
+  it("records half as an abono, and the row shows what was paid and what is left", async () => {
+    renderPage();
+    const row = (await screen.findAllByTestId("invoice-row")).find((r) => within(r).queryByText("Factura 9001")) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar pago…" }));
+    fireEvent.click(within(row).getByRole("button", { name: "50 %" }));
+    expect(within(row).getByText("Queda un saldo de $ 59.500 por cobrar.")).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Guardar abono" }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-28", amount: 59500 }));
+    expect(toasts).toContain("Abono de $ 59.500 registrado: faltan $ 59.500");
+  });
+
+  it("an amount above what is left cannot be saved", async () => {
+    renderPage();
+    const row = (await screen.findAllByTestId("invoice-row")).find((r) => within(r).queryByText("Factura 9001")) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar pago…" }));
+    fireEvent.change(within(row).getByLabelText(/¿Cuánto pagó\?/), { target: { value: "500.000" } });
+    expect(within(row).getByText("No puede ser más de $ 119.000.")).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: "Guardar pago" })).toBeDisabled();
+  });
+
+  it("a factura half paid shows the abono in the row and lists it in the factura", async () => {
+    fetchInvoices.mockResolvedValue({ ...LIST, items: [invoice("i-1", 9001, {
+      billed: 119000, paid_amount: 59500, balance: 59500,
+      payments: [{ payment_id: "p-1", paid_on: "2026-10-20", amount: 59500, recorded_by: "Tatiana" }] })] });
+    renderPage();
+    const row = (await screen.findAllByTestId("invoice-row"))[0];
+    expect(within(row).getByText("$ 59.500", { selector: "p" })).toBeInTheDocument();
+    expect(within(row).getByText(/abonado \$ 59\.500/)).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: "Ver la Factura 9001" }));
+    const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9001" });
+    expect(within(sheet).getByText(/\(50 %\)/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/lo registró Tatiana/)).toBeInTheDocument();
+    fireEvent.click(within(sheet).getByRole("button", { name: /Quitar el pago de \$ 59\.500/ }));
+    await waitFor(() => expect(api.markInvoiceUnpaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, payment_id: "p-1" }));
   });
 
   it("uploads the SII CSV and says what came in; a wrong file reads the API's Spanish reason", async () => {
@@ -176,7 +214,7 @@ describe("«Pagos»", () => {
     expect(await screen.findByText("Factura 9001")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Subir CSV del SII" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Asignar caso…" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Marcar pagada…" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Registrar pago…" })).not.toBeInTheDocument();
   });
 
   it("lists what is owed oldest first, and «Sin caso» narrows to the facturas without one", async () => {
@@ -243,9 +281,30 @@ describe("«Pagos»", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Ver la Factura 9001" }));
     const sheet = screen.getByRole("dialog", { name: "Factura electrónica Nº 9001" });
-    fireEvent.click(within(sheet).getByRole("button", { name: "Marcar pagada…" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "Registrar pago…" }));
     fireEvent.change(within(sheet).getByLabelText("¿Qué día pagó?"), { target: { value: "2026-10-27" } });
     fireEvent.click(within(sheet).getByRole("button", { name: "Guardar pago" }));
     await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-27" }));
+  });
+
+  it("«Por facturar» lists won cases with an OC since the first month on record and no factura", async () => {
+    const won = (id: string, attached: string, extra: Partial<OpportunityCardData> = {}) => ({
+      ...CARD, opportunity_id: id, title: `Caso ${id}`, organization: { organization_id: "x", name: `Cliente ${id}` },
+      documents: [{ ...(CARD.documents ?? [])[0], document_id: `d-${id}`, document_number: `OC-${id}`, attached_at: attached }],
+      ...extra,
+    }) as OpportunityCardData;
+    vi.mocked(crmApi.fetchPipeline).mockResolvedValue({ items: [
+      CARD, // its factura is on record (i-2)
+      won("nueva", "2026-10-21T10:00:00Z"),
+      won("vieja", "2026-09-15T10:00:00Z"), // before the first month uploaded: may have been billed
+      won("abierta", "2026-10-22T10:00:00Z", { stage: "quoting" }),
+    ], total: 4, drive_configured: false } as unknown as PipelineResponse);
+    renderPage();
+    const box = await screen.findByTestId("por-facturar");
+    expect(box).toHaveTextContent("Por facturar: 1 caso ganado con OC y sin factura");
+    expect(within(box).getByText("Cliente nueva")).toBeInTheDocument();
+    expect(within(box).queryByText("Cliente vieja")).not.toBeInTheDocument();
+    expect(within(box).getByRole("link", { name: /Emitir en el SII/ })).toHaveAttribute("href", expect.stringContaining("sii.cl"));
+    expect(within(box).getByRole("button", { name: "Ver la orden de compra OC-nueva" })).toBeInTheDocument();
   });
 });
