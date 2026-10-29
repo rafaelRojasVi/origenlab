@@ -73,7 +73,7 @@ def test_r18_never_our_mail_or_a_supplier() -> None:
 
 
 def test_r18_needs_exactly_one_case() -> None:
-    assert planned("R18", thanks(linked_case_ids=())) == []
+    assert planned("R18", thanks(linked_case_ids=(), thread_id="t-otro")) == []  # on no case's thread
     assert planned("R18", thanks(linked_case_ids=("c-1", "c-2")),
                    cases=(case(), case(id="c-2", thread_ids=("t-1",)))) == []
 
@@ -179,3 +179,26 @@ def test_r19_sees_a_newer_email_on_the_thread_not_linked_yet() -> None:
     # R1 links it this very pass. The newer question decides: the case stays open.
     newer = thanks(id="e-10", sent_at="2026-10-27T16:00:00+00:00", model_needs_reply=True, linked_case_ids=())
     assert planned("R19", lost(), newer, cases=(case(stage="negotiating"),)) == []
+
+
+def test_r18_finds_the_case_by_its_thread_when_the_email_is_not_linked() -> None:
+    # A won case's thread: R1 links nothing new to a closed case, but the card shows the email as
+    # the client's — R18 reads it through the thread, as the card does.
+    unlinked = thanks(linked_case_ids=())
+    [a] = planned("R18", unlinked, cases=(case(stage="won", closed=True),), applied_evidence_ids=frozenset(),
+                  applied_pairs=frozenset())
+    assert a.case_id == "c-1"
+
+
+def test_r18_reads_a_reply_on_a_campaign_thread() -> None:
+    # «¿Necesitas renovar tus balanzas?» → «lo vamos a considerar»: the rules skip campaign threads
+    # (R8), yet the case lists the reply; it needs no answer either.
+    reply_to_campaign = thanks(linked_case_ids=(), campaign_thread=True)
+    assert [a.case_id for a in planned("R18", reply_to_campaign, applied_evidence_ids=frozenset(),
+                                        applied_pairs=frozenset())] == ["c-1"]
+
+
+def test_r18_by_thread_needs_exactly_one_case() -> None:
+    unlinked = thanks(linked_case_ids=())
+    assert planned("R18", unlinked, cases=(case(), case(id="c-2", thread_ids=("t-1",))),
+                   applied_evidence_ids=frozenset(), applied_pairs=frozenset()) == []
