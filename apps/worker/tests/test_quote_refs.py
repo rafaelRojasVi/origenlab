@@ -81,7 +81,7 @@ def test_is_oc_pdf_matches_po_prefix() -> None:
 
 def test_is_oc_pdf_matches_orden_de_compra_in_name() -> None:
     # Real-world long-form names seen in practice
-    assert _is_oc_pdf("2783-2026 Orden de compra Origen Lab.pdf")
+    assert _is_oc_pdf("4521-2026 Orden de compra Proveedor Ficticio.pdf")
     assert _is_oc_pdf("orden_de_compra_4500.pdf")
 
 

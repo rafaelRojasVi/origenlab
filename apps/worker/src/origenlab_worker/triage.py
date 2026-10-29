@@ -1018,7 +1018,7 @@ def _is_oc_pdf(filename: str) -> bool:
 
     This is intentionally broader than the API's `PURCHASE_ORDER_FILENAME` (which is used for the
     R5 «purchase_order» triage-class signal and must stay narrow).  Real-world OCs seen so far:
-    «OC 4500000123.pdf», «2783-2026 Orden de compra Origen Lab.pdf», «PO_4500012345.pdf»,
+    «OC 4500000123.pdf», «4521-2026 Orden de compra Proveedor Ficticio.pdf», «PO_4500012345.pdf»,
     «Purchase Order 123.pdf».
     """
     import re as _re

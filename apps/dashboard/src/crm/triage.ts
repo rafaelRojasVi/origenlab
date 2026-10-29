@@ -212,7 +212,7 @@ export function isPurchaseOrder(r: Pick<TriageReading, "class" | "intent">): boo
   return r.class === "purchase_order" || r.intent === "purchase_order";
 }
 
-/** True when a po_refs token (e.g. «CN01291», «01291-26») matches a revision's quote_number (e.g. «01291-26»). */
+/** True when a po_refs token (e.g. «CN09876», «09876-26») matches a revision's quote_number (e.g. «09876-26»). */
 function tokenMatchesRevision(token: string, revisionQuoteNumber: string): boolean {
   const parsed = parseQuoteNumber(token, 0);
   if (!parsed) return false;
