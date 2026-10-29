@@ -58,7 +58,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16", "R17")
+                             "R14", "R15", "R16", "R17", "R18")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -756,6 +756,12 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
             reply = _client_reply_rule(e, index)
             if reply is not None:
                 out.append(reply)
+        # R18 runs no command, so it never waits for another rule: a receipt that says the email
+        # needs no answer, read on the pass after the triage's reading exists.
+        if (e.id, "R18") not in snapshot.applied_pairs:
+            closing = _closing_reply_rule(e, index)
+            if closing is not None:
+                out.append(closing)
     for f in sorted(snapshot.forwards, key=lambda x: x.id):
         if f.id not in snapshot.applied_evidence_ids and not (set(f.ids) & snapshot.applied_evidence_ids):
             out.append(_plan_forward(f, index))
@@ -1553,6 +1559,47 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     return PlannedAction(e.id, "R17", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id, quote_number=label,
                          commands=(_advance_step("negotiating", note),),
+                         context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+#: How much of the triage's summary R18's reason quotes.
+SUMMARY_CHARS = 160
+
+
+def _from_the_client(e: MailEvidence, ix: _Index) -> bool:
+    """A person on the client's side wrote it: inbound, not ours, not a supplier, not a bounce or an
+    automatic reply (the triage's class, else the subject)."""
+    sender = _sender(e)
+    if e.direction != "inbound" or sender is None:
+        return False
+    if domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+        return False
+    if e.triage_class in ("bounce", "auto_reply"):
+        return False
+    subject = fold(e.subject)
+    return not any(p in subject for p in AUTO_REPLY_PHRASES)
+
+
+def _closing_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R18 (owner, 2026-10-29): the client closed the loop — «gracias, estamos evaluando, te aviso» —
+    and the triage's reading says nobody needs to answer. Nothing in the CRM changes: the receipt is
+    the record, the case card reads it and the email leaves Hoy's «Responder»; «Quitar» brings it back.
+
+    Only an email on exactly one case, open or won, sent in the last `REPLY_WINDOW_DAYS`, from the
+    client, with a reading that says `needs_reply: false`. A reading of «lost» is R19's."""
+    if len(e.linked_case_ids) != 1 or e.model_needs_reply is not False or e.model_stage == "lost":
+        return None
+    at, since = _instant(e.sent_at), _instant(ix.reply_since)
+    if at is None or since is None or at < since:
+        return None
+    c = ix.cases.get(e.linked_case_ids[0])
+    if c is None or (c.closed and c.stage != "won") or not _from_the_client(e, ix):
+        return None
+    summary = " ".join((e.model_summary or "").split())[:SUMMARY_CHARS]
+    reasons = [f"el cliente cerró la conversación: «{summary}»" if summary else "el cliente cerró la conversación",
+               "no requiere respuesta"]
+    return PlannedAction(e.id, "R18", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id,
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
 
 

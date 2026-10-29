@@ -282,7 +282,7 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
 """
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
-AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17"})
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18"})
 #: R15: the institutions «por confirmar», what created them (the receipt of their
 #: `organization.created` event), and the PDF file name of each quote on their cases that is still
 #: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
@@ -889,6 +889,9 @@ class MailRulesRepository(V2CaseCommandRepository):
             org_id = created.get("organization_id")
             if rule in ("R4", "R10") and org_id:
                 kept = self._retire_mail_organization(cur, org_id, action, note, run)
+        if rule == "R18":
+            # R18 changed nothing in the CRM: its undo receipt is what puts the email back in «Responder».
+            done.append({"command": "no_reply_withdrawn"})
         if not done:
             raise CommandRefused(409, "nothing_to_undo", "this action left nothing that can be reversed")
         return done, kept

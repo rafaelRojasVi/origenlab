@@ -1,0 +1,63 @@
+"""R18 and R19 against a real database (owner 2026-10-29): the client's closing reply leaves a receipt
+only, shown in «Hecho automáticamente» and removable with «Quitar»; a reply the AI reads as lost closes
+the case, and «Quitar» reopens it.
+
+Runs in a disposable `origenlab_test_<hex>` as the unprivileged `origenlab_api` role. Every name,
+number and address is fictitious.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+
+from test_v2_mail_rules_client_reply_db import _reply, _sent_case, _stage
+from test_v2_mail_rules_cotizador_sent_db import _admin, _mail_rules, _planned
+from test_v2_quote_commands import _owner
+from test_v2_quote_commands import world as world  # noqa: PLC0414 - the module's catalog fixture, reused
+from v2_command_harness import needs_db
+
+pytestmark = needs_db
+
+
+def _read(dsn: str, record: str, **reading) -> None:
+    """The worker's triage reading of the email (`triage:v4`)."""
+    _owner(dsn, "insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                "values (%s, 'message_triage', 'triage:v4', %s::jsonb)",
+           (record, json.dumps({"class": "commercial", "reading": reading})))
+
+
+def _closing(world: dict, admin, **reading) -> tuple[str, str]:
+    dsn = world["dsn"]
+    case_id = _sent_case(world, admin)
+    answer = _reply(dsn, case_id, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+    _read(dsn, answer, **{"intent": "quote_followup", "stage": "negotiating", "needs_reply": False,
+                          "summary_es": "Agradece y avisará.", **reading})
+    return case_id, answer
+
+
+def test_r18_applies_as_a_receipt_only_and_shows_in_recent_automatic(world) -> None:
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_id, answer = _closing(world, admin)
+    repo = _mail_rules(dsn)
+    action = next(a for a in repo.plan()[0] if a.evidence_id == answer and a.rule_id == "R18")
+    result = repo.apply_planned(admin, action, automatic=True)
+    assert result["rule_id"] == "R18" and result["case_id"] == case_id
+    assert result["steps"] == []
+    assert _stage(dsn, case_id) == "quoting"  # R18 changes nothing in the CRM
+    shown = [a for a in repo.recent_automatic() if a["receipt_id"] == result["command_receipt_id"]]
+    assert [a["rule_id"] for a in shown] == ["R18"]
+    assert "R18" not in _planned(repo, answer)  # once
+
+
+def test_r18_undo_brings_the_row_back(world) -> None:
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    _, answer = _closing(world, admin)
+    repo = _mail_rules(dsn)
+    applied = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R18"}])
+    assert not applied["refused"], applied["refused"]
+    undone = repo.undo(admin, applied["applied"][0]["command_receipt_id"], "sí había que responder")
+    assert [s["command"] for s in undone["steps"]] == ["no_reply_withdrawn"]
+    assert "R18" not in _planned(repo, answer)  # an undone action is not planned again
