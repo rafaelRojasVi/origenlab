@@ -143,7 +143,7 @@ describe("MarketingOverview", () => {
     render(<MarketingOverview campaigns={CAMPAIGNS} today={TODAY} onOpen={onOpen} />);
     expect(screen.getByTestId("last-send")).toHaveTextContent("Último envío: hace 11 días");
     expect(screen.getByTestId("next-planned")).toHaveTextContent("Próxima campaña: en 5 días");
-    expect(screen.getByTestId("overview-counts")).toHaveTextContent("Enviadas1Borradores1Audiencia congelada1Planificadas1");
+    expect(screen.queryByTestId("overview-counts")).toBeNull(); // the status counters are gone (2026-10-29)
     expect(screen.getByText("Planificación interna · no programa el envío")).toBeInTheDocument();
     const text = screen.getByTestId("marketing-overview").textContent ?? "";
     expect(text).not.toMatch(/apertura|clic|respuesta/i);

@@ -83,13 +83,13 @@ export function CampaignRows({
               </div>
               <p className="mt-1 text-[11px] tabular-nums text-ink-faint">
                 <Num value={bounced} onClick={() => onPeople({ kind: "campaign", metric: "bounced", campaignId: c.campaign_id }, `${c.name} · Rebotes`)} />{" "}
-                rebotes{pct(bounced, sent) ? ` (${pct(bounced, sent)})` : ""} ·{" "}
-                <Num value={baja} onClick={() => onPeople({ kind: "campaign", metric: "baja", campaignId: c.campaign_id }, `${c.name} · Bajas`)} /> bajas
+                {bounced === 1 ? "rebote" : "rebotes"}{pct(bounced, sent) ? ` (${pct(bounced, sent)})` : ""} ·{" "}
+                <Num value={baja} onClick={() => onPeople({ kind: "campaign", metric: "baja", campaignId: c.campaign_id }, `${c.name} · Bajas`)} /> {baja === 1 ? "baja" : "bajas"}
                 {f?.new_people != null ? (
                   <>
                     {" · "}
                     <Num value={f.new_people} onClick={() => onPeople({ kind: "campaign", metric: "new_people", campaignId: c.campaign_id }, `${c.name} · Personas nuevas`)} />{" "}
-                    personas nuevas
+                    {f.new_people === 1 ? "persona nueva" : "personas nuevas"}
                   </>
                 ) : null}
               </p>

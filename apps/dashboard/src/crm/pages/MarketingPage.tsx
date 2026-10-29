@@ -133,7 +133,6 @@ export function MarketingPage() {
           <AnalyticsAlert data={analytics} />
           <AnalyticsKpis data={analytics} onOpen={openPeople} />
           <ContactBaseBar data={analytics} />
-          <CoverageCard data={analytics} onOpen={openPeople} />
         </div>
       ) : null}
       {people && view.kind === "list" && tab === "campanas" ? (
@@ -355,6 +354,7 @@ function Body({
         <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>
       ) : null}
       {revealNeverSent}
+      {analytics ? <CoverageCard data={analytics} onOpen={onPeople} /> : null}
       <p className="text-[11px] text-ink-faint" data-testid="analytics-footnote">
         — = aún no medido. «Respondieron» cuenta a quien escribió hasta {analytics?.reply_window_days ?? 14} días después de recibir la
         campaña (sin rebotes, respuestas automáticas ni bajas). Aperturas y clics no se registran.

@@ -41,7 +41,7 @@ export function PeopleList({ title, query, onClose, closable = true }: { title: 
                         r.name ?? r.address_norm
                       )}
                     </span>
-                    <span className="font-mono text-[11px] text-ink-muted">{r.address_norm}</span>
+                    {r.name ? <span className="font-mono text-[11px] text-ink-muted">{r.address_norm}</span> : null}
                     {r.organization ? <span className="text-ink-muted">{r.organization}</span> : null}
                     {r.opportunity_id ? (
                       <a href={crmHash("oportunidades", r.opportunity_id)} className="ml-auto font-medium text-accent hover:underline">
