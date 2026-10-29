@@ -348,7 +348,8 @@ export interface CampaignSummary {
   last_sent_at: string | null;
   recipients_by_state: Record<string, number>;
   send_attempts: { submission_state: string; delivery_state: string; count: number }[];
-  replies_recorded: number;
+  /** Recipients who wrote within the reply window (marketing analytics); null = not measurable. */
+  responded?: number | null;
   /** Accepted attempts grouped by the day (America/Santiago) they were accepted on. */
   send_batches?: SendBatch[];
   /** Attempts with no acceptance date (rejected, never submitted). */
@@ -428,7 +429,6 @@ export interface V1LaneCampaign {
 export interface MarketingResponse {
   campaigns: CampaignSummary[];
   contact_controls: { kind: string; scope: string; count: number }[];
-  replies_note: string;
   /** Where campaigns (and drafts) are stored, as the API reports it. */
   storage?: { table: string; database: string };
   authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean; recontact_review_enabled?: boolean; planning_enabled?: boolean };

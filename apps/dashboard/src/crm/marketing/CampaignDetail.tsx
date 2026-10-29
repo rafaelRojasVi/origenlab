@@ -6,6 +6,7 @@ import { PLANNING_LABEL, fmtLongDay, relativeDay, santiagoTime, todayInSantiago 
 import { CampaignAudit } from "./CampaignAudit";
 import { CampaignRecipients } from "./CampaignRecipients";
 import { CampaignReplies } from "./CampaignReplies";
+import { CampaignResults } from "./CampaignResults";
 import { FILTER_TOTALS, NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, neverSent, repliesUnknown } from "./campaignTotals";
 import { CampaignHoldPanel } from "./CampaignHolds";
 import { EmailFrame } from "./EmailFrame";
@@ -187,6 +188,8 @@ export function CampaignDetail({
       ) : tab === "auditoria" ? (
         <CampaignAudit campaignId={summary.campaign_id} />
       ) : (
+        <>
+        {tab !== "html" ? <CampaignResults campaignId={summary.campaign_id} campaignName={summary.name} /> : null}
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
           {(a) =>
             tab === "html" ? (
@@ -206,6 +209,7 @@ export function CampaignDetail({
             )
           }
         </ResourceGate>
+        </>
       )}
     </div>
   );
@@ -215,11 +219,10 @@ export function CampaignDetail({
 function TotalsPanel({ archive: a, onOpen }: { archive: CampaignArchive; onOpen: (k: TotalKey) => void }) {
   const t = a.totals;
   if (!t) return null;
-  const unknownReplies = repliesUnknown(a.replies, t);
   return (
     <Panel title="Destinatarios" note="cada cifra abre sus filas" bodyClassName="p-3">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" data-testid="detail-totals">
-        {FILTER_TOTALS.map((k) => (
+        {FILTER_TOTALS.filter((k) => k !== "responses").map((k) => (
           <button
             key={k}
             type="button"
@@ -230,7 +233,7 @@ function TotalsPanel({ archive: a, onOpen }: { archive: CampaignArchive; onOpen:
           >
             <span className="block text-[11px] text-ink-faint">{TOTAL_LABEL[k]}</span>
             <span className="block text-lg font-semibold tabular-nums text-ink">
-              {k === "responses" && unknownReplies ? <span className="text-sm font-medium text-ink-faint">No sincronizadas</span> : fmtInt(t[k])}
+              {fmtInt(t[k])}
             </span>
           </button>
         ))}

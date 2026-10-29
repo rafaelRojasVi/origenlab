@@ -37,7 +37,7 @@ const base: CampaignSummary = {
   last_sent_at: null,
   recipients_by_state: {},
   send_attempts: [],
-  replies_recorded: 0,
+  responded: null,
   send_batches: [],
   origin: "native_v2",
   equipment_lines: [],
@@ -659,7 +659,7 @@ describe("MarketingPage calendar flow", () => {
         const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
         const json = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
         if (url.pathname.endsWith("/v2/workspace/marketing")) {
-          return json({ campaigns: CAMPAIGNS, contact_controls: [], replies_note: "", authoring: { drafts_enabled: false, planning_enabled: true } });
+          return json({ campaigns: CAMPAIGNS, contact_controls: [], authoring: { drafts_enabled: false, planning_enabled: true } });
         }
         if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return json(taxonomy);
         if (url.pathname.endsWith(`/campaigns/${IMPORTED.campaign_id}/archive`)) return json(importedArchive);

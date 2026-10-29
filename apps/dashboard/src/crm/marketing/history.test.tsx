@@ -25,7 +25,7 @@ const HISTORICAL: CampaignSummary = {
   last_sent_at: "2026-09-03T19:00:00Z",
   recipients_by_state: { sent: 95, bounced: 9, excluded: 10, snapshotted: 6 },
   send_attempts: [{ submission_state: "accepted", delivery_state: "pending", count: 104 }],
-  replies_recorded: 0,
+  responded: null,
   send_batches: [],
   origin: "imported_v1",
   totals: TOTALS,
@@ -103,9 +103,11 @@ function stub({
       calls.push(url);
       const json = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (url.pathname.endsWith("/v2/workspace/marketing")) {
-        return json({ campaigns: [campaign], contact_controls: [], replies_note: "", authoring: {}, storage: { table: "outbound.campaign", database } });
+        return json({ campaigns: [campaign], contact_controls: [], authoring: {}, storage: { table: "outbound.campaign", database } });
       }
       if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return json(taxonomyJson);
+      if (url.pathname.endsWith("/marketing/analytics")) return json(ANALYTICS);
+      if (url.pathname.endsWith("/marketing/analytics/people")) return json(PEOPLE);
       if (url.pathname.endsWith("/history/recipients")) return json(page(url, role === "viewer"));
       if (url.pathname.endsWith("/history/replies")) return json(replies);
       if (url.pathname.endsWith("/history/audit")) return json(AUDIT);
@@ -126,6 +128,30 @@ function stub({
   return calls;
 }
 
+const ANALYTICS = {
+  reply_window_days: 14,
+  overview: { reached: 104, writable: 100, bounced: 3, baja: 1, other_blocks: 0, with_open_case: 2 },
+  campaigns: { [ID]: { sent: 104, new_people: 104, bounced: 3, baja: 1, responded: 1, quote_request: 1, cases_after: 0, ndr_unblocked: 0 } },
+  coverage: [],
+  alerts: { ndr_unblocked: 0 },
+  mail_captured_from: "2026-08-01T00:00:00+00:00",
+};
+const PEOPLE = {
+  total: 1, limit: 50, offset: 0,
+  rows: [{ address_norm: "ana@lab.example", opportunity_id: null, person_id: null, name: "Ana Ficticia", organization: null, case_stage: null, case_title: null }],
+};
+
+/** A sent campaign is a row now; its totals live in the detail the row opens. */
+async function openSentCampaign() {
+  fireEvent.click(await screen.findByTestId("campaign-row"));
+  await screen.findByTestId("campaign-detail");
+}
+
+async function openTotal(key: string) {
+  await openSentCampaign();
+  fireEvent.click(await screen.findByTestId(`detail-total-${key}`));
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -139,11 +165,12 @@ describe("campaign card totals", () => {
     expect(t.find((x) => x.key === "sent")?.value).toBe(104);
   });
 
-  it("every card total opens the recipient rows filtered by that same total, and they reconcile", async () => {
+  it("every detail total opens the recipient rows filtered by that same total, and they reconcile", async () => {
     for (const key of ["audience", "sent", "excluded", "rejected", "bounced"] as const) {
       const calls = stub();
       const view = render(withRole("sales", <MarketingPage />));
-      const button = await screen.findByTestId(`card-total-${key}`);
+      await openSentCampaign();
+      const button = await screen.findByTestId(`detail-total-${key}`);
       expect(button).toHaveTextContent(new Intl.NumberFormat("es-CL").format(TOTALS[key]));
       fireEvent.click(button);
       const range = await screen.findByTestId("recipients-range");
@@ -155,15 +182,15 @@ describe("campaign card totals", () => {
     }
   });
 
-  it("the responses total says «No sincronizadas» and opens the replies tab, which says so too", async () => {
+  it("the replies tab lists who wrote back, measured, and never says «No sincronizadas»", async () => {
     stub();
     render(withRole("sales", <MarketingPage />));
-    const button = await screen.findByTestId("card-total-responses");
-    expect(button).toHaveTextContent("No sincronizadas");
-    expect(button).not.toHaveTextContent(/^Respuestas0$/);
-    fireEvent.click(button);
-    expect(await screen.findByTestId("replies-not-synced")).toHaveTextContent("Respuestas no sincronizadas desde Gmail");
-    expect(within(screen.getByTestId("reply-counts")).getAllByText("No sincronizadas")).toHaveLength(2);
+    await openSentCampaign();
+    expect(screen.queryByTestId("detail-total-responses")).toBeNull();
+    expect(await screen.findByTestId("result-responded")).toHaveTextContent("1");
+    fireEvent.click(await screen.findByRole("button", { name: "Respuestas" }));
+    expect(await screen.findByTestId("people-list")).toHaveTextContent("Ana Ficticia");
+    expect(screen.queryByText(/No sincronizadas/)).toBeNull();
     expect(screen.getByTestId("baja-by-address")).toHaveTextContent("2");
     expect(screen.getByTestId("baja-unassociated")).toHaveTextContent("5");
   });
@@ -171,10 +198,10 @@ describe("campaign card totals", () => {
   it("a historical card offers no editor, only its history", async () => {
     stub();
     render(withRole("admin", <MarketingPage />));
-    const card = await screen.findByTestId("campaign-card");
-    expect(within(card).queryByRole("button", { name: "Editar" })).toBeNull();
-    expect(within(card).queryByRole("button", { name: "Abrir" })).toBeNull();
-    fireEvent.click(within(card).getByTestId("open-history"));
+    const row = await screen.findByTestId("campaign-row");
+    expect(within(row).queryByRole("button", { name: "Editar" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Abrir" })).toBeNull();
+    fireEvent.click(row);
     expect(await screen.findByText("Cerrada · solo lectura")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Editar|Abrir campaña|Reenviar|Reabrir/ })).toBeNull();
   });
@@ -221,9 +248,9 @@ describe("an archived campaign that was never sent", () => {
   it("a sent historical campaign never carries the label", async () => {
     stub();
     render(withRole("admin", <MarketingPage />));
-    const card = await screen.findByTestId("campaign-card");
-    expect(within(card).queryByTestId("never-sent")).toBeNull();
-    fireEvent.click(within(card).getByTestId("open-history"));
+    const row = await screen.findByTestId("campaign-row");
+    expect(within(row).queryByTestId("never-sent")).toBeNull();
+    fireEvent.click(row);
     await screen.findByText("Cerrada · solo lectura");
     expect(screen.queryByText("Nunca enviada")).toBeNull();
   });
@@ -233,7 +260,7 @@ describe("recipients tab", () => {
   it("pages on the server and keeps the filter", async () => {
     const calls = stub();
     render(withRole("sales", <MarketingPage />));
-    fireEvent.click(await screen.findByTestId("card-total-sent"));
+    await openTotal("sent");
     expect(await screen.findByTestId("recipients-range")).toHaveTextContent("1–50 de 104");
     fireEvent.click(screen.getByTestId("recipients-next"));
     await waitFor(() => expect(screen.getByTestId("recipients-range")).toHaveTextContent("51–100 de 104"));
@@ -245,7 +272,7 @@ describe("recipients tab", () => {
   it("labels a CRM person, a historical address, a missing institution and a registered BAJA", async () => {
     stub();
     render(withRole("sales", <MarketingPage />));
-    fireEvent.click(await screen.findByTestId("card-total-audience"));
+    await openTotal("audience");
     const table = await screen.findByTestId("recipients-table");
     expect(table).toHaveTextContent("Persona del CRM");
     expect(table).toHaveTextContent("Dirección histórica");
@@ -261,7 +288,7 @@ describe("recipients tab", () => {
   it("a viewer reads masked addresses and is told the search covers names only", async () => {
     stub({ role: "viewer" });
     render(withRole("viewer", <MarketingPage />));
-    fireEvent.click(await screen.findByTestId("card-total-audience"));
+    await openTotal("audience");
     const table = await screen.findByTestId("recipients-table");
     expect(table).not.toHaveTextContent(/persona\d+@/);
     expect(table).toHaveTextContent("***@lab.example");
@@ -290,7 +317,7 @@ describe("replies and audit", () => {
       },
     });
     render(withRole("sales", <MarketingPage />));
-    fireEvent.click(await screen.findByTestId("open-history"));
+    await openSentCampaign();
     fireEvent.click(await screen.findByRole("button", { name: "Respuestas" }));
     const items = await screen.findAllByTestId("reply-item");
     expect(items.map((i) => i.getAttribute("data-kind"))).toEqual(["reply", "baja", "baja_pending_review"]);
@@ -302,7 +329,7 @@ describe("replies and audit", () => {
   it("the audit tab says the history is immutable and offers no action", async () => {
     stub();
     render(withRole("admin", <MarketingPage />));
-    fireEvent.click(await screen.findByTestId("open-history"));
+    await openSentCampaign();
     fireEvent.click(await screen.findByRole("button", { name: "Auditoría" }));
     expect(await screen.findByTestId("audit-immutable")).toHaveTextContent("Inmutable");
     expect(screen.getByTestId("audit-no-actions")).toBeInTheDocument();
@@ -320,7 +347,7 @@ describe("data source", () => {
   it("says nothing of the kind for the clean room", async () => {
     stub();
     render(withRole("sales", <MarketingPage />));
-    expect(await screen.findByTestId("campaign-storage-note")).toHaveTextContent("origenlab_clean");
+    await screen.findByTestId("campaign-row");
     expect(screen.queryByTestId("fixture-warning")).toBeNull();
   });
 });

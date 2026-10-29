@@ -21,7 +21,7 @@ const ARCHIVED: CampaignSummary = {
   campaign_id: "a0000000-0000-4000-8000-000000000001", name: "Histórica ficticia", status: "archived", subject: null,
   approved_at: null, created_at: "2026-09-01T12:00:00Z", first_sent_at: "2026-09-02T13:00:00Z", last_sent_at: "2026-09-02T14:00:00Z",
   recipients_by_state: { sent: 2, excluded: 1 }, send_attempts: [{ submission_state: "accepted", delivery_state: "pending", count: 2 }],
-  replies_recorded: 0, send_batches: [], origin: "imported_v1", totals: TOTALS, replies: REPLIES, subject_state: "not_imported",
+  responded: null, send_batches: [], origin: "imported_v1", totals: TOTALS, replies: REPLIES, subject_state: "not_imported",
   attempt_totals: {
     attempts: 2, accepted: 2, rejected: 0, other: 0, delivery_confirmed: 0, delivery_pending: 2, delivery_bounced: 0,
     rejected_undated: 0, with_provider_id: 0, first_accepted_at: "2026-09-02T13:00:00Z", last_accepted_at: "2026-09-02T14:00:00Z",
@@ -54,7 +54,7 @@ function stub() {
       if (init?.method && init.method.toUpperCase() !== "GET") return json({});
       if (p.endsWith("/v2/workspace/marketing")) {
         return json({
-          campaigns: CAMPAIGNS, contact_controls: [], replies_note: "",
+          campaigns: CAMPAIGNS, contact_controls: [],
           // Every write switched on: only the role may hide a control.
           authoring: { drafts_enabled: true, freeze_enabled: true, planning_enabled: true },
           storage: { table: "outbound.campaign", database: "origenlab_clean" },
@@ -166,7 +166,8 @@ describe.each([
     const calls = stub();
     render(withRole(role, <MarketingPage />));
     const cards = await screen.findAllByTestId("campaign-card");
-    expect(cards).toHaveLength(3);
+    expect(cards).toHaveLength(2); // the draft and the frozen one; the sent campaign is a row
+    expect(screen.getAllByTestId("campaign-row")).toHaveLength(1);
     expectNoWriteAffordance();
     // Every card still opens its history.
     for (const card of cards) expect(within(card).getByTestId("open-history")).toBeInTheDocument();
@@ -184,8 +185,12 @@ describe.each([
     const calls = stub();
     render(withRole(role, <MarketingPage />));
     const cards = await screen.findAllByTestId("campaign-card");
-    const card = cards.find((x) => within(x).queryByText(c.name))!;
-    fireEvent.click(within(card).getByRole("button", { name: c.name }));
+    if (c.status === "archived") {
+      fireEvent.click(screen.getByTestId("campaign-row"));
+    } else {
+      const card = cards.find((x) => within(x).queryByText(c.name))!;
+      fireEvent.click(within(card).getByRole("button", { name: c.name }));
+    }
     const detail = await screen.findByTestId("campaign-detail");
     expect(screen.queryByTestId("persistence")).toBeNull();
     expect(screen.queryByTestId("audience-freeze")).toBeNull();
@@ -212,7 +217,7 @@ describe.each([
     const calls = stub();
     render(withRole(role, <MarketingPage />));
     await screen.findAllByTestId("campaign-card");
-    for (const tab of ["Audiencias por equipo", "Bajas"]) {
+    for (const tab of ["Audiencias por equipo", "Bajas y rebotes"]) {
       fireEvent.click(screen.getByRole("button", { name: tab }));
       await new Promise((r) => setTimeout(r, 0));
       expectNoWriteAffordance();
@@ -249,7 +254,7 @@ describe.each(["sales", "admin"])("Marketing for %s keeps its permitted actions"
     const byName = (n: string) => cards.find((x) => within(x).queryByText(n))!;
     expect(within(byName(DRAFT.name)).getByRole("button", { name: "Editar" })).toBeInTheDocument();
     expect(within(byName(FROZEN.name)).getByRole("button", { name: "Abrir" })).toBeInTheDocument();
-    expect(within(byName(ARCHIVED.name)).queryByRole("button", { name: /^(Editar|Abrir)$/ })).toBeNull();
+    expect(within(screen.getByTestId("campaign-row")).queryByRole("button", { name: /^(Editar|Abrir)$/ })).toBeNull();
   });
 
   it("the draft's detail offers «Editar borrador» and the planning form; «Editar» opens the editor with «Duplicar»", async () => {
