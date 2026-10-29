@@ -562,21 +562,11 @@ class _Index:
         self.late_quote_since = snapshot.late_quote_since
         self.reply_since = snapshot.reply_since
         self.cases = {c.id: c for c in snapshot.cases}
-        #: Per case, the newest email a person sent us on it — linked to it, or on one of its threads
-        #: and not linked yet (R1 may link it this very pass). R19 acts only on that one.
+        #: Per case, the newest email a person on the client's side sent us — linked to it, or on one
+        #: of its threads and not linked yet (R1 may link it this very pass). Supplier free-mail
+        #: addresses and automatic senders are excluded; only _from_the_client emails count (Goal 5,
+        #: 2026-10-29). Populated below, after supplier_free_addresses is known. R19 acts only on this.
         self.newest_inbound: dict[str, datetime] = {}
-        case_ids_by_thread: dict[str, set[str]] = {}
-        for c in snapshot.cases:
-            for t in c.thread_ids:
-                case_ids_by_thread.setdefault(t, set()).add(c.id)
-        for ev in snapshot.evidence:
-            human = ev.direction == "inbound" and not is_automatic_mail(ev.sender, ev.triage_class)
-            at = _instant(ev.sent_at) if human else None
-            if at is None:
-                continue
-            for cid in set(ev.linked_case_ids) | case_ids_by_thread.get(ev.thread_id or "", set()):
-                if cid not in self.newest_inbound or self.newest_inbound[cid] < at:
-                    self.newest_inbound[cid] = at
         self.by_thread: dict[str, list[CaseState]] = {}
         for c in snapshot.cases:
             for t in c.thread_ids:
@@ -647,6 +637,36 @@ class _Index:
         self.ai_supplier_domains: frozenset[str] = frozenset(
             d for ev in snapshot.evidence if ev.direction == "inbound" and ev.model_intent == "supplier_offer"
             for d in _external_domains(ev) if d not in FREE_MAIL_DOMAINS)
+        #: Free-mail *addresses* (not domains) that are suppliers: either we sent them a price request
+        #: (`supplier_rfq`) or an email they sent was AI-read as a `supplier_offer`. Never applies to a
+        #: non-free-mail address — those are handled by domain-level checks.
+        rfq_free: set[str] = set()
+        for ev in snapshot.evidence:
+            if ev.direction != "outbound" or (ev.direction_hint or "") != "supplier_rfq":
+                continue
+            for a in addresses(ev.recipients):
+                if domain_of(a) in FREE_MAIL_DOMAINS:
+                    rfq_free.add(a)
+        offer_free: set[str] = set()
+        for ev in snapshot.evidence:
+            if ev.direction != "inbound" or ev.model_intent != "supplier_offer":
+                continue
+            sender_addr = _sender(ev)
+            if sender_addr and domain_of(sender_addr) in FREE_MAIL_DOMAINS:
+                offer_free.add(sender_addr)
+        self.supplier_free_addresses: frozenset[str] = frozenset(rfq_free | offer_free)
+        #: Now that supplier_free_addresses is known, populate newest_inbound using _from_the_client
+        #: so free-mail supplier replies and automatic mail are excluded (goal 5, 2026-10-29).
+        _cids_by_thread: dict[str, set[str]] = {
+            t: {c.id for c in cs} for t, cs in self.by_thread.items()
+        }
+        for ev in snapshot.evidence:
+            at = _instant(ev.sent_at) if _from_the_client(ev, self) else None
+            if at is None:
+                continue
+            for cid in set(ev.linked_case_ids) | _cids_by_thread.get(ev.thread_id or "", set()):
+                if cid not in self.newest_inbound or self.newest_inbound[cid] < at:
+                    self.newest_inbound[cid] = at
 
     def answers_our_rfq(self, e: "MailEvidence", domains: list[str]) -> bool:
         """An inbound email later than one of our RFQs, from a domain that RFQ went to."""
@@ -657,6 +677,13 @@ class _Index:
 
     def is_supplier_domain(self, domain: str) -> bool:
         return any(o.is_supplier for o in self.by_domain.get(domain, []))
+
+    def is_supplier_address(self, address: str) -> bool:
+        """True when a free-mail address (only) belongs to a supplier.
+
+        Non-free-mail addresses are handled by `is_supplier_domain`; this check only applies when
+        the domain is in `FREE_MAIL_DOMAINS` to avoid silencing every gmail.com client."""
+        return address.lower() in self.supplier_free_addresses
 
 
 def _mail_text(e: MailEvidence) -> str:
@@ -709,7 +736,7 @@ def _sender_may_speak_for(e: MailEvidence, c: CaseState, ix: _Index) -> str | No
     """None when the sender may close this case (won or lost); else why not.
 
     The sender's domain must be one of the case institution's, or a free-mail address on the
-    case's own thread — never a supplier's and never ours."""
+    case's own thread — never a supplier's (by domain or free-mail address) and never ours."""
     if e.direction != "inbound":
         return "no es un correo recibido"
     sender = _sender(e)
@@ -721,6 +748,8 @@ def _sender_may_speak_for(e: MailEvidence, c: CaseState, ix: _Index) -> str | No
     if ix.is_supplier_domain(d):
         return f"remitente de un proveedor ({d})"
     if d in FREE_MAIL_DOMAINS:
+        if ix.is_supplier_address(sender):
+            return f"remitente es proveedor ({sender})"
         return None
     org = ix.orgs.get(c.organization_id or "")
     if org is not None and d in org.domains:
@@ -1568,6 +1597,8 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     sender = _sender(e)
     if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
         return None
+    if sender is not None and ix.is_supplier_address(sender):
+        return None
     subject = fold(e.subject)
     if any(p in subject for p in AUTO_REPLY_PHRASES):
         return None
@@ -1603,12 +1634,14 @@ def is_automatic_mail(sender: str | None, triage_class: str | None) -> bool:
 
 
 def _from_the_client(e: MailEvidence, ix: _Index) -> bool:
-    """A person on the client's side wrote it: inbound, not ours, not a supplier, not a bounce or an
-    automatic reply (the triage's class, else the subject)."""
+    """A person on the client's side wrote it: inbound, not ours, not a supplier (by domain or by
+    free-mail address), not a bounce or an automatic reply (the triage's class, else the subject)."""
     sender = _sender(e)
     if e.direction != "inbound" or sender is None:
         return False
     if domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+        return False
+    if ix.is_supplier_address(sender):
         return False
     if is_automatic_mail(e.sender, e.triage_class):
         return False
@@ -1656,7 +1689,11 @@ def _read_lost_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     subject and file names, and before the reading exists; R19 reads the body's reading, a pass later.
 
     Only the newest email from the client on exactly one open case that is not «En pausa» (a person
-    already decided to wait); the R6 sender gate, else a proposal. «Quitar» reopens the case."""
+    already decided to wait); the R6 sender gate, else a proposal. «Quitar» reopens the case.
+
+    «Newest from the client» uses `_from_the_client` (goal 5, 2026-10-29): free-mail supplier replies
+    and automatic mail are excluded from `newest_inbound` so a courier notice or a supplier answer
+    does not hide the client's «no»."""
     if len(e.linked_case_ids) != 1 or e.model_stage != "lost" or not _from_the_client(e, ix):
         return None
     c = ix.cases.get(e.linked_case_ids[0])

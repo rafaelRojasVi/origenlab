@@ -202,3 +202,44 @@ def test_r18_by_thread_needs_exactly_one_case() -> None:
     unlinked = thanks(linked_case_ids=())
     assert planned("R18", unlinked, cases=(case(), case(id="c-2", thread_ids=("t-1",))),
                    applied_evidence_ids=frozenset(), applied_pairs=frozenset()) == []
+
+
+# ----------------------------------------------------------------- goal 4 — supplier free mail
+
+def _rfq_to_free_mail() -> MailEvidence:
+    """An outbound supplier RFQ sent to a gmail address; marks that address as a supplier."""
+    return MailEvidence(id="e-rfq", thread_id="t-rfq", direction="outbound",
+                        direction_hint="supplier_rfq",
+                        sender="contacto@origenlab.cl",
+                        recipients=("proveedor@gmail.com",),
+                        subject="Request for quotation",
+                        sent_at="2026-10-15T10:00:00+00:00")
+
+
+def test_r19_ignores_a_reply_from_a_free_mail_supplier(  # goal 4
+) -> None:
+    """A free-mail address that received a supplier RFQ is excluded by _from_the_client (not by
+    domain), so R19 does not fire on their email even though it is linked to the case."""
+    rfq = _rfq_to_free_mail()
+    # linked to c-1 so the len==1 check passes; the _from_the_client check must reject it
+    supplier_reply = lost(sender="proveedor@gmail.com", linked_case_ids=("c-1",))
+    # proveedor@gmail.com is in supplier_free_addresses → _from_the_client → False → R19 returns None
+    assert planned("R19", rfq, supplier_reply, cases=(case(stage="negotiating"),)) == []
+
+
+# ----------------------------------------------------------------- goal 5 — newest_inbound from client
+
+def test_r19_is_not_blocked_by_a_newer_email_from_a_supplier(  # goal 5
+) -> None:
+    """A newer supplier reply on the case's thread (free-mail address, marked by rfq) does not
+    reset newest_inbound, so R19 still fires on the client's older lost email."""
+    rfq = _rfq_to_free_mail()
+    client_lost = lost(id="e-9", sent_at="2026-10-20T12:00:00+00:00",
+                       linked_case_ids=("c-1",))
+    # A later email from the free-mail supplier — NOT the client — on the same case
+    supplier_newer = lost(id="e-10", sent_at="2026-10-22T12:00:00+00:00",
+                          sender="proveedor@gmail.com", linked_case_ids=("c-1",))
+    # newest_inbound must exclude supplier_newer so the older client_lost is still the newest from the
+    # client; R19 fires on it even though a newer email exists on the case
+    [a] = planned("R19", rfq, client_lost, supplier_newer, cases=(case(stage="negotiating"),))
+    assert a.mode == "auto"
