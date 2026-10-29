@@ -132,7 +132,7 @@ def _json(value: Any) -> Any:
 #: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
-       requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent,
+       requester.value as requester_match, quote_refs.value as quote_refs, po_refs.value as po_refs, ai.intent as model_intent,
        ai.stage as model_stage, ai.needs_reply as model_needs_reply, ai.summary as model_summary,
        ai.triage_class,
        case_match.value as case_match, web_form.is_web_form, web_form.reply_to
@@ -154,6 +154,11 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'quote_refs:v1'
         limit 1
   ) quote_refs on true
+  left join lateral (
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'po_refs:v1'
+        limit 1
+  ) po_refs on true
   left join lateral (
        -- The newest triage reading: the AI's intent, stage, needs_reply and summary when the model
        -- read the email, and the rules' class (bounce, auto_reply, …) either way.
@@ -365,7 +370,11 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             requester_checked=bool(requester),
             requester_organization_id=(requester.get("organization_id") if requester_matched else None),
             requester_organization_name=(requester.get("organization_name") if requester_matched else None),
-            body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
+            body_quote_tokens=tuple(dict.fromkeys(
+                str(t) for src in ((_json(r.get("quote_refs")) or {}).get("tokens") or (),
+                                   (_json(r.get("po_refs")) or {}).get("tokens") or ())
+                for t in src
+            )),
             model_intent=r.get("model_intent"),
             model_stage=r.get("model_stage"),
             model_needs_reply=r.get("model_needs_reply"),

@@ -176,6 +176,9 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
   left join lateral (select p.address_norm from comms.message_participant p
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
+  left join lateral (select a.value from evidence.assertion a
+                      where a.source_record_id = r.source_record_id and a.kind = 'message_triage'
+                        and a.value_norm = 'po_refs:v1' limit 1) po_refs on true
  where coalesce((r.value ->> 'needs_model')::boolean, false)
    and (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
    -- An email a tender holds — itself, or any email of its thread — is the tender's: «Licitaciones»
@@ -288,7 +291,8 @@ class TriageReviewRepository(CommandTransaction):
         for row in rows:
             value = row["value"] or {}
             reading = value.get("reading") or {}
-            items.append({
+            po_refs = row.get("po_refs") or {}
+        items.append({
                 "assertion_id": row["assertion_id"],
                 "source_record_id": row["source_record_id"],
                 "version": row["version"],
@@ -313,6 +317,8 @@ class TriageReviewRepository(CommandTransaction):
                 "transitions": reading.get("linked_cases") or [],
                 "review": row["review"],
                 "case_match": case_match_view(row, cases),
+                "po_quote_numbers": po_refs.get("tokens") or [],
+                "purchase_order_numbers": po_refs.get("purchase_order_numbers") or [],
             })
         return {"status": status, "items": items,
                 "vocabulary": {"classes": list(TRIAGE_CLASSES), "stages": list(TRIAGE_STAGES),

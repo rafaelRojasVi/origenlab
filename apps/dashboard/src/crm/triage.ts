@@ -11,6 +11,7 @@ import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import { STAGE_LABEL } from "./stage";
 import { mayBeWonFrom, stagePath, winnableRevisions } from "./caseCommands";
+import { parseQuoteNumber } from "./quoteNumbers";
 
 /** The queue (a read). The verdict is posted by `mailRules.ts`, the Revisión mail tools' one write client. */
 export const TRIAGE_PATHS = {
@@ -129,6 +130,10 @@ export interface TriageReading {
   review: TriageReview | null;
   /** Absent from an older API. */
   case_match?: TriageCaseMatch | null;
+  /** Quote tokens from OC PDF attachments (po_refs:v1); absent from an older API. */
+  po_quote_numbers?: string[];
+  /** PO numbers found in OC PDF attachments (po_refs:v1); absent from an older API. */
+  purchase_order_numbers?: string[];
 }
 
 export interface TriageReadings {
@@ -207,16 +212,33 @@ export function isPurchaseOrder(r: Pick<TriageReading, "class" | "intent">): boo
   return r.class === "purchase_order" || r.intent === "purchase_order";
 }
 
+/** True when a po_refs token (e.g. «CN01291», «01291-26») matches a revision's quote_number (e.g. «01291-26»). */
+function tokenMatchesRevision(token: string, revisionQuoteNumber: string): boolean {
+  const parsed = parseQuoteNumber(token, 0);
+  if (!parsed) return false;
+  const rev = parseQuoteNumber(revisionQuoteNumber, 0);
+  if (!rev) return false;
+  if (parsed.year === 0) return parsed.correlative === rev.correlative;  // no year: match by correlative only
+  return parsed.year === rev.year && parsed.correlative === rev.correlative;
+}
+
 export function wonProposal(
-  r: Pick<TriageReading, "class" | "intent" | "cases">,
+  r: Pick<TriageReading, "class" | "intent" | "cases" | "po_quote_numbers">,
   cards: ReadonlyMap<string, OpportunityCardData>,
 ): WonProposal | null {
   if (!isPurchaseOrder(r) || r.cases.length !== 1) return null;
   const only = r.cases[0];
   const card = cards.get(only.opportunity_id);
   if (!card || !mayBeWonFrom(card.stage) || card.closed_at) return null;
-  const revisions = winnableRevisions(card);
+  let revisions = winnableRevisions(card);
   if (revisions.length === 0) return null;
+  // When the OC PDF names specific quote numbers, keep only revisions that match one of them.
+  // If none match, the suggestion is wrong — return null so the row stays for a person.
+  const poTokens = r.po_quote_numbers;
+  if (poTokens && poTokens.length > 0) {
+    revisions = revisions.filter((rev) => poTokens.some((t) => tokenMatchesRevision(t, rev.quote_number)));
+    if (revisions.length === 0) return null;
+  }
   return { case: { ...only, stage: card.stage, version: card.version ?? only.version }, card, revisions };
 }
 
@@ -377,13 +399,18 @@ export function sortInbox(
   const rank = (r: TriageReading) => (wonProposal(r, byId) || reopenProposal(r, byId, now) ? 0 : 1);
   const newest = [...items].sort((a, b) => rank(a) - rank(b) || (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
   const seen = new Set<string>();
+  const seenPO = new Set<string>();
   const ask: TriageReading[] = [];
   for (const r of newest) {
     const why = hiddenReason(r, byId, now);
     if (why) { count(why); continue; }
     const thread = r.thread_id ?? r.assertion_id;
     if (seen.has(thread)) { count("mismo hilo"); continue; }
+    // One row per purchase-order number: the same OC arriving on different threads is the same OC.
+    const poNums = r.purchase_order_numbers ?? [];
+    if (poNums.length > 0 && poNums.every((n) => seenPO.has(n))) { count("mismo hilo"); continue; }
     seen.add(thread);
+    for (const n of poNums) seenPO.add(n);
     ask.push(r);
   }
   return { ask, hidden };

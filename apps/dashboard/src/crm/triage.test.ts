@@ -266,4 +266,39 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     expect(ask).toEqual([]);
     expect(hidden).toEqual({ "en un caso": 1 });
   });
+
+  it("deduplicates by purchase-order number when po_refs read the same OC on two threads (goal 3)", () => {
+    // Two emails (different threads) that are the same OC: only the newest is asked about.
+    const { ask, hidden } = sortInbox([
+      r("oc-new", { class: "purchase_order", cases: [CASE], sent_at: "2026-10-10T10:00:00Z",
+                    purchase_order_numbers: ["4500000123"] }),
+      r("oc-old", { class: "purchase_order", cases: [CASE], sent_at: "2026-10-09T10:00:00Z",
+                    thread_id: "t-oc-old", purchase_order_numbers: ["4500000123"] }),
+    ], [card()]);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["oc-new"]);
+    expect(hidden).toEqual({ "mismo hilo": 1 });
+  });
+});
+
+describe("wonProposal — po_quote_numbers filter (goal 2)", () => {
+  const byId = (c: OpportunityCardData) => new Map([[c.opportunity_id, c]]);
+  const po = { class: "purchase_order" as const, intent: null, cases: [CASE] };
+
+  it("with no po_quote_numbers, proposes all winnable revisions as before", () => {
+    expect(wonProposal({ ...po, po_quote_numbers: [] }, byId(card()))?.revisions.length).toBe(1);
+    expect(wonProposal({ ...po, po_quote_numbers: undefined }, byId(card()))?.revisions.length).toBe(1);
+  });
+
+  it("with po_quote_numbers, keeps only revisions whose quote_number matches", () => {
+    const twoRevisions = card({}, [revision(1), revision(2)]);
+    // revision() uses quote_number "01253-26"; token "CN01253" matches by correlative (year=0)
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01253"] }, byId(twoRevisions))?.revisions.length).toBe(2);
+    // Token "01253-26" matches by (year=26, correlative=1253)
+    expect(wonProposal({ ...po, po_quote_numbers: ["01253-26"] }, byId(twoRevisions))?.revisions.length).toBe(2);
+  });
+
+  it("returns null when po_quote_numbers is set but no revision matches (wrong quote)", () => {
+    // The OC PDF says CN09876 but the case's quote is 01253-26 — no match → stay for a person
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN09876"] }, byId(card()))).toBeNull();
+  });
 });
