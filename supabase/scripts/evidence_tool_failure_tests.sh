@@ -62,8 +62,8 @@ check() { # description  condition-already-evaluated-as-rc  detail
 # case fails for the wrong reason.
 {
   for i in $(seq 1 7);   do echo "CREATE SCHEMA s$i;"; done
-  for i in $(seq 1 66);  do echo "CREATE TABLE s1.t$i (id integer);"; done
-  for i in $(seq 1 233); do echo "CREATE POLICY p$i ON s1.t1 FOR SELECT TO r USING (true);"; done
+  for i in $(seq 1 67);  do echo "CREATE TABLE s1.t$i (id integer);"; done
+  for i in $(seq 1 236); do echo "CREATE POLICY p$i ON s1.t1 FOR SELECT TO r USING (true);"; done
 } >"$STATE/schema_good.sql"
 
 # Two applied-migration listings. Both name every local migration, so both pass the completeness

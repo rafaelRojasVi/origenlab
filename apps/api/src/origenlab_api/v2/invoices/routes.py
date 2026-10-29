@@ -5,8 +5,8 @@
 | `GET /v2/workspace/invoices?opportunity_id=` | every document (or one case's), its balance, and the por-cobrar totals |
 | `POST /v2/commands/import-invoices` | multipart: one SII «Registro de Ventas» CSV (`file`); adds the new folios |
 | `POST /v2/commands/set-invoice-case` | the document belongs to this case, or to none |
-| `POST /v2/commands/mark-invoice-paid` | «Pagada», with the day |
-| `POST /v2/commands/mark-invoice-unpaid` | undo «Pagada» |
+| `POST /v2/commands/mark-invoice-paid` | a payment, with its day: all that is left, or `amount` (an abono); «Pagada» once nothing is left |
+| `POST /v2/commands/mark-invoice-unpaid` | remove a payment recorded by mistake (`payment_id`, else the latest) |
 
 Any signed-in operator reads; the commands are behind `Deciding` (a `viewer` is 403) and an
 `Idempotency-Key`; the three JSON ones also carry the version shown and a non-blank `note`.

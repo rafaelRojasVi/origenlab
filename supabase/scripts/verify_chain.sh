@@ -37,9 +37,9 @@ export OL_REPO_ROOT
 # file with them. They are deliberately not derived from the database — a check that measures
 # its own expectation proves nothing.
 EXPECT_SCHEMAS=7
-EXPECT_TABLES=66
-EXPECT_TABLES_BY_SCHEMA="catalog=8,comms=4,crm=30,evidence=7,outbound=9,platform=7,procurement=1"
-EXPECT_POLICIES=233
+EXPECT_TABLES=67
+EXPECT_TABLES_BY_SCHEMA="catalog=8,comms=4,crm=31,evidence=7,outbound=9,platform=7,procurement=1"
+EXPECT_POLICIES=236
 EXPECT_ROLES=4
 EXPECT_SECURITY_DEFINER=3  # outbound.add_contact_control (W10), platform.begin_pin_attempt and platform.finish_pin_attempt (slice 1), the closed list (ARCHITECTURE.md §6.2)
 

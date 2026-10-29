@@ -1397,12 +1397,16 @@ guessed again on every later import.
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
 | 70 | `crm.invoice` | one SII sales document (factura 33, exenta 34, nota de débito 56, nota de crédito 61) | (`doc_type`, `folio`) unique — a re-uploaded month adds nothing; CLP amounts ≥ 0; a nota names the document it adjusts (`reference_doc_type`, `reference_folio`); `opportunity_id` set ⇔ `case_link` ∈ {`machine`,`operator`}; `paid_on` only on a 33/34; `version` ≥ 1; **never physically deleted** (`platform.reject_mutation`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
+| 71 | `crm.invoice_payment` | one payment (abono) recorded against a factura: `paid_on`, `amount` | `amount` > 0 (CLP); the factura's `paid_on` is set by the payment that leaves nothing owed, cleared when a removal takes the payments below it; a wrong payment is removed once (`removed_at` ⇔ `removed_by_operator_id`), **never physically deleted**; `origenlab_api` select/insert + UPDATE of the two removal columns, `origenlab_worker` no access |
+
+A payment is recorded by `invoice.paid` (payload: `amount`, `payment_id`, `fully_paid`) and removed
+by `invoice.unpaid` (payload: `payment_id`) — no new event type.
 
 Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.case_set`,
 `invoice.paid`, `invoice.unpaid`.
 
-Counts by schema: `crm` 30, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **66**.
+Counts by schema: `crm` 31, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **67**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

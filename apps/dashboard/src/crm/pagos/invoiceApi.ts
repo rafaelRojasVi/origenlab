@@ -31,6 +31,13 @@ export interface InvoiceNote {
   total_amount: number;
 }
 
+export interface InvoicePayment {
+  payment_id: string;
+  paid_on: string;
+  amount: number;
+  recorded_by: string | null;
+}
+
 export interface Invoice {
   invoice_id: string;
   version: number;
@@ -47,8 +54,14 @@ export interface Invoice {
   vat_amount: number;
   exempt_amount: number;
   total_amount: number;
-  /** Total less its notas de crédito, plus its notas de débito; null on a nota. */
+  /** Total less its notas de crédito, plus its notas de débito; null on a nota. Absent from an older API. */
+  billed?: number | null;
+  /** What its payments (abonos) add up to; null on a nota. Absent from an older API. */
+  paid_amount?: number | null;
+  /** What is still owed: billed less its payments; null on a nota. */
   balance: number | null;
+  /** The payments recorded against it, oldest first. Absent from an older API. */
+  payments?: InvoicePayment[];
   reference: { doc_type: number; folio: number } | null;
   notes: InvoiceNote[];
   status: InvoiceStatus;
@@ -124,8 +137,10 @@ export async function importInvoices(file: File, idempotencyKey: string = newCas
 export const setInvoiceCase = (body: InvoiceRef & { opportunity_id: string | null }, idempotencyKey: string = newCaseCommandKey()) =>
   post("/v2/commands/set-invoice-case", json({ ...body }), idempotencyKey);
 
-export const markInvoicePaid = (body: InvoiceRef & { paid_on: string }, idempotencyKey: string = newCaseCommandKey()) =>
+/** A payment: all that is left, or `amount` (an abono). */
+export const markInvoicePaid = (body: InvoiceRef & { paid_on: string; amount?: number }, idempotencyKey: string = newCaseCommandKey()) =>
   post("/v2/commands/mark-invoice-paid", json({ ...body }), idempotencyKey);
 
-export const markInvoiceUnpaid = (body: InvoiceRef, idempotencyKey: string = newCaseCommandKey()) =>
+/** Remove a payment recorded by mistake: `payment_id`, else the latest. */
+export const markInvoiceUnpaid = (body: InvoiceRef & { payment_id?: string }, idempotencyKey: string = newCaseCommandKey()) =>
   post("/v2/commands/mark-invoice-unpaid", json({ ...body }), idempotencyKey);

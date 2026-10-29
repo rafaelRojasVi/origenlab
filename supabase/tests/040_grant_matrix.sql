@@ -206,9 +206,13 @@ insert into expected values
     -- 20261030100000: crm.invoice — «Pagos»; api select/insert/update (an SII document is never
     -- deleted: no DELETE grant), no worker access at all.
     ('crm', 'invoice', 'origenlab_api', 'SIU', null, 'SIU'),
-    ('crm', 'invoice', 'origenlab_worker', '', null, '');
+    ('crm', 'invoice', 'origenlab_worker', '', null, ''),
+    -- 20261031100000: crm.invoice_payment — «Pagos» abonos; api select/insert + column UPDATE
+    -- (removed_at, removed_by_operator_id: a payment is removed once, never deleted), no worker access.
+    ('crm', 'invoice_payment', 'origenlab_api', 'SI', array['removed_at', 'removed_by_operator_id'], 'SIU'),
+    ('crm', 'invoice_payment', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 132, 'the matrix covers all 66 tables for both runtime roles');
+select is((select count(*)::int from expected), 134, 'the matrix covers all 67 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

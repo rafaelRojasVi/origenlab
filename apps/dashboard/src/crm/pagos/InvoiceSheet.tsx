@@ -1,11 +1,12 @@
-import { useId, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { documentRefusalText, fetchCaseDocumentUrl } from "../caseDocuments";
 import { crmHash, type CrmSection } from "../crmRoute";
 import type { CaseDocument, OpportunityCardData, RevisionCard } from "../crmTypes";
 import { formatMoney } from "../money";
 import { currentRevision, quotesNewestFirst } from "../pages/CaseQuotes";
 import { Button, Drawer, buttonClass, fmtDate, isSafeExternalHref, toast, type Tone } from "../ui";
-import { markInvoicePaid, type Invoice, type InvoiceStatus } from "./invoiceApi";
+import { markInvoiceUnpaid, type Invoice, type InvoiceStatus } from "./invoiceApi";
+import { PayForm } from "./PayForm";
 
 /**
  * «Ver factura»: one factura, read the way the owner asks about it — who owes, how much, since when —
@@ -51,7 +52,7 @@ const clp = (n: number | string | null | undefined) => (n == null ? "—" : form
 const BIG_ACTION = "min-h-11 px-4 text-[15px]";
 
 /** A revision's neto: the Cotizador's own, or the one read off the PDF. */
-function revisionNet(r: RevisionCard): number | null {
+export function revisionNet(r: RevisionCard): number | null {
   const n = Number(r.contents?.net_total ?? NaN);
   return r.contents?.currency === "CLP" && Number.isFinite(n) ? Math.round(n) : null;
 }
@@ -87,7 +88,7 @@ function PaperCard({ kind, title, detail, action }: { kind: string; title: React
   );
 }
 
-function OpenOcButton({ opportunityId, doc }: { opportunityId: string; doc: CaseDocument }) {
+export function OpenOcButton({ opportunityId, doc }: { opportunityId: string; doc: CaseDocument }) {
   const [opening, setOpening] = useState(false);
   async function open() {
     setOpening(true);
@@ -114,63 +115,60 @@ function OpenOcButton({ opportunityId, doc }: { opportunityId: string; doc: Case
   );
 }
 
-function PayForm({ invoice: i, today, onDone }: { invoice: Invoice; today: string; onDone: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [day, setDay] = useState(today);
-  const [busy, setBusy] = useState(false);
-  const id = useId();
-  const valid = /^\d{4}-\d{2}-\d{2}$/.test(day) && day <= today;
-  if (!open) {
-    return (
-      <Button variant="primary" className={BIG_ACTION} onClick={() => setOpen(true)}>
-        Marcar pagada…
-      </Button>
-    );
-  }
-  async function save() {
-    setBusy(true);
+/** The payments behind «Pagado»: each abono with its day, and «Quitar» for one recorded by mistake. */
+function Payments({ invoice: i, may, onChanged }: { invoice: Invoice; may: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const payments = i.payments ?? [];
+  const billed = i.billed ?? i.total_amount;
+  const paid = i.paid_amount ?? 0;
+  if (payments.length === 0 && paid === 0) return null;
+  const share = billed > 0 ? Math.min(100, Math.round((paid / billed) * 100)) : 0;
+  async function remove(paymentId: string) {
+    setBusy(paymentId);
     try {
-      await markInvoicePaid({ invoice_id: i.invoice_id, invoice_version: i.version, paid_on: day });
-      toast(`${SHORT[i.doc_type] ?? "Factura"} ${i.folio} pagada`);
-      onDone();
+      await markInvoiceUnpaid({ invoice_id: i.invoice_id, invoice_version: i.version, payment_id: paymentId });
+      toast("Pago quitado");
     } catch {
-      toast("No se pudo guardar el pago. Se recargó la lista: vuelve a intentarlo.", "bad");
-      onDone();
+      toast("No se pudo quitar el pago. Se recargó la lista: vuelve a intentarlo.", "bad");
     } finally {
-      setBusy(false);
+      setBusy(null);
+      onChanged();
     }
   }
   return (
-    <form
-      className="flex w-full flex-wrap items-end gap-3 rounded-lg border border-line bg-canvas p-3"
-      aria-label="Registrar el pago"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (valid) void save();
-      }}
-      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
-    >
-      <div className="flex flex-col gap-1">
-        <label htmlFor={id} className="text-sm font-medium text-ink">¿Qué día pagó?</label>
-        <input
-          id={id}
-          type="date"
-          autoFocus
-          value={day}
-          max={today}
-          onChange={(e) => setDay(e.target.value)}
-          aria-invalid={!valid || undefined}
-          className="h-11 rounded-md border border-line bg-canvas-raised px-3 text-base tabular-nums text-ink focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
-        />
+    <section aria-label="Pagos recibidos" className="space-y-2">
+      <Heading>Pagos recibidos</Heading>
+      <div className="space-y-1.5">
+        <p className="text-base text-ink">
+          Pagado <span className="font-semibold tabular-nums">{clp(paid)}</span> de <span className="tabular-nums">{clp(billed)}</span>
+          <span className="text-ink-muted"> ({share} %)</span>
+        </p>
+        <div className="h-2.5 w-full overflow-hidden rounded-full bg-canvas-sunken" aria-hidden="true">
+          <div className="h-full rounded-full bg-good" style={{ width: `${share}%` }} />
+        </div>
       </div>
-      <div className="flex gap-2">
-        <Button variant="quiet" className={BIG_ACTION} disabled={busy} onClick={() => setOpen(false)}>Cancelar</Button>
-        <Button type="submit" variant="primary" className={BIG_ACTION} busy={busy} busyLabel="Guardando…" disabled={!valid}>
-          Guardar pago
-        </Button>
-      </div>
-      {!valid ? <p className="w-full text-sm text-bad">Elige un día de hoy o antes.</p> : null}
-    </form>
+      {payments.length > 0 ? (
+        <ul className="divide-y divide-line rounded-lg border border-line">
+          {payments.map((p) => (
+            <li key={p.payment_id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0">
+                <p className="text-base tabular-nums text-ink">{clp(p.amount)}</p>
+                <p className="text-sm text-ink-muted">
+                  {fmtDate(p.paid_on)}
+                  {p.recorded_by ? ` · lo registró ${p.recorded_by}` : ""}
+                </p>
+              </div>
+              {may ? (
+                <Button variant="quiet" className="min-h-11" busy={busy === p.payment_id} busyLabel="Quitando…"
+                  onClick={() => void remove(p.payment_id)} aria-label={`Quitar el pago de ${clp(p.amount)} del ${fmtDate(p.paid_on)}`}>
+                  Quitar
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
@@ -241,8 +239,10 @@ export function InvoiceSheet({
           <p className="text-sm text-ink-muted">{owed != null ? "Te debe" : "Total facturado"}</p>
           <p className="text-[40px] font-bold leading-none tracking-tight tabular-nums text-ink">{clp(owed ?? i.total_amount)}</p>
         </div>
-        {may && i.status === "unpaid" ? <PayForm invoice={i} today={today} onDone={onChanged} /> : null}
+        {may && i.status === "unpaid" ? <PayForm invoice={i} today={today} onDone={onChanged} large /> : null}
       </section>
+
+      <Payments invoice={i} may={may} onChanged={onChanged} />
 
       <section aria-label="Documentos" className="space-y-2">
         <Heading>Documentos</Heading>

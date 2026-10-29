@@ -100,6 +100,9 @@ def _case_with_quote(db, operator_id, organization_id, total, tag, stage="lead",
 def world(db):
     """A sales operator, an organization with a RUT, and two of its cases (quotes of 119.000 and 238.000)."""
     tag = uuid.uuid4().hex[:12]
+    _owner(db, "alter table crm.invoice_payment disable trigger invoice_payment_never_deleted")
+    _owner(db, "delete from crm.invoice_payment")
+    _owner(db, "alter table crm.invoice_payment enable trigger invoice_payment_never_deleted")
     _owner(db, "alter table crm.invoice disable trigger invoice_never_deleted")
     _owner(db, "delete from crm.invoice")
     _owner(db, "alter table crm.invoice enable trigger invoice_never_deleted")
@@ -333,3 +336,47 @@ def test_a_case_set_by_hand_teaches_the_rut_to_the_next_document(world) -> None:
     second = _doc(world, total=333000, rut=rut, name="RAZON SOCIAL QUE NO CALZA")
     _import(world, second)
     assert _invoice(world, second["folio"])["opportunity_id"] == case
+
+
+@needs_db
+def test_a_factura_paid_in_two_parts_is_pagada_only_when_nothing_is_left(world) -> None:
+    doc = _doc(world, total=238000)
+    _import(world, doc)
+    inv = _invoice(world, doc["folio"])
+    half = _run(world, MARK_INVOICE_PAID, MarkInvoicePaidBody(
+        invoice_id=inv["id"], invoice_version=inv["version"], paid_on=date.today(), amount=119000, note="abono 50 %"))
+    assert (half["paid_amount"], half["left"]) == (119000, 119000)
+    assert _invoice(world, doc["folio"])["paid_on"] is None
+    item = next(i for i in _reads(world).list()["items"] if i["folio"] == doc["folio"])
+    assert (item["status"], item["billed"], item["paid_amount"], item["balance"]) == ("unpaid", 238000, 119000, 119000)
+    assert [p["amount"] for p in item["payments"]] == [119000]
+    with pytest.raises(CommandRefused) as too_much:
+        _run(world, MARK_INVOICE_PAID, MarkInvoicePaidBody(
+            invoice_id=inv["id"], invoice_version=inv["version"] + 1, paid_on=date.today(), amount=200000, note="no"))
+    assert too_much.value.code == "payment_exceeds_balance"
+    rest = _run(world, MARK_INVOICE_PAID, MarkInvoicePaidBody(
+        invoice_id=inv["id"], invoice_version=inv["version"] + 1, paid_on=date.today(), note="el resto"))
+    assert rest["left"] == 0
+    assert _invoice(world, doc["folio"])["paid_on"] == date.today()
+    summary = _reads(world).list()["summary"]
+    assert summary["por_cobrar"] == 0
+
+
+@needs_db
+def test_undo_removes_the_latest_payment_and_the_factura_is_owed_again(world) -> None:
+    doc = _doc(world, total=238000)
+    _import(world, doc)
+    inv = _invoice(world, doc["folio"])
+    _run(world, MARK_INVOICE_PAID, MarkInvoicePaidBody(
+        invoice_id=inv["id"], invoice_version=inv["version"], paid_on=date.today(), amount=100000, note="abono"))
+    _run(world, MARK_INVOICE_PAID, MarkInvoicePaidBody(
+        invoice_id=inv["id"], invoice_version=inv["version"] + 1, paid_on=date.today(), note="resto"))
+    _run(world, MARK_INVOICE_UNPAID, MarkInvoiceUnpaidBody(
+        invoice_id=inv["id"], invoice_version=inv["version"] + 2, note="el resto no llegó"))
+    now = _invoice(world, doc["folio"])
+    assert now["paid_on"] is None
+    item = next(i for i in _reads(world).list()["items"] if i["folio"] == doc["folio"])
+    assert (item["paid_amount"], item["balance"]) == (100000, 138000)
+    [(removed,)] = _owner(world, "select count(*) from crm.invoice_payment p join crm.invoice i on i.id = p.invoice_id "
+                                 "where i.folio = %s and p.removed_at is not null", doc["folio"])
+    assert removed == 1

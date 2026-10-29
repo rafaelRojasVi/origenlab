@@ -2,8 +2,12 @@
 
 The same `CommandTransaction` as every other V2 command: one transaction, one receipt per
 `(operator, Idempotency-Key)`, one `crm.domain_event` per change, and a refusal rolls back all
-three. What it writes is `crm.invoice` and its `invoice.*` events — nothing else; a case is read
-(it must exist) and never written.
+three. What it writes is `crm.invoice`, its payments (`crm.invoice_payment`) and its `invoice.*`
+events — nothing else; a case is read (it must exist) and never written.
+
+**A factura is paid in one payment or several.** «Pagada» records what is left, or a part of it (an
+abono); `paid_on` is set only by the payment that leaves nothing to pay. Undoing removes the latest
+payment (or the one named) and clears `paid_on`.
 
 **The import adds, never rewrites.** A document already on record (same type and folio) is left
 exactly as it is — its case, its «Pagada» — so uploading the same month twice, or a month that
@@ -324,32 +328,89 @@ class V2InvoiceCommandRepository(CommandTransaction):
                      "note": fields["note"]},
         )
 
+    def _owed(self, cur: Any, invoice: dict[str, Any]) -> tuple[int, int]:
+        """(billed, paid): the total net of its notas, and its live payments."""
+        cur.execute(
+            """
+            select i.total_amount
+                   + coalesce((select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
+                                 from crm.invoice n
+                                where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type
+                                  and n.reference_folio = i.folio), 0),
+                   coalesce((select sum(p.amount) from crm.invoice_payment p
+                              where p.invoice_id = i.id and p.removed_at is null), 0)
+              from crm.invoice i where i.id = %s
+            """,
+            (invoice["id"],),
+        )
+        billed, paid = cur.fetchone()
+        return int(billed), int(paid)
+
     def _mark_invoice_paid(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:
+        """Record a payment — all that is left, or a part — and «Pagada» once nothing is left."""
         invoice = self._lock_invoice(cur, fields)
         if invoice["doc_type"] not in (33, 34):
             raise CommandRefused(409, "invoice_not_collectable", "only a factura is paid; a nota adjusts one")
         if invoice["paid_on"] is not None:
             raise CommandRefused(409, "invoice_already_paid", "this invoice is already marked paid")
-        return self._change(
+        billed, paid = self._owed(cur, invoice)
+        left = billed - paid
+        if left <= 0:
+            raise CommandRefused(409, "invoice_already_paid", "nothing is left to pay on this invoice")
+        amount = fields.get("amount") or left
+        if amount > left:
+            raise CommandRefused(409, "payment_exceeds_balance", f"only {left} is left to pay on this invoice")
+        cur.execute(
+            "insert into crm.invoice_payment (invoice_id, paid_on, amount, recorded_by_operator_id) "
+            "values (%s, %s, %s, %s) returning id::text",
+            (invoice["id"], fields["paid_on"], amount, operator.operator_id),
+        )
+        payment_id = cur.fetchone()[0]
+        fully = amount == left
+        result = self._change(
             cur, operator, receipt_id, invoice,
             command=MARK_INVOICE_PAID, event_type="invoice.paid",
-            assignments={"paid_on": fields["paid_on"]},
-            payload={"paid_on": fields["paid_on"].isoformat(), "note": fields["note"]},
+            assignments={"paid_on": fields["paid_on"] if fully else None},
+            payload={"paid_on": fields["paid_on"].isoformat(), "amount": amount, "payment_id": payment_id,
+                     "fully_paid": fully, "note": fields["note"]},
         )
+        return {**result, "payment_id": payment_id, "paid_amount": paid + amount, "left": left - amount}
 
     def _mark_invoice_unpaid(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:
+        """Remove a payment recorded by mistake (the one named, else the latest); it is no longer «Pagada»."""
         invoice = self._lock_invoice(cur, fields)
-        if invoice["paid_on"] is None:
-            raise CommandRefused(409, "invoice_not_paid", "this invoice is not marked paid")
+        cur.execute(
+            """
+            select id::text, amount from crm.invoice_payment
+             where invoice_id = %s and removed_at is null and (%s::uuid is null or id = %s::uuid)
+             order by paid_on desc, created_at desc
+             limit 1
+               for update
+            """,
+            (invoice["id"], fields.get("payment_id"), fields.get("payment_id")),
+        )
+        payment = cur.fetchone()
+        if payment is None and (fields.get("payment_id") is not None or invoice["paid_on"] is None):
+            raise CommandRefused(409, "invoice_not_paid", "this invoice has no such payment")
+        if payment is not None:
+            cur.execute(
+                "update crm.invoice_payment set removed_at = now(), removed_by_operator_id = %s where id = %s",
+                (operator.operator_id, payment[0]),
+            )
         return self._change(
             cur, operator, receipt_id, invoice,
             command=MARK_INVOICE_UNPAID, event_type="invoice.unpaid",
             assignments={"paid_on": None},
-            payload={"previous_paid_on": invoice["paid_on"].isoformat(), "note": fields["note"]},
+            payload={
+                "payment_id": payment[0] if payment else None,
+                "amount": int(payment[1]) if payment else None,
+                "previous_paid_on": invoice["paid_on"].isoformat() if invoice["paid_on"] else None,
+                "note": fields["note"],
+            },
         )
 
     _HANDLERS = {
