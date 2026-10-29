@@ -317,7 +317,7 @@ class TriageReviewRepository(CommandTransaction):
             value = row["value"] or {}
             reading = value.get("reading") or {}
             po_refs = row.get("po_refs") or {}
-        items.append({
+            items.append({
                 "assertion_id": row["assertion_id"],
                 "source_record_id": row["source_record_id"],
                 "version": row["version"],
