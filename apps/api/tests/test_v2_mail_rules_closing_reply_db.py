@@ -83,3 +83,27 @@ def test_r19_closes_the_case_and_undo_reopens_it(world) -> None:
     undone = repo.undo(admin, closed["applied"][0]["command_receipt_id"], "sigue evaluando")
     assert [s["command"] for s in undone["steps"]] == ["correct_case_stage"]
     assert _stage(dsn, case_id) == "negotiating"
+
+
+def _inbound(dsn: str, case_id: str) -> dict:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+    from v2_command_harness import runtime_dsn
+
+    workspace = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(dsn))
+    [card] = [c for c in workspace.pipeline()["items"] if c["opportunity_id"] == case_id]
+    return card["last_contact"]["inbound"]
+
+
+def test_card_reports_no_reply_until_undone(world) -> None:
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_id, answer = _closing(world, admin)
+    assert "no_reply" not in _inbound(dsn, case_id)
+    repo = _mail_rules(dsn)
+    applied = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R18"}])
+    assert not applied["refused"], applied["refused"]
+    assert _inbound(dsn, case_id)["no_reply"] is True
+    repo.undo(admin, applied["applied"][0]["command_receipt_id"], "sí había que responder")
+    assert "no_reply" not in _inbound(dsn, case_id)

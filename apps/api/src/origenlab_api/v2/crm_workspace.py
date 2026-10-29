@@ -58,6 +58,7 @@ from origenlab_api.v2.mail_rules import (
     FREE_MAIL_DOMAINS,
     OWN_DOMAINS,
     WEB_FORM_REPLY_TO_SQL,
+    is_automatic_mail,
     mail_direction,
     web_form_enquirer,
 )
@@ -376,7 +377,17 @@ _SQL_PIPELINE_SOURCES = """
 # drops one message instead of failing the read. A web-quote-form submission (`web_form_reply_to`)
 # counts as received from its Reply-To.
 _SQL_PIPELINE_CONTACT = """
-    with case_threads as (
+    with no_reply_ids as materialized (
+        -- Mail rule R18 read these emails as needing no answer, and nobody removed it («Quitar»).
+        select r.response_body->>'evidence_id' as evidence_id
+          from platform.command_receipt r
+         where r.command_name = 'apply_mail_rule' and r.status = 'completed'
+           and r.response_body->>'rule_id' = 'R18'
+           and not exists (select 1 from platform.command_receipt u
+                            where u.command_name = 'undo_mail_rule_action' and u.status = 'completed'
+                              and u.response_body->>'undoes_receipt_id' = r.id::text)
+    ),
+    case_threads as (
         select oe.opportunity_id, sr.payload->>'gmail_thread_id' as thread_id
           from crm.opportunity_evidence oe
           join evidence.source_record sr on sr.id = oe.source_record_id
@@ -403,7 +414,12 @@ _SQL_PIPELINE_CONTACT = """
            -- a suggestion for «Asignar institución», never a CRM fact.
            (select a.value->'reading'->>'requester_organization' from evidence.assertion a
              where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value ? 'reading'
-             order by a.created_at desc limit 1) as requester_read
+             order by a.created_at desc limit 1) as requester_read,
+           -- The triage's class (bounce, auto_reply, …): mail no person wrote is not a touch.
+           (select a.value->>'class' from evidence.assertion a
+             where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
+             order by substring(a.value_norm from 9)::int desc limit 1) as triage_class,
+           sr.id::text in (select evidence_id from no_reply_ids) as no_reply
       from case_threads ct
       join evidence.source_record sr
         on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
@@ -822,6 +838,8 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             enquirers[oid] = (at, enquirer)
         direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"),
                                    row.get("web_form_reply_to"))
+        if direction == "inbound" and not enquirer and is_automatic_mail(row.get("sender"), row.get("triage_class")):
+            continue  # a bounce or an out-of-office: nobody on the client's side wrote it
         if direction == "inbound":
             read = (row.get("requester_read") or "").strip()
             if read and (oid not in reads or reads[oid][0] < at):
@@ -840,6 +858,8 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             "subject": row.get("subject"),
             "url": gmail_url(row.get("gmail_message_id")),
         }
+        if direction == "inbound" and row.get("no_reply"):
+            out[row["opportunity_id"]][direction]["no_reply"] = True
         if enquirer:
             # A web-quote-form submission: the From's name is OrigenLab's own, never the client's.
             continue

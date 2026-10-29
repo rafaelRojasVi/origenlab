@@ -563,7 +563,7 @@ class _Index:
         #: Per case, the newest inbound email linked to it (R19 acts only on that one).
         self.newest_inbound: dict[str, datetime] = {}
         for ev in snapshot.evidence:
-            human = ev.direction == "inbound" and ev.triage_class not in ("bounce", "auto_reply")
+            human = ev.direction == "inbound" and not is_automatic_mail(ev.sender, ev.triage_class)
             at = _instant(ev.sent_at) if human else None
             for cid in ev.linked_case_ids if at is not None else ():
                 if cid not in self.newest_inbound or self.newest_inbound[cid] < at:
@@ -1580,6 +1580,19 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
 SUMMARY_CHARS = 160
 
 
+#: A delivery system's own address (the worker's triage uses the same pattern): never a person writing.
+BOUNCE_SENDER = re.compile(r"^(?:mailer-daemon|postmaster|mail-daemon|bounces?)(?:[+.\-]|@)", re.IGNORECASE)
+#: The triage's classes for mail no person wrote.
+AUTOMATIC_CLASSES: frozenset[str] = frozenset({"bounce", "auto_reply"})
+
+
+def is_automatic_mail(sender: str | None, triage_class: str | None) -> bool:
+    """A bounce or an automatic reply: by the triage's class, else by a delivery system's address."""
+    if triage_class in AUTOMATIC_CLASSES:
+        return True
+    return any(BOUNCE_SENDER.match(addr) for _, addr in getaddresses([sender or ""]) if "@" in addr)
+
+
 def _from_the_client(e: MailEvidence, ix: _Index) -> bool:
     """A person on the client's side wrote it: inbound, not ours, not a supplier, not a bounce or an
     automatic reply (the triage's class, else the subject)."""
@@ -1588,7 +1601,7 @@ def _from_the_client(e: MailEvidence, ix: _Index) -> bool:
         return False
     if domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
         return False
-    if e.triage_class in ("bounce", "auto_reply"):
+    if is_automatic_mail(e.sender, e.triage_class):
         return False
     subject = fold(e.subject)
     return not any(p in subject for p in AUTO_REPLY_PHRASES)
