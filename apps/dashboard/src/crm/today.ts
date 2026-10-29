@@ -188,6 +188,9 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     // touch. One clock with the board's status line (`lastTouch`).
     const touch = lastTouch(card);
     const email = touch.by === "us" ? touch.at : null;
+    // The client's closing reply («gracias, te aviso», mail rule R18) restarts the rhythm, but only an
+    // email of ours marks a follow-up task done.
+    const clock = touch.by === "settled" ? touch.at : email;
     // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
     // to press «Hecho» — the email the sync captures is the proof.
     const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
@@ -206,8 +209,8 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     const sent = card.latest_revision?.sent_at ?? null;
     if (!sent && !task) continue;
     if (!task && conversation(card, now).kind === "replied") continue;
-    const byEmail = email !== null;
-    const touchAt = byEmail ? (email as string) : sent;
+    const byEmail = clock !== null;
+    const touchAt = byEmail ? (clock as string) : sent;
     const days = touchAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(touchAt)) / DAY_MS)) : 0;
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.

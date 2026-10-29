@@ -25,6 +25,8 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes, naming which institution, not only a kind; else a person); confirmed with no operator named. Keyed by the institution's id, not an email |
 | R16 | outbound from contacto@, carrying the PDF of a Cotizador revision of that case that is approved and not yet sent — matched by the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; a «(borrador)» print never; the email's year, else the year before), sent after the approval | auto: each such revision → «sent» (the email, its PDF's hash), the case → «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several PDFs in one email: each its revision, on each case it belongs to, the email linked there. A closed case among them, an email a person put elsewhere, or an open case of its thread no PDF names → nothing. Reads an email another rule acted on, once |
 | R17 | inbound, already on exactly one case in «Enviada» (`quoting`), sent in the last `REPLY_WINDOW_DAYS` and after that case's live quote was sent, from neither us nor a supplier, not an automatic reply | auto: the case → «Conversación» (`negotiating`). Reads an email another rule acted on (R1 links it a pass earlier), once |
+| R18 | inbound from the client (not ours, a supplier, a bounce or an automatic reply) on exactly one open **or won** case, sent in the last `REPLY_WINDOW_DAYS`, whose triage reading says `needs_reply: false` and not `stage: lost` | auto: a receipt only — no CRM write; the card marks that email `no_reply` and Hoy leaves it out of «Responder». Reads an email another rule acted on, once |
+| R19 | inbound from the client, the newest one on exactly one open case not «En pausa», whose triage reading says `stage: lost` (the body, which R6 never reads) | auto: the case → «Perdida» (`READ_LOST_CLOSE_REASON`); R6's sender gate, else a proposal; waits a pass while R17 moves the case. Reads an email another rule acted on, once |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -58,7 +60,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16", "R17")
+                             "R14", "R15", "R16", "R17", "R18", "R19")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -162,6 +164,13 @@ class MailEvidence:
     #: «quote_request» lets R7 open a request whose subject has no quote word; «supplier_offer»
     #: keeps a supplier's own quotation from opening one.
     model_intent: str | None = None
+    #: The same reading's stage (the CRM stage key it reads, e.g. «lost»), whether a person should
+    #: answer the email, and its one-line summary: R18 and R19 read them (owner, 2026-10-29).
+    model_stage: str | None = None
+    model_needs_reply: bool | None = None
+    model_summary: str | None = None
+    #: The newest triage row's rule class (`bounce`, `auto_reply`, …), with or without a reading.
+    triage_class: str | None = None
     #: Lower-case machine headers set by OrigenLab on self-sent messages (e.g. x-origenlab-origin
     #: for web-quote-form messages). Absent on all normal inbound/outbound mail.
     extra_headers: Mapping[str, str] = field(default_factory=dict)
@@ -553,6 +562,21 @@ class _Index:
         self.late_quote_since = snapshot.late_quote_since
         self.reply_since = snapshot.reply_since
         self.cases = {c.id: c for c in snapshot.cases}
+        #: Per case, the newest email a person sent us on it — linked to it, or on one of its threads
+        #: and not linked yet (R1 may link it this very pass). R19 acts only on that one.
+        self.newest_inbound: dict[str, datetime] = {}
+        case_ids_by_thread: dict[str, set[str]] = {}
+        for c in snapshot.cases:
+            for t in c.thread_ids:
+                case_ids_by_thread.setdefault(t, set()).add(c.id)
+        for ev in snapshot.evidence:
+            human = ev.direction == "inbound" and not is_automatic_mail(ev.sender, ev.triage_class)
+            at = _instant(ev.sent_at) if human else None
+            if at is None:
+                continue
+            for cid in set(ev.linked_case_ids) | case_ids_by_thread.get(ev.thread_id or "", set()):
+                if cid not in self.newest_inbound or self.newest_inbound[cid] < at:
+                    self.newest_inbound[cid] = at
         self.by_thread: dict[str, list[CaseState]] = {}
         for c in snapshot.cases:
             for t in c.thread_ids:
@@ -745,10 +769,22 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
             if sent is not None:
                 out.append(sent)
         # R17 likewise: the reply R1 links on one pass moves its case on the next.
+        reply = None
         if (action is None or action.mode != AUTO) and (e.id, "R17") not in snapshot.applied_pairs:
             reply = _client_reply_rule(e, index)
             if reply is not None:
                 out.append(reply)
+        # R19 closes the case: it waits while another rule moves the same case in this pass.
+        if (action is None or action.mode != AUTO) and reply is None and (e.id, "R19") not in snapshot.applied_pairs:
+            read_lost = _read_lost_rule(e, index)
+            if read_lost is not None:
+                out.append(read_lost)
+        # R18 runs no command, so it never waits for another rule: a receipt that says the email
+        # needs no answer, read on the pass after the triage's reading exists.
+        if (e.id, "R18") not in snapshot.applied_pairs:
+            closing = _closing_reply_rule(e, index)
+            if closing is not None:
+                out.append(closing)
     for f in sorted(snapshot.forwards, key=lambda x: x.id):
         if f.id not in snapshot.applied_evidence_ids and not (set(f.ids) & snapshot.applied_evidence_ids):
             out.append(_plan_forward(f, index))
@@ -1546,6 +1582,95 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     return PlannedAction(e.id, "R17", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id, quote_number=label,
                          commands=(_advance_step("negotiating", note),),
+                         context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+#: How much of the triage's summary R18's reason quotes.
+SUMMARY_CHARS = 160
+
+
+#: A delivery system's own address (the worker's triage uses the same pattern): never a person writing.
+BOUNCE_SENDER = re.compile(r"^(?:mailer-daemon|postmaster|mail-daemon|bounces?)(?:[+.\-]|@)", re.IGNORECASE)
+#: The triage's classes for mail no person wrote.
+AUTOMATIC_CLASSES: frozenset[str] = frozenset({"bounce", "auto_reply"})
+
+
+def is_automatic_mail(sender: str | None, triage_class: str | None) -> bool:
+    """A bounce or an automatic reply: by the triage's class, else by a delivery system's address."""
+    if triage_class in AUTOMATIC_CLASSES:
+        return True
+    return any(BOUNCE_SENDER.match(addr) for _, addr in getaddresses([sender or ""]) if "@" in addr)
+
+
+def _from_the_client(e: MailEvidence, ix: _Index) -> bool:
+    """A person on the client's side wrote it: inbound, not ours, not a supplier, not a bounce or an
+    automatic reply (the triage's class, else the subject)."""
+    sender = _sender(e)
+    if e.direction != "inbound" or sender is None:
+        return False
+    if domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+        return False
+    if is_automatic_mail(e.sender, e.triage_class):
+        return False
+    subject = fold(e.subject)
+    return not any(p in subject for p in AUTO_REPLY_PHRASES)
+
+
+def _closing_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R18 (owner, 2026-10-29): the client closed the loop — «gracias, estamos evaluando, te aviso» —
+    and the triage's reading says nobody needs to answer. Nothing in the CRM changes: the receipt is
+    the record, the case card reads it and the email leaves Hoy's «Responder»; «Quitar» brings it back.
+
+    Only an email on exactly one case, open or won, sent in the last `REPLY_WINDOW_DAYS`, from the
+    client, with a reading that says `needs_reply: false`. A reading of «lost» is R19's."""
+    if len(e.linked_case_ids) != 1 or e.model_needs_reply is not False or e.model_stage == "lost":
+        return None
+    at, since = _instant(e.sent_at), _instant(ix.reply_since)
+    if at is None or since is None or at < since:
+        return None
+    c = ix.cases.get(e.linked_case_ids[0])
+    if c is None or (c.closed and c.stage != "won") or not _from_the_client(e, ix):
+        return None
+    summary = " ".join((e.model_summary or "").split())[:SUMMARY_CHARS]
+    reasons = [f"el cliente cerró la conversación: «{summary}»" if summary else "el cliente cerró la conversación",
+               "no requiere respuesta"]
+    # No `from_stage`: R18 writes nothing, so a case R17 (or a person) moved since still takes it.
+    return PlannedAction(e.id, "R18", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id,
+                         context={"case": c.id, "case_version": c.version})
+
+
+#: R19's close reason: the AI read it in the client's email, no phrase list matched it.
+READ_LOST_CLOSE_REASON = "el cliente no sigue (lectura del correo)"
+
+
+def _read_lost_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R19 (owner, 2026-10-29): the triage's reading of the email's body says the case is lost —
+    «la compra ya se efectuó a otro proveedor», «se evaluará el año entrante». R6 reads only the
+    subject and file names, and before the reading exists; R19 reads the body's reading, a pass later.
+
+    Only the newest email from the client on exactly one open case that is not «En pausa» (a person
+    already decided to wait); the R6 sender gate, else a proposal. «Quitar» reopens the case."""
+    if len(e.linked_case_ids) != 1 or e.model_stage != "lost" or not _from_the_client(e, ix):
+        return None
+    c = ix.cases.get(e.linked_case_ids[0])
+    if c is None or c.closed or c.paused_until is not None:
+        return None
+    at = _instant(e.sent_at)
+    newest = ix.newest_inbound.get(c.id)
+    if at is None or (newest is not None and newest > at):
+        return None
+    summary = " ".join((e.model_summary or "").split())[:SUMMARY_CHARS]
+    reasons = [f"el cliente indica en el correo: «{summary}»" if summary else "el correo del cliente indica que no sigue",
+               "caso perdido"]
+    problem = _sender_may_speak_for(e, c, ix)
+    if problem is not None:
+        return PlannedAction(e.id, "R19", PROPOSAL, (*reasons, problem, "un humano decide"),
+                             case_id=c.id, case_title=c.title, organization_id=c.organization_id)
+    note = _note("R19", reasons)
+    return PlannedAction(e.id, "R19", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id,
+                         commands=(_advance_step("lost", note, READ_LOST_CLOSE_REASON),),
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
 
 

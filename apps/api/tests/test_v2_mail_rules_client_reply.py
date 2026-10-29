@@ -55,7 +55,7 @@ def r17(*evidence: MailEvidence, cases: tuple[CaseState, ...] | None = None, sin
 
 
 def test_r17_is_a_rule() -> None:
-    assert RULE_IDS[-1] == "R17"
+    assert "R17" in RULE_IDS
 
 
 def test_the_client_answering_after_the_quote_moves_the_case_to_conversacion() -> None:

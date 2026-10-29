@@ -1041,3 +1041,26 @@ def test_our_own_mail_never_suggests() -> None:
 def test_the_web_form_visitor_domain_is_suggested() -> None:
     card = _card([{**_WEB_FORM_ROW, "opportunity_id": "o9", "requester_read": None}])
     assert card["requester_suggestion"] == {"name": None, "domain": "lab-ficticio.example.test"}
+
+
+def _mail_row(gid: str, at: str, sender: str, **over) -> dict:
+    return {"opportunity_id": "o1", "sent_at": at, "subject": "Re: Cotización", "gmail_message_id": gid,
+            "sender": sender, "direction_hint": None, "comms_direction": "inbound", **over}
+
+
+def test_last_contacts_skips_automatic_mail() -> None:
+    """A bounce of our cc or an out-of-office is not the client writing (owner 2026-10-29)."""
+    rows = [
+        _mail_row("m1", "2026-10-23T12:00:00Z", "Persona <persona@ejemplo.invalid>"),
+        _mail_row("m2", "2026-10-26T15:02:00Z", "Mail Delivery System <Mailer-Daemon@correo.invalid>"),
+        _mail_row("m3", "2026-10-26T16:00:00Z", "Persona <persona@ejemplo.invalid>", triage_class="auto_reply"),
+        _mail_row("m4", "2026-10-26T17:00:00Z", "postmaster@correo.invalid", triage_class="bounce"),
+    ]
+    assert last_contacts(rows)["o1"]["inbound"]["at"] == "2026-10-23T12:00:00+00:00"
+
+
+def test_no_reply_only_marks_the_email_r18_read() -> None:
+    closing = _mail_row("m1", "2026-10-23T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=True)
+    assert last_contacts([closing])["o1"]["inbound"]["no_reply"] is True
+    later = _mail_row("m2", "2026-10-24T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=False)
+    assert "no_reply" not in last_contacts([closing, later])["o1"]["inbound"]
