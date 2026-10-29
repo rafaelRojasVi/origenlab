@@ -67,6 +67,12 @@ from origenlab_worker.triage_model import (
 from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
 
 logger = logging.getLogger(__name__)
+#: Extracts a PO number from full-phrase PDF body text: «ORDEN DE COMPRA N° 4500012345» or
+#: «Purchase Order 4500012345» — as a complement to `PURCHASE_ORDER_NUMBER` which only handles
+#: the compact OC-prefix form.
+_PO_PHRASE_NUMBER = re.compile(
+    r"(?:orden\s+de\s+compra|purchase\s+order)\s+(?:n[°ºo]?\.?\s*)?(\d{4,})",
+)
 VALUE_NORM = f"triage:v{TRIAGE_VERSION}"
 REQUESTER_VALUE_NORM = "requester:v1"
 PO_REFS_VALUE_NORM = "po_refs:v1"
@@ -1003,12 +1009,61 @@ def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:
         return False
 
 
+def _is_oc_pdf(filename: str) -> bool:
+    """True when an attachment looks like a purchase-order PDF.
+
+    Accepts OC/O.C. and PO/P.O. prefixes, and Spanish/English long-form names anywhere in the
+    stem.  Only `.pdf` files — never Word documents, spreadsheets, etc.  All matching is done on
+    the folded (lowercase) name, matching `PURCHASE_ORDER_FILENAME`'s convention.
+
+    This is intentionally broader than the API's `PURCHASE_ORDER_FILENAME` (which is used for the
+    R5 «purchase_order» triage-class signal and must stay narrow).  Real-world OCs seen so far:
+    «OC 4500000123.pdf», «2783-2026 Orden de compra Origen Lab.pdf», «PO_4500012345.pdf»,
+    «Purchase Order 123.pdf».
+    """
+    import re as _re
+    name = fold(filename)
+    if not name.endswith(".pdf"):
+        return False
+    return bool(
+        PURCHASE_ORDER_FILENAME.match(name)               # ^oc / ^o.c. (existing)
+        or _re.match(r"^p\.?o(?![a-z])", name)            # PO_ / PO4500
+        or "orden de compra" in name
+        or "orden_de_compra" in name
+        or _re.search(r"purchase[\s_]order", name)        # "purchase order" or "purchase_order"
+    )
+
+
+def _po_refs_from_text(text: str) -> tuple[list[str], list[str]]:
+    """Extract quote tokens and PO numbers from plain text (already extracted from a PDF).
+
+    Applies `fold()` so uppercase PDF text («OC 4500123», «CN09876») is matched correctly by the
+    lowercase-only regexes.  Returns (tokens, po_numbers).
+    """
+    folded = fold(text)
+    tokens: list[str] = []
+    po_numbers: list[str] = []
+    for t in quote_number_tokens(folded):
+        if t not in tokens:
+            tokens.append(t)
+    for m in PURCHASE_ORDER_NUMBER.finditer(folded):
+        n = m.group(1)
+        if n not in po_numbers:
+            po_numbers.append(n)
+    # Also capture PO numbers from full-phrase form: «ORDEN DE COMPRA N° 4500012345»
+    for m in _PO_PHRASE_NUMBER.finditer(folded):
+        n = m.group(1)
+        if n not in po_numbers:
+            po_numbers.append(n)
+    return tokens, po_numbers
+
+
 def _po_refs_from_raw(raw: bytes) -> tuple[list[str], list[str]]:
     """Extract quote tokens and PO numbers from OC PDF attachments in a raw EML.
 
-    Parses the EML for parts whose filename matches `PURCHASE_ORDER_FILENAME`, extracts the PDF
-    text layer, and returns (tokens, po_numbers). Empty lists when nothing is found or pdftotext
-    is not available (non-OCR; scanned OC PDFs yield no tokens).
+    Parses the EML for parts whose filename passes `_is_oc_pdf`, extracts the PDF text layer, and
+    returns (tokens, po_numbers).  Empty lists when nothing is found or pdftotext is not available
+    (non-OCR; scanned OC PDFs yield no tokens).  Logs a warning on unexpected errors.
     """
     from email import policy
     from email.message import EmailMessage
@@ -1018,12 +1073,13 @@ def _po_refs_from_raw(raw: bytes) -> tuple[list[str], list[str]]:
     po_numbers: list[str] = []
     try:
         msg = BytesParser(policy=policy.default).parsebytes(raw)
-        assert isinstance(msg, EmailMessage)
+        if not isinstance(msg, EmailMessage):
+            raise TypeError(f"unexpected parser result: {type(msg).__name__}")
+        if msg.defects:
+            raise ValueError(f"malformed EML: {type(msg.defects[0]).__name__}")
         for part in msg.walk():
             filename = part.get_filename()
-            if not filename:
-                continue
-            if not PURCHASE_ORDER_FILENAME.match(fold(filename)):
+            if not filename or not _is_oc_pdf(filename):
                 continue
             data = part.get_payload(decode=True)
             if not isinstance(data, bytes) or not data:
@@ -1031,24 +1087,26 @@ def _po_refs_from_raw(raw: bytes) -> tuple[list[str], list[str]]:
             text = pdf_text(data)
             if not text:
                 continue
-            for t in quote_number_tokens(text):
+            part_tokens, part_pos = _po_refs_from_text(text)
+            for t in part_tokens:
                 if t not in tokens:
                     tokens.append(t)
-            for m in PURCHASE_ORDER_NUMBER.finditer(text):
-                n = m.group(1)
+            for n in part_pos:
                 if n not in po_numbers:
                     po_numbers.append(n)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("po reference reading skipped: %s", type(exc).__name__)
     return tokens, po_numbers
 
 
 def record_po_refs(db: Any, source_record_id: str, raw: bytes) -> bool:
     """`po_refs:v1`: quote tokens and PO numbers from OC PDF attachments. Isolated — a failure is
-    logged by class and swallowed, never the triage's. Always written (possibly empty) so the
-    triage_review query can left-join it without re-reading."""
+    logged by class and swallowed, never the triage's.  Only written when at least one OC PDF
+    attachment yielded a token or PO number — ordinary mail (no OC PDF) produces no row."""
     try:
         tokens, po_numbers = _po_refs_from_raw(raw)
+        if not tokens and not po_numbers:
+            return False
         db.record_po_refs(source_record_id, tokens, po_numbers)
         return True
     except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage

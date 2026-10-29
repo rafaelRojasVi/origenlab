@@ -6,8 +6,12 @@ from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+import logging
+
+from unittest.mock import MagicMock
+
 from origenlab_worker.quote_refs import read_quote_refs
-from origenlab_worker.triage import _po_refs_from_raw
+from origenlab_worker.triage import _is_oc_pdf, _po_refs_from_raw, _po_refs_from_text, record_po_refs
 
 
 def _make_eml(attachments: list[tuple[str, bytes]]) -> bytes:
@@ -60,3 +64,76 @@ def test_po_refs_from_raw_yields_empty_when_no_attachments() -> None:
     eml = _make_eml([])
     tokens, po_numbers = _po_refs_from_raw(eml)
     assert tokens == [] and po_numbers == []
+
+
+# -------- _is_oc_pdf: OC attachment detection (goal 3 fix, 2026-10-29) --------
+
+def test_is_oc_pdf_matches_oc_prefix() -> None:
+    assert _is_oc_pdf("OC 4500000123.pdf")
+    assert _is_oc_pdf("oc_991.pdf")
+    assert _is_oc_pdf("O.C. 77.pdf")
+
+
+def test_is_oc_pdf_matches_po_prefix() -> None:
+    assert _is_oc_pdf("PO_4500012345.pdf")
+    assert _is_oc_pdf("po 123.pdf")
+
+
+def test_is_oc_pdf_matches_orden_de_compra_in_name() -> None:
+    # Real-world long-form names seen in practice
+    assert _is_oc_pdf("2783-2026 Orden de compra Origen Lab.pdf")
+    assert _is_oc_pdf("orden_de_compra_4500.pdf")
+
+
+def test_is_oc_pdf_matches_purchase_order_in_name() -> None:
+    assert _is_oc_pdf("Purchase Order 123.pdf")
+    assert _is_oc_pdf("purchase_order_abc.pdf")
+
+
+def test_is_oc_pdf_rejects_non_pdf() -> None:
+    assert not _is_oc_pdf("OC 4500000123.docx")
+    assert not _is_oc_pdf("purchase order.xlsx")
+
+
+def test_is_oc_pdf_rejects_unrelated_pdf() -> None:
+    assert not _is_oc_pdf("cotizacion.pdf")
+    assert not _is_oc_pdf("factura_1234.pdf")
+    assert not _is_oc_pdf("ocean_research.pdf")   # «oc» inside a word — should not match
+
+
+# -------- _po_refs_from_text: pure text→tokens (goal 2 fix, 2026-10-29) ------
+
+def test_po_refs_from_text_extracts_cn_and_oc_from_uppercase_text() -> None:
+    # PDF text may be uppercase; fold() must be applied before the regexes
+    tokens, po_numbers = _po_refs_from_text(
+        "ORDEN DE COMPRA N° 4500012345\nN° COTIZACIÓN CN09876"
+    )
+    assert "CN09876" in tokens
+    assert "4500012345" in po_numbers
+
+
+def test_po_refs_from_text_empty_on_blank() -> None:
+    tokens, po_numbers = _po_refs_from_text("")
+    assert tokens == [] and po_numbers == []
+
+
+# -------- record_po_refs: no DB write on ordinary mail (issue 9, 2026-10-29) -
+
+def test_record_po_refs_does_not_write_for_non_oc_email() -> None:
+    """An ordinary email with no OC PDF must not write any po_refs:v1 assertion."""
+    db = MagicMock()
+    eml = _make_eml([("invoice_1234.pdf", b"%PDF fake")])
+    result = record_po_refs(db, "src-ficticio-001", eml)
+    assert result is False
+    db.record_po_refs.assert_not_called()
+
+
+# -------- exception logging (goal 7 fix, 2026-10-29) -------------------------
+
+def test_po_refs_from_raw_logs_and_returns_empty_on_invalid_eml(caplog) -> None:
+    with caplog.at_level(logging.WARNING):
+        tokens, po_numbers = _po_refs_from_raw(b"not-an-eml-at-all\xff\xfe")
+    # The function must not raise; the warning must be logged
+    assert tokens == [] and po_numbers == []
+    # Warning with the exception class name (not the email content)
+    assert any("po reference" in r.message.lower() for r in caplog.records)
