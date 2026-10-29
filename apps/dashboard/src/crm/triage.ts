@@ -337,6 +337,10 @@ export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "r
 export const ANSWERED_HIDE_DAYS = 14;
 
 const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|marketing|notifications?|info|customer\.assistance|gemini-notes)$/;
+/** Courier and autoresponder domains: dhl.com, any subdomain, icliente.com (owner 2026-10-29). */
+const NOTIFICATION_DOMAIN = /^(dhl\.com|[^.]+\.dhl\.com|icliente\.com)$/;
+/** Looser no-reply pattern for the full local part: catches «drive-shares-dm-noreply@», «no_responder@». */
+const LOOSE_NO_REPLY_LOCAL = /(?:^|[-_.])no[-_.]?(?:reply|responder)(?:[-_.+]|$)/;
 const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
@@ -348,7 +352,8 @@ function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCa
   // sees a deal with no case; a platform's notice only when there is a case to suggest.
   if ((r.sender_is_supplier || r.intent === "supplier_offer") && !hasCaseMatch(r)) return "proveedor";
   const suggestsCase = (r.case_match?.suggestions.length ?? 0) > 0;
-  if ((AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) && !suggestsCase) return "aviso automático";
+  const isAutoSender = AUTOMATIC_SENDER.test(local) || LOOSE_NO_REPLY_LOCAL.test(local) || NOTIFICATION_DOMAIN.test(domain);
+  if ((isAutoSender || AUTOMATIC_CLASSES.has(r.class ?? "")) && !suggestsCase) return "aviso automático";
   if (hasCaseMatch(r)) return null;
   return null;
 }

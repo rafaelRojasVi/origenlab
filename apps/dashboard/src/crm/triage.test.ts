@@ -151,6 +151,20 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 4, "reenvío antiguo": 1, "mismo hilo": 1 });
   });
 
+  it("hides courier and loose-noreply senders as «aviso automático» even before re-triage (2026-10-29)", () => {
+    // Already-triaged rows: class is business_other/purchase_order (pre-rule-change), but the
+    // dashboard's widened check hides them without waiting for the worker to re-triage.
+    const { ask, hidden } = sortInbox([
+      r("dhl", { sender: "tracking@dhl.com", class: "purchase_order" }),
+      r("dhl-sub", { sender: "cl@express.dhl.com", class: "business_other" }),
+      r("icliente", { sender: "no_responder@icliente.com", class: "business_other" }),
+      r("noreply-loose", { sender: "drive-shares-dm-noreply@google.com", class: "business_other" }),
+      r("real", {}),
+    ]);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["real"]);
+    expect(hidden).toEqual({ "aviso automático": 4 });
+  });
+
   it("hides an email older than 14 days that contacto@ already answered on its thread (2026-10-19)", () => {
     const now = new Date("2026-10-30T12:00:00Z");
     const { ask, hidden } = sortInbox([
