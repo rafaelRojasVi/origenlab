@@ -227,6 +227,35 @@ def test_r19_ignores_a_reply_from_a_free_mail_supplier(  # goal 4
     assert planned("R19", rfq, supplier_reply, cases=(case(stage="negotiating"),)) == []
 
 
+# ----------------------------------------------------------------- issue 5 — rfq_free thread-start guard
+
+def test_r19_still_fires_when_our_supplier_rfq_hint_was_on_the_clients_own_thread() -> None:
+    """rfq_free must apply the same thread-start guard as rfqs: a supplier_rfq we sent *on the
+    client's own thread* (e.g. replying to their «Request for quotation» subject) must not tag
+    that client's gmail address as a supplier — their later «we'll pass» must still close the case.
+
+    Without the fix, rfq_free would include the client's address (we sent supplier_rfq to them),
+    _from_the_client would return False, and R19 would not fire."""
+    # Client starts the thread (inbound before our outbound)
+    client_original = MailEvidence(id="e-orig", thread_id="t-cli", direction="inbound",
+                                   sender="Cliente <cliente@gmail.com>",
+                                   recipients=("contacto@origenlab.cl",),
+                                   subject="Request for quotation sonicator",
+                                   sent_at="2026-10-01T12:00:00+00:00")
+    # We reply on the client's thread with direction_hint="supplier_rfq" (V1 behaviour)
+    our_reply = MailEvidence(id="e-reply", thread_id="t-cli", direction="outbound",
+                             direction_hint="supplier_rfq",
+                             sender="contacto@origenlab.cl",
+                             recipients=("cliente@gmail.com",),
+                             subject="Re: Request for quotation sonicator",
+                             sent_at="2026-10-01T13:00:00+00:00")
+    # Later the client sends a «won't proceed» email linked to the case
+    client_lost = lost(sender="cliente@gmail.com", linked_case_ids=("c-1",))
+    # Without the fix rfq_free includes cliente@gmail.com → _from_the_client returns False → R19 never fires
+    [a] = planned("R19", client_original, our_reply, client_lost, cases=(case(stage="negotiating"),))
+    assert a.mode == "auto"
+
+
 # ----------------------------------------------------------------- goal 5 — newest_inbound from client
 
 def test_r19_is_not_blocked_by_a_newer_email_from_a_supplier(  # goal 5

@@ -636,6 +636,26 @@ def test_a_reply_on_an_rfq_thread_already_linked_to_a_case_still_links() -> None
     assert actions["e-1"].rule_id == "R1"
 
 
+def test_our_reply_with_supplier_rfq_hint_on_a_gmail_clients_thread_does_not_tag_them_as_supplier() -> None:
+    """Issue 5 (rfq_free thread-start guard): if we reply on the client's own thread with
+    direction_hint='supplier_rfq', that gmail address must NOT land in supplier_free_addresses.
+    Only an RFQ that started its own thread counts."""
+    client_request = mail(id="e-1", thread_id="t-cli", direction="inbound",
+                          sender="Cliente <cliente@gmail.com>",
+                          subject="Request for quotation sonicator", documents=(), requester_checked=True,
+                          sent_at="2026-10-01T12:00:00+00:00")
+    our_reply = mail(id="e-2", thread_id="t-cli", direction="outbound", direction_hint="supplier_rfq",
+                     recipients=("cliente@gmail.com",),
+                     subject="Re: Request for quotation sonicator", documents=(),
+                     sent_at="2026-10-01T13:00:00+00:00")
+    later = mail(id="e-3", thread_id="t-cli-2", direction="inbound",
+                 sender="Cliente <cliente@gmail.com>",
+                 subject="Solicitud de cotización balanza", documents=(), requester_checked=True,
+                 sent_at="2026-10-05T12:00:00+00:00")
+    actions = {a.evidence_id: a for a in plan(Snapshot(evidence=(client_request, our_reply, later), cases=(), organizations=()))}
+    assert actions["e-3"].rule_id == "R7"  # still a client request, not a supplier
+
+
 def test_our_reply_titled_request_for_quotation_to_a_customer_never_silences_that_customer() -> None:
     """V1 marks any outbound «Request for quotation» subject as supplier_rfq, customer replies too.
     Only an RFQ that started its own thread counts, so the customer's next request still opens a case."""

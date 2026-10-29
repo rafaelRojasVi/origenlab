@@ -644,6 +644,15 @@ class _Index:
         for ev in snapshot.evidence:
             if ev.direction != "outbound" or (ev.direction_hint or "") != "supplier_rfq":
                 continue
+            at = _instant(ev.sent_at)
+            if at is None:
+                continue
+            # Apply the same thread-start guard as `rfqs`: an outbound supplier_rfq sent on a
+            # thread that already had inbound mail does not make the recipient a supplier — we were
+            # replying on someone else's thread (e.g. V1 tagged «Re: Request for quotation» with
+            # supplier_rfq on the client's own thread).
+            if ev.thread_id and ev.thread_id in first_inbound and first_inbound[ev.thread_id] < at:
+                continue
             for a in addresses(ev.recipients):
                 if domain_of(a) in FREE_MAIL_DOMAINS:
                     rfq_free.add(a)
