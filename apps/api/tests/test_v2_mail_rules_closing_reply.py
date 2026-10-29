@@ -91,3 +91,76 @@ def test_r18_alongside_r17() -> None:
     snap = Snapshot(evidence=(thanks(),), cases=(case(),), organizations=(CLIENT, SUPPLIER), reply_since=SINCE,
                     **AFTER_R1)
     assert sorted(a.rule_id for a in plan(snap)) == ["R17", "R18"]
+
+
+def lost(**over) -> MailEvidence:
+    return thanks(**{"model_intent": "lost", "model_stage": "lost",
+                     "model_summary": "Compraron a otro proveedor.", **over})
+
+
+def test_r19_closes_a_case_lost() -> None:
+    # The case is already in «Conversación» (R17 moved it on an earlier email): nothing else acts.
+    [a] = planned("R19", lost(), cases=(case(stage="negotiating"),))
+    assert (a.mode, a.case_id) == ("auto", "c-1")
+    [step] = a.commands
+    assert step["command"] == "advance_case_stage"
+    assert step["inputs"]["stage"] == "lost"
+    assert step["inputs"]["close_reason"] == "el cliente no sigue (lectura del correo)"
+    assert "Compraron a otro proveedor." in a.reasons[0]
+    assert a.context["from_stage"] == "negotiating"
+
+
+def test_r19_proposes_when_the_sender_cannot_speak_for_the_case() -> None:
+    [a] = planned("R19", lost(sender="alguien@otra-institucion.test"), cases=(case(stage="negotiating"),))
+    assert a.mode == "proposal"
+    assert a.commands == ()
+
+
+def test_r19_ignores_an_older_email() -> None:
+    # The client wrote again after the «no»: the newest email decides, not the old one.
+    newer = thanks(id="e-10", sent_at="2026-10-27T16:00:00+00:00", model_needs_reply=True)
+    assert planned("R19", lost(), newer, cases=(case(stage="negotiating"),),
+                   applied_evidence_ids=frozenset({"e-9", "e-10"}),
+                   applied_pairs=frozenset({("e-9", "R1"), ("e-10", "R1")})) == []
+
+
+def test_r19_skips_a_paused_case() -> None:
+    assert planned("R19", lost(), cases=(case(stage="negotiating", paused_until="2027-03-01T12:00:00+00:00"),)) == []
+
+
+def test_r19_skips_won_and_closed() -> None:
+    assert planned("R19", lost(), cases=(case(stage="won", closed=True),)) == []
+    assert planned("R19", lost(), cases=(case(stage="lost", closed=True),)) == []
+
+
+def test_r19_needs_a_lost_reading() -> None:
+    assert planned("R19", lost(model_stage="negotiating"), cases=(case(stage="negotiating"),)) == []
+    assert planned("R19", lost(model_stage=None), cases=(case(stage="negotiating"),)) == []
+
+
+def test_r19_never_a_bounce_or_a_supplier() -> None:
+    assert planned("R19", lost(triage_class="bounce"), cases=(case(stage="negotiating"),)) == []
+    assert planned("R19", lost(sender="ventas@fabricante.test"), cases=(case(stage="negotiating"),)) == []
+
+
+def test_r19_waits_for_r17() -> None:
+    # A case in «Enviada»: R17 moves it this pass; R19 closes it on the next, once R17's receipt is in.
+    assert [a.rule_id for a in planned("R17", lost())] == ["R17"]
+    assert planned("R19", lost()) == []
+    [a] = planned("R19", lost(), cases=(case(stage="negotiating"),),
+                  applied_pairs=frozenset({("e-9", "R1"), ("e-9", "R17")}))
+    assert a.mode == "auto"
+
+
+def test_r19_runs_once() -> None:
+    assert planned("R19", lost(), cases=(case(stage="negotiating"),),
+                   applied_pairs=frozenset({("e-9", "R1"), ("e-9", "R19")})) == []
+
+
+def test_r19_a_later_bounce_does_not_hide_the_clients_no() -> None:
+    bounce = thanks(id="e-10", sent_at="2026-10-27T16:00:00+00:00", sender="Mailer-Daemon@correo.test",
+                    triage_class="bounce", model_needs_reply=None, model_stage=None)
+    [a] = planned("R19", lost(), bounce, cases=(case(stage="negotiating"),),
+                  applied_evidence_ids=frozenset({"e-9", "e-10"}),
+                  applied_pairs=frozenset({("e-9", "R1"), ("e-10", "R1")}))
+    assert a.mode == "auto"

@@ -282,7 +282,7 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
 """
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
-AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18"})
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18", "R19"})
 #: R15: the institutions «por confirmar», what created them (the receipt of their
 #: `organization.created` event), and the PDF file name of each quote on their cases that is still
 #: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
@@ -816,7 +816,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             if row is not None and row[0] == "negotiating":
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
                                          "stage": "quoting", "note": note})
-        if rule in ("R5", "R6"):
+        if rule in ("R5", "R6", "R19"):
             came_from = "negotiating" if rule == "R5" else action.get("from_stage")
             run(CORRECT_CASE_STAGE, {"opportunity_id": case_id, "to_stage": came_from, "note": note})
             if rule == "R5" and action.get("from_stage") == "quoting":

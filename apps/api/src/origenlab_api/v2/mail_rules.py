@@ -58,7 +58,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16", "R17", "R18")
+                             "R14", "R15", "R16", "R17", "R18", "R19")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -560,6 +560,14 @@ class _Index:
         self.late_quote_since = snapshot.late_quote_since
         self.reply_since = snapshot.reply_since
         self.cases = {c.id: c for c in snapshot.cases}
+        #: Per case, the newest inbound email linked to it (R19 acts only on that one).
+        self.newest_inbound: dict[str, datetime] = {}
+        for ev in snapshot.evidence:
+            human = ev.direction == "inbound" and ev.triage_class not in ("bounce", "auto_reply")
+            at = _instant(ev.sent_at) if human else None
+            for cid in ev.linked_case_ids if at is not None else ():
+                if cid not in self.newest_inbound or self.newest_inbound[cid] < at:
+                    self.newest_inbound[cid] = at
         self.by_thread: dict[str, list[CaseState]] = {}
         for c in snapshot.cases:
             for t in c.thread_ids:
@@ -752,10 +760,16 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
             if sent is not None:
                 out.append(sent)
         # R17 likewise: the reply R1 links on one pass moves its case on the next.
+        reply = None
         if (action is None or action.mode != AUTO) and (e.id, "R17") not in snapshot.applied_pairs:
             reply = _client_reply_rule(e, index)
             if reply is not None:
                 out.append(reply)
+        # R19 closes the case: it waits while another rule moves the same case in this pass.
+        if (action is None or action.mode != AUTO) and reply is None and (e.id, "R19") not in snapshot.applied_pairs:
+            read_lost = _read_lost_rule(e, index)
+            if read_lost is not None:
+                out.append(read_lost)
         # R18 runs no command, so it never waits for another rule: a receipt that says the email
         # needs no answer, read on the pass after the triage's reading exists.
         if (e.id, "R18") not in snapshot.applied_pairs:
@@ -1600,6 +1614,40 @@ def _closing_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                "no requiere respuesta"]
     return PlannedAction(e.id, "R18", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id,
+                         context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+#: R19's close reason: the AI read it in the client's email, no phrase list matched it.
+READ_LOST_CLOSE_REASON = "el cliente no sigue (lectura del correo)"
+
+
+def _read_lost_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R19 (owner, 2026-10-29): the triage's reading of the email's body says the case is lost —
+    «la compra ya se efectuó a otro proveedor», «se evaluará el año entrante». R6 reads only the
+    subject and file names, and before the reading exists; R19 reads the body's reading, a pass later.
+
+    Only the newest email from the client on exactly one open case that is not «En pausa» (a person
+    already decided to wait); the R6 sender gate, else a proposal. «Quitar» reopens the case."""
+    if len(e.linked_case_ids) != 1 or e.model_stage != "lost" or not _from_the_client(e, ix):
+        return None
+    c = ix.cases.get(e.linked_case_ids[0])
+    if c is None or c.closed or c.paused_until is not None:
+        return None
+    at = _instant(e.sent_at)
+    newest = ix.newest_inbound.get(c.id)
+    if at is None or (newest is not None and newest > at):
+        return None
+    summary = " ".join((e.model_summary or "").split())[:SUMMARY_CHARS]
+    reasons = [f"el cliente indica en el correo: «{summary}»" if summary else "el correo del cliente indica que no sigue",
+               "caso perdido"]
+    problem = _sender_may_speak_for(e, c, ix)
+    if problem is not None:
+        return PlannedAction(e.id, "R19", PROPOSAL, (*reasons, problem, "un humano decide"),
+                             case_id=c.id, case_title=c.title, organization_id=c.organization_id)
+    note = _note("R19", reasons)
+    return PlannedAction(e.id, "R19", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id,
+                         commands=(_advance_step("lost", note, READ_LOST_CLOSE_REASON),),
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
 
 

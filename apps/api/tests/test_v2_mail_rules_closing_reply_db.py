@@ -61,3 +61,25 @@ def test_r18_undo_brings_the_row_back(world) -> None:
     undone = repo.undo(admin, applied["applied"][0]["command_receipt_id"], "sí había que responder")
     assert [s["command"] for s in undone["steps"]] == ["no_reply_withdrawn"]
     assert "R18" not in _planned(repo, answer)  # an undone action is not planned again
+
+
+def test_r19_closes_the_case_and_undo_reopens_it(world) -> None:
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_id, answer = _closing(world, admin, intent="lost", stage="lost", needs_reply=False,
+                               summary_es="Compraron a otro proveedor.")
+    # A free-mail client on the case's own thread may speak for it (the R6 sender gate).
+    _owner(dsn, "update evidence.source_record set payload = jsonb_set(payload, '{sender}', %s::jsonb) where id = %s",
+           (json.dumps("Persona <persona.ficticia@gmail.com>"), answer))
+    repo = _mail_rules(dsn)
+    # R17 moves the case to «Conversación» first; R19 closes it on the next pass.
+    first = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R17"}])
+    assert not first["refused"], first["refused"]
+    assert _planned(repo, answer)["R19"]["mode"] == "auto"
+    closed = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R19"}])
+    assert not closed["refused"], closed["refused"]
+    assert _stage(dsn, case_id) == "lost"
+
+    undone = repo.undo(admin, closed["applied"][0]["command_receipt_id"], "sigue evaluando")
+    assert [s["command"] for s in undone["steps"]] == ["correct_case_stage"]
+    assert _stage(dsn, case_id) == "negotiating"
