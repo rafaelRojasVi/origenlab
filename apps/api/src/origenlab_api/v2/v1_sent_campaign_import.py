@@ -224,6 +224,11 @@ def _apply(cur: Any, campaign: SentCampaign, result: ImportResult) -> None:
         if (name, status) != (campaign.name, "archived"):
             raise SentCampaignRefused("the stored campaign differs from the extraction (name or status)")
     else:
+        # The September V1 campaigns came in through the Wave importer, whose manifest names no
+        # single campaign: a same-named campaign is that import, and a second copy is refused.
+        cur.execute("select 1 from outbound.campaign where name = %s", (campaign.name,))
+        if cur.fetchone() is not None:
+            raise SentCampaignRefused("a campaign with this name is already in the target under another import")
         cur.execute(
             "insert into outbound.campaign (name, subject, status, mailbox_id, max_sends, recontact_interval_days, "
             "policy_include_suppliers, origin_source_record_id) values (%s, %s, 'archived', %s, %s, null, false, %s) "

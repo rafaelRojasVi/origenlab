@@ -277,3 +277,18 @@ def test_v1_later_bounce_does_not_block_the_next_wave(disposable_database, mailb
         conn.execute("update outbound_campaign_recipient set state = 'bounced' where email_norm = 'w1-p0@instituto.invalid'")
     r = _apply(disposable_database, _named(extract_sent_campaign(later, cid), f"Promo {cid}"))
     assert r.inserted["outbound.campaign_recipient"] == 3
+
+
+@needs_db
+def test_apply_refuses_campaign_already_imported_by_another_importer(disposable_database, mailbox, tmp_path: Path) -> None:
+    import psycopg
+
+    cid = f"promo-{uuid.uuid4().hex[:6]}"
+    c = _named(extract_sent_campaign(_wave(tmp_path, cid, 1), cid), f"Promo {cid}")
+    with psycopg.connect(disposable_database, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute("insert into outbound.campaign (name, status, mailbox_id, max_sends) values (%s, 'archived', %s, 10)",
+                    (c.name, mailbox))
+    with pytest.raises(SentCampaignRefused, match="already in the target"):
+        _apply(disposable_database, c)
+    assert _counts(disposable_database, c.name)["recipients"] == 0
