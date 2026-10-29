@@ -52,6 +52,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/marketing$/,
   /^\/v2\/workspace\/marketing\/taxonomy$/,
   /^\/v2\/workspace\/marketing\/audience$/,
+  // Marketing analytics (v2/marketing_analytics.py): the figures, and the people behind one
+  // figure (`?metric=&campaign_id=` or `?segment=&column=`, paged). GET-only reads.
+  /^\/v2\/workspace\/marketing\/analytics$/,
+  /^\/v2\/workspace\/marketing\/analytics\/people$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/freeze-preview$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipients$/,

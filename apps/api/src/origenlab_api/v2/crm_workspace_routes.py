@@ -27,6 +27,7 @@ from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.case_documents import mail_storage_key
 from origenlab_api.v2.case_mail import MAX_EML_BYTES, read_message, valid_message_id
 from origenlab_api.v2.catalog.storage import StorageUnavailable
+from origenlab_api.v2.marketing_analytics import UnknownFigure
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute, sees_contact_addresses
 from origenlab_api.v2.crm_merge_preview import merge_preview
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
@@ -378,6 +379,35 @@ def get_marketing_campaign_blocks(operator: Operator, repo: Repo, request: Reque
     if getattr(operator, "role", None) == "viewer":
         return redact_for_viewer(body)
     return body
+
+
+@workspace_router.get("/marketing/analytics")
+def get_marketing_analytics(_: Operator, repo: Repo) -> Any:
+    """Reach, still-writable, bounces, bajas, open cases, per-campaign results and CRM coverage.
+
+    A read, computed from the CRM's facts (`marketing_analytics`); `null` means not measurable.
+    """
+    return repo.marketing_analytics()
+
+
+@workspace_router.get("/marketing/analytics/people")
+def get_marketing_analytics_people(
+    _: Operator,
+    repo: Repo,
+    metric: str | None = None,
+    campaign_id: UUID | None = None,
+    segment: str | None = None,
+    column: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Any:
+    """The people one figure counts: `?metric=` (with `campaign_id`, or an overview metric), or a
+    coverage `?segment=` (optionally `column=`). The route class masks addresses for a viewer."""
+    try:
+        return repo.marketing_people(metric=metric, campaign_id=None if campaign_id is None else str(campaign_id),
+                                     segment=segment, column=column, limit=limit, offset=offset)
+    except UnknownFigure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @workspace_router.get("/marketing/taxonomy")

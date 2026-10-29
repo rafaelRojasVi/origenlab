@@ -298,3 +298,84 @@ def test_unknown_figure_is_refused() -> None:
         read_people(None, metric="opens", campaign_id=None)
     with pytest.raises(UnknownFigure):
         read_people(None, segment="vip")
+
+
+# --------------------------------------------------------------------------- routes
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER  # noqa: E402
+from origenlab_api.v2.identity import LocalDevIdentity, OperatorIdentity, OperatorLookup  # noqa: E402
+
+_HEADERS = {OPERATOR_EMAIL_HEADER: "op@example.invalid"}
+
+
+class _Lookup(OperatorLookup):
+    def __init__(self, role: str) -> None:
+        self._op = OperatorIdentity(operator_id="00000000-0000-0000-0000-00000000000a", email_norm="op@example.invalid",
+                                    display_name="Op", role=role, status="active")
+
+    def by_email(self, email_norm: str) -> OperatorIdentity:  # noqa: ANN001, ANN201
+        return self._op
+
+
+class _Repo:
+    def marketing_analytics(self) -> dict:
+        return {"overview": {"reached": 3}, "campaigns": {}, "coverage": [], "alerts": {"ndr_unblocked": 0},
+                "reply_window_days": 14, "mail_captured_from": None}
+
+    def marketing_people(self, **kw) -> dict:
+        if kw.get("metric") not in (None, "responded"):
+            raise UnknownFigure("unknown")
+        return {"total": 1, "rows": [{"address_norm": "ana@instituto.invalid", "name": "Ana Ficticia"}],
+                "limit": 50, "offset": 0}
+
+
+def _route_client(role: str = "admin") -> TestClient:
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+
+    app = FastAPI()
+    app.include_router(workspace_router)
+    app.state.crm_workspace = _Repo()
+    app.state.v2_identity = LocalDevIdentity("postgresql://origenlab_api:pw@127.0.0.1:54332/origenlab_dev", _Lookup(role))
+    return TestClient(app)
+
+
+def test_analytics_route_returns_sections() -> None:
+    body = _route_client().get("/v2/workspace/marketing/analytics", headers=_HEADERS).json()
+    assert set(body) >= {"overview", "campaigns", "coverage", "alerts", "reply_window_days"}
+
+
+def test_people_route_rejects_unknown_metric() -> None:
+    r = _route_client().get("/v2/workspace/marketing/analytics/people?metric=opens", headers=_HEADERS)
+    assert r.status_code == 422
+
+
+def test_people_list_masks_addresses_for_viewer() -> None:
+    url = "/v2/workspace/marketing/analytics/people?metric=responded&campaign_id=00000000-0000-0000-0000-000000000001"
+    admin = _route_client("admin").get(url, headers=_HEADERS).json()
+    viewer = _route_client("viewer").get(url, headers=_HEADERS).json()
+    assert admin["rows"][0]["address_norm"] == "ana@instituto.invalid"
+    assert viewer["rows"][0]["address_norm"].startswith("***@")
+
+
+def test_analytics_routes_are_get_only() -> None:
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+
+    routes = [r for r in workspace_router.routes if "/marketing/analytics" in r.path]
+    assert {r.path for r in routes} == {"/v2/workspace/marketing/analytics", "/v2/workspace/marketing/analytics/people"}
+    assert all(r.methods == {"GET"} for r in routes)
+
+
+@needs_db
+def test_campaign_list_carries_measured_responses(world) -> None:
+    import psycopg
+
+    from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+
+    body = CrmWorkspaceRepository(psycopg.connect, world["dsn"]).marketing()
+    rows = {c["campaign_id"]: c for c in body["campaigns"]}
+    assert rows[world["camp"]["B"]]["responded"] == 1
+    assert rows[world["camp"]["C"]]["responded"] is None
+    assert "replies_recorded" not in rows[world["camp"]["B"]] and "replies_note" not in body

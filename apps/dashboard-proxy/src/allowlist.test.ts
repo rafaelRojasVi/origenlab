@@ -141,7 +141,7 @@ describe("allowlist", () => {
     }
   });
 
-  it("forwards exactly the twelve Marketing reads, GET only, and nothing near them", async () => {
+  it("forwards exactly the fourteen Marketing reads, GET only, and nothing near them", async () => {
     const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     for (const path of [
@@ -157,12 +157,17 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/history/audit`,
       "/v2/workspace/marketing/suppressions",
       "/v2/workspace/marketing/campaign-blocks",
+      "/v2/workspace/marketing/analytics",
+      "/v2/workspace/marketing/analytics/people",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
     }
     for (const path of [
       "/v2/workspace/marketing/",
+      "/v2/workspace/marketing/analytics/",
+      "/v2/workspace/marketing/analytics/people/x",
+      "/v2/workspace/marketing/analytics/export",
       "/v2/workspace/marketing/campaigns",
       "/v2/workspace/marketing/campaigns/not-a-uuid",
       `/v2/workspace/marketing/campaigns/${uuid.toUpperCase()}`,

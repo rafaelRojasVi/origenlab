@@ -62,6 +62,7 @@ from origenlab_api.v2.mail_rules import (
     mail_direction,
     web_form_enquirer,
 )
+from origenlab_api.v2.marketing_analytics import read_analytics, read_people
 from origenlab_api.v2.marketing_audience import (
     address_ref,
     addresses_in,
@@ -1661,6 +1662,8 @@ class CrmWorkspaceRepository:
             cur.execute("select kind, scope, count(*) from outbound.contact_control group by 1, 2 order by 1, 2")
             controls = [{"kind": r[0], "scope": r[1], "count": int(r[2])} for r in cur.fetchall()]
             holds = read_campaign_holds(cur)
+            # The measured response count (14-day window): the one reply figure every screen shows.
+            measured = read_analytics(cur)["campaigns"]
             cur.execute("select current_database()")
             database = cur.fetchone()[0]
             # Campaign-content presence: override has_html and provide html_state for lists
@@ -1670,7 +1673,8 @@ class CrmWorkspaceRepository:
             c["hold"] = campaign_hold(holds, c["campaign_id"])
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
-            c["replies_recorded"] = replies.get(c["campaign_id"], 0)
+            figures = measured.get(c["campaign_id"])
+            c["responded"] = figures["responded"] if figures else None
             c["send_batches"] = batches.get(c["campaign_id"], [])
             c["attempts_without_date"] = undated.get(c["campaign_id"], 0)
             t = totals.get(c["campaign_id"])
@@ -1701,7 +1705,6 @@ class CrmWorkspaceRepository:
             "campaigns": campaigns,
             "holds": {k: v for k, v in holds.items() if k != "by_campaign"},
             "contact_controls": controls,
-            "replies_note": ENTITY_NOTES["campaign_replies"]["note"],
             "storage": {"table": "outbound.campaign", "database": database},
         }
 
@@ -1911,6 +1914,16 @@ class CrmWorkspaceRepository:
             rows[0]["hold_refusals"] = list(cur.fetchone()[0])
             inputs = read_marketing_audience_inputs(cur)
         return plan_freeze(load_taxonomy(), inputs, rows[0], criteria, recontact_review=recontact_review)
+
+    def marketing_analytics(self) -> dict[str, Any]:
+        """Reach, blocks, responses, quote requests, cases and CRM coverage (marketing_analytics)."""
+        with self._read() as cur:
+            return read_analytics(cur)
+
+    def marketing_people(self, **query: Any) -> dict[str, Any]:
+        """The people behind one analytics figure — the rows that figure counts."""
+        with self._read() as cur:
+            return read_people(cur, **query)
 
     def campaign_blocks(self) -> dict[str, Any]:
         """Every active campaign safety block, the latest lifted ones, and each target's version."""
