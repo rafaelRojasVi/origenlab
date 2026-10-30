@@ -1370,8 +1370,10 @@ class CrmWorkspaceRepository:
         self._drive: Mapping[str, DriveLink] = drive or {}
         self._statement_timeout_ms = statement_timeout_ms
         from origenlab_api.v2.operations import FactsCache
+        from origenlab_api.v2.infrastructure import RenderCache
 
         self._facts_cache = FactsCache(30)
+        self._render_cache = RenderCache()
 
     @property
     def drive_configured(self) -> bool:
@@ -3023,6 +3025,14 @@ class CrmWorkspaceRepository:
             return build_operations(facts, now.isoformat())
 
         return self._facts_cache.get(load)
+
+    def infrastructure(self, render_api_key: str | None = None) -> dict[str, Any]:
+        """«Costos e infraestructura»: Supabase usage from SQL + Render via API (cached 10 min)."""
+        from origenlab_api.v2.infrastructure import RenderClient, read_infrastructure
+
+        client = RenderClient(render_api_key) if render_api_key else None
+        with self._read() as cur:
+            return read_infrastructure(cur, client, self._render_cache)
 
     def mail_sync(self) -> dict[str, Any]:
         """Whether the Gmail capture is running. Its age is measured by the database clock, never

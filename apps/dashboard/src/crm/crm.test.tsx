@@ -451,7 +451,8 @@ describe("no write path in the CRM workspace", () => {
       ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
-      expect(src, f).not.toMatch(/\/operations\//);
+      // Bare /operations/* = V1 command boundary; allow /workspace/operations/* (read endpoints).
+      expect(src, f).not.toMatch(/(?<!\/workspace)\/operations\//);
     }
   });
 });

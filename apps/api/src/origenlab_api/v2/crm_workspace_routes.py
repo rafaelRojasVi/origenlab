@@ -621,6 +621,17 @@ def get_mail_sync(_: Operator, repo: Repo) -> Any:
     return repo.mail_sync()
 
 
+@workspace_router.get("/operations/infrastructure")
+def get_infrastructure(request: Request, _: Operator, repo: Repo) -> Any:
+    """«Costos e infraestructura»: Supabase usage (DB size, largest tables, mail files) and
+    Render services + bandwidth (requires ORIGENLAB_RENDER_API_KEY; cached 10 min).
+    Any signed-in operator. No secret is returned."""
+    # The key is set on app.state at startup (main.py `_mount_v2_read_boundary`); without it
+    # the Render section returns ``{"available": false, "reason": "..."}`` and makes no HTTP call.
+    key = getattr(request.app.state, "render_api_key", None)
+    return repo.infrastructure(render_api_key=key)
+
+
 @workspace_router.get("/operations")
 def get_operations(request: Request, _: Operator, repo: Repo) -> Any:
     """«Operaciones»: every part of the system with its state (spec 2026-10-13). Read-only, any

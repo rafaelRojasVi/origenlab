@@ -23,10 +23,11 @@ import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 import { CompleteSentQuote } from "./CompleteSentQuote";
 import { DatosBody, TECHNICAL_TABS } from "./DatosPage";
 import { DrivePage } from "./DrivePage";
+import { InfraCostsPage } from "./InfraCostsPage";
 import { ProvidersPage } from "./ProvidersPage";
 import { TriagePanel } from "./TriagePanel";
 
-type View = "general" | "actividad" | "reglas" | "decidir" | "mas";
+type View = "general" | "actividad" | "reglas" | "decidir" | "mas" | "infra";
 type More = "proveedores" | "drive" | "tecnico";
 
 const VIEW_LABEL: Record<View, string> = {
@@ -34,6 +35,7 @@ const VIEW_LABEL: Record<View, string> = {
   actividad: "Lo que hizo el sistema",
   reglas: "Reglas",
   decidir: "Por decidir",
+  infra: "Costos e infraestructura",
   mas: "Más",
 };
 
@@ -89,6 +91,8 @@ export function OperacionesPage({ navigate, tab }: { navigate: (s: CrmSection, i
       />
       {view === "mas" ? (
         <MoreView more={more} setMore={setMore} isAdmin={isAdmin} technical={start.technical} navigate={navigate} />
+      ) : view === "infra" ? (
+        <InfraCostsPage />
       ) : (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton cards rows={4} />}>
           {(data) =>
