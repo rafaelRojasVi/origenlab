@@ -19,8 +19,9 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from ipaddress import ip_address
@@ -605,6 +606,165 @@ class WorkerDb:
             return cur.fetchone() is not None
 
 
+class VerifiedConnectionCache:
+    """Process-level cached verified synchronous connection.
+
+    Verifies once when the connection is first established; re-verifies only after a
+    reconnect.  Fail-closed: a failed verification raises :class:`TargetRefused`
+    unchanged.  The yielded connection is *not* psycopg-thread-safe — each concurrent
+    thread must use its own :class:`VerifiedConnectionCache` instance.
+
+    The internal lock serialises reconnect decisions so two threads calling :meth:`get`
+    at the same moment do not both open a new connection; it does *not* serialise the
+    actual use of the connection after :meth:`get` returns.
+    """
+
+    def __init__(
+        self,
+        target: WorkerTarget,
+        *,
+        application_name: str,
+        privileges: tuple[tuple[str, str], ...],
+        policies: frozenset[tuple[str, str, str]],
+        connect: Callable[..., Any] | None = None,
+    ) -> None:
+        self._target = target
+        self._app_name = application_name
+        self._privileges = privileges
+        self._policies = policies
+        self._connect = connect
+        self._conn: Any = None
+        self._rlock = threading.Lock()
+        #: Number of times the full verification probe has run (tests use this).
+        self.verification_count = 0
+
+    def _new_verified_conn(self) -> Any:
+        import psycopg
+
+        connect_fn = self._connect if self._connect is not None else psycopg.connect
+        conn = connect_fn(
+            self._target.dsn,
+            autocommit=True,
+            application_name=self._app_name,
+            **self._target.connect_options,
+        )
+        try:
+            verify_worker_connection(conn, self._target,
+                                     privileges=self._privileges, policies=self._policies)
+            self.verification_count += 1
+        except Exception:
+            with suppress(Exception):
+                conn.close()
+            raise
+        return conn
+
+    def get(self) -> Any:
+        """Return the live verified connection; reconnect and re-verify if closed or broken."""
+        with self._rlock:
+            if self._conn is None or self._conn.closed or self._conn.broken:
+                self._conn = self._new_verified_conn()
+            return self._conn
+
+    def invalidate(self) -> None:
+        """Mark the current connection dead; the next :meth:`get` will reconnect."""
+        with self._rlock:
+            if self._conn is not None:
+                with suppress(Exception):
+                    self._conn.close()
+                self._conn = None
+
+    def close(self) -> None:
+        """Close and discard the cached connection."""
+        self.invalidate()
+
+    @contextmanager
+    def connection(self) -> Iterator[Any]:
+        """Context manager yielding a live verified connection.
+
+        On :class:`psycopg.OperationalError` or :class:`psycopg.InterfaceError`
+        (broken wire) the connection is invalidated so the *next* call reconnects and
+        re-verifies.  The current call still raises — the caller (the sweep, the job)
+        sees the error and Procrastinate retries or logs it.
+        """
+        import psycopg
+
+        conn = self.get()
+        try:
+            yield conn
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            self.invalidate()
+            raise
+
+
+class AsyncVerifiedConnectionCache:
+    """Process-level cached verified *async* connection for :func:`capture_queue.cycle_lock`.
+
+    Like :class:`VerifiedConnectionCache` but for ``psycopg.AsyncConnection``.
+    Not guarded by a threading lock (the capture worker runs in a single asyncio event
+    loop thread); callers must not use the returned connection from multiple coroutines
+    concurrently.
+    """
+
+    def __init__(
+        self,
+        target: WorkerTarget,
+        *,
+        application_name: str,
+        privileges: tuple[tuple[str, str], ...],
+        policies: frozenset[tuple[str, str, str]],
+        connect: Callable[..., Any] | None = None,
+    ) -> None:
+        self._target = target
+        self._app_name = application_name
+        self._privileges = privileges
+        self._policies = policies
+        self._connect = connect
+        self._conn: Any = None
+        #: Number of times the full verification probe has run (tests use this).
+        self.verification_count = 0
+
+    async def _new_verified_conn(self) -> Any:
+        import psycopg
+
+        connect_fn = self._connect if self._connect is not None else psycopg.AsyncConnection.connect
+        conn = await connect_fn(
+            self._target.dsn,
+            autocommit=True,
+            application_name=self._app_name,
+            **self._target.connect_options,
+        )
+        try:
+            await averify_worker_connection(conn, self._target,
+                                            privileges=self._privileges, policies=self._policies)
+            self.verification_count += 1
+        except Exception:
+            with suppress(Exception):
+                await conn.close()
+            raise
+        return conn
+
+    async def get(self) -> Any:
+        """Return the live verified async connection; reconnect and re-verify if needed."""
+        if self._conn is None or self._conn.closed or self._conn.broken:
+            self._conn = await self._new_verified_conn()
+        return self._conn
+
+    def invalidate(self) -> None:
+        """Discard the cached connection reference (does not await a close).
+
+        Safe to call from a ``finally`` block.  The server closes the connection when
+        the TCP keepalive fails, and the advisory lock (if any) is released automatically.
+        """
+        self._conn = None
+
+    async def aclose(self) -> None:
+        """Gracefully close and discard the cached async connection."""
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            with suppress(Exception):
+                await conn.close()
+
+
 @contextmanager
 def open_verified_connection(
     target: WorkerTarget,
@@ -652,4 +812,5 @@ __all__ = [
     "ALLOWED_OUTSIDE_WRITES", "ALLOWED_WORKER_DEFINERS", "APP_NAME", "LOCK_ACQUIRED", "LOCK_HELD", "LOCK_NAME", "LOCK_STUCK", "STALE_LOCK_AFTER", "Mailbox", "RecordOutcome",
     "TargetRefused", "WORKER_ROLE", "WorkerDb", "WorkerTarget", "local_test_target", "open_worker_db",
     "remote_worker_target", "verify_worker_connection", "write_ca_file",
+    "AsyncVerifiedConnectionCache", "VerifiedConnectionCache",
 ]

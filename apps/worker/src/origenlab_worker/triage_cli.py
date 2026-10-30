@@ -415,9 +415,16 @@ def bid_config_from_env(env: Mapping[str, str], *,
 
 
 def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
-    """One sweep on a fresh verified connection: what the `bid_preparation_sweep` task runs."""
+    """One sweep reusing a long-lived verified connection: what `bid_preparation_sweep` runs.
+
+    The connection is verified once when first established and reused across sweeps; a
+    broken connection is replaced and re-verified on the next sweep call.  The
+    ``reconnect`` parameter passed to ``run_bid_sweep`` is the cache's own context-
+    manager accessor so a mid-preparation reconnect also skips re-verification.
+    """
     from datetime import UTC, datetime
 
+    from origenlab_worker.database import VerifiedConnectionCache
     from origenlab_worker.tender.job import (
         BID_REQUIRED_POLICIES,
         BID_REQUIRED_PRIVILEGES,
@@ -425,20 +432,22 @@ def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
         run_bid_sweep,
     )
 
-    def connect() -> Any:
-        # A remote target carries TCP keepalives (`database.KEEPALIVES`): the session stays up
-        # through a model call of several minutes.
-        return open_verified_connection(config.database, application_name=APP_NAME_BID,
-                                        privileges=BID_REQUIRED_PRIVILEGES, policies=BID_REQUIRED_POLICIES)
+    # Created once per call to bid_sweep_for (i.e. once per tender-child process).
+    _cache = VerifiedConnectionCache(
+        config.database,
+        application_name=APP_NAME_BID,
+        privileges=BID_REQUIRED_PRIVILEGES,
+        policies=BID_REQUIRED_POLICIES,
+    )
 
     def sweep() -> dict[str, Any]:
         from origenlab_worker.drive_client import DriveRest
 
-        with connect() as conn:
+        with _cache.connection() as conn:
             store = S3EmlStore(config.storage.client(), bucket=DOCUMENTS_BUCKET)
             drive = DriveRest(config.drive) if config.drive is not None else None
             return run_bid_sweep(conn, store, config.reader, config.models, now=lambda: datetime.now(UTC),
-                                 reconnect=connect, drive=drive, drive_target=config.drive_target)
+                                 reconnect=_cache.connection, drive=drive, drive_target=config.drive_target)
 
     return sweep
 
@@ -601,10 +610,18 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
         _idle_until_terminated()
         return EXIT_OK
     try:
+        from origenlab_worker.database import VerifiedConnectionCache
+
         config = triage_config_from_env(env)
         task_queue.CONTEXT.target = config.database
         task_queue.CONTEXT.store_factory = lambda: S3EmlStore(config.storage.client())
         task_queue.CONTEXT.model = config.model
+        task_queue.CONTEXT.sweep_conn = VerifiedConnectionCache(
+            config.database,
+            application_name=task_queue.APP_NAME_TRIAGE,
+            privileges=task_queue.TRIAGE_REQUIRED_PRIVILEGES,
+            policies=task_queue.TRIAGE_REQUIRED_POLICIES,
+        )
         revision = env.get("RENDER_GIT_COMMIT", "")
         task_queue.CONTEXT.revision = revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None
         line["model"] = config.model_name if config.model_enabled else "off"
