@@ -28,6 +28,15 @@ from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.identity import OperatorIdentity
 
+
+def quote_outcome(quote_id: str, won_quote_id: str | None) -> str | None:
+    """A won case's quotations: the one the client accepted is "won", every other "not_chosen" —
+    alternatives offered for the same request (owner 2026-10-30). None while the case is not won."""
+    if not won_quote_id:
+        return None
+    return "won" if quote_id == won_quote_id else "not_chosen"
+
+
 _REVISION_BY_ID = """
     select r.id::text as id, r.quote_id::text as quote_id, r.revision_no, r.status,
            r.superseded_by_revision_no, q.opportunity_id::text as opportunity_id, q.quote_number

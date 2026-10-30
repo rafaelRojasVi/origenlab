@@ -204,8 +204,12 @@ export interface QuoteCard {
   quote_id: string;
   quote_number: string;
   number_origin: string | null;
+  /** Once the case is won: the quotation it was won with, or one of the alternatives not chosen. */
+  outcome?: QuoteOutcome | null;
   revisions: RevisionCard[];
 }
+
+export type QuoteOutcome = "won" | "not_chosen";
 
 export interface Attention {
   code: string;

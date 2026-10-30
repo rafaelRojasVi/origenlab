@@ -359,7 +359,7 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onRentabil
                       <span className="block truncate font-semibold">{r.client?.name ?? "Sin institución"}</span>
                       <span className="block truncate text-[12.5px] text-ink-muted">
                         {r.opportunity.title ?? "Sin título"}
-                        {r.opportunity.closed ? " · caso cerrado" : ""}
+                        {r.outcome === "won" ? " · ganadora" : r.outcome === "not_chosen" ? " · no elegida" : r.opportunity.closed ? " · caso cerrado" : ""}
                       </span>
                     </td>
                     <td className="max-w-[260px] px-3 py-3 align-middle text-[13px] text-ink-muted" title={r.items.first.join(", ")}>

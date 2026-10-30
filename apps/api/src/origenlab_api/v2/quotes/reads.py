@@ -74,6 +74,7 @@ from origenlab_api.v2.catalog.fx import FxUnavailable
 from origenlab_api.v2.catalog import aliases
 from origenlab_api.v2.catalog.keys import is_labdelivery, model_key
 from origenlab_api.v2.case_commands import SUPPLIER_RELATIONSHIP_ROLES
+from origenlab_api.v2.case_won import quote_outcome
 from origenlab_api.v2.catalog.reads import V2CatalogReads, _like_escape, _plain
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.quotes.draft import PreviewQuoteBody, QuoteDraft, draft_tax_rate
@@ -312,7 +313,7 @@ with cur as (
   select q.id, q.quote_number, c.revision_id, c.revision_no, c.status, c.origin, c.grand_total, c.quote_currency,
          c.pdf_sha256, greatest(q.updated_at, c.updated_at) as updated_at,
          case when c.status = 'in_review' then 'draft' else c.status end as bucket,
-         o.id as opportunity_id, o.title, o.closed_at,
+         o.id as opportunity_id, o.title, o.closed_at, o.won_quote_id,
          inst.id as institution_id, inst.name as institution_name
     from crm.quote q
     join cur c on c.quote_id = q.id
@@ -365,22 +366,29 @@ select count(*) filter (where bucket = 'draft') as draft, count(*) filter (where
 # voided, dated in Santiago by when it was approved (else sent; a draft by its last change) and
 # inside the period; with its institution through a merge. The second statement is those revisions'
 # stored lines, the third the parameters: one pipeline, one round trip, whatever the period holds.
+# One quote per case (owner 2026-10-30: three alternatives are one sale, not three): a won case's
+# winning quote only; otherwise its newest — one among the drafts, one among the rest.
 _ECONOMICS_BASE_SQL = """
 with cur as (
   select distinct on (r.quote_id) r.*
     from crm.quote_revision r
    order by r.quote_id, (r.status in ('draft', 'in_review')) desc, (r.status <> 'void') desc, r.revision_no desc
-), picked as (
+), authored as (
   select c.id as revision_id, c.quote_id, c.revision_no, c.status, c.quote_currency, c.tax_rate,
-         c.expense_allocation_mode,
+         c.expense_allocation_mode, q.opportunity_id, o.won_quote_id,
          case when c.status = 'in_review' then 'draft' else c.status end as bucket,
          case when c.status in ('draft', 'in_review') then c.updated_at
               else coalesce(c.approved_at, c.sent_at, c.updated_at) end as at
     from cur c
-   where c.origin = 'authored' and c.status <> 'void'
-     -- Sales cases only: a tender's offer is not in «Rentabilidad» (`case_kind.py`).
-     and exists (select 1 from crm.quote q join crm.opportunity o on o.id = q.opportunity_id
-                  where q.id = c.quote_id and o.kind = 'sale')
+    join crm.quote q on q.id = c.quote_id
+    join crm.opportunity o on o.id = q.opportunity_id
+   -- Sales cases only: a tender's offer is not in «Rentabilidad» (`case_kind.py`).
+   where c.origin = 'authored' and c.status <> 'void' and o.kind = 'sale'
+     and (o.won_quote_id is null or o.won_quote_id = c.quote_id)
+), picked as (
+  select distinct on (a.opportunity_id, a.bucket = 'draft') a.*
+    from authored a
+   order by a.opportunity_id, a.bucket = 'draft', a.at desc, a.quote_id desc
 ), dated as (
   select p.*, (p.at at time zone 'America/Santiago') as local_at
     from picked p
@@ -998,6 +1006,8 @@ class V2QuoteReads:
                 "quote_id": str(r["id"]), "quote_number": r["quote_number"],
                 "label": _label(r["quote_number"], r["revision_no"]), "status": r["bucket"], "origin": r["origin"],
                 "opportunity": {"id": str(r["opportunity_id"]), "title": r["title"], "closed": r["closed_at"] is not None},
+                # «Ganadora» / «No elegida» once the case is won (`crm_workspace.quote_outcome`).
+                "outcome": quote_outcome(str(r["id"]), str(r["won_quote_id"]) if r["won_quote_id"] else None),
                 "client": ({"organization_id": str(r["institution_id"]), "name": r["institution_name"]}
                            if r["institution_id"] else None),
                 **_list_amounts(r), "updated_at": r["updated_at"],

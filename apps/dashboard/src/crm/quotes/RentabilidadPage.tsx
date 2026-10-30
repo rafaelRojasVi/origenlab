@@ -96,7 +96,8 @@ export function RentabilidadPage({
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="text-2xl font-bold tracking-tight text-ink">Rentabilidad</h1>
         <span className="text-[13px] text-ink-muted">
-          venta, costo de productos, gastos de importación y margen bruto de cada cotización
+          venta, costo de productos, gastos de importación y margen bruto de cada cotización · una por caso:
+          la ganadora, o la más reciente
           {refreshing && state.kind === "ready" ? " · actualizando…" : ""}
         </span>
       </div>

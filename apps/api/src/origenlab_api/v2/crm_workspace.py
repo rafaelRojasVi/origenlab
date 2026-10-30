@@ -47,6 +47,7 @@ from origenlab_api.v2.campaign_state import (  # noqa: F401 - re-exported from h
     _compute_campaign_content_state,
 )
 from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
+from origenlab_api.v2.case_won import quote_outcome
 from origenlab_api.v2.drive_ledgers import (  # noqa: F401 - DriveLink, load_drive_ledgers: this module's API
     DRIVE_FILE_URL,
     DRIVE_FOLDER_URL,
@@ -265,7 +266,8 @@ _SQL_PIPELINE_OPPS = f"""
     select op.id::text as opportunity_id, op.title, op.stage, op.version,
            op.organization_id::text as organization_id, o.name as organization_name,
            o.confirmation as organization_confirmation, o.version as organization_version,
-           op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
+           op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
+           op.won_quote_id::text as won_quote_id, op.won_revision_no
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
      where {sale_cases("op")}
@@ -533,16 +535,20 @@ def authored_contents(rev: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def case_money(revisions: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def case_money(revisions: Iterable[Mapping[str, Any]], won: tuple[str, int] | None = None) -> list[dict[str, Any]]:
     """The case's amount for the card, the board column and the panel header: the neto of the
     LAST SENT vigente revision (owner 2026-10-12), not a sum — a later quotation usually replaces
-    an earlier one for the same request. One entry, or none for a case without a vigente revision.
+    an earlier one for the same request. A won case's is the revision it was won with (`won`:
+    quote id and revision number), whichever was sent last (owner 2026-10-30: alternatives).
+    One entry, or none for a case without a vigente revision.
     Its currency is "unread" (net_total "1") when that revision's PDF was never read; it also
     names the quotation and when it was sent, and how many vigente quotations the case has."""
     live = [r for r in revisions if r.get("is_active") and delivered(r)]
-    if not live:
+    winner = next((r for r in revisions if won and r.get("_quote_id") == won[0]
+                   and r.get("revision_no") == won[1]), None)
+    if not live and winner is None:
         return []
-    last = max(live, key=_sort_key_sent)
+    last = winner or max(live, key=_sort_key_sent)
     c = last.get("contents")
     net = _money(c.get("net_total")) if c else None
     cur = c.get("currency") if c else None
@@ -1001,6 +1007,7 @@ def compose_pipeline(
                     "drive_pending": (link is None and bool(src.get("has_eml") or r.get("sent_has_eml"))
                                       and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
+                    "_quote_id": q["quote_id"],
                     "contents": quote_contents(r) or authored_contents(r),
                     "_recipients": src.get("recipients"),
                 }
@@ -1011,6 +1018,7 @@ def compose_pipeline(
                     "quote_id": q["quote_id"],
                     "quote_number": q["quote_number"],
                     "number_origin": q.get("number_origin"),
+                    "outcome": quote_outcome(q["quote_id"], opp.get("won_quote_id")),
                     "revisions": [{k: v for k, v in rc.items() if not k.startswith("_")} for rc in rev_cards],
                 }
             )
@@ -1137,7 +1145,8 @@ def compose_pipeline(
                 "quotes": quote_cards,
                 "quote_numbers": [q["quote_number"] for q in quote_cards],
                 "revision_count": len(all_revs),
-                "money": case_money(all_revs),
+                "money": case_money(all_revs, (opp["won_quote_id"], opp["won_revision_no"])
+                                    if opp.get("won_quote_id") else None),
                 # The documents a person attached to the case (its purchase order), newest first.
                 "documents": docs_by_opp.get(oid, []),
                 "latest_revision": (

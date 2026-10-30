@@ -696,6 +696,7 @@ def test_the_quote_list_shows_each_quote_at_its_current_revision_with_counts(wor
         "quote_id": draft["quote_id"], "quote_number": draft["quote_number"], "label": draft["quote_number"],
         "status": "draft", "origin": "authored",
         "opportunity": {"id": draft_case, "title": f"Caso borrador {tag}", "closed": False},
+        "outcome": None,
         "client": {"organization_id": institution, "name": row["client"]["name"]},
         "items": {"first": ["Equipo ficticio FX-100", "Línea libre", "Tercera línea"], "count": 4},
         "grand_total": row["grand_total"], "net_total": None, "currency": "CLP", "amount_source": "revision",

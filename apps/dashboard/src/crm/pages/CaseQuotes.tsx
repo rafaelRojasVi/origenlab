@@ -39,9 +39,13 @@ function sentKey(r: RevisionCard | null): string {
   return r?.sent_at ?? "";
 }
 
-/** The case's quotations, the last sent first (by its current revision's send time). */
+/** The case's quotations, the last sent first (by its current revision's send time); a won case's
+ * winning quotation before every other. */
 export function quotesNewestFirst(card: OpportunityCardData): QuoteCard[] {
   return [...card.quotes].sort((a, b) => {
+    const wa = a.outcome === "won" ? 0 : 1;
+    const wb = b.outcome === "won" ? 0 : 1;
+    if (wa !== wb) return wa - wb;
     const ka = sentKey(currentRevision(a));
     const kb = sentKey(currentRevision(b));
     return ka === kb ? b.quote_number.localeCompare(a.quote_number) : kb.localeCompare(ka);
@@ -121,10 +125,11 @@ export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
   const c = rev?.contents ?? null;
   const unread = m.currency === "unread";
   const others = count - 1;
+  const won = card.quotes.some((q) => q.outcome === "won" && q.quote_number === m.quote_number);
   return (
     <section aria-label="Monto cotizado" className="rounded-lg border border-line bg-canvas-raised px-4 py-3" data-testid="case-money">
       <p className="text-[11px] font-medium text-ink-muted">
-        {count > 1 ? "Última cotización enviada" : "Cotizado, neto"}
+        {won ? "Cotización ganadora" : count > 1 ? "Última cotización enviada" : "Cotizado, neto"}
         {m.quote_number ? <span className="ml-1.5 font-mono font-semibold text-ink">{m.quote_number}</span> : null}
         {m.sent_at ? <span className="ml-1.5 tabular-nums">· {fmtDateTime(m.sent_at)}</span> : null}
       </p>
@@ -149,7 +154,9 @@ export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
       )}
       {others > 0 ? (
         <p className="mt-1.5 text-[11px] text-ink-muted">
-          {others === 1 ? "La otra cotización del caso no se suma." : `Las otras ${others} cotizaciones del caso no se suman.`}
+          {won
+            ? others === 1 ? "La otra cotización no fue elegida y no se suma." : `Las otras ${others} cotizaciones no fueron elegidas y no se suman.`
+            : others === 1 ? "La otra cotización del caso no se suma." : `Las otras ${others} cotizaciones del caso no se suman.`}
         </p>
       ) : null}
     </section>
@@ -277,7 +284,13 @@ function QuoteBlock({ q, defaultOpen, latest, documents = [], mayOpenCotizador =
         <span className="block min-w-0">
           <span className="flex flex-wrap items-center gap-1.5">
             <span className="font-mono text-sm font-semibold text-ink">{q.quote_number}</span>
-            {latest ? (
+            {q.outcome === "won" ? (
+              <Badge tone="good">Ganadora</Badge>
+            ) : q.outcome === "not_chosen" ? (
+              <Badge tone="neutral" glyph={false} title="El cliente eligió otra cotización del caso">
+                No elegida
+              </Badge>
+            ) : latest ? (
               <Badge tone="brand" glyph={false}>
                 Última
               </Badge>
