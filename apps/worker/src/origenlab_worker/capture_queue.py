@@ -8,13 +8,14 @@ block the next periodic cycle forever. Historical jobs are never replayed.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import re
 import sys
 import time
 from collections.abc import Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 import procrastinate
@@ -22,7 +23,7 @@ import psycopg
 from procrastinate import testing
 
 from origenlab_worker.database import (
-    QUEUE_REQUIRED_POLICIES, QUEUE_REQUIRED_PRIVILEGES, WorkerTarget,
+    QUEUE_REQUIRED_POLICIES, QUEUE_REQUIRED_PRIVILEGES, AsyncVerifiedConnectionCache, WorkerTarget,
     averify_worker_connection, remote_worker_target, write_ca_file,
 )
 from origenlab_worker.errors import ConfigRefused
@@ -91,18 +92,58 @@ def target_from_env(env: Mapping[str, str]) -> WorkerTarget:
 
 
 @asynccontextmanager
-async def cycle_lock(target: WorkerTarget):
-    async with await psycopg.AsyncConnection.connect(
-        target.dsn, autocommit=True, application_name="origenlab-worker-capture-cycle",
-        **target.connect_options,
-    ) as conn:
-        await averify_worker_connection(conn, target, privileges=QUEUE_REQUIRED_PRIVILEGES,
-                                        policies=QUEUE_REQUIRED_POLICIES)
-        row = await (await conn.execute(
-            "select pg_try_advisory_lock(hashtextextended(%s, 0))", (CYCLE_LOCK,),
-        )).fetchone()
-        # Closing the connection releases the session lock, also after cancellation.
-        yield bool(row[0])
+async def cycle_lock(
+    target: WorkerTarget,
+    *,
+    _cache: AsyncVerifiedConnectionCache | None = None,
+    _process_lock: asyncio.Lock | None = None,
+):
+    """Acquire the per-process capture-cycle advisory lock.
+
+    **With a cache and process lock** (production, set up by :func:`run_capture_worker`):
+    the async connection is verified once and reused; an in-process ``asyncio.Lock``
+    prevents re-entrancy within the same process (same session) while the PostgreSQL
+    session-level advisory lock prevents concurrent cycles in *other* processes.  The
+    advisory lock is explicitly released on exit so the connection stays alive for the
+    next cycle.
+
+    **Without a cache** (tests using the legacy interface): a fresh verified connection
+    is opened for every call, exactly as before, so all existing tests remain valid.
+    """
+    if _cache is not None and _process_lock is not None:
+        # New behaviour: persistent connection + asyncio.Lock for in-process exclusion.
+        if _process_lock.locked():
+            yield False
+            return
+        async with _process_lock:
+            conn = await _cache.get()
+            row = await (await conn.execute(
+                "select pg_try_advisory_lock(hashtextextended(%s, 0))", (CYCLE_LOCK,),
+            )).fetchone()
+            acquired = bool(row[0])
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    with suppress(Exception):
+                        await conn.execute(
+                            "select pg_advisory_unlock(hashtextextended(%s, 0))", (CYCLE_LOCK,),
+                        )
+                    if conn.closed or conn.broken:
+                        _cache.invalidate()
+    else:
+        # Legacy behaviour: fresh connection per call (advisory lock released on connection close).
+        async with await psycopg.AsyncConnection.connect(
+            target.dsn, autocommit=True, application_name="origenlab-worker-capture-cycle",
+            **target.connect_options,
+        ) as conn:
+            await averify_worker_connection(conn, target, privileges=QUEUE_REQUIRED_PRIVILEGES,
+                                            policies=QUEUE_REQUIRED_POLICIES)
+            row = await (await conn.execute(
+                "select pg_try_advisory_lock(hashtextextended(%s, 0))", (CYCLE_LOCK,),
+            )).fetchone()
+            # Closing the connection releases the session lock, also after cancellation.
+            yield bool(row[0])
 
 
 async def run_stage(command: str, env: Mapping[str, str]) -> dict[str, Any]:
@@ -212,7 +253,18 @@ def run_capture_worker(env: Mapping[str, str]) -> int:
     config_from_env(env)
     if env.get("ORIGENLAB_WORKER_DRIVE_FILING_ENABLED", "").strip().lower() == "true":
         drive_config_from_env(env)
-    app = build_app(target, env, connector_for(target))
+    # Build a persistent verified connection for cycle_lock so TLS + SCRAM + the
+    # permission probe run once per process instead of once per minute.
+    conn_cache = AsyncVerifiedConnectionCache(
+        target,
+        application_name="origenlab-worker-capture-cycle",
+        privileges=QUEUE_REQUIRED_PRIVILEGES,
+        policies=QUEUE_REQUIRED_POLICIES,
+    )
+    proc_lock = asyncio.Lock()
+    lock_fn = functools.partial(cycle_lock, _cache=conn_cache, _process_lock=proc_lock)
+    app = build_app(target, env, connector_for(target),
+                    cycle=functools.partial(run_cycle, lock=lock_fn))
 
     async def serve():
         async with app.open_async():
