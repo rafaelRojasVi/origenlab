@@ -153,7 +153,7 @@ export function DiscoveredTenders({
               {data.last_checked_at ? (
                 <span className="flex items-center gap-1.5 text-[11px] text-ink-faint sm:ml-auto">
                   <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-good" />
-                  Revisado {fmtDateTime(data.last_checked_at)} · se revisa cada 15 minutos
+                  Revisado {fmtDateTime(data.last_checked_at)} · se revisa cada hora
                 </span>
               ) : null}
             </dl>

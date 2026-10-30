@@ -157,6 +157,7 @@ export const CLASS_LABEL: Record<string, string> = {
   bulk: "Masivo",
   notification: "Notificación",
   empty: "Vacío",
+  unreadable: "Ilegible",
 };
 
 export const INTENT_LABEL: Record<string, string> = {
@@ -365,7 +366,7 @@ const NOTIFICATION_DOMAIN = /^(dhl\.com|(?:[^.]+\.)*dhl\.com|icliente\.com)$/;
  *  and «no_responder@» / «no-responder@» (Spanish form at start). Does NOT match plain «noreply» /
  *  «no-reply» at the local-part start — those fall through to AUTOMATIC_SENDER. */
 const LOOSE_NO_REPLY_LOCAL = /(?:^no[-_.]responder|[-_.]no[-_.]?(?:reply|responder))(?:[-_.+]|$)/;
-const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
+const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound", "unreadable"]);
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
   if (holdingCases(r, cards, now).length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";

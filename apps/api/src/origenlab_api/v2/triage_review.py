@@ -38,7 +38,7 @@ from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS
 REVIEW_TRIAGE = "review_triage"
 VERDICTS: tuple[str, ...] = ("approved", "corrected", "rejected")
 TRIAGE_CLASSES: tuple[str, ...] = (
-    "outbound", "bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty",
+    "outbound", "bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty", "unreadable",
     "tender_notice", "purchase_order", "lost", "quote_followup", "quote_request", "business_other",
 )
 TRIAGE_STAGES: tuple[str, ...] = (*CASE_STAGES, "not_a_case", "unclear")

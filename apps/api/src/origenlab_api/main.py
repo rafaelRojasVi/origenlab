@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import SecretStr
 
 from origenlab_api.backends.factory import validate_api_settings
@@ -84,6 +85,9 @@ def create_app() -> FastAPI:
     # outermost (last-added) middleware wraps all others:
     #   RequestLoggingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
     # RequestLoggingMiddleware is outermost so it measures total dispatch time.
+    # Innermost: replies leave compressed when the caller accepts gzip (the dashboard Worker does).
+    # Render bills outbound bandwidth and JSON shrinks 5-10x (2026-10-30). Under 1 KB is not worth it.
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(ResponseTimingMiddleware)
     app.add_middleware(RequestLoggingMiddleware)

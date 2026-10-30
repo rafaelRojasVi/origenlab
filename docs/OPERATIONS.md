@@ -2234,7 +2234,7 @@ participant with the sent quote), or it is uploaded by hand with «Adjuntar OC»
 ### 8.14 Tender bid preparation (Licitaciones fase 1)
 
 Live since 2026-10-20. The «Licitaciones» space lists the open Mercado Público tenders that fit the
-catalog («En Mercado Público», the worker's discovery sweep every 15 minutes), opens a tender by
+catalog («En Mercado Público», the worker's discovery sweep every hour), opens a tender by
 code or link, and the `origenlab-mail-triage` worker prepares the bid (reading, forms, offer, zip).
 Spec and rules:
 [`WORKFLOWS.md`](WORKFLOWS.md) W7a, [`DOMAIN.md`](DOMAIN.md) §7.11.
@@ -2256,7 +2256,7 @@ Spec and rules:
 worst-case estimate before each call; at the cap a preparation is refused. «Operaciones» shows the
 month's spend and the cap.
 
-**Discovery's API traffic.** Each run (every 15 minutes) makes one list call and reads up to 150
+**Discovery's API traffic.** Each run (hourly since 2026-10-30; every 15 minutes before) makes one list call and reads up to 150
 details, 0.3 s apart, of tenders it has not read yet — every new open tender, matching titles first.
 After the switch to reading every tender (2026-10-20, §2.7.142 of STATUS) the ~4,600 backlog takes
 about eight hours (≈ 150 calls a run, ≈ 4,600 in all); then a normal day is the 96 list calls plus

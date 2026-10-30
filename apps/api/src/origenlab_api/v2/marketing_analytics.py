@@ -39,7 +39,7 @@ REPLY_WINDOW_DAYS = 14
 MAIL_CAPTURE_FROM = "2026-09-25T00:00:00+00:00"
 #: Triage classes that are never a person answering (``apps/worker`` ``NOISE_CLASSES`` plus the
 #: routed tender alerts and our own outbound copies).
-NOISE_CLASSES = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty",
+NOISE_CLASSES = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty", "unreadable",
                  "tender_notice", "outbound")
 INTERNAL_DOMAINS = ("origenlab.cl",)
 

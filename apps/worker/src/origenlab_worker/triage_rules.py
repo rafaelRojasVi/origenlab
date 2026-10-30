@@ -67,7 +67,7 @@ from origenlab_worker.mail_text import MailText
 TRIAGE_VERSION = 4
 
 NOISE_CLASSES: tuple[str, ...] = ("bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification",
-                                   "empty")
+                                   "empty", "unreadable")  # «unreadable»: never classified; triage.py closes a lost or broken .eml
 #: Business, but settled without the model: tender alerts go to the procurement pipeline.
 ROUTED_CLASSES: tuple[str, ...] = ("tender_notice",)
 SIGNAL_CLASSES: tuple[str, ...] = ("purchase_order", "lost", "quote_followup", "quote_request")

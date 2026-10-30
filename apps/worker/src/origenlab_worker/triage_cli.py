@@ -544,8 +544,9 @@ def _serve_tenders(config: BidConfig, *, discovery: Callable[[], dict[str, Any]]
         with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
             async with app.open_async():
                 # One preparation at a time: the monthly cap relies on a single spender.
+                from origenlab_worker.task_queue import WORKER_POLLING
                 await app.run_worker_async(queues=[task_queue.TENDER_QUEUE], concurrency=1, name="tenders",
-                                           install_signal_handlers=True, delete_jobs="successful")
+                                           install_signal_handlers=True, delete_jobs="successful", **WORKER_POLLING)
 
     asyncio.run(serve())
 
@@ -614,8 +615,9 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
             # own app, so a copy would leave every sweep in the module's in-memory connector.
             with task_queue.app.replace_connector(task_queue.connector_for(config.database)) as app:
                 async with app.open_async():
+                    from origenlab_worker.task_queue import WORKER_POLLING
                     await app.run_worker_async(queues=[task_queue.QUEUE], concurrency=WORKER_CONCURRENCY,
-                                               install_signal_handlers=True, delete_jobs="successful")
+                                               install_signal_handlers=True, delete_jobs="successful", **WORKER_POLLING)
 
         asyncio.run(serve())
         line["mode"] = "stopped"
