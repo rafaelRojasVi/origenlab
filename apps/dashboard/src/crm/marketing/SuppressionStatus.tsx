@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
-import { Badge, EmptyState, Panel, ResourceGate, Skeleton, StatLine, fmtDate, fmtInt } from "../ui";
+import { Badge, EmptyState, Panel, ResourceGate, Skeleton, fmtDate, fmtInt } from "../ui";
 import { inSharedMailbox } from "../gmailLinks";
 import {
   confirmTriageUnsubscribe,
@@ -14,9 +14,9 @@ import {
 import type { PendingUnsubscribeReview, SuppressionsResponse, TriageUnsubscribeReading } from "./marketingTypes";
 
 const SOURCE_LABEL: Record<string, string> = {
-  unsubscribe_handler: "Respuesta BAJA aplicada",
-  wave1a_suppression: "Supresión heredada (V1)",
-  operator_command: "Bloqueo de un operador",
+  unsubscribe_handler: "Respondió «BAJA»",
+  wave1a_suppression: "Heredada de V1",
+  operator_command: "Registrada a mano",
   ndr_handler: "Rebote",
   complaint_handler: "Queja",
 };
@@ -273,48 +273,6 @@ export function SuppressionStatus() {
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
         {(data: SuppressionsResponse) => (
           <>
-            <p role="status" data-testid="gmail-sync-notice" className="rounded-md border border-warn/40 bg-warn-bg px-3 py-2 text-xs text-warn">
-              <b>{data.gmail_sync.label}</b> Cada BAJA registrada es permanente: no se borra, no se debilita y no existe la
-              re-suscripción.
-            </p>
-            <Panel
-              title="Bajas y supresiones de marketing"
-              note={`${data.storage.table} · base ${data.storage.database} · sólo lectura`}
-              bodyClassName="space-y-3 p-3"
-            >
-              <StatLine
-                items={[
-                  { label: "Direcciones con BAJA", value: fmtInt(data.summary.unsubscribed_addresses) },
-                  { label: "Mensajes BAJA registrados", value: fmtInt(data.summary.baja_messages) },
-                  { label: "Última registrada", value: data.summary.last_recorded_at ? fmtDate(data.summary.last_recorded_at) : "—" },
-                  { label: "BAJAS en revisión", value: fmtInt(data.summary.pending_reviews ?? 0) },
-                  { label: "Leídas por el triaje", value: fmtInt(data.summary.triage_readings ?? 0) },
-                ]}
-              />
-              <p className="text-[11px] text-ink-muted" data-testid="baja-grammar">
-                Regla ({data.grammar.version}): {data.grammar.rule} Se acepta: {data.grammar.accepted.map((a) => `«${a}»`).join(", ")}.
-                {data.apply_enabled ? "" : " La aplicación de lotes está desactivada en esta API."}
-                {data.sender_policy ? ` Remitente (${data.sender_policy.version}): ${data.sender_policy.rule}` : ""}
-              </p>
-              {data.entries.length === 0 ? (
-                <EmptyState title="Sin BAJAS registradas">Ninguna respuesta BAJA se ha aplicado todavía en esta base.</EmptyState>
-              ) : (
-                <div className="divide-y divide-line rounded-md border border-line">
-                  {data.entries.map((e) => (
-                    <div key={e.contact_control_id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-[13px]" data-testid="suppression-row">
-                      <Badge tone="bad">BAJA</Badge>
-                      <span className="text-ink">{e.address}</span>
-                      <span className="text-[11px] text-ink-muted">
-                        {SOURCE_LABEL[e.source] ?? e.source}
-                        {e.reason !== "unsubscribe" ? ` · bloqueo previo: ${e.reason}` : ""} · registrada {fmtDate(e.recorded_at)}
-                        {e.last_observed_at ? ` · recibida ${fmtDate(e.last_observed_at)}` : ""} · {fmtInt(e.baja_messages)} mensaje(s)
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {data.truncated ? <p className="text-[11px] text-ink-muted">Se muestran las más recientes.</p> : null}
-            </Panel>
             {data.pending_reviews && data.pending_reviews.length > 0 ? (
               <Panel title="BAJAS en revisión" note="remitente no comprobado · bloqueadas para marketing hasta confirmarlas" bodyClassName="p-3">
                 <div className="divide-y divide-line rounded-md border border-line" data-testid="pending-reviews">
@@ -336,17 +294,16 @@ export function SuppressionStatus() {
             ) : null}
             {data.triage_readings && data.triage_readings.length > 0 ? (
               <Panel
-                title="Posibles BAJAS según la lectura del correo"
-                note="el triaje las leyó como baja, pero el texto no es exactamente «BAJA» · nada se suprime sin confirmarlo"
+                title={`Por confirmar: ${fmtInt(data.triage_readings.length)} ${data.triage_readings.length === 1 ? "posible baja" : "posibles bajas"}`}
+                note="el correo parece pedir la baja, pero no dice exactamente «BAJA» · nada se bloquea sin confirmarlo"
                 bodyClassName="p-3"
               >
                 <div className="divide-y divide-line rounded-md border border-line" data-testid="triage-readings">
                   {data.triage_readings.map((r) => {
                     const href = r.gmail_message_id ? inSharedMailbox(`https://mail.google.com/mail/u/0/#all/${r.gmail_message_id}`) : null;
                     return (
-                      <div key={r.assertion_id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-[13px]" data-testid="triage-reading-row">
-                        <Badge tone="warn">Lectura</Badge>
-                        <span className="text-ink">{r.address}</span>
+                      <div key={r.assertion_id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]" data-testid="triage-reading-row">
+                        <span className="font-medium text-ink">{r.address}</span>
                         <span className="text-[11px] text-ink-muted">
                           {r.subject ? `«${r.subject}» · ` : ""}
                           {r.reasons.map((x) => READING_REASON_LABEL[x] ?? x).join(", ") || "sin motivo registrado"}
@@ -369,10 +326,9 @@ export function SuppressionStatus() {
                 </div>
               </Panel>
             ) : null}
-            <Panel title="Audiencias congeladas frente a las BAJAS de hoy" bodyClassName="p-3">
-              {data.frozen_campaigns.length === 0 ? (
-                <EmptyState title="Sin audiencias congeladas">No hay instantáneas que contrastar.</EmptyState>
-              ) : (
+            <BajaList data={data} />
+            {data.frozen_campaigns.length > 0 ? (
+              <Panel title="Audiencias congeladas frente a las BAJAS de hoy" bodyClassName="p-3">
                 <ul className="space-y-1 text-xs" data-testid="frozen-vs-baja">
                   {data.frozen_campaigns.map((c) => (
                     <li key={c.campaign_id}>
@@ -385,11 +341,86 @@ export function SuppressionStatus() {
                     </li>
                   ))}
                 </ul>
-              )}
-            </Panel>
+              </Panel>
+            ) : null}
+            <details className="group rounded-xl border border-line bg-canvas-raised" data-testid="baja-how">
+              <summary className="cursor-pointer list-none px-4 py-3 text-[13px] font-semibold text-ink">
+                <span className="mr-1.5 inline-block transition-transform group-open:rotate-90">›</span>¿Cómo funcionan las bajas?
+              </summary>
+              <div className="space-y-2 px-4 pb-4 text-[11px] leading-5 text-ink-muted">
+                <p role="status" data-testid="gmail-sync-notice">
+                  <b className="text-ink">{data.gmail_sync.label}</b> Cada BAJA registrada es permanente: no se borra, no se debilita y
+                  no existe la re-suscripción.
+                </p>
+                <p data-testid="baja-grammar">
+                  Regla ({data.grammar.version}): {data.grammar.rule} Se acepta: {data.grammar.accepted.map((a) => `«${a}»`).join(", ")}.
+                  {data.apply_enabled ? "" : " La aplicación de lotes está desactivada en esta API."}
+                  {data.sender_policy ? ` Remitente (${data.sender_policy.version}): ${data.sender_policy.rule}` : ""}
+                </p>
+                <p>Datos: {data.storage.table} · base {data.storage.database} · sólo lectura.</p>
+              </div>
+            </details>
           </>
         )}
       </ResourceGate>
     </div>
+  );
+}
+
+const SHOWN = 8;
+
+/** Who asked not to receive marketing: newest first, searchable, the first few then «Ver todas». */
+function BajaList({ data }: { data: SuppressionsResponse }) {
+  const [query, setQuery] = useState("");
+  const [all, setAll] = useState(false);
+  const q = query.trim().toLowerCase();
+  const rows = q ? data.entries.filter((e) => e.address.toLowerCase().includes(q)) : data.entries;
+  const shown = all || q ? rows : rows.slice(0, SHOWN);
+  return (
+    <Panel
+      title={`Pidieron la baja · ${fmtInt(data.summary.unsubscribed_addresses)}`}
+      note={data.summary.last_recorded_at ? `última ${fmtDate(data.summary.last_recorded_at)}` : undefined}
+      aside={
+        data.entries.length > SHOWN ? (
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Buscar dirección"
+            aria-label="Buscar entre las bajas"
+            className="h-7 w-44 rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink"
+          />
+        ) : undefined
+      }
+      bodyClassName="p-0"
+    >
+      {data.entries.length === 0 ? (
+        <div className="p-3">
+          <EmptyState title="Sin BAJAS registradas">Ninguna respuesta BAJA se ha aplicado todavía en esta base.</EmptyState>
+        </div>
+      ) : (
+        <>
+          <ul className="divide-y divide-line">
+            {shown.map((e) => (
+              <li key={e.contact_control_id} className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-4 py-2 text-[13px]" data-testid="suppression-row">
+                <span aria-hidden="true" className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-canvas-sunken text-[11px] font-semibold uppercase text-ink-muted">
+                  {e.address.slice(0, 1)}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-ink">{e.address}</span>
+                <span className="rounded-full bg-canvas-sunken px-2 py-0.5 text-[11px] text-ink-muted">{SOURCE_LABEL[e.source] ?? e.source}</span>
+                {e.reason !== "unsubscribe" ? <span className="text-[11px] text-ink-faint">bloqueo previo: {e.reason}</span> : null}
+                <span className="w-24 text-right text-[11px] tabular-nums text-ink-faint">{fmtDate(e.recorded_at)}</span>
+              </li>
+            ))}
+          </ul>
+          {!q && rows.length > SHOWN ? (
+            <button type="button" onClick={() => setAll((v) => !v)} className="w-full border-t border-line px-4 py-2 text-left text-xs font-medium text-accent hover:bg-canvas-sunken/50">
+              {all ? "Ver menos" : `Ver todas (${fmtInt(rows.length)})`}
+            </button>
+          ) : null}
+          {data.truncated ? <p className="px-4 pb-2 text-[11px] text-ink-muted">Se muestran las más recientes.</p> : null}
+        </>
+      )}
+    </Panel>
   );
 }

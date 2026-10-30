@@ -480,3 +480,11 @@ def test_blocks_are_broken_down_by_kind_and_week(world) -> None:
     assert kinds["not_in_directory"] == 1  # a16: the worker, by itself
     assert kinds["baja"] == 1
     assert sum(w["rebote"] + w["baja"] + w["otro"] for w in b["by_week"]) == sum(kinds.values())
+
+
+@needs_db
+def test_the_open_case_group_lists_every_open_segment(world) -> None:
+    an = _analytics(world)
+    rows = {r["segment"]: r for r in an["coverage"]}
+    open_people = sum(rows[s]["people"] for s in ("solicitada", "enviada", "conversacion", "pausa"))
+    assert _people(world, segment="abierto", limit=200)["total"] == open_people

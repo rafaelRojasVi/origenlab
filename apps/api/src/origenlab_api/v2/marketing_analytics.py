@@ -458,12 +458,14 @@ def read_people(cur: Any, *, metric: str | None = None, campaign_id: str | None 
     """
     params: dict[str, Any] = {"limit": max(1, min(int(limit), 200)), "offset": max(0, int(offset))}
     if segment is not None:
-        if segment not in SEGMENTS and segment != "total":
+        if segment not in SEGMENTS and segment not in ("total", "abierto"):
             raise UnknownFigure(f"unknown segment {segment!r}")
         if column is not None and column not in COVERAGE_COLUMNS:
             raise UnknownFigure(f"unknown column {column!r}")
         where = []
-        if segment != "total":
+        if segment == "abierto":  # every open case, paused or not: the dashboard's «Con caso abierto» row
+            where.append("segment in ('solicitada', 'enviada', 'conversacion', 'pausa')")
+        elif segment != "total":
             where.append("segment = %(segment)s")
             params["segment"] = segment
         if column is not None:

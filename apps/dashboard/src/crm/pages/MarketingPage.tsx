@@ -8,8 +8,9 @@ import { CampaignCalendar } from "../marketing/CampaignCalendar";
 import { CampaignDetail, type DetailTab } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
 import { HoldsBanner } from "../marketing/CampaignHolds";
+import { BlocksOverview } from "../marketing/BlocksOverview";
 import { CampaignRows } from "../marketing/CampaignRows";
-import { AnalyticsAlert, AnalyticsKpis, ContactBaseBar, CoverageCard } from "../marketing/MarketingAnalytics";
+import { AnalyticsAlert, AnalyticsKpis, CampaignResultsChart, ContactBase, CoverageCard } from "../marketing/MarketingAnalytics";
 import { MarketingOverview } from "../marketing/MarketingOverview";
 import { PeopleList } from "../marketing/PeopleList";
 import { fetchMarketingAnalytics, type MarketingAnalytics, type PeopleQuery } from "../marketing/analytics";
@@ -132,7 +133,12 @@ export function MarketingPage() {
         <div className="space-y-3" data-testid="marketing-analytics">
           <AnalyticsAlert data={analytics} />
           <AnalyticsKpis data={analytics} onOpen={openPeople} />
-          <ContactBaseBar data={analytics} />
+          <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+            <ContactBase data={analytics} />
+            {state.kind === "ready" ? (
+              <CampaignResultsChart data={analytics} campaigns={state.data.campaigns} onOpen={openPeople} />
+            ) : null}
+          </div>
         </div>
       ) : null}
       {people && view.kind === "list" && tab === "campanas" ? (
@@ -167,9 +173,17 @@ export function MarketingPage() {
       ) : null}
       {tab === "bajas" ? (
         <div className="space-y-4">
-          <HoldsBanner onChanged={() => reload()} />
+          {analytics ? <BlocksOverview data={analytics} /> : null}
           <SuppressionStatus />
-          {state.kind === "ready" ? <ContactControls controls={state.data.contact_controls} /> : null}
+          <details className="group rounded-xl border border-line bg-canvas-raised" data-testid="safety-details">
+            <summary className="cursor-pointer list-none px-4 py-3 text-[13px] font-semibold text-ink">
+              <span className="mr-1.5 inline-block transition-transform group-open:rotate-90">›</span>Controles y bloqueos de seguridad
+            </summary>
+            <div className="space-y-3 px-4 pb-4">
+              <HoldsBanner onChanged={() => reload()} />
+              {state.kind === "ready" ? <ContactControls controls={state.data.contact_controls} /> : null}
+            </div>
+          </details>
         </div>
       ) : tab === "audiencias" ? (
         taxonomy ? <AudienceBuilder taxonomy={taxonomy} /> : <TaxonomyGate state={taxonomyState} />
