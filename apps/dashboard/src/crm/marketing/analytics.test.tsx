@@ -31,7 +31,11 @@ function analytics(overrides: Partial<MarketingAnalytics> = {}): MarketingAnalyt
       { segment: "ganada", people: 40, contacted: 30, not_contacted: 8, blocked: 2 },
       { segment: "perdida", people: 5, contacted: 5, not_contacted: 0, blocked: 0 },
     ],
-    alerts: { ndr_unblocked: 0 },
+    alerts: { ndr_unblocked: 0, soft_bounces: 0 },
+    blocks: {
+      by_kind: [{ kind: "not_in_directory", n: 120 }, { kind: "rebote_revisado", n: 300 }, { kind: "baja", n: 2 }],
+      by_week: [{ week: "2026-10-19", rebote: 300, baja: 2, otro: 0 }, { week: "2026-10-26", rebote: 120, baja: 0, otro: 0 }],
+    },
     mail_captured_from: "2026-09-01T00:00:00+00:00",
     ...overrides,
   };
@@ -117,17 +121,20 @@ describe("Marketing analytics", () => {
     await waitFor(() => expect(within(row).getAllByTitle("Aún no medido")).toHaveLength(2));
   });
 
-  it("coverage row cell opens people list with segment and column", async () => {
+  it("coverage groups open cases and a cell opens its people", async () => {
     const calls = stub();
     render(<MarketingPage />);
-    const pausa = await screen.findByTestId("coverage-pausa");
-    expect(pausa).toHaveTextContent("En pausa");
-    fireEvent.click(within(screen.getByTestId("coverage-solicitada")).getByRole("button", { name: "6" }));
+    const open = await screen.findByTestId("coverage-abierto");
+    expect(open).toHaveTextContent("Con caso abierto");
+    expect(open).toHaveTextContent("12"); // solicitada 10 + pausa 2
+    fireEvent.click(within(open).getByRole("button", { name: "Nunca les escribimos: 7" }));
     await screen.findByTestId("people-list");
     const q = calls.filter((u) => u.pathname.endsWith("/analytics/people")).at(-1)!;
-    expect(q.searchParams.get("segment")).toBe("solicitada");
+    expect(q.searchParams.get("segment")).toBe("abierto");
     expect(q.searchParams.get("column")).toBe("not_contacted");
     expect(screen.getByTestId("coverage-total")).toHaveTextContent("957");
+    fireEvent.click(within(open).getByRole("button", { name: "ver detalle" }));
+    expect(screen.getByTestId("coverage-open-detail")).toHaveTextContent("En pausa");
   });
 
   it("campaign row shows measured results and its click opens the detail", async () => {
@@ -180,9 +187,10 @@ describe("Marketing analytics", () => {
     expect(screen.queryByTestId("analytics-alert")).toBeNull();
     view.unmount();
     vi.unstubAllGlobals();
-    stub({ data: analytics({ alerts: { ndr_unblocked: 7 } }) });
+    stub({ data: analytics({ alerts: { ndr_unblocked: 7, soft_bounces: 40 } }) });
     render(<MarketingPage />);
-    expect(await screen.findByTestId("analytics-alert")).toHaveTextContent("7 avisos de rebote");
+    expect(await screen.findByTestId("analytics-alert")).toHaveTextContent("7 rebotes permanentes");
+    expect(screen.getByTestId("soft-bounces")).toHaveTextContent("40 rebotes temporales");
   });
 });
 
@@ -218,5 +226,21 @@ describe("review fixes", () => {
     fireEvent.click(row);
     fireEvent.click(await screen.findByRole("button", { name: "Respuestas" }));
     expect(await screen.findByTestId("people-unmeasured")).toHaveTextContent("Aún no medido");
+  });
+});
+
+describe("Bajas y rebotes", () => {
+  it("shows the blocks at a glance: totals, origin donut, automatic kinds", async () => {
+    stub();
+    render(<MarketingPage />);
+    await screen.findByTestId("analytics-kpis");
+    fireEvent.click(screen.getByRole("button", { name: "Bajas y rebotes" }));
+    const o = await screen.findByTestId("blocks-overview");
+    await waitFor(() => expect(within(o).getByTestId("blocks-kpi-total")).toHaveTextContent("422"));
+    expect(within(o).getByTestId("blocks-kpi-auto")).toHaveTextContent("120");
+    expect(within(o).getByTestId("auto-kinds")).toHaveTextContent("Ya no está en la organización");
+    expect(within(o).getByRole("img", { name: /Direcciones bloqueadas por origen/ })).toHaveAccessibleName(
+      expect.stringContaining("Rebote revisado a mano 300"),
+    );
   });
 });

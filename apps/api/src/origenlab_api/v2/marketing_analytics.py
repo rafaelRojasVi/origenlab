@@ -94,7 +94,7 @@ seq as (
 ),
 reached as (select distinct address_norm from sends),
 blocks as (
-  select cc.scope, cc.value_norm, cc.created_at, {_CATEGORY_SQL} as category
+  select cc.id, cc.scope, cc.value_norm, cc.created_at, cc.source, {_CATEGORY_SQL} as category
     from outbound.contact_control cc
    where cc.kind = 'block' and (cc.until_at is null or cc.until_at > now())
 ),
@@ -164,7 +164,36 @@ opportunities as (
     left join comms.message m on sr.dedupe_key like 'gmail_message:%%'
                               and m.provider_message_id = substr(sr.dedupe_key, 15)
 ),
-case_links as (
+-- The email threads of each case (the messages and records linked to it, and the one it was
+-- opened from), and every outside address that wrote or was written to in them.
+case_threads as (
+  select distinct oe.opportunity_id, m.provider_thread_id
+    from crm.opportunity_evidence oe
+    join comms.message m on m.id = oe.message_id
+   where m.provider_thread_id is not null
+  union
+  select oe.opportunity_id, m.provider_thread_id
+    from crm.opportunity_evidence oe
+    join evidence.source_record sr on sr.id = oe.source_record_id and sr.dedupe_key like 'gmail_message:%%'
+    join comms.message m on m.provider_message_id = substr(sr.dedupe_key, 15)
+   where m.provider_thread_id is not null
+  union
+  select o.id, m.provider_thread_id
+    from crm.opportunity o
+    join evidence.source_record sr on sr.id = o.origin_source_record_id and sr.dedupe_key like 'gmail_message:%%'
+    join comms.message m on m.provider_message_id = substr(sr.dedupe_key, 15)
+   where m.provider_thread_id is not null
+),
+case_thread_people as (
+  select distinct ct.opportunity_id, p.address_norm
+    from case_threads ct
+    join comms.message m on m.provider_thread_id = ct.provider_thread_id
+    join comms.message_participant p on p.message_id = m.id and p.role in ('from', 'to', 'cc')
+   where split_part(p.address_norm, '@', 2) not in ({_INTERNAL})
+     and p.address_norm not like 'mailer-daemon@%%' and p.address_norm not like 'postmaster@%%'
+),
+-- A person «has» a case when they are on it or in its email threads (coverage, «Con caso abierto»).
+person_case_links as (
   select o.id as opportunity_id, ep.entity, ep.address_norm, o.requested_at, o.stage
     from opportunities o
     join crm.opportunity_participant op on op.opportunity_id = o.id
@@ -176,7 +205,21 @@ case_links as (
     join entity_points ep on ep.person_id = op.person_id
   union
   select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
+    from opportunities o
+    join case_thread_people tp on tp.opportunity_id = o.id
+    join entity_points ep on ep.address_norm = tp.address_norm
+),
+-- A campaign «produced» a case when anyone at the institution asked (owner decision 3, «Casos después»).
+case_links as (
+  select * from person_case_links
+  union
+  select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
     from opportunities o join entity_points ep on ep.organization_id = o.organization_id
+  union
+  select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
+    from opportunities o
+    join crm.affiliation af on af.organization_id = o.organization_id
+    join entity_points ep on ep.person_id = af.person_id
   union
   select o.id, ep.entity, ep.address_norm, o.requested_at, o.stage
     from opportunities o
@@ -201,15 +244,24 @@ campaign_threads as (
     join comms.message m on m.mailbox_id = a.mailbox_id and m.provider_message_id = a.provider_message_id
    where a.purpose = 'marketing' and a.accepted_at is not null and m.provider_thread_id is not null
 ),
-ndr_unblocked as (
-  select distinct ct.campaign_id, ct.address_norm
+delivery as (
+  select substr(sr.dedupe_key, 15) as provider_message_id, d.value->>'block_reason' as block_reason
+    from evidence.assertion d join evidence.source_record sr on sr.id = d.source_record_id
+   where d.kind = 'delivery_failure' and d.value_norm = 'delivery:v2' and sr.dedupe_key like 'gmail_message:%%'
+),
+campaign_ndrs as (
+  select distinct ct.campaign_id, ct.address_norm, (dl.block_reason is not null) as permanent
     from campaign_threads ct
     join comms.message m on m.provider_thread_id = ct.provider_thread_id and m.direction = 'inbound'
     join comms.message_participant p on p.message_id = m.id and p.role = 'from'
     left join triage t on t.provider_message_id = m.provider_message_id
+    left join delivery dl on dl.provider_message_id = m.provider_message_id
    where (p.address_norm like 'mailer-daemon@%%' or p.address_norm like 'postmaster@%%' or t.cls = 'bounce')
      and not exists (select 1 from blocked b where b.address_norm = ct.address_norm)
 ),
+-- A real miss: the worker read the notice as permanent and the address is still not blocked.
+-- Temporary notices (full mailbox, delay, …) are never blocked on purpose and are counted apart.
+ndr_unblocked as (select distinct campaign_id, address_norm from campaign_ndrs where permanent),
 facts as (
   select 'sent' as metric, campaign_id, address_norm, null::uuid as opportunity_id, null::text as message_ref from sends
   union all select 'new_people', campaign_id, address_norm, null, null from seq where nth = 1
@@ -249,7 +301,7 @@ entity_state as (
 ),
 entity_cases as (
   select distinct on (cl.entity) cl.entity, cl.stage, (p.opportunity_id is not null) as paused
-    from case_links cl left join paused p on p.opportunity_id = cl.opportunity_id
+    from person_case_links cl left join paused p on p.opportunity_id = cl.opportunity_id
    order by cl.entity, (cl.stage not in ('won', 'lost', 'abandoned')) desc,
             case cl.stage when 'negotiating' then 4 when 'quoting' then 3 when 'won' then 2 else 1 end desc,
             cl.requested_at desc nulls last
@@ -278,8 +330,30 @@ select json_build_object(
   'reached', (select count(*) from reached),
   'blocked_reached', (select json_object_agg(category, n) from (
       select b.category, count(*) as n from blocked b join reached r using (address_norm) group by 1) z),
-  'with_open_case', (select count(distinct cl.address_norm) from case_links cl join reached r using (address_norm)
+  'with_open_case', (select count(distinct cl.address_norm) from person_case_links cl join reached r using (address_norm)
                       where cl.stage not in ('won', 'lost', 'abandoned')),
+  'soft_bounces', (select count(distinct address_norm) from campaign_ndrs where not permanent
+                    and address_norm not in (select address_norm from ndr_unblocked)),
+  'blocks_by_kind', (select coalesce(json_agg(k), '[]'::json) from (
+      select case when b.source = 'ndr_handler' then coalesce(ev.block_reason, 'no_such_user')
+                  when b.category = 'baja' then 'baja'
+                  when b.category = 'rebote' and b.source in ('wave1a_suppression', 'wave1b_block') then 'rebote_historico'
+                  when b.category = 'rebote' then 'rebote_revisado'
+                  else 'otro' end as kind,
+             count(*) as n
+        from blocks b
+        left join lateral (
+          select e.payload->>'block_reason' as block_reason from crm.domain_event e
+           where e.aggregate_kind = 'contact_control' and e.aggregate_id = b.id
+             and e.event_type = 'contact_control.added'
+           order by e.seq limit 1) ev on true
+       group by 1) k),
+  'blocks_by_week', (select coalesce(json_agg(w order by w.week), '[]'::json) from (
+      select date_trunc('week', created_at)::date as week,
+             count(*) filter (where category = 'rebote') as rebote,
+             count(*) filter (where category = 'baja') as baja,
+             count(*) filter (where category = 'otro') as otro
+        from blocks group by 1) w),
   'coverage', (select coalesce(json_agg(c), '[]'::json) from (
       select segment, col, count(*) as n from coverage group by 1, 2) c)
 )
@@ -334,7 +408,12 @@ def read_analytics(cur: Any) -> dict[str, Any]:
         },
         "campaigns": campaigns,
         "coverage": [{"segment": s, **coverage[s]} for s in SEGMENTS],
-        "alerts": {"ndr_unblocked": ndr},
+        "alerts": {"ndr_unblocked": ndr, "soft_bounces": int(raw["soft_bounces"])},
+        "blocks": {
+            "by_kind": [{"kind": k["kind"], "n": int(k["n"])} for k in raw["blocks_by_kind"]],
+            "by_week": [{"week": w["week"], "rebote": int(w["rebote"]), "baja": int(w["baja"]), "otro": int(w["otro"])}
+                        for w in raw["blocks_by_week"]],
+        },
         "mail_captured_from": None if mf is None else mf.isoformat(),
     }
 
@@ -379,12 +458,14 @@ def read_people(cur: Any, *, metric: str | None = None, campaign_id: str | None 
     """
     params: dict[str, Any] = {"limit": max(1, min(int(limit), 200)), "offset": max(0, int(offset))}
     if segment is not None:
-        if segment not in SEGMENTS and segment != "total":
+        if segment not in SEGMENTS and segment not in ("total", "abierto"):
             raise UnknownFigure(f"unknown segment {segment!r}")
         if column is not None and column not in COVERAGE_COLUMNS:
             raise UnknownFigure(f"unknown column {column!r}")
         where = []
-        if segment != "total":
+        if segment == "abierto":  # every open case, paused or not: the dashboard's «Con caso abierto» row
+            where.append("segment in ('solicitada', 'enviada', 'conversacion', 'pausa')")
+        elif segment != "total":
             where.append("segment = %(segment)s")
             params["segment"] = segment
         if column is not None:
@@ -404,7 +485,7 @@ def read_people(cur: Any, *, metric: str | None = None, campaign_id: str | None 
             "writable": "select address_norm, null::uuid from reached where address_norm not in (select address_norm from blocked)",
             "bounced": "select address_norm, null::uuid from blocked join reached using (address_norm) where category = 'rebote'",
             "baja": "select address_norm, null::uuid from blocked join reached using (address_norm) where category = 'baja'",
-            "with_open_case": "select distinct cl.address_norm, null::uuid from case_links cl join reached using (address_norm) "
+            "with_open_case": "select distinct cl.address_norm, null::uuid from person_case_links cl join reached using (address_norm) "
                               "where cl.stage not in ('won', 'lost', 'abandoned')",
         }[metric]
     else:

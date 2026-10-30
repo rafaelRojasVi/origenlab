@@ -24,9 +24,32 @@ export interface MarketingAnalytics {
   overview: Record<OverviewMetric, number> & { other_blocks: number };
   campaigns: Record<string, Record<CampaignMetric, number | null>>;
   coverage: CoverageRow[];
-  alerts: { ndr_unblocked: number };
+  /** ndr_unblocked: permanent bounce notices still unblocked (real misses); soft_bounces: temporary ones, never blocked on purpose. */
+  alerts: { ndr_unblocked: number; soft_bounces: number };
+  blocks: {
+    by_kind: { kind: BlockKind; n: number }[];
+    by_week: { week: string; rebote: number; baja: number; otro: number }[];
+  };
   mail_captured_from: string | null;
 }
+
+export type BlockKind =
+  | "no_such_user" | "not_in_directory" | "domain_not_found" | "mailbox_disabled"
+  | "rebote_revisado" | "rebote_historico" | "baja" | "otro";
+
+export const BLOCK_KIND_LABEL: Record<BlockKind, string> = {
+  no_such_user: "No existe la casilla",
+  not_in_directory: "Ya no está en la organización (Microsoft 365)",
+  domain_not_found: "El dominio no existe",
+  mailbox_disabled: "Cuenta desactivada",
+  rebote_revisado: "Rebote revisado a mano",
+  rebote_historico: "Rebote histórico (V1)",
+  baja: "Pidió la baja",
+  otro: "Otro bloqueo",
+};
+
+/** Automatic kinds: blocked by the worker from the bounce notice itself. */
+export const AUTO_KINDS: BlockKind[] = ["no_such_user", "not_in_directory", "domain_not_found", "mailbox_disabled"];
 
 export interface PeopleRow {
   address_norm: string;
@@ -50,7 +73,7 @@ export interface PeoplePage {
 export type PeopleQuery =
   | { kind: "campaign"; metric: CampaignMetric; campaignId: string }
   | { kind: "overview"; metric: OverviewMetric }
-  | { kind: "coverage"; segment: Segment | "total"; column?: CoverageColumn };
+  | { kind: "coverage"; segment: Segment | "total" | "abierto"; column?: CoverageColumn };
 
 export const ANALYTICS_PATHS = {
   analytics: "/v2/workspace/marketing/analytics",
@@ -87,8 +110,8 @@ export const SEGMENT_LABEL: Record<Segment, string> = {
 };
 
 export const COLUMN_LABEL: Record<CoverageColumn, string> = {
-  contacted: "Contactadas",
-  not_contacted: "Sin contactar",
+  contacted: "Les escribimos",
+  not_contacted: "Nunca les escribimos",
   blocked: "Bloqueadas",
 };
 

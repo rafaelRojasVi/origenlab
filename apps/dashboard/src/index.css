@@ -48,6 +48,18 @@
   --color-scrim: rgb(28 25 23 / 0.3);
   --color-skeleton-a: #f5f5f4;
   --color-skeleton-b: #ebe9e7;
+
+  /* Chart marks (Marketing). Validated with the dataviz validator per theme: lightness band,
+     CVD and normal-vision separation, ≥ 3:1 against the surface. «other» is the neutral bucket. */
+  --chart-ok: #0d9488;
+  --chart-bounce: #b91c1c;
+  --chart-optout: #d97706;
+  --chart-other: #57534e;
+  --chart-new: #2a78d6;
+  --chart-cat-1: #2a78d6;
+  --chart-cat-2: #eb6834;
+  --chart-cat-3: #6250d6;
+  --chart-cat-4: #e87ba4;
 }
 
 /* Dark theme: warm near-black surfaces (same stone family as light), lighter tonal status
@@ -93,7 +105,34 @@
     --color-scrim: rgb(0 0 0 / 0.6);
     --color-skeleton-a: #232120;
     --color-skeleton-b: #2e2b29;
+
+    --chart-ok: #14a394;
+    --chart-bounce: #d9363e;
+    --chart-optout: #c98500;
+    --chart-other: #6f6a65;
+    --chart-new: #3987e5;
+    --chart-cat-1: #3987e5;
+    --chart-cat-2: #d95926;
+    --chart-cat-3: #9085e9;
+    --chart-cat-4: #d55181;
   }
+}
+
+/* Charts grow in once; a reader who asked for less motion gets them still. */
+@keyframes chart-grow {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+@keyframes chart-grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.chart-bar-y { transform-box: fill-box; transform-origin: bottom; animation: chart-grow 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.chart-bar-x { transform-origin: left; animation: chart-grow-x 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.chart-arc { transition: stroke-dasharray 700ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 150ms; }
+@media (prefers-reduced-motion: reduce) {
+  .chart-bar-y, .chart-bar-x { animation: none; }
+  .chart-arc { transition: none; }
 }
 
 @keyframes crm-drawer-in {
