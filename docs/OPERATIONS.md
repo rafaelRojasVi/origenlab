@@ -2243,6 +2243,7 @@ Spec and rules:
 
 | Where | Variable | Notes |
 |---|---|---|
+| Render API | `ORIGENLAB_RENDER_API_KEY` | **Optional secret.** Render API key (Render → API keys, in the Render dashboard) for the `origenlab` web service. When set, `GET /v2/workspace/operations/infrastructure` lists services and their monthly outbound bandwidth via the Render public API (cached 10 min in-process). Without it the Render section returns `{"available": false}` and makes no HTTP call. Never logged, never returned in any response. |
 | Render API | `ORIGENLAB_V2_CHILECOMPRA_TICKET` | **Secret.** Mercado Público ticket for the tender detail by code. Falls back to `CHILECOMPRA_API_TICKET`; without either, «Nueva licitación» needs the buyer typed (422 `buyer_required`). Listed in `apps/api/.env.example`. |
 | `origenlab-mail-triage` | `ORIGENLAB_WORKER_BID_ENABLED` | `true` starts the tender child (default off). It keeps the `DRIVE_*` settings. |
 | `origenlab-mail-triage` | `ORIGENLAB_V2_CHILECOMPRA_TICKET` | **Secret**, the same ticket as the API's (falls back to `CHILECOMPRA_API_TICKET`). The tender child's «En Mercado Público» sweep reads the open-tender list with it; unset, each run logs `tender_discovery` `no_ticket` and nothing else changes. |

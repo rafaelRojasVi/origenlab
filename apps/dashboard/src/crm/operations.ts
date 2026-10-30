@@ -85,6 +85,68 @@ export interface OperationsPayload {
 
 export const fetchOperations = () => fetchJsonGet<OperationsPayload>(operatorApiUrl(OPERATIONS_PATH));
 
+// ---------------------------------------------------------------------------
+// «Costos e infraestructura» — GET /v2/workspace/operations/infrastructure
+// ---------------------------------------------------------------------------
+
+export const INFRASTRUCTURE_PATH = "/v2/workspace/operations/infrastructure";
+
+export interface InfraTable {
+  table: string;
+  bytes: number;
+}
+
+export interface InfraSupabase {
+  database_bytes: number | null;
+  database_bytes_error?: string;
+  largest_tables: InfraTable[] | null;
+  largest_tables_error?: string;
+  mail_bytes: number | null;
+  mail_count: number | null;
+  mail_bytes_this_month: number | null;
+  mail_bytes_error?: string;
+  plan: string;
+  plan_monthly_usd: number;
+  database_gb_included: number;
+  file_storage_gb_included: number;
+}
+
+export interface InfraService {
+  id: string;
+  name: string;
+  type: string;
+  plan: string;
+  suspended: boolean;
+  price_usd: number | null;
+  bandwidth_bytes_this_month: number;
+}
+
+export interface InfraRenderAvailable {
+  available: true;
+  services: InfraService[];
+  workspace_plan: string;
+  workspace_monthly_usd: number;
+  bandwidth_bytes_this_month: number;
+  bandwidth_gb_included: number;
+  bandwidth_overage_usd_per_100_gb: number;
+}
+
+export interface InfraRenderUnavailable {
+  available: false;
+  reason: string;
+}
+
+export type InfraRender = InfraRenderAvailable | InfraRenderUnavailable;
+
+export interface InfraPayload {
+  supabase: InfraSupabase;
+  render: InfraRender;
+  monthly_cost_usd: number;
+  plans_as_of: string;
+}
+
+export const fetchInfrastructure = () => fetchJsonGet<InfraPayload>(operatorApiUrl(INFRASTRUCTURE_PATH));
+
 export interface RuleGuide {
   /** When it applies, in one sentence. */
   cuando: string;

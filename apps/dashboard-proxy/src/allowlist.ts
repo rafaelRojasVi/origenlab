@@ -185,6 +185,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // rule actions. Same GET-only, operator-session rule; no address, subject or message body.
   // Nothing under it is reachable.
   /^\/v2\/workspace\/operations$/,
+  // «Costos e infraestructura»: Supabase DB size, largest tables, mail-file bytes, and Render
+  // services + bandwidth. GET-only, any signed-in operator. No secret is returned.
+  // Only this one literal sub-path is listed; nothing else under /operations/ is reachable.
+  /^\/v2\/workspace\/operations\/infrastructure$/,
   // Quote numbers already seen in the captured Gmail (number, first sighting, message count), so
   // the Resumen's quote-number box never suggests a number already sent. Same GET-only,
   // operator-session rule; no address, subject or institution. Nothing under it is reachable.

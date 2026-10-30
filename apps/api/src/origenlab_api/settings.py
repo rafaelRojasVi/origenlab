@@ -361,6 +361,11 @@ class Settings(BaseSettings):
     #: Unset → the organization read says `web_suggestions: null`. It names customers: never a path
     #: inside this public repository.
     v2_org_suggestions_file: str | None = None
+    #: Render API key (`ORIGENLAB_RENDER_API_KEY`). When set, `GET /v2/workspace/operations/infrastructure`
+    #: calls the Render public API to list services and their monthly outbound bandwidth.
+    #: Never logged, never returned in any response. Without it the Render section answers
+    #: ``{"available": false, "reason": "..."}`` and no external call is made.
+    render_api_key: SecretStr | None = None
 
     # --- Dashboard login -----------------------------------------------------
     # Google Workspace sign-in for the V2 boundary (apps/api/docs/PRODUCTION_AUTH.md,

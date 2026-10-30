@@ -725,6 +725,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
         "/v2/workspace/operations",
+        "/v2/workspace/operations/infrastructure",
         "/v2/workspace/mail-quote-numbers",
         "/v2/workspace/history",
         "/v2/workspace/marketing",
