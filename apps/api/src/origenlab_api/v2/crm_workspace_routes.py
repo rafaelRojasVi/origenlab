@@ -27,6 +27,7 @@ from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.case_documents import mail_storage_key
 from origenlab_api.v2.case_mail import MAX_EML_BYTES, read_message, valid_message_id
 from origenlab_api.v2.catalog.storage import StorageUnavailable
+from origenlab_api.v2.marketing_analytics import UnknownFigure
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute, sees_contact_addresses
 from origenlab_api.v2.crm_merge_preview import merge_preview
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
@@ -335,8 +336,12 @@ def get_marketing(operator: Operator, repo: Repo, request: Request) -> Any:
     # visible in the V2 database. Loaded from a checked-in JSON file; a bad file returns [].
     # The email preview comes from outside the repository (it carries contact addresses).
     content_dir = getattr(request.app.state, "v1_lane_content_dir", None)
+    # Once its sends are imported (v1_sent_campaign_import) the CRM row is the campaign: the
+    # plan is kept for the calendar (waves not sent yet) and marked, so the list shows it once.
+    imported = {c.get("v1_campaign_key") for c in body["campaigns"]} - {None}
     body["v1_lane_campaigns"] = [
-        v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)) for c in load_v1_lane_campaigns()
+        {**v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)), "imported": c.key in imported}
+        for c in load_v1_lane_campaigns()
     ]
     body["test_send"] = {
         "enabled": bool(getattr(request.app.state, "campaign_test_send_enabled", False)),
@@ -374,6 +379,35 @@ def get_marketing_campaign_blocks(operator: Operator, repo: Repo, request: Reque
     if getattr(operator, "role", None) == "viewer":
         return redact_for_viewer(body)
     return body
+
+
+@workspace_router.get("/marketing/analytics")
+def get_marketing_analytics(_: Operator, repo: Repo) -> Any:
+    """Reach, still-writable, bounces, bajas, open cases, per-campaign results and CRM coverage.
+
+    A read, computed from the CRM's facts (`marketing_analytics`); `null` means not measurable.
+    """
+    return repo.marketing_analytics()
+
+
+@workspace_router.get("/marketing/analytics/people")
+def get_marketing_analytics_people(
+    _: Operator,
+    repo: Repo,
+    metric: str | None = None,
+    campaign_id: UUID | None = None,
+    segment: str | None = None,
+    column: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Any:
+    """The people one figure counts: `?metric=` (with `campaign_id`, or an overview metric), or a
+    coverage `?segment=` (optionally `column=`). The route class masks addresses for a viewer."""
+    try:
+        return repo.marketing_people(metric=metric, campaign_id=None if campaign_id is None else str(campaign_id),
+                                     segment=segment, column=column, limit=limit, offset=offset)
+    except UnknownFigure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @workspace_router.get("/marketing/taxonomy")

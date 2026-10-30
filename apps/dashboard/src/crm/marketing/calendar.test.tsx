@@ -37,7 +37,7 @@ const base: CampaignSummary = {
   last_sent_at: null,
   recipients_by_state: {},
   send_attempts: [],
-  replies_recorded: 0,
+
   send_batches: [],
   origin: "native_v2",
   equipment_lines: [],
@@ -143,7 +143,7 @@ describe("MarketingOverview", () => {
     render(<MarketingOverview campaigns={CAMPAIGNS} today={TODAY} onOpen={onOpen} />);
     expect(screen.getByTestId("last-send")).toHaveTextContent("Último envío: hace 11 días");
     expect(screen.getByTestId("next-planned")).toHaveTextContent("Próxima campaña: en 5 días");
-    expect(screen.getByTestId("overview-counts")).toHaveTextContent("Enviadas1Borradores1Audiencia congelada1Planificadas1");
+    expect(screen.queryByTestId("overview-counts")).toBeNull(); // the status counters are gone (2026-10-29)
     expect(screen.getByText("Planificación interna · no programa el envío")).toBeInTheDocument();
     const text = screen.getByTestId("marketing-overview").textContent ?? "";
     expect(text).not.toMatch(/apertura|clic|respuesta/i);
@@ -659,7 +659,7 @@ describe("MarketingPage calendar flow", () => {
         const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, "http://localhost");
         const json = (b: unknown) => Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
         if (url.pathname.endsWith("/v2/workspace/marketing")) {
-          return json({ campaigns: CAMPAIGNS, contact_controls: [], replies_note: "", authoring: { drafts_enabled: false, planning_enabled: true } });
+          return json({ campaigns: CAMPAIGNS, contact_controls: [], authoring: { drafts_enabled: false, planning_enabled: true } });
         }
         if (url.pathname.endsWith("/v2/workspace/marketing/taxonomy")) return json(taxonomy);
         if (url.pathname.endsWith(`/campaigns/${IMPORTED.campaign_id}/archive`)) return json(importedArchive);

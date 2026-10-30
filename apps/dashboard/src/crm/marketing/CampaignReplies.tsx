@@ -1,6 +1,7 @@
 import { Badge, ExternalLink, Panel, ResourceGate, Skeleton, fmtDate, fmtInt, type Tone } from "../ui";
 import { useResource } from "../useResource";
 import { fetchCampaignReplies } from "./marketingApi";
+import { PeopleList } from "./PeopleList";
 import type { ReplyItem, RepliesResponse } from "./marketingTypes";
 
 const KIND: Record<ReplyItem["kind"], { label: string; tone: Tone }> = {
@@ -16,35 +17,25 @@ const ASSOCIATION: Record<ReplyItem["association"], string> = {
 };
 
 /**
- * Respuestas: only what the CRM stores with lineage. Nothing is fetched from Gmail. With nothing
- * stored the tab says the replies were never synchronized — it never shows a zero.
+ * Respuestas: who wrote back within the reply window, measured from the captured mail (the same
+ * figure as the campaign list), then what the CRM stores with lineage and the BAJA bookkeeping.
+ * Nothing is fetched from Gmail here.
  */
 export function CampaignReplies({ campaignId }: { campaignId: string }) {
   const [state, reload] = useResource(() => fetchCampaignReplies(campaignId), [campaignId]);
   return (
-    <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
-      {(d) => <Body d={d} />}
-    </ResourceGate>
+    <div className="space-y-3">
+      <PeopleList title="Respondieron (hasta 14 días después)" query={{ kind: "campaign", metric: "responded", campaignId }} onClose={() => undefined} closable={false} />
+      <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />}>
+        {(d) => <Body d={d} />}
+      </ResourceGate>
+    </div>
   );
 }
 
 function Body({ d }: { d: RepliesResponse }) {
   return (
     <div className="space-y-3" data-testid="campaign-replies">
-      {d.sync.state === "not_synced" ? (
-        <div role="status" className="rounded-lg border border-line bg-canvas-sunken/70 px-4 py-4" data-testid="replies-not-synced">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="neutral">Sin sincronizar</Badge>
-            <p className="text-[13px] font-semibold text-ink">{d.sync.label}</p>
-          </div>
-          <p className="mt-1.5 max-w-2xl text-xs leading-5 text-ink-muted">
-            El CRM no tiene ninguna respuesta guardada de esta campaña y nada lee Gmail automáticamente. Esto no significa que
-            nadie haya respondido: las respuestas simplemente no se han traído al CRM.
-          </p>
-        </div>
-      ) : (
-        <p className="text-xs text-ink-muted">{d.sync.label}</p>
-      )}
       {d.items.length ? (
         <Panel title="Respuestas guardadas" note={`${fmtInt(d.items.length)} registradas`} bodyClassName="divide-y divide-line">
           {d.items.map((i) => (
@@ -67,9 +58,8 @@ function Body({ d }: { d: RepliesResponse }) {
           ))}
         </Panel>
       ) : null}
-      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3" data-testid="reply-counts">
-        <Figure label="Respuestas guardadas" value={d.sync.state === "not_synced" ? null : d.counts.reply} />
-        <Figure label="BAJA / REMOVER con vínculo a un envío" value={d.sync.state === "not_synced" ? null : d.counts.baja} />
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="reply-counts">
+        <Figure label="BAJA / REMOVER con vínculo a un envío" value={d.counts.baja} />
         <Figure label="BAJA en revisión (por dirección)" value={d.counts.baja_pending_review} />
       </dl>
       <ul className="space-y-1 text-[11px] leading-4 text-ink-muted">
@@ -89,7 +79,7 @@ function Figure({ label, value }: { label: string; value: number | null }) {
   return (
     <div className="rounded-lg border border-line bg-canvas-raised px-3 py-2">
       <dt className="text-[11px] text-ink-faint">{label}</dt>
-      <dd className="text-lg font-semibold tabular-nums text-ink">{value === null ? <span className="text-sm font-medium text-ink-faint">No sincronizadas</span> : fmtInt(value)}</dd>
+      <dd className="text-lg font-semibold tabular-nums text-ink">{value === null ? <span className="text-ink-faint">—</span> : fmtInt(value)}</dd>
     </div>
   );
 }

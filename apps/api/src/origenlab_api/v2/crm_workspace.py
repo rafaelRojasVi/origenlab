@@ -62,6 +62,7 @@ from origenlab_api.v2.mail_rules import (
     mail_direction,
     web_form_enquirer,
 )
+from origenlab_api.v2.marketing_analytics import read_analytics, read_people
 from origenlab_api.v2.marketing_audience import (
     address_ref,
     addresses_in,
@@ -1602,9 +1603,13 @@ class CrmWorkspaceRepository:
                        c.audience_frozen_at::text, c.content_frozen_at::text, c.content_sha256,
                        c.audience_criteria,
                        case when c.origin_source_record_id is not null then 'imported_v1' else 'native_v2' end as origin,
+                       case when sr.dedupe_key like 'migration_manifest:v1-sent-campaign:%'
+                            then substr(sr.dedupe_key, length('migration_manifest:v1-sent-campaign:') + 1) end
+                         as v1_campaign_key,
                        m.address_norm as sender_address, m.display_name as sender_name
                   from outbound.campaign c
                   left join comms.mailbox m on m.id = c.mailbox_id
+                  left join evidence.source_record sr on sr.id = c.origin_source_record_id
                  order by c.created_at desc
                 """
             )
@@ -1666,7 +1671,6 @@ class CrmWorkspaceRepository:
             c["hold"] = campaign_hold(holds, c["campaign_id"])
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
-            c["replies_recorded"] = replies.get(c["campaign_id"], 0)
             c["send_batches"] = batches.get(c["campaign_id"], [])
             c["attempts_without_date"] = undated.get(c["campaign_id"], 0)
             t = totals.get(c["campaign_id"])
@@ -1697,7 +1701,6 @@ class CrmWorkspaceRepository:
             "campaigns": campaigns,
             "holds": {k: v for k, v in holds.items() if k != "by_campaign"},
             "contact_controls": controls,
-            "replies_note": ENTITY_NOTES["campaign_replies"]["note"],
             "storage": {"table": "outbound.campaign", "database": database},
         }
 
@@ -1907,6 +1910,16 @@ class CrmWorkspaceRepository:
             rows[0]["hold_refusals"] = list(cur.fetchone()[0])
             inputs = read_marketing_audience_inputs(cur)
         return plan_freeze(load_taxonomy(), inputs, rows[0], criteria, recontact_review=recontact_review)
+
+    def marketing_analytics(self) -> dict[str, Any]:
+        """Reach, blocks, responses, quote requests, cases and CRM coverage (marketing_analytics)."""
+        with self._read() as cur:
+            return read_analytics(cur)
+
+    def marketing_people(self, **query: Any) -> dict[str, Any]:
+        """The people behind one analytics figure — the rows that figure counts."""
+        with self._read() as cur:
+            return read_people(cur, **query)
 
     def campaign_blocks(self) -> dict[str, Any]:
         """Every active campaign safety block, the latest lifted ones, and each target's version."""

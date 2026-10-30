@@ -8,9 +8,13 @@ import { CampaignCalendar } from "../marketing/CampaignCalendar";
 import { CampaignDetail, type DetailTab } from "../marketing/CampaignDetail";
 import { CampaignEditor, type EditorSeed } from "../marketing/CampaignEditor";
 import { HoldsBanner } from "../marketing/CampaignHolds";
+import { CampaignRows } from "../marketing/CampaignRows";
+import { AnalyticsAlert, AnalyticsKpis, ContactBaseBar, CoverageCard } from "../marketing/MarketingAnalytics";
 import { MarketingOverview } from "../marketing/MarketingOverview";
+import { PeopleList } from "../marketing/PeopleList";
+import { fetchMarketingAnalytics, type MarketingAnalytics, type PeopleQuery } from "../marketing/analytics";
 import { SuppressionStatus } from "../marketing/SuppressionStatus";
-import { PLANNING_LABEL, fmtShortDay, isV1LaneFinished, mergeFinishedV1, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
+import { PLANNING_LABEL, fmtShortDay, isV1LaneFinished, relativeDay, santiagoTime, todayInSantiago } from "../marketing/calendar";
 import { EmailFrame } from "../marketing/EmailFrame";
 import { V1LaneCampaignCard } from "../marketing/V1LaneCampaignCard";
 import { NEVER_SENT_LABEL, TOTAL_HINT, TOTAL_LABEL, cardTotals, neverSent, isNeverSentHistorical } from "../marketing/campaignTotals";
@@ -19,13 +23,11 @@ import type { CampaignContent, EquipmentTaxonomy } from "../marketing/marketingT
 import {
   Badge,
   EmptyState,
-  NotImportedState,
   PageHeader,
   Panel,
   ResourceGate,
   Segmented,
   Skeleton,
-  StatLine,
   fmtDate,
   fmtInt,
 } from "../ui";
@@ -68,6 +70,10 @@ export function MarketingPage() {
   const mayAuthor = useMayAuthorCampaigns();
   const [state, reload] = useResource(fetchMarketing);
   const [taxonomyState] = useResource(fetchTaxonomy);
+  const [analyticsState] = useResource(fetchMarketingAnalytics);
+  const analytics = analyticsState.kind === "ready" ? analyticsState.data : null;
+  const [people, setPeople] = useState<{ query: PeopleQuery; title: string } | null>(null);
+  const openPeople = (query: PeopleQuery, title: string) => setPeople({ query, title });
   const [tab, setTab] = useState<Tab>("campanas");
   const [view, setView] = useState<View>({ kind: "list" });
   const [openError, setOpenError] = useState<string | null>(null);
@@ -113,7 +119,7 @@ export function MarketingPage() {
     <div className="space-y-4">
       <PageHeader
         title="Marketing"
-        subtitle="Campañas de correo en el CRM y audiencias por interés en equipos. Sólo cifras registradas; nada estimado. Nada se envía desde aquí: este panel no envía campañas."
+        subtitle="Campañas enviadas, a quién llegaron y a quién nos queda escribir. Sólo cifras registradas; nada estimado. Este panel no envía campañas."
         actions={
           mayAuthor && tab !== "audiencias" && tab !== "bajas" && view.kind === "list" ? (
             <button type="button" onClick={openNew} className="h-7 rounded-md bg-ink px-3 text-xs font-medium text-on-solid hover:bg-ink-strong">
@@ -122,6 +128,16 @@ export function MarketingPage() {
           ) : null
         }
       />
+      {view.kind === "list" && tab === "campanas" && analytics ? (
+        <div className="space-y-3" data-testid="marketing-analytics">
+          <AnalyticsAlert data={analytics} />
+          <AnalyticsKpis data={analytics} onOpen={openPeople} />
+          <ContactBaseBar data={analytics} />
+        </div>
+      ) : null}
+      {people && view.kind === "list" && tab === "campanas" ? (
+        <PeopleList key={JSON.stringify(people.query)} title={people.title} query={people.query} onClose={() => setPeople(null)} />
+      ) : null}
       {state.kind === "ready" && view.kind === "list" && tab !== "audiencias" && tab !== "bajas" ? (
         <MarketingOverview
           campaigns={state.data.campaigns}
@@ -129,7 +145,7 @@ export function MarketingPage() {
           v1LaneCampaigns={state.data.v1_lane_campaigns}
         />
       ) : null}
-      {view.kind === "list" ? <HoldsBanner onChanged={() => reload()} /> : null}
+      {view.kind === "list" && tab !== "bajas" ? <HoldsBanner onlyGeneral onChanged={() => reload()} /> : null}
       <Segmented
         label="Sección de marketing"
         value={tab}
@@ -140,8 +156,8 @@ export function MarketingPage() {
         options={[
           { value: "campanas", label: "Campañas" },
           { value: "calendario", label: "Calendario" },
+          { value: "bajas", label: "Bajas y rebotes" },
           { value: "audiencias", label: "Audiencias por equipo" },
-          { value: "bajas", label: "Bajas" },
         ]}
       />
       {openError ? (
@@ -150,7 +166,11 @@ export function MarketingPage() {
         </p>
       ) : null}
       {tab === "bajas" ? (
-        <SuppressionStatus />
+        <div className="space-y-4">
+          <HoldsBanner onChanged={() => reload()} />
+          <SuppressionStatus />
+          {state.kind === "ready" ? <ContactControls controls={state.data.contact_controls} /> : null}
+        </div>
       ) : tab === "audiencias" ? (
         taxonomy ? <AudienceBuilder taxonomy={taxonomy} /> : <TaxonomyGate state={taxonomyState} />
       ) : view.kind === "detail" ? (
@@ -227,7 +247,16 @@ export function MarketingPage() {
         </div>
       ) : (
         <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={3} cards />}>
-          {(data) => <Body data={data} mayAuthor={mayAuthor} onOpen={(id) => void openStored(id)} onHistory={openDetail} />}
+          {(data) => (
+            <Body
+              data={data}
+              analytics={analytics}
+              mayAuthor={mayAuthor}
+              onOpen={(id) => void openStored(id)}
+              onHistory={openDetail}
+              onPeople={openPeople}
+            />
+          )}
         </ResourceGate>
       )}
     </div>
@@ -242,46 +271,43 @@ function TaxonomyGate({ state }: { state: ResourceState<EquipmentTaxonomy> }) {
   );
 }
 
+function ContactControls({ controls }: { controls: MarketingResponse["contact_controls"] }) {
+  return (
+    <Panel title="Controles de contacto" note="se aplican antes de cualquier envío" bodyClassName="divide-y divide-line">
+      {controls.map((cc) => (
+        <div key={`${cc.kind}:${cc.scope}`} className="flex items-center gap-3 px-3 py-2">
+          <span className="min-w-0 flex-1 text-[13px] text-ink">{CONTROL_LABEL[`${cc.kind}:${cc.scope}`] ?? `${cc.kind} · ${cc.scope}`}</span>
+          <span className="text-[13px] font-semibold tabular-nums text-ink">{fmtInt(cc.count)}</span>
+        </div>
+      ))}
+    </Panel>
+  );
+}
+
+/** A campaign that went out: it is a row with its measured results, not a card. */
+const wasSent = (c: CampaignSummary) => c.status !== "draft" && c.status !== "audience_frozen" && Boolean(c.first_sent_at);
+
 function Body({
   data,
+  analytics,
   mayAuthor,
   onOpen,
   onHistory,
+  onPeople,
 }: {
   data: MarketingResponse;
+  analytics: MarketingAnalytics | null;
   mayAuthor: boolean;
   onOpen: (id: string) => void;
   onHistory: (id: string, tab?: DetailTab, total?: TotalKey) => void;
+  onPeople: (query: PeopleQuery, title: string) => void;
 }) {
   const [showNeverSent, setShowNeverSent] = useState(false);
-  const drafts = data.authoring?.drafts_enabled;
   const storage = data.storage;
   const fixture = storage ? /^origenlab_test_/.test(storage.database) : false;
-  const note = (
-    <>
-    {fixture ? (
-      <p role="alert" className="rounded-md border border-bad/40 bg-bad-bg px-3 py-2 text-xs font-medium text-bad" data-testid="fixture-warning">
-        Base de pruebas <code>{storage?.database}</code>: estas campañas son datos inventados de desarrollo, no historia real.
-      </p>
-    ) : null}
-    <p className="text-[11px] text-ink-faint" data-testid="campaign-storage-note">
-      Las campañas y borradores se guardan en <code>{storage?.table ?? "outbound.campaign"}</code>
-      {storage ? (
-        <>
-          {" "}
-          de la base <code>{storage.database}</code>
-        </>
-      ) : null}
-      .{" "}
-      {drafts
-        ? "El guardado de borradores está habilitado en este entorno."
-        : "El guardado de borradores no está habilitado en este entorno: un borrador nuevo existe sólo en la pestaña."}
-    </p>
-    </>
-  );
   const today = todayInSantiago();
-  const v1All = data.v1_lane_campaigns ?? [];
-  // Current and upcoming V1-lane campaigns stay on top; finished ones join the sent campaigns below.
+  // V1-lane plans the CRM has not imported yet (the API drops a plan once its sends are in).
+  const v1All = (data.v1_lane_campaigns ?? []).filter((c) => !c.imported);
   const v1Lane = v1All
     .filter((c) => !isV1LaneFinished(c, today))
     .map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />);
@@ -289,6 +315,8 @@ function Body({
   // Historical V1 campaigns that never went out are hidden (the record stays in the CRM).
   const hidden = data.campaigns.filter(isNeverSentHistorical);
   const campaigns = showNeverSent ? data.campaigns : data.campaigns.filter((c) => !isNeverSentHistorical(c));
+  const sent = campaigns.filter(wasSent);
+  const unsent = campaigns.filter((c) => !wasSent(c));
   const revealNeverSent =
     hidden.length > 0 ? (
       <button type="button" onClick={() => setShowNeverSent((v) => !v)} className="text-xs font-medium text-accent hover:underline">
@@ -297,69 +325,40 @@ function Body({
           : `Mostrar ${hidden.length} ${hidden.length === 1 ? "campaña nunca enviada" : "campañas nunca enviadas"}`}
       </button>
     ) : null;
-  if (campaigns.length === 0) {
-    return (
-      <>
-        {v1Lane}
-        {v1Finished.map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />)}
-        {note}
-        <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>
-        {revealNeverSent}
-      </>
-    );
-  }
-  const totalSent = campaigns.reduce((n, c) => n + (c.recipients_by_state.sent ?? 0), 0);
-  const totalBounced = campaigns.reduce((n, c) => n + (c.recipients_by_state.bounced ?? 0), 0);
-  const replies = campaigns.reduce((n, c) => n + c.replies_recorded, 0);
-  const sentRecipients = campaigns.reduce((n, c) => n + (c.totals?.sent ?? 0), 0);
   return (
     <>
+      {fixture ? (
+        <p role="alert" className="rounded-md border border-bad/40 bg-bad-bg px-3 py-2 text-xs font-medium text-bad" data-testid="fixture-warning">
+          Base de pruebas <code>{storage?.database}</code>: estas campañas son datos inventados de desarrollo, no historia real.
+        </p>
+      ) : null}
       {v1Lane}
-      <StatLine
-        items={[
-          { label: "Campañas", value: campaigns.length },
-          { label: "Borradores", value: campaigns.filter((c) => c.status === "draft").length },
-          { label: "Destinatarios enviados", value: fmtInt(sentRecipients || totalSent), title: "Destinatarios con un envío aceptado por Gmail" },
-          { label: "Rebotes registrados", value: fmtInt(totalBounced), tone: totalBounced ? "warn" : undefined },
-          { label: "Respuestas", value: replies === 0 ? "no sincronizadas desde Gmail" : fmtInt(replies) },
-        ]}
-      />
-      {note}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-        {mergeFinishedV1(campaigns, v1Finished).map((item) =>
-          item.kind === "v1" ? (
-            <div key={item.campaign.key} className="md:col-span-2 2xl:col-span-3">
-              <V1LaneCampaignCard campaign={item.campaign} testSend={data.test_send} />
-            </div>
-          ) : (
+      {sent.length ? (
+        <CampaignRows campaigns={sent} analytics={analytics} onDetail={(id) => onHistory(id)} onPeople={onPeople} />
+      ) : null}
+      {v1Finished.map((c) => <V1LaneCampaignCard key={c.key} campaign={c} testSend={data.test_send} />)}
+      {unsent.length ? (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+          {unsent.map((c) => (
             <CampaignCard
-              key={item.campaign.campaign_id}
-              c={item.campaign}
+              key={c.campaign_id}
+              c={c}
               mayAuthor={mayAuthor}
-              onOpen={() =>
-                mayAuthor && (item.campaign.status === "draft" || item.campaign.status === "audience_frozen")
-                  ? onOpen(item.campaign.campaign_id)
-                  : onHistory(item.campaign.campaign_id)
-              }
-              onHistory={(tab, total) => onHistory(item.campaign.campaign_id, tab, total)}
+              onOpen={() => (mayAuthor && (c.status === "draft" || c.status === "audience_frozen") ? onOpen(c.campaign_id) : onHistory(c.campaign_id))}
+              onHistory={(tab, total) => onHistory(c.campaign_id, tab, total)}
             />
-          ),
-        )}
-      </div>
+          ))}
+        </div>
+      ) : null}
+      {!sent.length && !unsent.length && !v1All.length ? (
+        <EmptyState title="Sin campañas">El CRM no tiene campañas registradas.</EmptyState>
+      ) : null}
       {revealNeverSent}
-      {replies === 0 ? <NotImportedState title="Respuestas a campañas">{data.replies_note}</NotImportedState> : null}
-      <p className="text-[11px] text-ink-faint">
-        Aperturas y clics no se registran en el CRM y no se muestran. El estado de entrega de cada envío figura como «pendiente»
-        porque el CRM no ha recibido confirmaciones de entrega.
+      {analytics ? <CoverageCard data={analytics} onOpen={onPeople} /> : null}
+      <p className="text-[11px] text-ink-faint" data-testid="analytics-footnote">
+        — = aún no medido. «Respondieron» cuenta a quien escribió hasta {analytics?.reply_window_days ?? 14} días después de recibir la
+        campaña (sin rebotes, respuestas automáticas ni bajas). Aperturas y clics no se registran.
       </p>
-      <Panel title="Controles de contacto" note="outbound.contact_control — se aplican antes de cualquier envío" bodyClassName="divide-y divide-line">
-        {data.contact_controls.map((cc) => (
-          <div key={`${cc.kind}:${cc.scope}`} className="flex items-center gap-3 px-3 py-2">
-            <span className="min-w-0 flex-1 text-[13px] text-ink">{CONTROL_LABEL[`${cc.kind}:${cc.scope}`] ?? `${cc.kind} · ${cc.scope}`}</span>
-            <span className="text-[13px] font-semibold tabular-nums text-ink">{fmtInt(cc.count)}</span>
-          </div>
-        ))}
-      </Panel>
     </>
   );
 }
