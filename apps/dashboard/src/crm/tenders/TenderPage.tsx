@@ -10,6 +10,7 @@ import { AnnexUpload } from "./AnnexUpload";
 import { ChecklistList, ResumenList } from "./TenderReading";
 import { FilledForms, PackageBlock, SpecSheets } from "./TenderOutputs";
 import { TenderStatusControl } from "./TenderStatusControl";
+import { STEP_TARGET, TenderSteps, tenderSteps } from "./TenderSteps";
 import {
   createTenderOfferQuote,
   newTenderCommandKey,
@@ -31,6 +32,8 @@ import { POLL_MS, useTenderPage, type PollTrouble } from "./useTenderPage";
  * it there, let the machine fill the forms («Llenar formularios»), then download the package. Each
  * step says plainly what it needs when it cannot run yet. The page is read again every few seconds
  * only while the machine is working, and the line saying so is announced.
+ *
+ * Beside the work (above it on a narrow screen), «Pasos» shows the six steps and the next one.
  *
  * Sales and admin only: a viewer sees one line and nothing is read (the API refuses them the page).
  */
@@ -289,6 +292,7 @@ function TenderBody({
             : capReached
               ? capText(cap)
               : null;
+  const steps = useMemo(() => tenderSteps(data), [data]);
   const checklist = fill?.result?.checklist?.length ? fill.result.checklist : read?.result?.checklist ?? [];
   const items = read?.result?.items ?? [];
 
@@ -342,164 +346,190 @@ function TenderBody({
         {trouble ? <p className="px-1 py-1 text-[13px] font-medium text-warn">{trouble === "stopped" ? STOPPED : RETRYING}</p> : null}
       </div>
 
-      <Section title="Anexos" named>
-        <Card>
-          {annexes.length === 0 ? (
-            <Muted>Aún no hay anexos. Sube las bases, los formularios y las especificaciones técnicas.</Muted>
-          ) : (
-            <ul className="divide-y divide-line rounded-lg border border-line bg-canvas-raised">
-              {annexes.map((a) => (
-                <AnnexRow key={a.document_id} tenderId={tender.id} annex={a} onRemoved={reload} />
-              ))}
-            </ul>
-          )}
-          <AnnexUpload tenderId={tender.id} onUploaded={reload} />
-          {!read ? (
-            <StepButton
-              label="Preparar oferta"
-              reason={readReason}
-              busy={prepare.busy === "read"}
-              busyLabel="Pidiendo…"
-              problem={prepare.problems.read}
-              onClick={() => void prepare.run("read", null)}
-            />
-          ) : null}
-        </Card>
-      </Section>
+      <div className="grid min-w-0 gap-6 lg:grid-cols-[15.5rem_minmax(0,1fr)] lg:items-start">
+        <aside className="min-w-0 lg:sticky lg:top-4">
+          <TenderSteps steps={steps} />
+        </aside>
+        <div className="min-w-0 space-y-6">
+          <Anchor id={STEP_TARGET.anexos}>
+            <Section title="Anexos" named>
+              <Card>
+                {annexes.length === 0 ? (
+                  <Muted>Aún no hay anexos. Sube las bases, los formularios y las especificaciones técnicas.</Muted>
+                ) : (
+                  <ul className="divide-y divide-line rounded-lg border border-line bg-canvas-raised">
+                    {annexes.map((a) => (
+                      <AnnexRow key={a.document_id} tenderId={tender.id} annex={a} onRemoved={reload} />
+                    ))}
+                  </ul>
+                )}
+                <AnnexUpload tenderId={tender.id} onUploaded={reload} />
+                {!read ? (
+                  <StepButton
+                    label="Preparar oferta"
+                    reason={readReason}
+                    busy={prepare.busy === "read"}
+                    busyLabel="Pidiendo…"
+                    problem={prepare.problems.read}
+                    onClick={() => void prepare.run("read", null)}
+                  />
+                ) : null}
+              </Card>
+            </Section>
+          </Anchor>
 
-      <Section
-        title="Resumen"
-        named
-        aside={
-          read && !readRunning ? (
-            <StepButton
-              label="Regenerar"
-              ariaLabel="Regenerar la lectura de los anexos"
-              variant="secondary"
-              reason={readReason}
-              busy={prepare.busy === "read"}
-              busyLabel="Pidiendo…"
-              problem={prepare.problems.read}
-              onClick={() => void prepare.run("read", read.id)}
-            />
-          ) : undefined
-        }
-      >
-        {!read ? (
-          <Muted>Aún no se leen los anexos. Súbelos y usa «Preparar oferta».</Muted>
-        ) : readRunning ? (
-          <Muted>El resumen aparecerá aquí cuando termine la lectura.</Muted>
-        ) : read.status !== "ready" ? (
-          <Failure prep={read} cap={cap} />
-        ) : (
-          <ResumenList resumen={read.result?.resumen ?? {}} names={names} />
-        )}
-      </Section>
+          <Anchor id={STEP_TARGET.lectura}>
+            <Section
+              title="Resumen"
+              named
+              aside={
+                read && !readRunning ? (
+                  <StepButton
+                    label="Regenerar"
+                    ariaLabel="Regenerar la lectura de los anexos"
+                    variant="secondary"
+                    reason={readReason}
+                    busy={prepare.busy === "read"}
+                    busyLabel="Pidiendo…"
+                    problem={prepare.problems.read}
+                    onClick={() => void prepare.run("read", read.id)}
+                  />
+                ) : undefined
+              }
+            >
+              {!read ? (
+                <Muted>Aún no se leen los anexos. Súbelos y usa «Preparar oferta».</Muted>
+              ) : readRunning ? (
+                <Muted>El resumen aparecerá aquí cuando termine la lectura.</Muted>
+              ) : read.status !== "ready" ? (
+                <Failure prep={read} cap={cap} />
+              ) : (
+                <ResumenList resumen={read.result?.resumen ?? {}} names={names} />
+              )}
+            </Section>
+          </Anchor>
 
-      <Section title="Checklist" named>
-        {checklist.length > 0 || readReady ? (
-          <ChecklistList lines={checklist} names={names} />
-        ) : (
-          <Muted>La lista de documentos sale de la lectura de los anexos.</Muted>
-        )}
-      </Section>
+          <Section title="Checklist" named>
+            {checklist.length > 0 || readReady ? (
+              <ChecklistList lines={checklist} names={names} />
+            ) : (
+              <Muted>La lista de documentos sale de la lectura de los anexos.</Muted>
+            )}
+          </Section>
 
-      <Section title="Oferta económica" named>
-        <Card>
-          {offer ? (
-            <div className="space-y-2 rounded-lg border border-line bg-canvas-raised px-3 py-2">
-              <p className="flex flex-wrap items-center gap-2 text-[13.5px] text-ink">
-                <span className="font-medium">Cotización {offer.number}</span>
-                <Badge tone={offerApproved ? "good" : "neutral"}>{labelOf(QUOTE_STATUS_ES, offer.status, "Sin estado")}</Badge>
-              </p>
-              <dl className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-ink-muted">
-                <Money label="Neto" value={offer.neto} />
-                <Money label="IVA" value={offer.iva} />
-                <Money label="Total" value={offer.total} />
-              </dl>
-              {!offerApproved ? (
-                <p className="text-[12.5px] text-ink-muted">Pon los precios y aprueba la cotización en el Cotizador para poder llenar los formularios.</p>
-              ) : null}
-              <a
-                href={crmHash("cotizador", offer.quote_id)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  toCotizador(offer.quote_id);
-                }}
-                className={`${buttonClass("primary")} min-h-[44px] px-4 text-[13px]`}
-              >
-                Abrir en Cotizador
-              </a>
-            </div>
-          ) : (
-            <StepButton
-              label="Crear oferta económica"
-              reason={readReady ? null : NEEDS_READ}
-              busy={offerBusy}
-              busyLabel="Creando…"
-              problem={offerProblem ?? undefined}
-              onClick={() => void createOffer()}
-            />
-          )}
-          {readReady && items.length > 0 ? <ItemsList items={items} productNames={productNames} match={read?.result?.match?.estado} /> : null}
-        </Card>
-      </Section>
+          <Anchor id={STEP_TARGET.oferta}>
+            <Section title="Oferta económica" named>
+              <Card>
+                {offer ? (
+                  <div className="space-y-2 rounded-lg border border-line bg-canvas-raised px-3 py-2">
+                    <p className="flex flex-wrap items-center gap-2 text-[13.5px] text-ink">
+                      <span className="font-medium">Cotización {offer.number}</span>
+                      <Badge tone={offerApproved ? "good" : "neutral"}>{labelOf(QUOTE_STATUS_ES, offer.status, "Sin estado")}</Badge>
+                    </p>
+                    <dl className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-ink-muted">
+                      <Money label="Neto" value={offer.neto} />
+                      <Money label="IVA" value={offer.iva} />
+                      <Money label="Total" value={offer.total} />
+                    </dl>
+                    {!offerApproved ? (
+                      <p className="text-[12.5px] text-ink-muted">Pon los precios y aprueba la cotización en el Cotizador para poder llenar los formularios.</p>
+                    ) : null}
+                    <a
+                      href={crmHash("cotizador", offer.quote_id)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        toCotizador(offer.quote_id);
+                      }}
+                      className={`${buttonClass("primary")} min-h-[44px] px-4 text-[13px]`}
+                    >
+                      Abrir en Cotizador
+                    </a>
+                  </div>
+                ) : (
+                  <StepButton
+                    label="Crear oferta económica"
+                    reason={readReady ? null : NEEDS_READ}
+                    busy={offerBusy}
+                    busyLabel="Creando…"
+                    problem={offerProblem ?? undefined}
+                    onClick={() => void createOffer()}
+                  />
+                )}
+                {readReady && items.length > 0 ? <ItemsList items={items} productNames={productNames} match={read?.result?.match?.estado} /> : null}
+              </Card>
+            </Section>
+          </Anchor>
 
-      <Section
-        title="Formularios llenados"
-        named
-        aside={
-          fill && !fillRunning ? (
-            <StepButton
-              label="Regenerar"
-              ariaLabel="Regenerar los formularios"
-              variant="secondary"
-              reason={fillReason}
-              busy={prepare.busy === "fill"}
-              busyLabel="Pidiendo…"
-              problem={prepare.problems.fill}
-              onClick={() => void prepare.run("fill", fill.id)}
-            />
-          ) : undefined
-        }
-      >
-        <Card>
-          {!fill ? (
-            <StepButton
-              label="Llenar formularios"
-              reason={fillReason}
-              busy={prepare.busy === "fill"}
-              busyLabel="Pidiendo…"
-              problem={prepare.problems.fill}
-              onClick={() => void prepare.run("fill", null)}
-            />
-          ) : fillRunning ? (
-            <Muted>Los formularios aparecerán aquí cuando termine el llenado.</Muted>
-          ) : (
-            <>
-              {fill.status !== "ready" ? <Failure prep={fill} cap={cap} /> : null}
-              <FilledForms tenderId={tender.id} fill={fill} />
-            </>
-          )}
-        </Card>
-      </Section>
+          <Anchor id={STEP_TARGET.formularios}>
+            <Section
+              title="Formularios llenados"
+              named
+              aside={
+                fill && !fillRunning ? (
+                  <StepButton
+                    label="Regenerar"
+                    ariaLabel="Regenerar los formularios"
+                    variant="secondary"
+                    reason={fillReason}
+                    busy={prepare.busy === "fill"}
+                    busyLabel="Pidiendo…"
+                    problem={prepare.problems.fill}
+                    onClick={() => void prepare.run("fill", fill.id)}
+                  />
+                ) : undefined
+              }
+            >
+              <Card>
+                {!fill ? (
+                  <StepButton
+                    label="Llenar formularios"
+                    reason={fillReason}
+                    busy={prepare.busy === "fill"}
+                    busyLabel="Pidiendo…"
+                    problem={prepare.problems.fill}
+                    onClick={() => void prepare.run("fill", null)}
+                  />
+                ) : fillRunning ? (
+                  <Muted>Los formularios aparecerán aquí cuando termine el llenado.</Muted>
+                ) : (
+                  <>
+                    {fill.status !== "ready" ? <Failure prep={fill} cap={cap} /> : null}
+                    <FilledForms tenderId={tender.id} fill={fill} />
+                  </>
+                )}
+              </Card>
+            </Section>
+          </Anchor>
 
-      <Section title="Fichas técnicas" named>
-        {fill && !fillRunning ? (
-          <SpecSheets tenderId={tender.id} fill={fill} productNames={productNames} />
-        ) : (
-          <Muted>Las fichas de los productos de la oferta se adjuntan al llenar los formularios.</Muted>
-        )}
-      </Section>
+          <Section title="Fichas técnicas" named>
+            {fill && !fillRunning ? (
+              <SpecSheets tenderId={tender.id} fill={fill} productNames={productNames} />
+            ) : (
+              <Muted>Las fichas de los productos de la oferta se adjuntan al llenar los formularios.</Muted>
+            )}
+          </Section>
 
-      <Section title="Paquete" named>
-        {fill && !fillRunning ? (
-          <PackageBlock tenderId={tender.id} fill={fill} />
-        ) : (
-          <Muted>El paquete (.zip) con todo lo que se entrega se arma al llenar los formularios.</Muted>
-        )}
-      </Section>
+          <Anchor id={STEP_TARGET.postular}>
+            <Section title="Paquete" named>
+              {fill && !fillRunning ? (
+                <PackageBlock tenderId={tender.id} fill={fill} />
+              ) : (
+                <Muted>El paquete (.zip) con todo lo que se entrega se arma al llenar los formularios.</Muted>
+              )}
+            </Section>
+          </Anchor>
+        </div>
+      </div>
     </>
+  );
+}
+
+/** A step's place on the page, for «Ir al paso»; leaves room above it when scrolled to. */
+function Anchor({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <div id={id} className="scroll-mt-4">
+      {children}
+    </div>
   );
 }
 
@@ -515,6 +545,9 @@ function Money({ label, value }: { label: string; value: number | null }) {
     </div>
   );
 }
+
+/** What the read writes when the anexos do not say: a unit «No se indica» is left out, not shown. */
+const NOT_SAID = "No se indica";
 
 function ItemsList({
   items,
@@ -533,14 +566,29 @@ function ItemsList({
       </p>
       <ol className="divide-y divide-line rounded-lg border border-line bg-canvas-raised">
         {items.map((it, i) => (
-          <li key={`${it.linea}-${i}`} className="flex min-w-0 flex-col gap-0.5 px-3 py-2 text-[13px]">
-            <span className="break-words text-ink">
+          <li key={`${it.linea}-${i}`} className="flex min-w-0 flex-col gap-0.5 px-4 py-2.5 text-[13px]">
+            <span className="break-words font-medium text-ink">
               {it.linea}. {it.descripcion}
             </span>
             <span className="text-[12px] text-ink-muted">
-              {[it.cantidad, it.unidad].filter(Boolean).join(" ") || "Cantidad sin indicar"}
+              {[it.cantidad, it.unidad].filter((v) => v && v !== NOT_SAID).join(" ") || "Cantidad sin indicar"}
               {it.product_id && productNames.get(it.product_id) ? ` · Sugerido: ${productNames.get(it.product_id)}` : ""}
             </span>
+            {it.requisitos?.length ? (
+              <details className="group mt-0.5">
+                <summary className="inline-flex min-h-[32px] cursor-pointer list-none items-center gap-1 text-[12.5px] font-medium text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 [&::-webkit-details-marker]:hidden">
+                  <span aria-hidden="true" className="transition-transform group-open:rotate-90 motion-reduce:transition-none">›</span>
+                  Requisitos técnicos ({it.requisitos.length})
+                </summary>
+                <ul className="mt-1 max-w-prose list-disc space-y-0.5 pl-5 text-[12.5px] leading-relaxed text-ink marker:text-ink-faint">
+                  {it.requisitos.map((r, j) => (
+                    <li key={j} className="break-words">
+                      {r}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </li>
         ))}
       </ol>
