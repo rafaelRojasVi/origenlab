@@ -469,6 +469,8 @@ export interface QuoteListRow {
   /** `authored` here, `historical_import` for a quote brought in from before the app. */
   origin: string;
   opportunity: { id: string; title: string | null; closed: boolean };
+  /** Once its case is won: «Ganadora» or «No elegida» (an alternative). Absent from an older API. */
+  outcome?: "won" | "not_chosen" | null;
   client: { organization_id: string; name: string } | null;
   /** The first item descriptions and how many there are: the revision's own, or its read PDF's (`amount_source`). */
   items: { first: string[]; count: number };

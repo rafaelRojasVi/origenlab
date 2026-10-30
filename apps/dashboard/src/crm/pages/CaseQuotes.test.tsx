@@ -155,6 +155,35 @@ describe("several quotations on one case", () => {
     expect(within(screen.getByTestId("case-links")).getByRole("link", { name: /PDF 00998-26 r2/ }))
       .toHaveAttribute("href", "https://drive.google.com/file/d/f98/view");
   });
+
+  // Owner 2026-10-30: alternatives — once won, the winner leads and the others read «No elegida».
+  const won = () => {
+    const c = three();
+    return card({
+      ...c,
+      stage: "won",
+      quotes: c.quotes.map((q) => ({ ...q, outcome: q.quote_id === "q-1" ? "won" as const : "not_chosen" as const })),
+      money: [{ currency: "CLP", net_total: "1000", quote_number: "00997-26", revision_no: 2, sent_at: "2026-09-07T12:00:00Z", quote_count: 3 }],
+    });
+  };
+
+  it("once won, shows the winning quotation and says the others were not chosen", () => {
+    render(<CaseMoneySummary card={won()} />);
+    const box = screen.getByTestId("case-money");
+    expect(box).toHaveTextContent("Cotización ganadora");
+    expect(box).toHaveTextContent("00997-26");
+    expect(box).toHaveTextContent("Las otras 2 cotizaciones no fueron elegidas y no se suman.");
+  });
+
+  it("once won, lists the winner first as «Ganadora» and the others as «No elegida»", () => {
+    render(<QuoteList card={won()} />);
+    const blocks = screen.getAllByTestId("quote-block");
+    expect(blocks.map((b) => b.querySelector(".font-mono")?.textContent)).toEqual(["00997-26", "00998-26", "00999-26"]);
+    expect(within(blocks[0]).getByText("Ganadora")).toBeInTheDocument();
+    expect(within(blocks[1]).getByText("No elegida")).toBeInTheDocument();
+    expect(within(blocks[2]).getByText("No elegida")).toBeInTheDocument();
+    expect(screen.queryByText("Última")).not.toBeInTheDocument();
+  });
 });
 
 describe("«Abrir en Cotizador»", () => {
