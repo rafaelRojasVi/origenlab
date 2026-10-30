@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
 import { crmHash, type CrmSection } from "../crmRoute";
@@ -33,9 +33,19 @@ import { closingLabel, closingWhen } from "./tenderTime";
  */
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
+/** One loader per notice, kept, so the page memory (`useResource`) recognises a notice reopened. */
+const noticeLoaders = new Map<string, () => Promise<DiscoveredNoticePage>>();
+function noticeLoader(noticeId: string): () => Promise<DiscoveredNoticePage> {
+  let load = noticeLoaders.get(noticeId);
+  if (!load) {
+    load = () => fetchDiscoveredTender(noticeId);
+    noticeLoaders.set(noticeId, load);
+  }
+  return load;
+}
+
 export function DiscoveredTenderPage({ noticeId, navigate, now }: { noticeId: string; navigate: Navigate; now?: Date }) {
-  const load = useCallback(() => fetchDiscoveredTender(noticeId), [noticeId]);
-  const [state, reload] = useResource(load, [noticeId]);
+  const [state, reload] = useResource(noticeLoader(noticeId), [noticeId]);
   const { session } = useAuthSession();
   const mayOpen = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
   const [asking, setAsking] = useState(false);

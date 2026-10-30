@@ -10,7 +10,7 @@ import { AnnexUpload } from "./AnnexUpload";
 import { ChecklistList, ResumenList } from "./TenderReading";
 import { FilledForms, PackageBlock, SpecSheets } from "./TenderOutputs";
 import { TenderStatusControl } from "./TenderStatusControl";
-import { STEP_TARGET, TenderSteps, tenderSteps } from "./TenderSteps";
+import { STEP_TARGET, TenderSteps, factsOfPage, tenderSteps } from "./TenderSteps";
 import {
   createTenderOfferQuote,
   newTenderCommandKey,
@@ -292,7 +292,7 @@ function TenderBody({
             : capReached
               ? capText(cap)
               : null;
-  const steps = useMemo(() => tenderSteps(data), [data]);
+  const steps = useMemo(() => tenderSteps(factsOfPage(data)), [data]);
   const checklist = fill?.result?.checklist?.length ? fill.result.checklist : read?.result?.checklist ?? [];
   const items = read?.result?.items ?? [];
 

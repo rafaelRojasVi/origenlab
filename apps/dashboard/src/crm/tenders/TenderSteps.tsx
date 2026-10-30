@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { COTIZADOR_PREFERENCES, crmHash } from "../crmRoute";
-import type { Preparation, TenderPageData } from "./tenderApi";
+import type { TenderPageData, TenderRow, TenderStatus } from "./tenderApi";
 
 /**
  * «Pasos»: the tender's work as six steps — each done, under way, failed or still to do — and the
@@ -29,7 +29,46 @@ export const STEP_TARGET = {
   postular: "paso-paquete",
 } as const;
 
-const busy = (p: Preparation | null) => p?.status === "queued" || p?.status === "running";
+/**
+ * What the steps are worked out from — the same facts on a tender's page (`factsOfPage`) and on its
+ * row in «Mis licitaciones» (`factsOfRow`), so both say the same step.
+ */
+export interface StepFacts {
+  status: TenderStatus;
+  annexCount: number;
+  /** The latest read: its status, and what it found once ready. */
+  read: { status: string; documents: number; items: number } | null;
+  fill: { status: string } | null;
+  offer: { number: string | null; status: string | null } | null;
+  bidderReady: boolean;
+}
+
+export function factsOfPage(data: TenderPageData): StepFacts {
+  const read = data.preparations.read;
+  return {
+    status: data.tender.status,
+    annexCount: data.annexes.length,
+    read: read ? { status: read.status, documents: read.result?.checklist?.length ?? 0, items: read.result?.items?.length ?? 0 } : null,
+    fill: data.preparations.fill ? { status: data.preparations.fill.status } : null,
+    offer: data.offer_quote ? { number: data.offer_quote.number, status: data.offer_quote.status } : null,
+    bidderReady: data.bidder_ready,
+  };
+}
+
+export function factsOfRow(row: TenderRow, bidderReady: boolean): StepFacts {
+  return {
+    status: row.status,
+    annexCount: row.annex_count ?? 0,
+    read: row.preparation.read
+      ? { status: row.preparation.read, documents: row.reading?.documents ?? 0, items: row.reading?.items ?? 0 }
+      : null,
+    fill: row.preparation.fill ? { status: row.preparation.fill } : null,
+    offer: row.offer_quote_number ? { number: row.offer_quote_number, status: row.offer_status ?? null } : null,
+    bidderReady,
+  };
+}
+
+const busy = (p: { status: string } | null) => p?.status === "queued" || p?.status === "running";
 
 /** A step before its state: done, the machine working on it, or failed (its code; the step's
  * section says why, in Spanish — the rail only points there, so no line is said twice). */
@@ -37,22 +76,20 @@ type Draft = Omit<TenderStep, "state"> & { done: boolean; running?: boolean; fai
 
 const FAILED = "No se pudo; mira el paso";
 
-export function tenderSteps(data: TenderPageData): TenderStep[] {
-  const { annexes, offer_quote: offer, bidder_ready: bidderReady, tender } = data;
-  const read = data.preparations.read;
-  const fill = data.preparations.fill;
+export function tenderSteps(facts: StepFacts): TenderStep[] {
+  const { annexCount, read, fill, offer, bidderReady } = facts;
   const readReady = read?.status === "ready";
   const fillReady = fill?.status === "ready";
   const offerApproved = offer?.status === "approved" || offer?.status === "sent";
-  const docs = read?.result?.checklist?.length ?? 0;
-  const items = read?.result?.items?.length ?? 0;
+  const docs = read?.documents ?? 0;
+  const items = read?.items ?? 0;
 
   const steps: Draft[] = [
     {
       key: "anexos",
       title: "Subir anexos",
-      done: annexes.length > 0,
-      detail: annexes.length === 0 ? "Bases, formularios y especificaciones" : annexes.length === 1 ? "1 archivo subido" : `${annexes.length} archivos subidos`,
+      done: annexCount > 0,
+      detail: annexCount === 0 ? "Bases, formularios y especificaciones" : annexCount === 1 ? "1 archivo subido" : `${annexCount} archivos subidos`,
       target: STEP_TARGET.anexos,
       todo: "Sube las bases, los anexos y las especificaciones técnicas (o el .zip de Mercado Público).",
     },
@@ -61,7 +98,7 @@ export function tenderSteps(data: TenderPageData): TenderStep[] {
       title: "Leer las bases",
       done: readReady,
       running: busy(read),
-      failed: read && !busy(read) && !readReady ? read.failure_code ?? read.status : null,
+      failed: read && !busy(read) && !readReady ? read.status : null,
       detail: readReady ? `${docs} documentos · ${items} ítems` : busy(read) ? "Leyendo…" : "Resumen, documentos e ítems",
       target: STEP_TARGET.lectura,
       todo: read ? "Vuelve a leer los anexos con «Regenerar»." : "Usa «Preparar oferta» para que se lean los anexos.",
@@ -87,7 +124,7 @@ export function tenderSteps(data: TenderPageData): TenderStep[] {
       title: "Formularios y fichas",
       done: fillReady,
       running: busy(fill),
-      failed: fill && !busy(fill) && !fillReady ? fill.failure_code ?? fill.status : null,
+      failed: fill && !busy(fill) && !fillReady ? fill.status : null,
       detail: fillReady ? "Formularios, fichas y paquete listos" : busy(fill) ? "Llenando…" : "Se llenan con la oferta y tus datos",
       target: STEP_TARGET.formularios,
       todo: "Usa «Llenar formularios»: llena los anexos, adjunta las fichas y arma el paquete.",
@@ -95,7 +132,7 @@ export function tenderSteps(data: TenderPageData): TenderStep[] {
     {
       key: "postular",
       title: "Postular en Mercado Público",
-      done: tender.status === "postulada" || tender.status === "adjudicada",
+      done: facts.status === "postulada" || facts.status === "adjudicada",
       detail: "Firmar, subir y marcar «Postulada»",
       target: STEP_TARGET.postular,
       todo: "Firma lo que pide firma, sube el paquete en Mercado Público y marca la licitación como «Postulada».",

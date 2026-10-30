@@ -31,6 +31,7 @@ const LIST = {
       closes_at: "2026-10-10T18:00:00Z", status: "postulada", amount: { neto: 900000, currency: "CLP", source: "oferta" } }),
   ],
   counts: { preparando: 1, postulada: 1, adjudicada: 0, perdida: 2 },
+  bidder_ready: false,
 };
 
 const notice = (over: Record<string, unknown>) => ({
@@ -83,7 +84,7 @@ function renderPage(role: "sales" | "admin" | "viewer" = "sales", view: "mias" |
       <Toaster />
     </AuthSessionContext.Provider>,
   );
-  if (view === "mias") fireEvent.click(screen.getByRole("button", { name: "Mis licitaciones" }));
+  if (view === "mias") fireEvent.click(screen.getByRole("button", { name: /^Mis licitaciones/ }));
   return navigate;
 }
 
@@ -121,13 +122,39 @@ describe("LicitacionesPage", () => {
     expect(within(closed).getByText("por confirmar")).toBeInTheDocument();
   });
 
-  it("filters through the API and keeps the counts", async () => {
+  it("filters the list it read once, here, and keeps the counts", async () => {
     const gets = stubApi();
     renderPage();
     await screen.findByText("Compra de balanzas de ejemplo");
     fireEvent.click(screen.getByRole("button", { name: "Postulada 1" }));
-    await waitFor(() => expect(gets).toContain("/v2/tenders?status=postulada"));
     expect(screen.getByRole("button", { name: "Postulada 1" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Compra de balanzas de ejemplo")).toBeNull();
+    expect(screen.getByText("Reactivos de ejemplo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Todas 4" })).toBeInTheDocument();
+    expect(gets.filter((g) => g.startsWith("/v2/tenders?"))).toEqual([]);
+    expect(gets.filter((g) => g === "/v2/tenders")).toHaveLength(1);
+  });
+
+  it("the tab says how many are in play; a row says how far the bid is and what comes next", async () => {
+    stubApi({
+      ...LIST,
+      tenders: [row({ annex_count: 3, preparation: { read: "ready", fill: null }, reading: { documents: 21, items: 14 } })],
+    });
+    renderPage("sales", "mercado");
+    expect(await screen.findByRole("button", { name: "Mis licitaciones (2)" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mis licitaciones (2)" }));
+    const open = await screen.findByTestId(`tender-row-${ID1}`);
+    expect(within(open).getByRole("progressbar", { name: "Avance de la postulación" })).toHaveAttribute("aria-valuenow", "2");
+    expect(open).toHaveTextContent("2 de 6");
+    expect(open).toHaveTextContent("Siguiente: Oferta económica");
+  });
+
+  it("a viewer's list has no bidder data, so no progress", async () => {
+    const { bidder_ready: _, ...viewerList } = LIST;
+    stubApi(viewerList);
+    renderPage("viewer");
+    const open = await screen.findByTestId(`tender-row-${ID1}`);
+    expect(within(open).queryByRole("progressbar")).toBeNull();
   });
 
   it("opens the tender's page from a row", async () => {

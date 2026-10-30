@@ -152,6 +152,27 @@ afterEach(() => {
   window.location.hash = "";
 });
 
+describe("TenderPage — page memory", () => {
+  it("a tender opened again shows its last page at once while it is read again", async () => {
+    stubApi([page()]);
+    const first = renderPage();
+    await screen.findByRole("heading", { name: "Compra de balanzas de ejemplo" });
+    first.unmount();
+    renderPage();
+    expect(screen.getByRole("heading", { name: "Compra de balanzas de ejemplo" })).toBeInTheDocument();
+  });
+
+  it("forgets it when the session ends", async () => {
+    stubApi([page()]);
+    const first = renderPage();
+    await screen.findByRole("heading", { name: "Compra de balanzas de ejemplo" });
+    first.unmount();
+    clearResourceCache();
+    renderPage();
+    expect(screen.queryByRole("heading", { name: "Compra de balanzas de ejemplo" })).toBeNull();
+  });
+});
+
 describe("TenderPage — who sees it", () => {
   it("a viewer sees the restriction line and nothing is read", () => {
     const calls = stubApi([page()]);

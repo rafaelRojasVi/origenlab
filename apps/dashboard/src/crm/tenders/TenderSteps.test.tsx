@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { TenderPageData } from "./tenderApi";
 import { splitList } from "./TenderReading";
-import { TenderSteps, tenderSteps } from "./TenderSteps";
+import { TenderSteps, factsOfPage, tenderSteps } from "./TenderSteps";
 
 const prep = (phase: "read" | "fill", status: string, failure_code: string | null = null) => ({
   id: `${phase}-1`, phase, status, failure_code, result: {}, outputs: [],
@@ -21,7 +21,8 @@ function data(over: Record<string, unknown> = {}): TenderPageData {
   } as unknown as TenderPageData;
 }
 
-const states = (d: TenderPageData) => tenderSteps(d).map((s) => s.state);
+const steps = (d: TenderPageData) => tenderSteps(factsOfPage(d));
+const states = (d: TenderPageData) => steps(d).map((s) => s.state);
 
 describe("tenderSteps", () => {
   it("with nothing uploaded, uploading is next and the rest wait", () => {
@@ -37,9 +38,9 @@ describe("tenderSteps", () => {
   });
 
   it("a failed read is «error» and points to its step instead of repeating the reason", () => {
-    const steps = tenderSteps(data({ preparations: { read: prep("read", "failed", "request_failed"), fill: null } }));
-    expect(steps[1].state).toBe("error");
-    expect(steps[1].detail).toBe("No se pudo; mira el paso");
+    const lectura = steps(data({ preparations: { read: prep("read", "failed", "request_failed"), fill: null } }))[1];
+    expect(lectura.state).toBe("error");
+    expect(lectura.detail).toBe("No se pudo; mira el paso");
   });
 
   it("a quote not yet approved is still the next step: approving it is the operator's", () => {
@@ -47,7 +48,7 @@ describe("tenderSteps", () => {
       preparations: { read: prep("read", "ready"), fill: null },
       offer_quote: { quote_id: "q", number: "01300-26", status: "draft" },
     });
-    const oferta = tenderSteps(d)[2];
+    const oferta = steps(d)[2];
     expect(oferta.state).toBe("ahora");
     expect(oferta.detail).toBe("Cotización 01300-26: falta aprobar");
   });
@@ -69,7 +70,7 @@ describe("TenderSteps", () => {
       preparations: { read: prep("read", "ready"), fill: null },
       offer_quote: { quote_id: "q", number: "01300-26", status: "approved" },
     });
-    render(<TenderSteps steps={tenderSteps(d)} />);
+    render(<TenderSteps steps={steps(d)} />);
     const nav = screen.getByRole("navigation", { name: "Pasos de la licitación" });
     expect(within(nav).getByText("3 de 6 listos")).toBeInTheDocument();
     expect(within(nav).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "3");
