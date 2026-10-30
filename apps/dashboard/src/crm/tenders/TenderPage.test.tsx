@@ -152,6 +152,27 @@ afterEach(() => {
   window.location.hash = "";
 });
 
+describe("TenderPage — page memory", () => {
+  it("a tender opened again shows its last page at once while it is read again", async () => {
+    stubApi([page()]);
+    const first = renderPage();
+    await screen.findByRole("heading", { name: "Compra de balanzas de ejemplo" });
+    first.unmount();
+    renderPage();
+    expect(screen.getByRole("heading", { name: "Compra de balanzas de ejemplo" })).toBeInTheDocument();
+  });
+
+  it("forgets it when the session ends", async () => {
+    stubApi([page()]);
+    const first = renderPage();
+    await screen.findByRole("heading", { name: "Compra de balanzas de ejemplo" });
+    first.unmount();
+    clearResourceCache();
+    renderPage();
+    expect(screen.queryByRole("heading", { name: "Compra de balanzas de ejemplo" })).toBeNull();
+  });
+});
+
 describe("TenderPage — who sees it", () => {
   it("a viewer sees the restriction line and nothing is read", () => {
     const calls = stubApi([page()]);
@@ -382,14 +403,25 @@ describe("TenderPage — the reading", () => {
     })]);
     renderPage();
     const checklist = await screen.findByRole("region", { name: "Checklist" });
-    const rows = within(checklist).getAllByRole("listitem");
-    expect(rows).toHaveLength(3);
-    expect(within(rows[0]).getByText("Listo")).toBeInTheDocument();
-    expect(within(rows[0]).getByText("bases_ejemplo.pdf · p.5")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("Falta")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("Falta el documento")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("sin fuente")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Firmar")).toBeInTheDocument();
+    expect(within(checklist).getAllByRole("listitem")).toHaveLength(3);
+    const row = (documento: string) => within(checklist).getByText(documento).closest("li") as HTMLElement;
+    expect(within(row("Anexo 1 de ejemplo")).getByText("Listo")).toBeInTheDocument();
+    expect(within(row("Anexo 1 de ejemplo")).getByText("bases_ejemplo.pdf · p.5")).toBeInTheDocument();
+    expect(within(row("Garantía de seriedad")).getByText("Falta")).toBeInTheDocument();
+    expect(within(row("Garantía de seriedad")).getByText("Falta el documento")).toBeInTheDocument();
+    expect(within(row("Garantía de seriedad")).getByText("sin fuente")).toBeInTheDocument();
+    expect(within(row("Declaración jurada simple")).getByText("Firmar")).toBeInTheDocument();
+  });
+
+  it("Checklist groups the documents by kind, forms first", async () => {
+    stubApi([page({
+      preparations: { read: prep("read", { result: READ_RESULT }), fill: prep("fill", { result: FILL_RESULT, outputs: FILL_OUTPUTS }) },
+    })]);
+    renderPage();
+    const checklist = await screen.findByRole("region", { name: "Checklist" });
+    const groups = within(checklist).getAllByRole("region").map((g) => g.getAttribute("aria-label"));
+    expect(groups).toEqual(["Formularios", "Declaraciones juradas", "Garantías"]);
+    expect(within(within(checklist).getByRole("region", { name: "Garantías" })).getByText("Garantía de seriedad")).toBeInTheDocument();
   });
 });
 

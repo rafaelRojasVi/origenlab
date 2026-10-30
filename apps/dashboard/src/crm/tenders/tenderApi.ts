@@ -45,12 +45,19 @@ export interface TenderRow {
   /** The offer's neto, else the notice's estimate (`source: "estimado"`). */
   amount: { neto: number; currency: string; source: "oferta" | "estimado" } | null;
   offer_quote_number: string | null;
+  /** The offer's revision status (`draft`, `approved`, …), with `offer_quote_number`. */
+  offer_status?: string | null;
   preparation: { read: string | null; fill: string | null };
+  /** Anexos on the case, and what a ready read found: the list draws the page's steps from them. */
+  annex_count?: number;
+  reading?: { documents: number; items: number } | null;
 }
 
 export interface TenderList {
   tenders: TenderRow[];
   counts: Record<TenderStatus, number>;
+  /** Sales and admin only: whether the bidder's data is saved (a viewer's list leaves it out). */
+  bidder_ready?: boolean;
 }
 
 /** What Hoy shows for a tender that closes tomorrow (`tenders_closing` in the pipeline). */
