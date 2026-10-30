@@ -811,6 +811,28 @@ def reading_value(verdict: RuleVerdict, mail: MailText, candidates: Sequence[Pro
     return value
 
 
+#: Storage answers that will never change: the .eml is not there.
+PERMANENT_STORAGE_ERRORS = frozenset({"storage_get_http_404", "storage_get_http_410"})
+
+
+def _unreadable(db: TriageDb, source_record_id: str, reason: str, *, done: bool, bounce: bool) -> TriageResult:
+    """Close a message that cannot be read, once (2026-10-30, Render bandwidth).
+
+    Before, nothing was written, so the sweep found the same message every minute for 14 days and
+    downloaded its .eml again each time. Now a first triage records an «unreadable» reading under
+    the current version, and a bounce waiting for its delivery analysis records an empty one: the
+    message leaves the queue, and the reason stays on record. Nothing is inferred from it.
+    """
+    if bounce:
+        db.record_delivery_failure(source_record_id, BounceAnalysis(
+            reason_code="unreadable", batch="E", batch_reason=reason, recipient_count=0,
+            auto_block_addresses=(), block_reason=None))
+    elif not done:
+        db.record(source_record_id, {"triage_version": TRIAGE_VERSION, "class": "unreadable", "reason": reason,
+                                     "model_state": "not_needed"}, [])
+    return TriageResult("unreadable", "unreadable")
+
+
 def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: ModelSettings, *,
                clock: Callable[[], float] = time.monotonic) -> TriageResult:
     started = clock()
@@ -827,12 +849,15 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
         return TriageResult("no_eml")
     try:
         raw = store.get(storage_key(message.eml_storage_path))
-    except StorageError:
+    except StorageError as exc:
+        # A missing object is permanent; anything else (5xx, network) may pass, so the sweep retries.
+        if str(exc) in PERMANENT_STORAGE_ERRORS:
+            return _unreadable(db, source_record_id, "eml_missing", done=done, bounce=needs_delivery_backfill)
         return TriageResult("storage_error")
     try:
         mail = parse_mail(raw)
-    except Exception:  # noqa: BLE001 - a malformed message is recorded as such by the capture; skip it
-        return TriageResult("parse_error")
+    except Exception:  # noqa: BLE001 - a malformed message is recorded as such by the capture; close it
+        return _unreadable(db, source_record_id, "parse_error", done=done, bounce=needs_delivery_backfill)
 
     # Independent backfills never re-run the model. Hard-bounce evidence keeps triage:v1 exactly;
     # requester:v1 only reads the cleaned body and a read-only CRM organization list.

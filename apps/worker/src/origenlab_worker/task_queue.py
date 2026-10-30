@@ -140,6 +140,18 @@ def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE,
 
 
 PROSPECT_SWEEP_LOCK = "prospect-search-sweep"
+#: Mercado Público discovery: hourly (was every 15 min until 2026-10-30). Tenders stay open for days;
+#: each run sends the whole open list (~4,800 codes) to the database, so the cadence is bandwidth.
+DISCOVERY_CRON = "0 * * * *"
+#: Every queue worker (capture, triage, tenders). Library defaults poll every 5 s and beat every 10 s;
+#: LISTEN/NOTIFY still hands a new job over at once, so slower polling only catches a missed notify.
+#: The stalled timeout stays 3× the heartbeat, or a live worker would look dead.
+WORKER_POLLING: dict[str, float] = {
+    "fetch_job_polling_interval": 30.0,
+    "abort_job_polling_interval": 30.0,
+    "update_heartbeat_interval": 60.0,
+    "stalled_worker_timeout": 180.0,
+}
 PROSPECT_DAILY_LOCK = "prospect-daily-enqueue"
 
 
@@ -153,7 +165,7 @@ def _register_tender_tasks(app: procrastinate.App) -> None:
             raise RuntimeError("queue_context_not_configured")
         ctx.log({"event": "bid_preparation_sweep", **ctx.bid_sweep()})
 
-    @app.periodic(cron="*/15 * * * *", periodic_id="discovery")
+    @app.periodic(cron=DISCOVERY_CRON, periodic_id="discovery")
     @app.task(name="tender_discovery", queue=TENDER_QUEUE, queueing_lock=DISCOVERY_LOCK, retry=False,
               pass_context=False)
     def tender_discovery(timestamp: int) -> None:

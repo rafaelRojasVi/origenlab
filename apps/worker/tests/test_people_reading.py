@@ -90,5 +90,5 @@ def test_machine_classes_are_every_class_no_person_wrote() -> None:
     from origenlab_worker.triage_rules import CLASSES
 
     assert NO_PEOPLE_CLASSES == {"outbound", "bounce", "auto_reply", "calendar", "unsubscribe", "bulk",
-                                 "notification", "empty", "tender_notice"}
+                                 "notification", "empty", "unreadable", "tender_notice"}
     assert NO_PEOPLE_CLASSES | set(HUMAN_CLASSES) == set(CLASSES) and not NO_PEOPLE_CLASSES & set(HUMAN_CLASSES)

@@ -30,6 +30,8 @@ export function buildUpstreamHeaders(
 ): Headers {
   const headers = new Headers();
   headers.set("Accept", incoming.get("Accept") || "application/json");
+  // The API compresses replies over ~1 KB (Render bills its outbound bytes); the runtime decodes them.
+  headers.set("Accept-Encoding", "gzip");
 
   // Relevant for sanctioned POST commands; GET/HEAD requests normally
   // do not carry these. Forward byte-identical so the upstream API sees the

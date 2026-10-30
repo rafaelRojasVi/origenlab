@@ -25,7 +25,7 @@ def test_both_tasks_are_on_the_triage_queue_and_the_sweep_runs_every_minute(app)
     assert built.tasks["bid_preparation_sweep"].queue == "tenders"
     periodic = sorted(built.periodic_registry.periodic_tasks.values(), key=lambda p: p.periodic_id)
     assert [(p.task.name, p.cron, p.periodic_id) for p in periodic] == [
-        ("bid_preparation_sweep", "* * * * *", "bids"), ("tender_discovery", "*/15 * * * *", "discovery"),
+        ("bid_preparation_sweep", "* * * * *", "bids"), ("tender_discovery", "0 * * * *", "discovery"),
         ("prospect_daily_enqueue", "0 9 * * *", "prospect_daily"),
         ("prospect_search_sweep", "* * * * *", "prospect_sweep"),
         ("sweep_untriaged", "* * * * *", "sweep")]
@@ -159,3 +159,37 @@ def test_the_periodic_sweep_defers_into_the_connector_the_cli_swaps_in() -> None
 
         asyncio.run(tick())
     assert [j["task_name"] for j in real.jobs.values()] == ["sweep_untriaged"]
+
+
+def test_queue_workers_poll_slowly_and_still_spot_a_stalled_worker() -> None:
+    """2026-10-30 (Render bandwidth): the library defaults fetch every 5 s and beat every 10 s on
+    three workers — ~54 queries a minute. LISTEN/NOTIFY still delivers a new job at once."""
+    from origenlab_worker.task_queue import WORKER_POLLING
+
+    assert WORKER_POLLING["fetch_job_polling_interval"] >= 30
+    assert WORKER_POLLING["update_heartbeat_interval"] >= 60
+    assert WORKER_POLLING["stalled_worker_timeout"] >= 3 * WORKER_POLLING["update_heartbeat_interval"]
+    assert WORKER_POLLING.get("listen_notify", True) is True
+
+
+def test_every_queue_worker_uses_the_slow_polling() -> None:
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "src" / "origenlab_worker"
+    for name in ("capture_queue.py", "triage_cli.py"):
+        text = (src / name).read_text(encoding="utf-8")
+        calls = text.count("run_worker_async(")
+        assert calls and text.count("**WORKER_POLLING") == calls, name
+
+
+def test_tender_discovery_runs_hourly() -> None:
+    from origenlab_worker.task_queue import DISCOVERY_CRON
+
+    assert DISCOVERY_CRON == "0 * * * *"
+
+
+def test_a_refreshed_tender_does_not_resend_its_head() -> None:
+    from origenlab_worker.tender import discovery
+
+    assert "%(head)s" not in discovery._REFRESH_SUMMARY_SQL
+    assert "insert" not in discovery._REFRESH_SUMMARY_SQL.lower()

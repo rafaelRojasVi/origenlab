@@ -216,8 +216,9 @@ def run_capture_worker(env: Mapping[str, str]) -> int:
 
     async def serve():
         async with app.open_async():
+            from origenlab_worker.task_queue import WORKER_POLLING
             await app.run_worker_async(queues=[QUEUE], concurrency=1, name="capture",
                                        install_signal_handlers=True, delete_jobs="successful",
-                                       shutdown_graceful_timeout=15)
+                                       shutdown_graceful_timeout=15, **WORKER_POLLING)
     asyncio.run(serve())
     return 0

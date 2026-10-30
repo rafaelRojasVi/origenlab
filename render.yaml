@@ -86,6 +86,13 @@ services:
             value: DENY
           - key: X-Robots-Tag
             value: noindex, nofollow
+      # Hashed build files never change under their name: browsers keep them a year (2026-10-30,
+      # Render bandwidth). The service ignores this file — set the same rule in the Render dashboard.
+      - type: headers
+        source: /assets/*
+        headers:
+          - key: Cache-Control
+            value: public, max-age=31536000, immutable
       - type: rewrite
         source: /*
         destination: /index.html

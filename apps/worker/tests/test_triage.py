@@ -112,13 +112,13 @@ class FakeDb:
 
 
 class FakeStore:
-    def __init__(self, raw: bytes | None) -> None:
-        self.raw, self.keys = raw, []
+    def __init__(self, raw: bytes | None, error: str = "storage_get_http_404") -> None:
+        self.raw, self.keys, self.error = raw, [], error
 
     def get(self, key):
         self.keys.append(key)
         if self.raw is None:
-            raise StorageError("storage_get_http_404")
+            raise StorageError(self.error)
         return self.raw
 
 
@@ -238,10 +238,43 @@ def test_a_previously_triaged_quote_request_backfills_requester_without_model() 
     assert db.recorded == [] and reader.requests == []
 
 
-def test_a_storage_failure_writes_nothing_so_the_sweep_retries() -> None:
+def test_a_transient_storage_failure_writes_nothing_so_the_sweep_retries() -> None:
+    for code in ("storage_get_http_503", "EndpointConnectionError"):
+        db = FakeDb()
+        assert triage_one(db, FakeStore(None, code), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "storage_error"
+        assert db.recorded == []
+
+
+def test_a_missing_eml_is_recorded_once_as_unreadable_so_the_sweep_stops() -> None:
+    """2026-10-30: a message whose stored .eml is gone was downloaded again every minute for 14
+    days (Render bandwidth). A 404 is permanent: one «unreadable» reading closes it."""
     db = FakeDb()
-    assert triage_one(db, FakeStore(None), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "storage_error"
-    assert db.recorded == []
+    result = triage_one(db, FakeStore(None), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert (result.outcome, result.triage_class) == ("unreadable", "unreadable")
+    assert [(sid, r["class"], r["reason"]) for sid, r, _, _ in db.recorded] == [("sr-1", "unreadable", "eml_missing")]
+
+
+def test_a_malformed_eml_is_recorded_once_as_unreadable(monkeypatch) -> None:
+    import origenlab_worker.triage as triage_mod
+
+    def broken(raw):
+        raise ValueError("not a message")
+
+    monkeypatch.setattr(triage_mod, "parse_mail", broken)
+    db = FakeDb()
+    result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "unreadable"
+    assert [(r["class"], r["reason"]) for _, r, _, _ in db.recorded] == [("unreadable", "parse_error")]
+
+
+def test_a_bounce_backfill_on_a_missing_eml_closes_with_an_empty_observation() -> None:
+    db = FakeDb(done=True, done_class="bounce", delivery_done=False)
+    result = triage_one(db, FakeStore(None), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "unreadable"
+    assert len(db.delivery_failures) == 1
+    sid, analysis = db.delivery_failures[0]
+    assert sid == "sr-1" and analysis.auto_block_addresses == () and analysis.block_reason is None
+    assert analysis.batch_reason == "eml_missing"
 
 
 class _ApiError(Exception):
