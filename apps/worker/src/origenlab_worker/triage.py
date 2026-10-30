@@ -18,8 +18,9 @@ Writes, all `on conflict do nothing`, in one transaction per message:
   looks like a deal with no case. A person decides; nothing is linked here.
 
 The worker never writes `crm.*` or `outbound.*` directly. For a bounce it also records a versioned
-`delivery_failure` assertion and only a conservative Batch-A single-recipient no-such-user result
-may call the closed-list contact-control writer. Ordinary already-triaged mail is not re-read; old
+`delivery_failure` assertion; only a single-recipient hard bounce (`bounce.py`: no such user,
+not in the directory, no such domain, disabled account) may call the closed-list contact-control
+writer. Ordinary already-triaged mail is not re-read; old
 bounce readings are backfilled independently.
 
 The body is read for this one call and never stored. What is stored are short machine reasons,
@@ -576,7 +577,7 @@ class TriageDb:
             return len(mentions)
 
     def record_delivery_failure(self, source_record_id: str, analysis: BounceAnalysis) -> int:
-        """Record the versioned NDR observation and apply only its exact Batch-A hard block.
+        """Record the versioned NDR observation and apply its single-address hard block, if any.
 
         The assertion and privileged call share one transaction. If the database boundary refuses
         the proposed block, the assertion rolls back too and the sweep retries instead of silently
@@ -601,6 +602,7 @@ class TriageDb:
                             "triage_value_norm": VALUE_NORM,
                             "delivery_value_norm": DELIVERY_FAILURE_VALUE_NORM,
                             "reason_code": analysis.reason_code,
+                            "block_reason": analysis.block_reason,
                         }),
                     ),
                 )

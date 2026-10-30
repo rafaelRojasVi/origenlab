@@ -201,7 +201,7 @@ def test_a_clear_no_such_user_bounce_becomes_a_global_block(dsn, target, mailbox
         "value->'auto_block_addresses'->>0 from evidence.assertion "
         "where source_record_id = %s and kind = 'delivery_failure'",
         (sid,),
-    ) == [("delivery_failure", "delivery:v1", "bounce_no_such_user", "A", address)]
+    ) == [("delivery_failure", "delivery:v2", "bounce_no_such_user", "A", address)]
     assert owner_rows(
         dsn,
         "select kind, purpose, reason, source, origin_source_record_id::text "
@@ -210,11 +210,68 @@ def test_a_clear_no_such_user_bounce_becomes_a_global_block(dsn, target, mailbox
     ) == [("block", "all", "invalid_address", "ndr_handler", sid)]
     assert owner_rows(
         dsn,
-        "select actor_kind, payload->>'reason_code' from crm.domain_event "
+        "select actor_kind, payload->>'reason_code', payload->>'block_reason' from crm.domain_event "
         "where aggregate_kind = 'contact_control' and aggregate_id = "
         "(select id from outbound.contact_control where scope='address' and value_norm=%s and kind='block' and purpose='all')",
         (address,),
-    ) == [("worker", "bounce_no_such_user")]
+    ) == [("worker", "bounce_no_such_user", "no_such_user")]
+
+
+def test_a_microsoft_not_in_directory_bounce_becomes_a_global_block(dsn, target, mailbox_id) -> None:
+    """Owner 2026-10-29: «550 5.4.1 Recipient address rejected: Access denied» blocks by itself."""
+    address = f"gone-{uuid.uuid4().hex[:8]}@empresa.invalid"
+    store = Store()
+    raw = ndr_raw(
+        f"Final-Recipient: rfc822; {address}\nAction: failed\nStatus: 5.4.1\n"
+        "Diagnostic-Code: smtp; 550 5.4.1 Recipient address rejected: Access denied. For more information see "
+        "https://aka.ms/EXOSmtpErrors\n"
+    )
+    gid = capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}", raw)
+    sid = source_record(dsn, gid)
+    with triage_conn(target) as conn:
+        assert triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL)).triage_class == "bounce"
+    assert owner_rows(
+        dsn,
+        "select reason, source from outbound.contact_control where scope = 'address' and value_norm = %s",
+        (address,),
+    ) == [("invalid_address", "ndr_handler")]
+    assert owner_rows(
+        dsn,
+        "select payload->>'block_reason', payload->>'delivery_value_norm' from crm.domain_event "
+        "where aggregate_kind = 'contact_control' and aggregate_id = "
+        "(select id from outbound.contact_control where scope='address' and value_norm=%s and kind='block' and purpose='all')",
+        (address,),
+    ) == [("not_in_directory", "delivery:v2")]
+
+
+def test_the_database_refuses_a_block_the_stored_observation_does_not_prove(dsn, target, mailbox_id) -> None:
+    """A worker call naming a hard kind is re-proved against the stored delivery:v2 observation:
+    a held (temporary) report cannot be turned into a block by passing a reason."""
+    import psycopg
+    from psycopg.types.json import Jsonb
+
+    address = f"temp-{uuid.uuid4().hex[:8]}@cliente.invalid"
+    store = Store()
+    raw = ndr_raw(
+        f"Final-Recipient: rfc822; {address}\nAction: failed\nStatus: 4.4.3\n"
+        "Diagnostic-Code: smtp; 451 4.4.3 Temporary server error. Please try again later\n"
+    )
+    gid = capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}", raw)
+    sid = source_record(dsn, gid)
+    with triage_conn(target) as conn:
+        triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL))
+    with triage_conn(target) as conn, conn.cursor() as cur:
+        triage_norm = owner_rows(dsn, "select value_norm from evidence.assertion where source_record_id = %s "
+                                      "and kind = 'message_triage' and value->>'class' = 'bounce'", (sid,))[0][0]
+        try:
+            cur.execute("select outbound.add_contact_control('block', 'all', %s, 'invalid_address', null, null, %s)",
+                        (address, Jsonb({"source_record_id": sid, "triage_value_norm": triage_norm,
+                                         "delivery_value_norm": "delivery:v2", "reason_code": "bounce_other",
+                                         "block_reason": "domain_not_found"})))
+            raise AssertionError("the forged block was accepted")
+        except psycopg.errors.InvalidParameterValue as exc:
+            assert "no eligible hard-bounce observation" in str(exc)
+    assert owner_rows(dsn, "select count(*) from outbound.contact_control where value_norm = %s", (address,)) == [(0,)]
 
 
 def test_an_spf_policy_rejection_is_evidence_only(dsn, target, mailbox_id) -> None:
