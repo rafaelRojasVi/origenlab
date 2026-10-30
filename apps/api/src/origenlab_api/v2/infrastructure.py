@@ -232,7 +232,7 @@ def read_supabase(cur: Any) -> dict[str, Any]:
         result["database_bytes"] = int(cur.fetchone()[0])
     except Exception as exc:  # noqa: BLE001
         result["database_bytes"] = None
-        result["database_bytes_error"] = str(exc)
+        result["database_bytes_error"] = type(exc).__name__  # the kind only: operators read this
     # Largest tables.
     try:
         cur.execute(LARGEST_TABLES_SQL)
@@ -242,7 +242,7 @@ def read_supabase(cur: Any) -> dict[str, Any]:
         ]
     except Exception as exc:  # noqa: BLE001
         result["largest_tables"] = None
-        result["largest_tables_error"] = str(exc)
+        result["largest_tables_error"] = type(exc).__name__  # the kind only: operators read this
     # Mail bytes from comms.message.
     try:
         cur.execute(MAIL_BYTES_SQL)
@@ -254,7 +254,7 @@ def read_supabase(cur: Any) -> dict[str, Any]:
         result["mail_bytes"] = None
         result["mail_count"] = None
         result["mail_bytes_this_month"] = None
-        result["mail_bytes_error"] = str(exc)
+        result["mail_bytes_error"] = type(exc).__name__  # the kind only: operators read this
     # Plan limits.
     sup = PLANS["supabase"]
     result["plan"] = sup["plan"]
@@ -271,7 +271,7 @@ def fetch_render(client: RenderClient, cache: RenderCache) -> dict[str, Any]:
         try:
             services_raw = client.list_services()
         except Exception as exc:  # noqa: BLE001
-            return {"available": False, "reason": f"Error al leer los servicios de Render: {exc}"}
+            return {"available": False, "reason": f"Error al leer los servicios de Render ({type(exc).__name__})"}
         services = []
         total_bw_bytes = 0
         for svc in services_raw:

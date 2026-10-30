@@ -386,3 +386,19 @@ def test_supabase_sql_queries_work_as_runtime_role(disposable_database: str) -> 
     # plan info
     assert result["plan"] == "Pro"
     assert result["database_gb_included"] == 8.0
+
+
+def test_errors_shown_to_operators_carry_the_kind_never_the_raw_text() -> None:
+    """Any signed-in operator reads this page: an error's own text (a URL, a host, a database
+    detail) is never passed on, only its kind."""
+    secret = "texto-interno-que-no-debe-salir"
+    result = fetch_render(_make_client(None, raises=OSError(secret)), RenderCache())
+    assert secret not in result["reason"] and "OSError" in result["reason"]
+
+    class _BrokenCursor:
+        def execute(self, *a, **k):
+            raise RuntimeError(secret)
+
+    sup = read_supabase(_BrokenCursor())
+    assert secret not in repr(sup)
+    assert sup["database_bytes"] is None and sup["database_bytes_error"] == "RuntimeError"
