@@ -75,7 +75,8 @@ def world(disposable_database) -> dict[str, Any]:
     import psycopg
 
     tag = uuid.uuid4().hex[:6]
-    a = {k: f"{k}-{tag}@instituto.invalid" for k in ("a1", "a2", "a3", "a4", "a5", "a7", "a8", "a9", "a10", "c1", "a12", "a14")}
+    a = {k: f"{k}-{tag}@instituto.invalid"
+         for k in ("a1", "a2", "a3", "a4", "a5", "a7", "a8", "a9", "a10", "c1", "a12", "a14", "a15", "a16")}
     a["a13"] = f"a13@sub.dominio-{tag}.invalid"
     a["a6"] = f"a6@dominio-{tag}.invalid"
     a["a11"] = f"a11@proveedor-{tag}.invalid"
@@ -110,7 +111,8 @@ def world(disposable_database) -> dict[str, Any]:
             for k in keys:
                 send(c, k)
 
-        def inbound(sender: str, at: str, cls: str | None = None, thread: str | None = None) -> None:
+        def inbound(sender: str, at: str, cls: str | None = None, thread: str | None = None,
+                    delivery: dict | None = None) -> Any:
             pmid = f"in-{uuid.uuid4().hex[:10]}"
             mid = _one(cur, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, "
                             "internal_date) values (%s, %s, %s, 'inbound', %s) returning id", (mb, pmid, thread, at))
@@ -121,13 +123,21 @@ def world(disposable_database) -> dict[str, Any]:
                                "returning id", (f"gmail_message:{pmid}",))
                 cur.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) "
                             "values (%s, 'message_triage', 'triage:v2', %s)", (sr, json.dumps({"class": cls})))
+                if delivery is not None:
+                    cur.execute("insert into evidence.assertion (source_record_id, kind, value_norm, value) "
+                                "values (%s, 'delivery_failure', 'delivery:v2', %s)", (sr, json.dumps(delivery)))
+            return mid
 
         inbound(f"alguien-{tag}@otro.invalid", "2026-10-01T09:00:00Z")  # earliest captured inbound mail
         inbound(a["a1"], "2026-10-23T10:00:00Z", "quote_request")
         inbound(a["a2"], "2026-10-25T10:00:00Z")
         inbound(a["a3"], "2026-10-07T10:00:00Z", "auto_reply")
-        inbound(f"mailer-daemon-{tag}@googlemail.invalid".replace(f"mailer-daemon-{tag}", "mailer-daemon"),
-                "2026-10-05T12:05:00Z", None, thread=f"th-A-a3-{tag}")
+        # A permanent bounce notice in a3's thread the worker did not block (a real miss), and a
+        # temporary one in a2's thread (never blocked on purpose: not a miss, just a note).
+        inbound("mailer-daemon@googlemail.invalid", "2026-10-05T12:05:00Z", "bounce", thread=f"th-A-a3-{tag}",
+                delivery={"block_reason": "not_in_directory", "auto_block_addresses": [a["a3"]]})
+        inbound("mailer-daemon@googlemail.invalid", "2026-10-05T12:06:00Z", "bounce", thread=f"th-A-a2-{tag}",
+                delivery={"block_reason": None, "auto_block_addresses": []})
 
         def block(scope: str, value: str, reason: str, source: str, at: str) -> None:
             cur.execute("insert into outbound.contact_control (scope, value_norm, kind, purpose, reason, source, created_at) "
@@ -138,6 +148,12 @@ def world(disposable_database) -> dict[str, Any]:
         block("domain", a["a6"].split("@")[1], "v1 bounce_no_such_user", "wave1a_suppression", "2026-10-01T09:00:00Z")
         block("address", a["a7"], "invalid_address", "operator_command", "2026-10-02T09:00:00Z")
         block("address", a["a9"], "invalid_address", "operator_command", "2026-10-02T09:00:00Z")
+        # An automatic block with the kind its event records (a16 is no one we wrote to).
+        block("address", a["a16"], "invalid_address", "ndr_handler", "2026-10-28T09:00:00Z")
+        cc16 = _one(cur, "select id from outbound.contact_control where value_norm = %s", (a["a16"],))
+        cur.execute("insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, "
+                    "actor_kind) values ('contact_control', %s, 1, 'contact_control.added', 1, %s, 'worker')",
+                    (cc16, json.dumps({"block_reason": "not_in_directory", "source": "ndr_handler"})))
 
         def person(name: str, *keys: str, org=None) -> Any:
             pid = _one(cur, "insert into crm.person (display_name, confirmation) values (%s, 'confirmed') returning id",
@@ -178,6 +194,16 @@ def world(disposable_database) -> dict[str, Any]:
         person("P6", "a14")
         cur.execute("update crm.contact_point set status = 'inactive', deactivated_at = now(), deactivated_by_operator_id = %s "
                     "where value_norm = %s", (op, a["a14"]))
+        # P7 (a15) is on no case's participants, but wrote in a lost case's email thread.
+        p7 = person("P7", "a15")
+        w7 = _one(cur, "insert into crm.opportunity (title, stage, owner_operator_id, created_at) "
+                       "values ('Caso perdido ficticio', 'lead', %s, '2026-09-01') returning id", (op,))
+        first = inbound(f"compras-{tag}@instituto.invalid", "2026-09-01T09:00:00Z", thread=f"th-won-{tag}")
+        inbound(a["a15"], "2026-09-02T09:00:00Z", thread=f"th-won-{tag}")
+        cur.execute("insert into crm.opportunity_evidence (opportunity_id, message_id, relation, linked_by_operator_id) "
+                    "values (%s, %s, 'mentions', %s)", (w7, first, op))
+        cur.execute("update crm.opportunity set stage = 'lost', closed_at = now(), close_reason = 'precio' where id = %s", (w7,))
+        w["p7"] = str(p7)
         c4 = case(p4, "2026-09-10T10:00:00Z")
         cur.execute("insert into crm.task (opportunity_id, owner_operator_id, title, due_at) "
                     "values (%s, %s, 'Volver a llamar', now() + interval '10 days')", (c4, op))
@@ -430,3 +456,27 @@ def test_subdomain_of_a_blocked_domain_is_blocked(world) -> None:
 def test_inactive_addresses_are_not_in_coverage(world) -> None:
     rows = _people(world, segment="total")["rows"]
     assert world["a"]["a14"] not in {r["address_norm"] for r in rows}
+
+
+@needs_db
+def test_a_person_in_a_cases_email_thread_has_that_case(world) -> None:
+    rows = _people(world, segment="perdida", column="not_contacted")["rows"]
+    assert world["a"]["a15"] in {r["address_norm"] for r in rows}
+
+
+@needs_db
+def test_the_bounce_alert_counts_only_permanent_bounces_left_unblocked(world) -> None:
+    an = _analytics(world)
+    assert an["alerts"]["ndr_unblocked"] == 1  # a3: permanent, no block
+    assert an["alerts"]["soft_bounces"] == 1  # a2: temporary, never blocked on purpose
+
+
+@needs_db
+def test_blocks_are_broken_down_by_kind_and_week(world) -> None:
+    b = _analytics(world)["blocks"]
+    kinds = {k["kind"]: k["n"] for k in b["by_kind"]}
+    assert kinds["rebote_revisado"] == 3  # a4, a7, a9: blocked by a person after review
+    assert kinds["rebote_historico"] == 1  # a6's domain, from the V1 history
+    assert kinds["not_in_directory"] == 1  # a16: the worker, by itself
+    assert kinds["baja"] == 1
+    assert sum(w["rebote"] + w["baja"] + w["otro"] for w in b["by_week"]) == sum(kinds.values())
