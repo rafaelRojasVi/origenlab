@@ -96,6 +96,29 @@ def test_the_schema_is_closed_everywhere() -> None:
     assert tipo["enum"] == ["formulario", "documento", "certificado", "garantia", "declaracion", "otro"]
 
 
+def test_repeated_shapes_are_referenced_not_inlined() -> None:
+    """Inlined 13 times, `campo`/`cita` made the API refuse every read: 400 "compiled grammar is too
+    large". Each object shape is written once; every other use is a `$ref` that resolves."""
+    shapes: list[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                name = node["$ref"].removeprefix("#/$defs/")
+                assert name in READ_SCHEMA["$defs"], node
+            if node.get("type") == "object":
+                shapes.append(json.dumps(node, sort_keys=True))
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(READ_SCHEMA)
+    assert len(shapes) == len(set(shapes))
+    assert all(v == {"$ref": "#/$defs/campo"} for v in READ_SCHEMA["properties"]["resumen"]["properties"].values())
+
+
 def test_the_system_prompt_is_not_marked_for_caching_below_the_minimum() -> None:
     assert "cache_control" not in build_read_request("x", {}, model=MODEL)["system"][0]
 
