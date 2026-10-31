@@ -56,6 +56,18 @@ export function ProspectCard({
   const ago = awardedAgo(item.awarded_on, now);
   const knownOrg = item.organization_candidates.length === 1;
   const maybeDuplicate = item.organization_candidates.length > 1;
+  const prepareEmailButton = onPrepareEmail && item.email ? (
+    <button type="button" onClick={onPrepareEmail} disabled={busy}
+      aria-label={`Preparar correo para ${name}`}
+      title={item.email_draft ? "Borrador ya creado — preparar otro" : "Preparar correo de presentación"}
+      className={`${onEdit ? "" : "ml-auto "}inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium hover:bg-canvas-sunken disabled:opacity-50 ${item.email_draft ? "text-brand-600 hover:text-brand-700" : "text-ink-muted hover:text-ink"}`}>
+      <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M2 4h12v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" />
+        <path d="M2 4l6 5 6-5" />
+      </svg>
+      {item.email_draft ? "Correo (✓)" : "Preparar correo"}
+    </button>
+  ) : null;
   return (
     <article
       data-testid={`prospect-card-${item.id}`}
@@ -80,7 +92,11 @@ export function ProspectCard({
             {item.returns_today ? <Badge tone="info">Vuelve hoy</Badge> : null}
             {item.state === "known" ? <Badge tone="warn">Ya conocido</Badge> : null}
             {knownOrg ? <Badge tone="good" title={item.organization_candidates[0].name}>Institución conocida</Badge> : null}
-            {maybeDuplicate ? <Badge tone="warn">Posible duplicado</Badge> : null}
+            {maybeDuplicate ? (
+              <Badge tone="warn" title={item.organization_candidates.map((c) => c.name).join(" / ")}>
+                Dos instituciones posibles
+              </Badge>
+            ) : null}
           </div>
           <h3 className="mt-0.5 text-[15px] font-semibold leading-5 text-ink">
             <button type="button" onClick={onOpen} className="text-left hover:text-accent hover:underline focus-visible:underline">
@@ -170,19 +186,17 @@ export function ProspectCard({
               Editar
             </button>
           ) : null}
-          {onPrepareEmail && item.email ? (
-            <button type="button" onClick={onPrepareEmail} disabled={busy}
-              aria-label={`Preparar correo para ${name}`}
-              title={item.email_draft ? "Borrador ya creado — preparar otro" : "Preparar correo de presentación"}
-              className={`${onEdit ? "" : "ml-auto "}inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium hover:bg-canvas-sunken disabled:opacity-50 ${item.email_draft ? "text-brand-600 hover:text-brand-700" : "text-ink-muted hover:text-ink"}`}>
-              <svg aria-hidden="true" viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M2 4h12v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" />
-                <path d="M2 4l6 5 6-5" />
-              </svg>
-              {item.email_draft ? "Correo (✓)" : "Preparar correo"}
-            </button>
-          ) : null}
+          {prepareEmailButton}
           <button type="button" onClick={onOpen} className={`${onEdit || (onPrepareEmail && item.email) ? "" : "ml-auto "}text-xs font-medium text-accent hover:underline`}>
+            Ver todo
+          </button>
+        </div>
+      ) : onPrepareEmail && item.email ? (
+        // Contacted: «Contactar» is done, the intro email may still be to write («usa Contactar y luego
+        // prepara el correo» when two institutions matched).
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3 sm:pl-14">
+          {prepareEmailButton}
+          <button type="button" onClick={onOpen} className="text-xs font-medium text-accent hover:underline">
             Ver todo
           </button>
         </div>

@@ -99,7 +99,8 @@ def get_prospect_logo(finding_id: str, _: Operator, repo: ReadRepo) -> Response:
     if logo is None:
         raise HTTPException(status_code=404, detail=_NOT_FOUND)
     return Response(content=logo[1], media_type=logo[0],
-                    headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
+                    headers={"Cache-Control": "private, max-age=604800, immutable",  # a finding's logo never changes
+                             "X-Content-Type-Options": "nosniff"})
 
 
 def get_prospect_command_repository(request: Request) -> V2ProspectCommandRepository:
