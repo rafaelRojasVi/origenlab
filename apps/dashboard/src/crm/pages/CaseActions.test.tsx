@@ -1413,6 +1413,15 @@ describe("Decidir casos", () => {
     expect(proposeOpenDecision(paused, NOW)).toMatchObject({ decision: "pausa", include: false });
     expect(proposeOpenDecision({ ...replied, stage: "negotiating" }, NOW)).toMatchObject({ decision: "conversacion", include: false });
     expect(proposeOpenDecision(silent, NOW)).toMatchObject({ decision: "perdida", include: true });
+    // Our own follow-up does not make an unanswered quote fresh.
+    const chased = card({
+      ...silent,
+      opportunity_id: "aaaaaaaa-0000-4000-8000-000000000007",
+      last_contact: { outbound: { at: "2026-10-01T12:00:00Z", subject: "Re", url: null }, inbound: null },
+    });
+    expect(proposeOpenDecision(chased, NOW)).toMatchObject({ decision: "perdida", why: "Cotización hace 97 días y nunca respondió", include: true });
+    // An ordinary follow-up is Hoy's job: unticked.
+    expect(proposeOpenDecision(recent, NOW)).toMatchObject({ decision: "seguir", include: false });
   });
 
   it("goes back to the cards once every chosen decision applied", async () => {
