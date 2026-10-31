@@ -8,7 +8,7 @@ import { mayRunCaseCommands, nextStages, undeterminedQuotes, winnableRevisions }
 import type { OpportunityCardData, PipelineResponse, RevisionCard } from "../crmTypes";
 import { clearResourceCache } from "../useResource";
 import { Toaster } from "../ui";
-import { DecideCases, proposeDecision } from "./DecideCases";
+import { DecideCases, proposeDecision, proposeOpenDecision, reviewableOpenCards } from "./DecideCases";
 import { PipelinePage } from "./PipelinePage";
 import { moveRefusal } from "./CaseMove";
 
@@ -1393,6 +1393,26 @@ describe("Decidir casos", () => {
     expect(proposeDecision(silent, NOW).decision).toBe("perdida");
     expect(proposeDecision(silent, NOW).why).toBe("97 días sin respuesta");
     expect(proposeDecision(recent, NOW)).toEqual({ decision: "seguir", why: "Enviada hace 21 días" });
+  });
+
+  it("«Revisar casos abiertos» lists open cases with a sent quote and leaves pauses and live conversations alone", () => {
+    const won = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000004", stage: "won", closed_at: "2026-10-01T00:00:00Z" });
+    const unsent = card({
+      opportunity_id: "aaaaaaaa-0000-4000-8000-000000000005",
+      quotes: [{ quote_id: QUOTE, quote_number: "00002-26", number_origin: "printed_historical", revisions: [rev(1, { sent_at: null })] }],
+    });
+    expect(reviewableOpenCards([replied, silent, won, unsent]).map((c) => c.opportunity_id)).toEqual([
+      replied.opportunity_id,
+      silent.opportunity_id,
+    ]);
+    const paused = card({
+      ...silent,
+      opportunity_id: "aaaaaaaa-0000-4000-8000-000000000006",
+      open_tasks: [{ task_id: TASK, title: "Retomar: Esperando fondos o proyecto", due_at: "2026-11-20T12:00:00Z", version: 1, owner: "Ventas" }],
+    });
+    expect(proposeOpenDecision(paused, NOW)).toMatchObject({ decision: "pausa", include: false });
+    expect(proposeOpenDecision({ ...replied, stage: "negotiating" }, NOW)).toMatchObject({ decision: "conversacion", include: false });
+    expect(proposeOpenDecision(silent, NOW)).toMatchObject({ decision: "perdida", include: true });
   });
 
   it("goes back to the cards once every chosen decision applied", async () => {
