@@ -12,7 +12,7 @@ import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
 import { CaseThreads } from "./CaseThreads";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
-import { DecideCases } from "./DecideCases";
+import { DecideCases, reviewableOpenCards } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { awaitsQuote, endOfDay, isFollowUpTask } from "../today";
@@ -102,7 +102,7 @@ function Pipeline({
   const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
   const [moving, setMoving] = useState<{ id: string; to: MoveTarget } | null>(null);
   const [sort, setSort] = useState<BoardSort>("recent");
-  const [deciding, setDeciding] = useState(false);
+  const [deciding, setDeciding] = useState<false | "historical" | "open">(false);
   const mayDecide = useMayRunCaseCommands();
 
   function open(id: string | null, withForm: typeof openWith = null) {
@@ -139,6 +139,7 @@ function Pipeline({
   const withDrive = items.filter((i) => i.drive_folder).length;
   const historicalCards = useMemo(() => items.filter((i) => stageBasis(i) === "historical_import"), [items]);
   const historical = historicalCards.length;
+  const openCards = useMemo(() => reviewableOpenCards(items), [items]);
   const paused = items.filter((i) => pausedUntil(i)).length;
   const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
   const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
@@ -174,7 +175,7 @@ function Pipeline({
           {mayDecide ? (
             <button
               type="button"
-              onClick={() => setDeciding(true)}
+              onClick={() => setDeciding("historical")}
               className="inline-flex h-8 shrink-0 items-center rounded-md bg-brand-700 px-3 text-xs font-medium text-white hover:bg-brand-900"
             >
               Decidir {historical} casos
@@ -202,6 +203,15 @@ function Pipeline({
         <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
         <span className="text-xs text-ink-faint tabular-nums">{visible.length} resultados</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          {mayDecide && !deciding && openCards.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setDeciding("open")}
+              className="inline-flex h-8 items-center rounded-md border border-line-strong bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-ink-faint"
+            >
+              Revisar casos abiertos ({openCards.length})
+            </button>
+          ) : null}
           {view === "board" ? (
             <label className="flex items-center gap-1.5 text-xs text-ink-muted">
               Ordenar
@@ -231,7 +241,12 @@ function Pipeline({
       </div>
 
       {deciding ? (
-        <DecideCases cards={historicalCards} onApplied={onChanged} onClose={() => setDeciding(false)} />
+        <DecideCases
+          cards={deciding === "open" ? openCards : historicalCards}
+          mode={deciding}
+          onApplied={onChanged}
+          onClose={() => setDeciding(false)}
+        />
       ) : visible.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
