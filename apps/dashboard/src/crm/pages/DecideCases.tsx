@@ -1,6 +1,8 @@
 /**
  * «Decidir casos»: every case whose stage is only the historical import's trace («Enviada ·
  * histórico»), each with a proposed decision the operator reviews and applies in one go.
+ * «Revisar casos abiertos» (owner, 2026-10-31) opens the same table over every open case with a
+ * sent quote: which ones are simply lost, which go on (`proposeOpenDecision`).
  *
  * The proposal is a rule over what the card already carries, never stored and never sent:
  * the client wrote after the quote → «Conversación»; 45 days or more with no answer →
@@ -22,7 +24,7 @@ import {
 } from "../caseCommands";
 import { ageTone, contactLine, conversation, daysSince, displayName } from "../caseDisplay";
 import type { OpportunityCardData } from "../crmTypes";
-import { LOST_REASONS, PAUSE_REASONS } from "../stage";
+import { LOST_REASONS, PAUSE_REASONS, pausedUntil } from "../stage";
 import { Button, fmtDate, toast, type Tone } from "../ui";
 import { isoDay, morningOf } from "./CaseMove";
 
@@ -49,6 +51,25 @@ export function proposeDecision(card: OpportunityCardData, now: Date): { decisio
     return { decision: "perdida", why: `${days} días sin respuesta${conv.kind === "followed_up" ? " desde el seguimiento" : ""}` };
   }
   return { decision: "seguir", why: conv.kind === "followed_up" ? `Seguimiento hace ${days} días` : `Enviada hace ${days} días` };
+}
+
+/** Open cases with a sent quote: the ones «Revisar casos abiertos» lists. */
+export function reviewableOpenCards(cards: OpportunityCardData[]): OpportunityCardData[] {
+  return cards.filter(
+    (c) => !c.closed_at && (c.stage === "quoting" || c.stage === "negotiating") && c.quotes.some((q) => q.revisions.some((r) => r.sent_at)),
+  );
+}
+
+/**
+ * The same rule for any open case, plus what the case already is: a pause still running is left
+ * alone (unticked), and a reply on a case already in «Conversación» changes nothing (unticked).
+ */
+export function proposeOpenDecision(card: OpportunityCardData, now: Date): { decision: Decision; why: string; include: boolean } {
+  const until = pausedUntil(card, now);
+  if (until) return { decision: "pausa", why: `En pausa hasta ${fmtDate(until)}`, include: false };
+  const p = proposeDecision(card, now);
+  if (p.decision === "conversacion" && card.stage === "negotiating") return { ...p, why: `${p.why} · ya en Conversación`, include: false };
+  return { ...p, include: true };
 }
 
 interface Row {
@@ -83,26 +104,29 @@ export function DecideCases({
   onApplied,
   onClose,
   now,
+  mode = "historical",
 }: {
-  /** The cases to decide: the historical ones. */
+  /** The cases to decide: the historical ones, or every open one (`mode="open"`). */
   cards: OpportunityCardData[];
+  mode?: "historical" | "open";
   /** Refetch the pipeline after anything was recorded. */
   onApplied: () => void;
   onClose: () => void;
   now?: Date;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
+  const propose = (c: OpportunityCardData) => (mode === "open" ? proposeOpenDecision(c, at) : { ...proposeDecision(c, at), include: true });
   const proposals = useMemo(
-    () => Object.fromEntries(cards.map((c) => [c.opportunity_id, proposeDecision(c, at)])),
-    [cards, at],
+    () => Object.fromEntries(cards.map((c) => [c.opportunity_id, mode === "open" ? proposeOpenDecision(c, at) : proposeDecision(c, at)])),
+    [cards, at, mode],
   );
   const [rows, setRows] = useState<Record<string, Row>>(() =>
     Object.fromEntries(
       cards.map((c) => [
         c.opportunity_id,
         {
-          decision: proposeDecision(c, at).decision,
-          include: true,
+          decision: propose(c).decision,
+          include: propose(c).include,
           lostReason: "Sin respuesta",
           pauseReason: PAUSE_REASONS[2],
           pauseDay: isoDay(at, 30),
@@ -152,6 +176,7 @@ export function DecideCases({
       return { ok: true, text: `En pausa hasta ${fmtDate(morningOf(r.pauseDay))}` };
     }
     if (r.decision === "conversacion") {
+      if (card.stage === "negotiating") return { ok: true, text: "Ya estaba en Conversación" };
       await moveCase(base, "negotiating", `Decidido en bloque: ${why}.`, null, k);
       return { ok: true, text: "En conversación" };
     }
@@ -198,9 +223,10 @@ export function DecideCases({
       <header className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h2 id="decide-title" className="text-base font-semibold text-ink">
-            Decidir {pending.length} casos históricos
+            {mode === "open" ? `Revisar ${pending.length} casos abiertos` : `Decidir ${pending.length} casos históricos`}
           </h2>
           <p className="mt-0.5 max-w-3xl text-xs leading-5 text-ink-muted">
+            {mode === "open" ? "Los casos con cotización enviada que siguen abiertos. Los que están en pausa o ya en «Conversación» vienen desmarcados. " : null}
             Cada caso trae una propuesta a partir del correo: si el cliente escribió después de la cotización pasa a «Conversación»; con{" "}
             {SILENT_AFTER_DAYS} días o más sin respuesta, a «Perdida · Sin respuesta»; si no, queda en «Enviada» con un seguimiento para hoy.
             Cambia lo que no corresponda, desmarca lo que prefieras ver después y aplica.
