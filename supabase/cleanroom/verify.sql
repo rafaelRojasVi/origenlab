@@ -117,6 +117,10 @@ union all select 'crm.notice_review', count(*)::text from crm.notice_review
 union all select 'crm.prospect_review', count(*)::text from crm.prospect_review
 union all select 'crm.prospect_edit', count(*)::text from crm.prospect_edit
 union all select 'evidence.prospect_search_run', count(*)::text from evidence.prospect_search_run
+union all select 'crm.todo', count(*)::text from crm.todo
+union all select 'crm.person_name', count(*)::text from crm.person_name
+union all select 'crm.invoice', count(*)::text from crm.invoice
+union all select 'crm.invoice_payment', count(*)::text from crm.invoice_payment
 ;
 
 commit;

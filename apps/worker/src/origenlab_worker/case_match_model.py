@@ -113,10 +113,12 @@ def dossier(card: CaseCard, memory: dict[str, Any] | None = None) -> dict[str, A
 
 
 def offered_cases(layer1: MatchResult, cases: Sequence[CaseCard]) -> list[CaseCard]:
-    """Layer 1's candidates first, then open cases, then recently closed ones; at most MAX_CASES."""
+    """Layer 1's candidates first, then open cases, then recently closed ones; at most MAX_CASES. A case the
+    person guard dropped («mismo tema, otra persona», `MatchResult.excluded`) is never offered."""
     first = [c.opportunity_id for c in layer1.candidates]
     order = {oid: i for i, oid in enumerate(first)}
-    ranked = sorted(cases, key=lambda c: (order.get(c.opportunity_id, len(first)), bool(c.closed_at)))
+    dropped = set(layer1.excluded)
+    ranked = sorted((c for c in cases if c.opportunity_id not in dropped), key=lambda c: (order.get(c.opportunity_id, len(first)), bool(c.closed_at)))
     return ranked[:MAX_CASES]
 
 

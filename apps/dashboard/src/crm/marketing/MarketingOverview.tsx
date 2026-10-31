@@ -20,8 +20,7 @@ function formatV1DateRange(campaign: V1LaneCampaign): string {
 
 /**
  * The top of the Marketing section: how long since the last real send, how long until the next
- * planned one, and four counts. Only recorded figures: no opens, clicks or replies are shown,
- * because none are imported.
+ * planned one. The measured figures (reach, blocks, responses) are `MarketingAnalytics`.
  *
  * When a V1-lane campaign is active or upcoming, a banner shows its status and date range.
  * «En curso por el canal V1: …» while it runs; «Programada por el canal V1: …» before it starts;
@@ -46,7 +45,7 @@ export function MarketingOverview({
   ) ?? null;
 
   return (
-    <section aria-label="Resumen de marketing" className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_1.3fr]" data-testid="marketing-overview">
+    <section aria-label="Resumen de marketing" className="grid grid-cols-1 gap-3 lg:grid-cols-2" data-testid="marketing-overview">
       <div className="rounded-lg border border-line bg-canvas-raised p-4">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Último envío</p>
         {f.lastSend ? (
@@ -96,21 +95,6 @@ export function MarketingOverview({
         )}
         <p className="mt-2 text-[11px] font-medium text-warn">{PLANNING_LABEL}</p>
       </div>
-      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2" data-testid="overview-counts">
-        {(
-          [
-            ["Enviadas", f.sent],
-            ["Borradores", f.drafts],
-            ["Audiencia congelada", f.frozen],
-            ["Planificadas", f.planned],
-          ] as const
-        ).map(([label, n]) => (
-          <div key={label} className="rounded-lg border border-line bg-canvas-raised px-3 py-2">
-            <dt className="text-[11px] text-ink-faint">{label}</dt>
-            <dd className="text-lg font-semibold tabular-nums text-ink">{n}</dd>
-          </div>
-        ))}
-      </dl>
     </section>
   );
 }

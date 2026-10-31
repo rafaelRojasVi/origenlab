@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import SecretStr
 
 from origenlab_api.backends.factory import validate_api_settings
@@ -84,6 +85,9 @@ def create_app() -> FastAPI:
     # outermost (last-added) middleware wraps all others:
     #   RequestLoggingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
     # RequestLoggingMiddleware is outermost so it measures total dispatch time.
+    # Innermost: replies leave compressed when the caller accepts gzip (the dashboard Worker does).
+    # Render bills outbound bandwidth and JSON shrinks 5-10x (2026-10-30). Under 1 KB is not worth it.
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(ResponseTimingMiddleware)
     app.add_middleware(RequestLoggingMiddleware)
@@ -224,6 +228,12 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     app.state.drive_casos_url = f"https://drive.google.com/drive/folders/{casos}" if casos else None
     app.state.org_suggestions_file = settings.v2_org_suggestions_file
     app.state.fx_rates = build_fx_rates(connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
+    # Render API key for the infrastructure read (never logged, never returned in any response).
+    app.state.render_api_key = (
+        settings.render_api_key.get_secret_value()
+        if settings.render_api_key is not None
+        else None
+    )
     app.include_router(workspace_router)
     # Email → cases (spec 2026-10-05): the admin dry run mounts with the reads; apply and undo
     # mount with the case commands in `_mount_v2_command_boundary`.
@@ -670,6 +680,32 @@ def _mount_v2_command_boundary(
     app.include_router(command_router)
     app.include_router(case_command_router)
     app.include_router(task_command_router)
+    # «Pendientes» (the shared to-do list on Hoy): same database, role and switch.
+    from origenlab_api.v2.todos.reads import TodoReadRepository
+    from origenlab_api.v2.todos.repository import V2TodoCommandRepository
+    from origenlab_api.v2.todos.routes import todo_command_router, todo_read_router
+
+    app.state.v2_todo_command_repository = V2TodoCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.v2_todo_read_repository = TodoReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(todo_command_router)
+    app.include_router(todo_read_router)
+    # «Pagos» (the SII sales register and what is paid): same database, role and switch.
+    from origenlab_api.v2.invoices.reads import InvoiceReadRepository
+    from origenlab_api.v2.invoices.repository import V2InvoiceCommandRepository
+    from origenlab_api.v2.invoices.routes import invoice_command_router, invoice_read_router
+
+    app.state.v2_invoice_command_repository = V2InvoiceCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.v2_invoice_read_repository = InvoiceReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(invoice_command_router)
+    app.include_router(invoice_read_router)
     # «Licitaciones» (spec 2026-10-19 §6.10): tender cases, same database, role and switch. The
     # Mercado Público ticket reads a tender's detail by code; without one the operator types the buyer.
     from origenlab_api.v2.tenders.mercado_publico import resolve_ticket
@@ -726,8 +762,14 @@ def _mount_v2_command_boundary(
     from origenlab_api.v2.mail_rules_auto import AutoMailRules, AutoMailRulesRunner
     from origenlab_api.v2.mail_rules_routes import mail_rules_command_router
 
+    from origenlab_api.v2.people_rules_repository import PeopleRulesRepository
+
+    app.state.people_rules_repository = PeopleRulesRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms)
     app.state.auto_mail_rules = AutoMailRules(
         app.state.mail_rules_repository,
+        people_repo=app.state.people_rules_repository,
+        people_enabled=settings.v2_auto_people_enabled,
         interval_seconds=settings.v2_auto_mail_rules_interval_seconds,
         disabled_rules=frozenset(rule for rule, on in (("R14", settings.v2_auto_rule_r14_enabled),
                                                        ("R15", settings.v2_auto_rule_r15_enabled)) if not on),

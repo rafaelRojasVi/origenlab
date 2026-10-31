@@ -53,13 +53,15 @@ from typing import Any
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 from origenlab_api.v2.mail_rules import AUTO
+from origenlab_api.v2.people_rules import action_key
 
 logger = logging.getLogger(__name__)
 
 #: Safe intake/link rules the timer applies (R11, forwarded requests: owner 2026-10-14). Terminal actions (R5/R6) and recipient-domain
-#: creation (R3/R4) still wait for an admin.
+#: creation (R3/R4) still wait for an admin. R19 is terminal too, but runs by itself (owner 2026-10-29: the AI read the
+#: client's «no» in the body; «Quitar» reopens the case); R18 changes nothing in the CRM.
 AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15",
-                                             "R16"})
+                                             "R16", "R17", "R18", "R19"})
 #: Rules with their own kill flag in settings (`v2_auto_rule_<id>_enabled`).
 FLAGGED_RULES: tuple[str, ...] = ("R14", "R15")
 SWITCH_COMMAND = "set_auto_mail_rules"
@@ -67,6 +69,28 @@ DEFAULT_INTERVAL_SECONDS = 300
 #: At most this many actions per pass; the next pass takes the rest.
 MAX_ACTIONS_PER_PASS = 100
 MAX_NOTE_CHARS = 2000
+#: At most this many people actions per pass (strong ones only), by whole readings; the next pass
+#: takes the rest.
+MAX_PEOPLE_ACTIONS_PER_PASS = 50
+#: A refused people action is tried again on the next passes, at most this many times per API
+#: process: a refusal is usually the plan going stale (a row changed between plan and apply) and the
+#: next plan agrees with the database again; one that keeps being refused is held until a restart,
+#: so a deterministic refusal costs three attempts, not one every five minutes.
+MAX_PEOPLE_ATTEMPTS = 3
+
+
+def whole_readings(actions: list[Any], limit: int) -> list[Any]:
+    """The first actions in order, at most `limit`, never cutting one reading's actions in two
+    (a reading with more than `limit` actions alone is taken whole)."""
+    taken: list[Any] = []
+    groups: dict[str, list[Any]] = {}
+    for a in actions:
+        groups.setdefault(a.assertion_id, []).append(a)
+    for group in groups.values():
+        if taken and len(taken) + len(group) > limit:
+            break
+        taken.extend(group)
+    return taken
 
 
 def _digest(value: dict[str, Any]) -> str:
@@ -114,13 +138,20 @@ class AutoMailRules:
     """The switch and one automatic pass, over a :class:`MailRulesRepository`."""
 
     def __init__(self, repo: Any, *, interval_seconds: int = DEFAULT_INTERVAL_SECONDS,
-                 disabled_rules: frozenset[str] = frozenset()) -> None:
+                 disabled_rules: frozenset[str] = frozenset(), people_repo: Any = None,
+                 people_enabled: bool = False) -> None:
         self._repo = repo
+        #: «Who wrote each email» (`people_rules_repository.py`): runs before the mail rules, only
+        #: while `ORIGENLAB_V2_AUTO_PEOPLE_ENABLED` is on and the same switch is on.
+        self._people_repo = people_repo
+        self.people_enabled = bool(people_enabled)
         self.interval_seconds = int(interval_seconds)
         #: Rules a deploy flag keeps out of the automatic pass (`FLAGGED_RULES`).
         self.rules: frozenset[str] = AUTOMATIC_RULES - frozenset(disabled_rules)
         self._lock = threading.Lock()
         self._last_run: dict[str, Any] | None = None
+        #: People action key → refusals in this process (`MAX_PEOPLE_ATTEMPTS`).
+        self._people_refusals: dict[str, int] = {}
 
     # ------------------------------------------------------------------ state
 
@@ -185,19 +216,54 @@ class AutoMailRules:
 
     # ------------------------------------------------------------------ one pass
 
+    def _people_pass(self, operator: OperatorIdentity, result: dict[str, Any]) -> None:
+        """Apply the strong people actions first, so the mail rules see who wrote each email. A
+        failed people pass never stops the mail rules."""
+        people = result["people"]
+        try:
+            strong = [a for a in self._people_repo.plan() if a.tier == "strong"]
+            tries = self._people_refusals
+            ready = [a for a in strong if tries.get(action_key(a), 0) < MAX_PEOPLE_ATTEMPTS]
+            people["held"] = len(strong) - len(ready)
+            batch = whole_readings(ready, MAX_PEOPLE_ACTIONS_PER_PASS)
+            people["pending"] = len(ready) - len(batch)
+            for action in batch:
+                outcome = self._people_repo.apply_planned(operator, action, automatic=True)
+                key = action_key(action)
+                if outcome.get("code"):
+                    people["refused"] += 1
+                    tries[key] = tries.get(key, 0) + 1
+                else:
+                    people["applied"] += 1
+                    tries.pop(key, None)
+        except Exception:
+            logger.exception("auto mail rules: the people pass failed")
+            people["skipped"] = "error"
+
     def run_once(self) -> dict[str, Any]:
-        """Apply every safe automatic R1/R2/R7 action the rules plan now, if the switch is on."""
+        """One pass, if the switch is on: first the people pass (strong actions, when its flag is on),
+        then every automatic mail-rule action the rules plan now. The result counts both; the
+        people part carries its own `applied`, `refused`, `pending`, `held` (refused
+        `MAX_PEOPLE_ATTEMPTS` times, not tried again) and `skipped`."""
         started = datetime.now(UTC)
         with self._repo._read() as cur:
             switch = read_switch(cur)
         operator: OperatorIdentity | None = switch["operator"]
         result: dict[str, Any] = {"at": started.isoformat(), "applied": 0, "refused": 0, "pending": 0,
-                                  "skipped": None, "refusals": []}
+                                  "skipped": None, "refusals": [],
+                                  "people": {"applied": 0, "refused": 0, "pending": 0, "held": 0,
+                                             "skipped": None}}
         if not switch["enabled"] or operator is None:
             result["skipped"] = "off"
         elif not _is_active_admin(operator):
             result["skipped"] = "operator_not_admin"
+        if result["skipped"] is not None:
+            result["people"]["skipped"] = result["skipped"]
+        elif self._people_repo is None or not self.people_enabled:
+            result["people"]["skipped"] = "disabled"
         else:
+            self._people_pass(operator, result)
+        if result["skipped"] is None:
             actions, _display, _snapshot = self._repo.plan()
             eligible = [a for a in actions if a.mode == AUTO and a.rule_id in self.rules]
             result["pending"] = max(0, len(eligible) - MAX_ACTIONS_PER_PASS)
@@ -246,6 +312,8 @@ class AutoMailRulesRunner:
             except Exception:  # the timer must outlive one bad pass
                 logger.exception("auto mail rules: the pass failed")
                 continue
-            if result["applied"] or result["refused"]:
-                logger.info("auto mail rules: applied=%d refused=%d pending=%d",
-                            result["applied"], result["refused"], result["pending"])
+            people = result.get("people") or {}
+            if result["applied"] or result["refused"] or people.get("applied") or people.get("refused"):
+                logger.info("auto mail rules: applied=%d refused=%d pending=%d people_applied=%d people_refused=%d",
+                            result["applied"], result["refused"], result["pending"],
+                            people.get("applied", 0), people.get("refused", 0))

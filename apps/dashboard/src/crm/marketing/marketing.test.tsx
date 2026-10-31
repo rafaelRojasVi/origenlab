@@ -183,7 +183,7 @@ function jsonResponse(body: unknown, status = 200) {
 const ARCHIVED = {
   campaign_id: "c0000000-0000-4000-8000-000000000001", name: "Campaña archivada", status: "archived", subject: null, preheader: null,
   has_html: false, version: 1, approved_at: null, created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z",
-  first_sent_at: "2026-03-02T00:00:00Z", last_sent_at: "2026-03-02T00:00:00Z", recipients_by_state: { sent: 10 }, send_attempts: [], replies_recorded: 0,
+  first_sent_at: "2026-03-02T00:00:00Z", last_sent_at: "2026-03-02T00:00:00Z", recipients_by_state: { sent: 10 }, send_attempts: [],
 };
 const DRAFT = {
   ...ARCHIVED, campaign_id: "c0000000-0000-4000-8000-000000000002", name: "Borrador IKA", status: "draft", subject: "Dispersores IKA",
@@ -197,7 +197,7 @@ const DRAFT_CONTENT: CampaignContent = {
 
 function marketing(draftsEnabled: boolean): MarketingResponse {
   return {
-    campaigns: [DRAFT, ARCHIVED], contact_controls: [], replies_note: "sin respuestas",
+    campaigns: [DRAFT, ARCHIVED], contact_controls: [],
     storage: { table: "outbound.campaign", database: "origenlab_test_abcd1234" }, authoring: { drafts_enabled: draftsEnabled },
   };
 }
@@ -276,18 +276,19 @@ describe("MarketingPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows a sandboxed thumbnail for stored HTML and «HTML enviado no archivado» when there is none", async () => {
+  it("shows a sandboxed thumbnail for a draft's stored HTML; a sent campaign is a row, not a card", async () => {
     stubApi(false);
     render(<MarketingPage />);
     const cards = await screen.findAllByTestId("campaign-card");
-    expect(within(cards[1]).getByTestId("thumb-not-imported")).toHaveTextContent("HTML enviado no archivado");
+    expect(cards).toHaveLength(1);
+    expect(screen.getAllByTestId("campaign-row")).toHaveLength(1);
     const thumb = await within(cards[0]).findByTestId("thumb");
     const frame = within(thumb).getByTestId("email-frame");
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(frame.getAttribute("srcdoc")).toContain("Content-Security-Policy");
     expect(frame.getAttribute("srcdoc")).not.toContain("tracker.test");
-    expect(screen.getByTestId("campaign-storage-note")).toHaveTextContent("origenlab_test_abcd1234");
+    expect(screen.getByTestId("fixture-warning")).toHaveTextContent("origenlab_test_abcd1234");
   });
 
   it("a new draft says it exists only in this tab and cannot be saved where drafts are disabled", async () => {
@@ -383,7 +384,7 @@ describe("MarketingPage", () => {
     renderAs(role);
     await screen.findAllByTestId("campaign-card");
     expect(screen.queryByRole("button", { name: "Nueva campaña" })).toBeNull();
-    for (const tab of ["Calendario", "Audiencias por equipo", "Bajas", "Campañas"]) {
+    for (const tab of ["Calendario", "Audiencias por equipo", "Bajas y rebotes", "Campañas"]) {
       fireEvent.click(screen.getByRole("button", { name: tab }));
       await waitFor(() => expect(screen.queryByRole("button", { name: "Nueva campaña" })).toBeNull());
     }
@@ -764,7 +765,7 @@ describe("Bajas (W10)", () => {
     );
     render(<MarketingPage />);
     await screen.findAllByTestId("campaign-card");
-    fireEvent.click(screen.getByRole("button", { name: "Bajas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bajas y rebotes" }));
     const panel = await screen.findByTestId("suppression-status");
     expect(screen.getByTestId("gmail-sync-notice")).toHaveTextContent("no se sincronizan automáticamente");
     expect(screen.getByTestId("gmail-sync-notice")).toHaveTextContent("no existe la re-suscripción");
@@ -858,7 +859,7 @@ describe("Bajas (W10)", () => {
 
   async function openBajas() {
     await screen.findAllByTestId("campaign-card");
-    fireEvent.click(screen.getByRole("button", { name: "Bajas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bajas y rebotes" }));
     return screen.findAllByTestId("pending-review-row");
   }
 

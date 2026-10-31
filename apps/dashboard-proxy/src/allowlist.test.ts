@@ -88,6 +88,7 @@ describe("allowlist", () => {
       "/v2/workspace/fx",
       "/v2/workspace/mail-sync",
       "/v2/workspace/operations",
+      "/v2/workspace/operations/infrastructure",
       "/v2/workspace/mail-quote-numbers",
       "/v2/workspace/history",
       "/v2/cockpit/work-queue",
@@ -115,6 +116,8 @@ describe("allowlist", () => {
       "/v2/workspace/mail-sync/",
       "/v2/workspace/mail-sync/contacto",
       "/v2/workspace/operations/",
+      "/v2/workspace/operations/infrastructure/",
+      "/v2/workspace/operations/infrastructure/extra",
       "/v2/workspace/operations/correo",
       "/v2/workspace/mail-quote-numbers/",
       "/v2/workspace/mail-quote-numbers/CN09901",
@@ -141,7 +144,7 @@ describe("allowlist", () => {
     }
   });
 
-  it("forwards exactly the twelve Marketing reads, GET only, and nothing near them", async () => {
+  it("forwards exactly the fourteen Marketing reads, GET only, and nothing near them", async () => {
     const { isAllowedMarketingCommandPostPath } = await import("./allowlist");
     const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
     for (const path of [
@@ -157,12 +160,17 @@ describe("allowlist", () => {
       `/v2/workspace/marketing/campaigns/${uuid}/history/audit`,
       "/v2/workspace/marketing/suppressions",
       "/v2/workspace/marketing/campaign-blocks",
+      "/v2/workspace/marketing/analytics",
+      "/v2/workspace/marketing/analytics/people",
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(false);
     }
     for (const path of [
       "/v2/workspace/marketing/",
+      "/v2/workspace/marketing/analytics/",
+      "/v2/workspace/marketing/analytics/people/x",
+      "/v2/workspace/marketing/analytics/export",
       "/v2/workspace/marketing/campaigns",
       "/v2/workspace/marketing/campaigns/not-a-uuid",
       `/v2/workspace/marketing/campaigns/${uuid.toUpperCase()}`,
@@ -505,8 +513,19 @@ describe("V2 durable read boundary allowlist", () => {
       // «Adjuntar OC»: copy a case email's purchase order, or remove one (2026-10-12).
       "/v2/commands/attach-case-document-from-email",
       "/v2/commands/remove-case-document",
+      // «Pendientes» on Hoy.
+      "/v2/commands/create-todo",
+      "/v2/commands/update-todo",
+      "/v2/commands/move-todo",
+      "/v2/commands/complete-todo",
+      "/v2/commands/reopen-todo",
+      "/v2/commands/delete-todo",
+      // «Pagos»: a document's case, «Pagada» and its undo (2026-10-28).
+      "/v2/commands/set-invoice-case",
+      "/v2/commands/mark-invoice-paid",
+      "/v2/commands/mark-invoice-unpaid",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(16);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(25);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -692,6 +711,46 @@ describe("V2 durable read boundary allowlist", () => {
   });
 });
 
+describe("«Pagos» (invoices) allowlist", () => {
+  it("allows GET of the register only, its three JSON commands and the CSV upload as exact POST paths", async () => {
+    const { isAllowedCatalogUploadPostPath, isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/invoices")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/invoices?opportunity_id=aaaaaaaa-1111-4111-8111-111111111111")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/invoices")).toBe(false);
+    for (const path of ["/v2/workspace/invoices/1", "/v2/workspace/invoices/", "/v2/workspace/invoicesx"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+    for (const path of ["/v2/commands/set-invoice-case", "/v2/commands/mark-invoice-paid",
+      "/v2/commands/mark-invoice-unpaid", "/v2/commands/import-invoices"]) {
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(`${path}/x`), `${path}/x`).toBe(false);
+    }
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/import-invoices")).toBe(true);
+    expect(isAllowedCatalogUploadPostPath("/v2/commands/mark-invoice-paid")).toBe(false);
+  });
+});
+
+describe("«Pendientes» (todos) allowlist", () => {
+  it("allows GET of the list only and the six commands only as exact POST paths", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath("/v2/workspace/todos")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/workspace/todos?done_days=14")).toBe(true);
+    expect(isAllowedPostPath("/v2/workspace/todos")).toBe(false);
+    for (const path of ["/v2/workspace/todos/1", "/v2/workspace/todos/", "/v2/workspace/todosx"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+    for (const verb of ["create", "update", "move", "complete", "reopen", "delete"]) {
+      const path = `/v2/commands/${verb}-todo`;
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(`${path}/x`), `${path}/x`).toBe(false);
+      expect(isAllowedPostPath(`${path}s`), `${path}s`).toBe(false);
+    }
+    expect(isAllowedPostPath("/v2/commands/delete-todo/x")).toBe(false);
+  });
+});
+
 describe("CRM authoring command POST allowlist", () => {
   const ALL_AUTHORING_PATHS = [
     "/v2/commands/create-person",
@@ -723,9 +782,11 @@ describe("CRM authoring command POST allowlist", () => {
     "/v2/commands/add-note",
     "/v2/commands/revise-note",
     "/v2/commands/archive-note",
+    "/v2/commands/answer-person-guess",
+    "/v2/commands/confirm-person-fact",
   ];
 
-  it("isAllowedCrmAuthoringCommandPostPath allows all 29 exact paths", async () => {
+  it("isAllowedCrmAuthoringCommandPostPath allows all 31 exact paths", async () => {
     const { isAllowedCrmAuthoringCommandPostPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
@@ -734,7 +795,7 @@ describe("CRM authoring command POST allowlist", () => {
     expect(isAllowedCrmAuthoringCommandPostPath("/v2/commands/create-person?x=1")).toBe(true);
   });
 
-  it("isAllowedPostPath admits all 29 authoring paths", async () => {
+  it("isAllowedPostPath admits all 31 authoring paths", async () => {
     const { isAllowedPostPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -760,7 +821,7 @@ describe("CRM authoring command POST allowlist", () => {
     }
   });
 
-  it("none of the 29 authoring command paths are GET-readable", async () => {
+  it("none of the 31 authoring command paths are GET-readable", async () => {
     const { isAllowedUpstreamPath } = await import("./allowlist");
     for (const path of ALL_AUTHORING_PATHS) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
@@ -1354,3 +1415,26 @@ describe("«Prospectos» (spec 2026-10-23)", () => {
   });
 });
 
+
+describe("People first: weak guesses and «Confirmar» (Task 7)", () => {
+  const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+
+  it("the person payload and the case emails that carry the guesses are already GET-readable", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedUpstreamPath(`/v2/workspace/people/${uuid}`)).toBe(true);
+    expect(isAllowedUpstreamPath(`/v2/workspace/opportunities/${uuid}/threads`)).toBe(true);
+  });
+
+  it("answer-person-guess and confirm-person-fact are exact authoring POSTs, never GET", async () => {
+    const { isAllowedCrmAuthoringCommandPostPath, isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of ["/v2/commands/answer-person-guess", "/v2/commands/confirm-person-fact"]) {
+      expect(isAllowedCrmAuthoringCommandPostPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(true);
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      for (const near of [`${path}/`, `${path}s`, `${path}/x`, path.toUpperCase()]) {
+        expect(isAllowedPostPath(near), near).toBe(false);
+        expect(isAllowedUpstreamPath(near), near).toBe(false);
+      }
+    }
+  });
+});

@@ -82,7 +82,7 @@ describe("V1-lane campaign card", () => {
 
 const base = {
   status: "archived", subject: null, preheader: null, has_html: false, version: 1, approved_at: null,
-  created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z", replies_recorded: 0,
+  created_at: "2026-03-01T00:00:00Z", updated_at: "2026-03-01T00:00:00Z",
 };
 const SENT_V1 = {
   ...base, campaign_id: "c0000000-0000-4000-8000-000000000011", name: "Ola enviada", origin: "imported_v1",
@@ -104,7 +104,7 @@ describe("never-sent historical campaigns", () => {
 
   it("are hidden from the list and its count, behind a link that shows them", async () => {
     const data: MarketingResponse = {
-      campaigns: [SENT_V1, NEVER_SENT_V1], contact_controls: [], replies_note: "sin respuestas",
+      campaigns: [SENT_V1, NEVER_SENT_V1], contact_controls: [],
       storage: { table: "outbound.campaign", database: "origenlab_clean" }, authoring: { drafts_enabled: false },
     };
     vi.stubGlobal(
@@ -116,9 +116,10 @@ describe("never-sent historical campaigns", () => {
       }),
     );
     render(<MarketingPage />);
-    const cards = await screen.findAllByTestId("campaign-card");
-    expect(cards.map((c) => c.textContent)).toEqual([expect.stringContaining("Ola enviada")]);
+    const rows = await screen.findAllByTestId("campaign-row");
+    expect(rows.map((c) => c.textContent)).toEqual([expect.stringContaining("Ola enviada")]);
+    expect(screen.queryAllByTestId("campaign-card")).toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: /Mostrar 1 campaña nunca enviada/ }));
-    expect(screen.getAllByTestId("campaign-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("campaign-card")).toHaveLength(1); // the never-sent one; the sent one stays a row
   });
 });

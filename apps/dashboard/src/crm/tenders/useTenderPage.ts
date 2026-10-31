@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { onClearResourceCache, useMemoryScope } from "../useResource";
 import { fetchTenderPage, tenderRefusal, type TenderPageData } from "./tenderApi";
 
 /** While a preparation is queued or running, the page is read again this often. */
@@ -24,6 +25,14 @@ export function preparationBusy(data: TenderPageData): boolean {
   });
 }
 
+/**
+ * Page memory, as `useResource` keeps it: the last answer per signed-in operator and tender, so
+ * reopening a tender shows it at once while the read runs again. Memory only, dropped on a failed
+ * read and when the session ends.
+ */
+const kept = new Map<string, TenderPageData>();
+onClearResourceCache(() => kept.clear());
+
 /** The API refused for certain (a 4xx): reading again will not help. */
 function refused(err: unknown): boolean {
   const r = tenderRefusal(err);
@@ -43,18 +52,24 @@ export function useTenderPage(
   enabled: boolean,
   pollMs: number = POLL_MS,
 ): [TenderPageState, () => void, PollTrouble] {
-  const [state, setState] = useState<TenderPageState>({ kind: "loading" });
+  const scope = useMemoryScope();
+  const memoryKey = scope === null ? null : `${scope}#${id}`;
+  const [state, setState] = useState<TenderPageState>(() => {
+    const data = memoryKey === null ? undefined : kept.get(memoryKey);
+    return data ? { kind: "ready", data } : { kind: "loading" };
+  });
   const [trouble, setTrouble] = useState<PollTrouble>(null);
   const run = useRef<{ load: () => void } | null>(null);
 
   useEffect(() => {
     if (!enabled) return undefined;
+    const remembered = memoryKey === null ? undefined : kept.get(memoryKey);
     let alive = true;
     let inFlight = false;
     let again = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let busy = false;
-    let hasData = false;
+    let hasData = remembered !== undefined;
     let failures = 0;
     let stopped = false;
 
@@ -74,9 +89,11 @@ export function useTenderPage(
         busy = preparationBusy(data);
         failures = 0;
         stopped = false;
+        if (memoryKey !== null) kept.set(memoryKey, data);
         setTrouble(null);
         setState({ kind: "ready", data });
       } catch (error) {
+        if (memoryKey !== null) kept.delete(memoryKey);
         if (!alive) return;
         if (!hasData) {
           busy = false;
@@ -107,7 +124,7 @@ export function useTenderPage(
         void load();
       },
     };
-    setState({ kind: "loading" });
+    setState(remembered ? { kind: "ready", data: remembered } : { kind: "loading" });
     setTrouble(null);
     void load();
     return () => {
@@ -115,7 +132,7 @@ export function useTenderPage(
       if (timer) clearTimeout(timer);
       run.current = null;
     };
-  }, [id, enabled, pollMs]);
+  }, [id, enabled, pollMs, memoryKey]);
 
   const reload = useCallback(() => run.current?.load(), []);
   return [state, reload, trouble];

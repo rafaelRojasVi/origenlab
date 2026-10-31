@@ -5,6 +5,7 @@ import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } fro
 import { ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
+import { PendientesPanel } from "../todos/PendientesPanel";
 import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody } from "./TodayBody";
 import { HeroHeader } from "../HeroHeader";
@@ -16,8 +17,8 @@ type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
 /**
  * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,
- * clients who answered, the 3 · 14 · 30 follow-ups, what is left to add or decide), the next quote
- * number and the day's exchange rates kept at hand on the side. The data-health counts live on Datos.
+ * clients who answered, the 3 · 14 · 30 follow-ups, what is left to add or decide), and on the side
+ * the shared «Pendientes de la semana», the next quote number and the day's exchange rates. The data-health counts live on Datos.
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const { session } = useAuthSession();
@@ -51,6 +52,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             people={people}
             aside={
               <>
+                <PendientesPanel cases={p.items} navigate={navigate} />
                 <QuoteNumberBox pipeline={pipeline} compact />
                 <FxSection state={fx} reload={reloadFx} />
               </>

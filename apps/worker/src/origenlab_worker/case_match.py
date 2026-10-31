@@ -5,6 +5,11 @@ Pure: an email's features and the case snapshot in, ranked candidates out. Nothi
 result is stored as a `message_triage` assertion (`case_match:v1`) and a person decides. Guardrails
 (owner review 2026-10-10): the quote number on the PDF beats every other signal; the sender being on a
 case is never enough alone; a quote number no case holds proposes a new case, never the nearest one.
+People first (2026-10-27): the person behind the sender's address being on a case is a signal of its own
+(`person_on_case`, also never enough alone), and when that person is on an open case, a case that only
+shares the topic with the email — no quote number, no thread — and names other people is not offered,
+by layer 1 or to the model («mismo tema, otra persona»). A case with no participants recorded, or one the
+sender's own address already wrote on, is never dropped: nothing says it is another person's.
 
 The snapshot holds sales cases only (`triage.CASE_CARDS_SQL`, `o.kind = 'sale'`, the API's
 `case_kind.SALE_CASES`): a tender is never a candidate.
@@ -27,10 +32,14 @@ DECISIONS: tuple[str, ...] = ("exact", "propose", "new_case", "none")
 MAX_CANDIDATES = 3
 OWN_DOMAINS = frozenset({"origenlab.cl"})
 
-#: Points per signal. `sender_on_case` is weak on purpose and never suggests alone.
+#: Points per signal. `sender_on_case` is weak on purpose and never suggests alone; `person_on_case` (the
+#: sender's person is a participant of the case) never suggests alone either, but with the product or the
+#: institution's name it does.
 WEIGHTS: dict[str, int] = {"pdf_quote": 10, "thread_pdf_quote": 8, "text_quote": 6, "same_thread": 6, "domain": 3,
-                           "institution_name": 3, "product": 2, "sender_on_case": 1}
+                           "institution_name": 3, "product": 2, "sender_on_case": 1, "person_on_case": 4}
 EXACT_SIGNALS = frozenset({"pdf_quote", "thread_pdf_quote", "text_quote", "same_thread"})
+#: Signals about who writes, not about what: never enough alone to offer a case.
+PEOPLE_SIGNALS = frozenset({"sender_on_case", "person_on_case"})
 MIN_SCORE = 3
 
 #: A quote number in an attachment name: a CN/COT token («CN09147», «CN1975») or a five-digit 0xxxx
@@ -59,6 +68,8 @@ class CaseCard:
     threads: tuple[str, ...]
     addresses: tuple[str, ...]
     interests: tuple[str, ...]
+    #: The case's participants' persons, each merged person followed to the person it was merged into.
+    person_ids: tuple[str, ...] = ()
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> CaseCard:
@@ -66,7 +77,7 @@ class CaseCard:
             return tuple(str(x) for x in (row.get(key) or ()) if x)
         return cls(str(row["opportunity_id"]), str(row.get("title") or ""), str(row.get("stage") or ""),
                    row.get("closed_at"), row.get("institution"), t("domains"), t("quote_numbers"),
-                   t("threads"), t("addresses"), t("interests"))
+                   t("threads"), t("addresses"), t("interests"), t("person_ids"))
 
 
 @dataclass(frozen=True)
@@ -82,6 +93,9 @@ class MatchInput:
     #: Attachment names of the other emails on the same Gmail thread (`comms.attachment`): the quote
     #: PDF is usually on the email OrigenLab sent, not on the client's reply.
     thread_attachment_names: tuple[str, ...] = ()
+    #: The person behind the sender's address (`crm.contact_point`, merges followed), when the CRM knows
+    #: one. None for a shared mailbox, an address whose owner is unknown, or an inactive address.
+    sender_person_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +111,8 @@ class MatchResult:
     candidates: tuple[Candidate, ...]
     quote_numbers: tuple[str, ...]
     new_case_quote: str | None
+    #: Cases the person guard dropped: never offered to the model either. Not stored (`as_json`).
+    excluded: tuple[str, ...] = ()
 
     def as_json(self) -> dict[str, Any]:
         return {"case_match_version": CASE_MATCH_VERSION, "decision": self.decision,
@@ -178,8 +194,12 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: 
     text_words = _words(text)
     folded_text = " ".join(_WORD.findall(fold(text)))
     sender = (inp.sender or "").lower()
+    person = inp.sender_person_id
+    # The sender's person is on an open case: a case that only shares the topic is someone else's.
+    person_guard = bool(person) and any(person in c.person_ids for c in cases if not c.closed_at)
 
     scored: list[Candidate] = []
+    excluded: list[str] = []
     for case in cases:
         keyed, bare = _case_keys(case.quote_numbers)
         signals: list[str] = []
@@ -199,8 +219,14 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: 
             signals.append("product")
         if sender and sender in {a.lower() for a in case.addresses}:
             signals.append("sender_on_case")
+        if person and person in case.person_ids:
+            signals.append("person_on_case")
+        elif (person_guard and case.person_ids and "sender_on_case" not in signals
+              and not EXACT_SIGNALS & set(signals)):
+            excluded.append(case.opportunity_id)  # «mismo tema, otra persona»
+            continue
         score = sum(WEIGHTS[s] for s in signals)
-        if score >= MIN_SCORE and set(signals) - {"sender_on_case"}:
+        if score >= MIN_SCORE and set(signals) - PEOPLE_SIGNALS:
             scored.append(Candidate(case.opportunity_id, score, tuple(signals)))
 
     # The PDF names the case: nothing nearer competes with it — this email's PDF first, then the thread's.
@@ -228,12 +254,12 @@ def match_case(inp: MatchInput, cases: Sequence[CaseCard], known_quote_numbers: 
     # new quote of that case (R1 records it there), and the number is kept so a person sees it.
     on_thread = any("same_thread" in c.signals for c in top)
     if new_quote and not on_thread and not any({"pdf_quote", "thread_pdf_quote"} & set(c.signals) for c in top):
-        return MatchResult("new_case", top, numbers, new_quote)
+        return MatchResult("new_case", top, numbers, new_quote, tuple(excluded))
     if top and set(top[0].signals) & EXACT_SIGNALS and (len(top) == 1 or rank(top[0]) < rank(top[1])):
-        return MatchResult("exact", top[:1], numbers, new_quote if on_thread else None)
+        return MatchResult("exact", top[:1], numbers, new_quote if on_thread else None, tuple(excluded))
     if top:
-        return MatchResult("propose", top, numbers, None)
-    return MatchResult("none", (), numbers, None)
+        return MatchResult("propose", top, numbers, None, tuple(excluded))
+    return MatchResult("none", (), numbers, None, tuple(excluded))
 
 
 __all__ = ["CASE_MATCH_VALUE_NORM", "CASE_MATCH_VERSION", "DECISIONS", "Candidate", "CaseCard", "MatchInput",

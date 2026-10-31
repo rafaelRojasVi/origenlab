@@ -193,9 +193,26 @@ insert into expected values
     -- error, updated_at).
     ('evidence', 'prospect_search_run', 'origenlab_api', 'SI', null, 'SI'),
     ('evidence', 'prospect_search_run', 'origenlab_worker', 'SI',
-       array['status', 'started_at', 'finished_at', 'counts', 'error', 'updated_at'], 'SIU');
+       array['status', 'started_at', 'finished_at', 'counts', 'error', 'updated_at'], 'SIU'),
+    -- 20261028100000: crm.todo — the shared «Pendientes» list; api select/insert/update like
+    -- crm.task (a line is never deleted: no DELETE grant), no worker access at all.
+    ('crm', 'todo', 'origenlab_api', 'SIU', null, 'SIU'),
+    ('crm', 'todo', 'origenlab_worker', '', null, ''),
+    -- 20261029100000: crm.person_name — api select/insert + column UPDATE (removed_at,
+    -- removed_by_operator_id); worker select. No DELETE.
+    -- 20261029110000 adds confirmation (the contact page's «Confirmar»).
+    ('crm', 'person_name', 'origenlab_api', 'SI', array['confirmation', 'removed_at', 'removed_by_operator_id'], 'SIU'),
+    ('crm', 'person_name', 'origenlab_worker', 'S', null, 'S'),
+    -- 20261030100000: crm.invoice — «Pagos»; api select/insert/update (an SII document is never
+    -- deleted: no DELETE grant), no worker access at all.
+    ('crm', 'invoice', 'origenlab_api', 'SIU', null, 'SIU'),
+    ('crm', 'invoice', 'origenlab_worker', '', null, ''),
+    -- 20261031100000: crm.invoice_payment — «Pagos» abonos; api select/insert + column UPDATE
+    -- (removed_at, removed_by_operator_id: a payment is removed once, never deleted), no worker access.
+    ('crm', 'invoice_payment', 'origenlab_api', 'SI', array['removed_at', 'removed_by_operator_id'], 'SIU'),
+    ('crm', 'invoice_payment', 'origenlab_worker', '', null, '');
 
-select is((select count(*)::int from expected), 126, 'the matrix covers all 63 tables for both runtime roles');
+select is((select count(*)::int from expected), 134, 'the matrix covers all 67 tables for both runtime roles');
 
 -- Table-level grants match the matrix exactly.
 select results_eq(

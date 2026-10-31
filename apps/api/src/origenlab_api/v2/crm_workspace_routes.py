@@ -27,6 +27,7 @@ from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.case_documents import mail_storage_key
 from origenlab_api.v2.case_mail import MAX_EML_BYTES, read_message, valid_message_id
 from origenlab_api.v2.catalog.storage import StorageUnavailable
+from origenlab_api.v2.marketing_analytics import UnknownFigure
 from origenlab_api.v2.contact_redaction import ContactRedactingRoute, sees_contact_addresses
 from origenlab_api.v2.crm_merge_preview import merge_preview
 from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
@@ -135,8 +136,10 @@ def get_merge_preview(
 
 @workspace_router.get("/people/{person_id}")
 def get_person_authoring(person_id: UUID, operator: Operator, repo: Repo, request: Request) -> Any:
-    """Full authoring view of one person: contact points, affiliations, notes, references."""
-    body = repo.person_authoring(str(person_id))
+    """Full authoring view of one person: contact points, affiliations, notes, references, other
+    names, provenance and the «¿Es …?» guesses about them (people first)."""
+    people = getattr(request.app.state, "people_rules_repository", None)
+    body = repo.person_authoring(str(person_id), guesses=people.guesses_for_person if people is not None else None)
     if body is None:
         raise HTTPException(status_code=404, detail="no such person")
     enabled = bool(getattr(request.app.state, "crm_authoring_enabled", False))
@@ -180,10 +183,13 @@ def get_opportunity_notes(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
 
 
 @workspace_router.get("/opportunities/{opportunity_id}/threads")
-def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo) -> Any:
+def get_opportunity_threads(opportunity_id: UUID, _: Operator, repo: Repo, request: Request) -> Any:
     """The case's emails as Gmail cadenas, newest activity first, for the drawer's «Correos del
-    caso». A read only; senders by name or domain, never the full address."""
-    body = repo.opportunity_threads(str(opportunity_id))
+    caso». A read only; senders by name or domain, never the full address — except the address a
+    «¿Es …?» guess asks about (`person_guesses`), masked for a viewer like every other read."""
+    people = getattr(request.app.state, "people_rules_repository", None)
+    body = repo.opportunity_threads(str(opportunity_id),
+                                    person_guesses=people.guesses_for_case if people is not None else None)
     if body is None:
         raise HTTPException(status_code=404, detail="no such case")
     return body
@@ -330,8 +336,12 @@ def get_marketing(operator: Operator, repo: Repo, request: Request) -> Any:
     # visible in the V2 database. Loaded from a checked-in JSON file; a bad file returns [].
     # The email preview comes from outside the repository (it carries contact addresses).
     content_dir = getattr(request.app.state, "v1_lane_content_dir", None)
+    # Once its sends are imported (v1_sent_campaign_import) the CRM row is the campaign: the
+    # plan is kept for the calendar (waves not sent yet) and marked, so the list shows it once.
+    imported = {c.get("v1_campaign_key") for c in body["campaigns"]} - {None}
     body["v1_lane_campaigns"] = [
-        v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)) for c in load_v1_lane_campaigns()
+        {**v1_campaign_as_dict(c, load_v1_lane_html(c.key, content_dir)), "imported": c.key in imported}
+        for c in load_v1_lane_campaigns()
     ]
     body["test_send"] = {
         "enabled": bool(getattr(request.app.state, "campaign_test_send_enabled", False)),
@@ -369,6 +379,35 @@ def get_marketing_campaign_blocks(operator: Operator, repo: Repo, request: Reque
     if getattr(operator, "role", None) == "viewer":
         return redact_for_viewer(body)
     return body
+
+
+@workspace_router.get("/marketing/analytics")
+def get_marketing_analytics(_: Operator, repo: Repo) -> Any:
+    """Reach, still-writable, bounces, bajas, open cases, per-campaign results and CRM coverage.
+
+    A read, computed from the CRM's facts (`marketing_analytics`); `null` means not measurable.
+    """
+    return repo.marketing_analytics()
+
+
+@workspace_router.get("/marketing/analytics/people")
+def get_marketing_analytics_people(
+    _: Operator,
+    repo: Repo,
+    metric: str | None = None,
+    campaign_id: UUID | None = None,
+    segment: str | None = None,
+    column: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Any:
+    """The people one figure counts: `?metric=` (with `campaign_id`, or an overview metric), or a
+    coverage `?segment=` (optionally `column=`). The route class masks addresses for a viewer."""
+    try:
+        return repo.marketing_people(metric=metric, campaign_id=None if campaign_id is None else str(campaign_id),
+                                     segment=segment, column=column, limit=limit, offset=offset)
+    except UnknownFigure as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @workspace_router.get("/marketing/taxonomy")
@@ -580,6 +619,17 @@ def get_review(_: Operator, repo: Repo) -> Any:
 def get_mail_sync(_: Operator, repo: Repo) -> Any:
     """Gmail capture status for the dashboard banner (Phase 4a): state and last sync time."""
     return repo.mail_sync()
+
+
+@workspace_router.get("/operations/infrastructure")
+def get_infrastructure(request: Request, _: Operator, repo: Repo) -> Any:
+    """«Costos e infraestructura»: Supabase usage (DB size, largest tables, mail files) and
+    Render services + bandwidth (requires ORIGENLAB_RENDER_API_KEY; cached 10 min).
+    Any signed-in operator. No secret is returned."""
+    # The key is set on app.state at startup (main.py `_mount_v2_read_boundary`); without it
+    # the Render section returns ``{"available": false, "reason": "..."}`` and makes no HTTP call.
+    key = getattr(request.app.state, "render_api_key", None)
+    return repo.infrastructure(render_api_key=key)
 
 
 @workspace_router.get("/operations")

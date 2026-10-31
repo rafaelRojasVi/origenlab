@@ -106,8 +106,9 @@ describe("Operaciones", () => {
     respond();
     renderOps();
     fireEvent.click(await screen.findByRole("button", { name: "Reglas" }));
-    expect(screen.getAllByTestId(/^rule-R\d+$/)).toHaveLength(16);
+    expect(screen.getAllByTestId(/^rule-R\d+$/)).toHaveLength(19);
     expect(screen.getByTestId("rule-R1")).toHaveTextContent("Automática");
+    expect(screen.getByTestId("rule-R19")).toHaveTextContent("Automática");
     expect(screen.getByTestId("rule-R5")).toHaveTextContent("Con «Aplicar»");
     expect(screen.getByTestId("rule-R1")).toHaveTextContent("hoy: 1");
   });
@@ -133,6 +134,34 @@ describe("Operaciones", () => {
     respond();
     renderOps("admin", "proveedores");
     await waitFor(() => expect(screen.getByRole("button", { name: "Proveedores" })).toHaveAttribute("aria-pressed", "true"));
+  });
+
+  it("shows «Costos e infraestructura» tab in the segmented control", async () => {
+    // Stub infra fetch (the tab triggers a separate request).
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/v2/workspace/operations") {
+        return Promise.resolve(new Response(JSON.stringify(PAYLOAD), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
+      if (path === "/v2/workspace/operations/infrastructure") {
+        return Promise.resolve(new Response(JSON.stringify({
+          supabase: { database_bytes: 1000000000, largest_tables: [], mail_bytes: 0, mail_count: 0,
+                      mail_bytes_this_month: 0, plan: "Pro", plan_monthly_usd: 25, database_gb_included: 8,
+                      file_storage_gb_included: 100 },
+          render: { available: false, reason: "Falta la clave de la API de Render en el servicio" },
+          monthly_cost_usd: 25,
+          plans_as_of: "2026-10-30",
+        }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
+      return Promise.resolve(new Response("{}", { status: 404 }));
+    }));
+    renderOps();
+    const tab = await screen.findByRole("button", { name: "Costos e infraestructura" });
+    expect(tab).toBeInTheDocument();
+    fireEvent.click(tab);
+    // The infra page loads; it shows the missing-key note for Render.
+    await waitFor(() => expect(screen.getByText(/ORIGENLAB_RENDER_API_KEY/)).toBeInTheDocument());
   });
 });
 

@@ -96,6 +96,20 @@ _UPSERT_SUMMARY_SQL = """
 """
 
 
+#: A notice already stored: refresh what the list says, never resend the list row (`head` is not
+#: touched on conflict either). 2026-10-30, Render bandwidth: hundreds of rows a run carried it.
+_REFRESH_SUMMARY_SQL = """
+        update procurement.notice
+           set title = coalesce(%(title)s, title),
+               source_status = coalesce(%(status)s, source_status),
+               closes_at = coalesce(%(closes_at)s, closes_at),
+               last_seen_at = greatest(now(), first_seen_at),
+               disappeared_at = null,
+               updated_at = now()
+         where codigo_externo = %(code)s
+"""
+
+
 def _summary_params(row: dict[str, Any], code: str) -> dict[str, Any]:
     return {"code": code, "title": _str(row.get("Nombre")), "status": _str(row.get("Estado") or row.get("CodigoEstado")),
             "closes_at": _closes_at(row), "head": json.dumps(row, default=str)}
@@ -185,9 +199,12 @@ def run_discovery(conn: Any, fetch_list: FetchList, fetch_detail: FetchDetail, *
     fresh = [code for code in rows if code not in known]
     refreshed = [code for code in rows if code in known and not known[code]]
     with conn.transaction(), conn.cursor() as cur:
-        batch = [_summary_params(rows[code], code) for code in fresh + refreshed]
+        batch = [_summary_params(rows[code], code) for code in fresh]
         if batch:
             cur.executemany(_UPSERT_SUMMARY_SQL, batch)
+        refresh = [{k: v for k, v in _summary_params(rows[code], code).items() if k != "head"} for code in refreshed]
+        if refresh:
+            cur.executemany(_REFRESH_SUMMARY_SQL, refresh)
         withdrawn = 0
         if len(listado) >= min_list_rows:
             cur.execute(

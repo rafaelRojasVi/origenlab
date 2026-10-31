@@ -1,7 +1,7 @@
 """CRM freeform authoring command boundary — `POST /v2/commands/<crm-command>`.
 
 Mounted only when `ORIGENLAB_V2_CRM_AUTHORING_ENABLED=true` **and** a V2 DSN is set
-(default off).  All 29 routes require:
+(default off).  All 31 routes require:
 - An active operator with role `sales` or `admin` (viewer → 403 `role_may_not_decide`).
 - An `Idempotency-Key` header (absent → 400).
 - A JSON body whose shape is enforced by Pydantic with `extra="forbid"`.
@@ -12,12 +12,17 @@ Admin-only routes (sales → 403 `role_may_not_archive`):
   archive-organization, restore-organization.
 
 archive-note: the note's author **or** an admin.
+
+People first (Task 7): `answer-person-guess` (one Sí/No on a «¿Es …?» guess) and
+`confirm-person-fact` (the contact page's «Confirmar») run on the people rules' repository
+(`people_rules_repository.py`), take no `note`, and accept the key as the `Idempotency-Key` header
+or the body's `idempotency_key`.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -699,3 +704,63 @@ def archive_note(
     return _run(command_name="archive-note", body=body,
                 fields=fields, repo=repo,
                 operator=operator, idempotency_key=idempotency_key)
+
+
+# ─────────────────────────────────────────────── people first: guesses and «Confirmar» ──
+
+def get_people_rules_repository(request: Request) -> Any:
+    repo = getattr(request.app.state, "people_rules_repository", None)
+    if repo is None:  # pragma: no cover - mounted with the automatic timer
+        raise HTTPException(status_code=503, detail="the people rules are not configured")
+    return repo
+
+
+PeopleRepo = Annotated[Any, Depends(get_people_rules_repository)]
+_KEY = Field(default=None, min_length=1, max_length=200)
+
+
+class AnswerPersonGuessBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    guess_id: Annotated[str, Field(min_length=3, max_length=100)]
+    answer: Literal["si", "no"]
+    idempotency_key: Annotated[str | None, _KEY] = None
+
+
+class ConfirmPersonFactBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["name", "address", "affiliation"]
+    id: Annotated[str, _UUID]
+    idempotency_key: Annotated[str | None, _KEY] = None
+
+
+@crm_authoring_router.post("/answer-person-guess")
+def answer_person_guess(
+    body: AnswerPersonGuessBody,
+    operator: Deciding,
+    people: PeopleRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """One Sí/No to a «¿Es …?» guess (sales or admin): «sí» attaches the address to the person as a
+    person's act; «no» is recorded so the guess is never shown again."""
+    try:
+        key = require_idempotency_key(body.idempotency_key or idempotency_key)
+        return people.answer_guess(operator, body.guess_id, body.answer, key)
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc
+
+
+@crm_authoring_router.post("/confirm-person-fact")
+def confirm_person_fact(
+    body: ConfirmPersonFactBody,
+    operator: Deciding,
+    people: PeopleRepo,
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """«Confirmar» on a learned name, address or institution (sales or admin)."""
+    try:
+        key = require_idempotency_key(body.idempotency_key or idempotency_key)
+        return people.confirm_fact(operator, body.kind, body.id, key)
+    except CommandRefused as exc:
+        raise HTTPException(status_code=exc.status_code, detail=_detail(exc)) from exc

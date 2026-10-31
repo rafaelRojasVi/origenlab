@@ -52,6 +52,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   /^\/v2\/workspace\/marketing$/,
   /^\/v2\/workspace\/marketing\/taxonomy$/,
   /^\/v2\/workspace\/marketing\/audience$/,
+  // Marketing analytics (v2/marketing_analytics.py): the figures, and the people behind one
+  // figure (`?metric=&campaign_id=` or `?segment=&column=`, paged). GET-only reads.
+  /^\/v2\/workspace\/marketing\/analytics$/,
+  /^\/v2\/workspace\/marketing\/analytics\/people$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/freeze-preview$/,
   /^\/v2\/workspace\/marketing\/campaigns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipients$/,
@@ -81,6 +85,13 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // upstream and masked destinations join only by an opaque keyed `address_ref`.
   /^\/v2\/workspace\/providers$/,
   /^\/v2\/workspace\/equipment-interests$/,
+  // «Pendientes», the shared to-do list on Hoy (`apps/api` v2/todos/routes.py): one literal path,
+  // GET-only, `?done_days=` the only query. Its six commands are in `CASE_COMMAND_POST_PATHS`.
+  /^\/v2\/workspace\/todos$/,
+  // «Pagos», the SII sales register (`apps/api` v2/invoices/routes.py): one literal path, GET-only,
+  // `?opportunity_id=` the only query. Its three JSON commands are in `CASE_COMMAND_POST_PATHS`, the
+  // CSV upload in `CATALOG_UPLOAD_POST_PATHS`.
+  /^\/v2\/workspace\/invoices$/,
   // CRM authoring reads (ContactRedactingRoute; viewer sees addresses masked as ***@domain).
   // Three exact paths: person detail, organization authoring detail, and merge preview (with
   // query string). Named individually — not `/v2/workspace/.+` — so nothing else becomes
@@ -174,6 +185,10 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // rule actions. Same GET-only, operator-session rule; no address, subject or message body.
   // Nothing under it is reachable.
   /^\/v2\/workspace\/operations$/,
+  // «Costos e infraestructura»: Supabase DB size, largest tables, mail-file bytes, and Render
+  // services + bandwidth. GET-only, any signed-in operator. No secret is returned.
+  // Only this one literal sub-path is listed; nothing else under /operations/ is reachable.
+  /^\/v2\/workspace\/operations\/infrastructure$/,
   // Quote numbers already seen in the captured Gmail (number, first sighting, message count), so
   // the Resumen's quote-number box never suggests a number already sent. Same GET-only,
   // operator-session rule; no address, subject or institution. Nothing under it is reachable.
@@ -325,8 +340,11 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * «Hecho» (`complete-task`), and «Abrir caso» on a «Correos sin caso» row (`open-commercial-case`:
  * a case at `lead` whose origin is that email, owner decision 2026-10-10). «Reabrir» on a reply to a
  * lost case is `advance-case-stage` on that same case. «Adjuntar OC» copies a purchase order from a
- * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). Thirteen
- * exact paths, and only thirteen. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). The six
+ * «Pendientes» commands of Hoy (`create-todo`, `update-todo`, `move-todo`, `complete-todo`,
+ * `reopen-todo`, `delete-todo`) ride the same list: a todo never changes a case, and so do the three
+ * «Pagos» commands (`set-invoice-case`, `mark-invoice-paid`, `mark-invoice-unpaid`). Twenty-five
+ * exact paths, and only twenty-five. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -356,6 +374,17 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   // upload itself is multipart and listed with the other upload (CATALOG_UPLOAD_POST_PATHS).
   /^\/v2\/commands\/attach-case-document-from-email$/,
   /^\/v2\/commands\/remove-case-document$/,
+  // «Pendientes» on Hoy: the shared to-do list (`apps/api` v2/todos). The version shown is the line's.
+  /^\/v2\/commands\/create-todo$/,
+  /^\/v2\/commands\/update-todo$/,
+  /^\/v2\/commands\/move-todo$/,
+  /^\/v2\/commands\/complete-todo$/,
+  /^\/v2\/commands\/reopen-todo$/,
+  /^\/v2\/commands\/delete-todo$/,
+  // «Pagos»: a document's case, «Pagada» and its undo (`apps/api` v2/invoices). The version shown is the document's.
+  /^\/v2\/commands\/set-invoice-case$/,
+  /^\/v2\/commands\/mark-invoice-paid$/,
+  /^\/v2\/commands\/mark-invoice-unpaid$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
@@ -433,8 +462,11 @@ export function isAllowedMarketingCommandPostPath(pathname: string): boolean {
  * CRM authoring commands: freeform create/update/archive/restore/merge of person/organization/
  * contact_point, classification and product-line links, supplier-candidate resolution, and
  * notes (add, revise, archive), and the explicit restore of a soft-removed organization domain.
- * Thirty exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
- * «Confirmar institución», a record-level confirm that needs no assertion) among them. None is
+ * Thirty-one exact paths under `/v2/commands/`, `confirm-organization-record` (the card's
+ * «Confirmar institución», a record-level confirm that needs no assertion) among them, and the two
+ * of «people first» (2026-10-28): `answer-person-guess` (one Sí/No on a «¿Es …?» guess) and
+ * `confirm-person-fact` (the contact page's «Confirmar» on a learned name, address or
+ * institution). None is
  * evidence-bound, and none of the evidence-bound commands (create-organization, confirm-
  * organization, attach-contact-address, attribute-sender-organization, confirm-person-from-
  * evidence, the case commands, apply-unsubscribe-replies, preview) is listed here — the six case
@@ -475,6 +507,8 @@ export const CRM_AUTHORING_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-note$/,
   /^\/v2\/commands\/revise-note$/,
   /^\/v2\/commands\/archive-note$/,
+  /^\/v2\/commands\/answer-person-guess$/,
+  /^\/v2\/commands\/confirm-person-fact$/,
 ];
 
 /** 64 KiB: enough for a CRM authoring body (names, notes, identifiers). */
@@ -551,21 +585,27 @@ export const BIDDER_DOCUMENT_UPLOAD_PATH_RE = /^\/v2\/commands\/add-bidder-docum
 /** A tender's anexos (`attach-tender-annexes`): up to 20 files or a zip, 60 MiB in all. */
 export const TENDER_ANNEXES_UPLOAD_PATH_RE = /^\/v2\/commands\/attach-tender-annexes$/;
 
+/** «Pagos»: one month's SII «Registro de Ventas» CSV (`import-invoices`), at most 2 MiB. */
+export const SII_SALES_UPLOAD_PATH_RE = /^\/v2\/commands\/import-invoices$/;
+
 export const CATALOG_UPLOAD_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/add-product-image$/,
   CASE_DOCUMENT_UPLOAD_PATH_RE,
   BIDDER_DOCUMENT_UPLOAD_PATH_RE,
   TENDER_ANNEXES_UPLOAD_PATH_RE,
+  SII_SALES_UPLOAD_PATH_RE,
 ];
 
 export const CATALOG_UPLOAD_MAX_BYTES = 8_388_608 + 65_536;
 export const CASE_DOCUMENT_UPLOAD_MAX_BYTES = 20_971_520 + 65_536;
 export const TENDER_ANNEXES_UPLOAD_MAX_BYTES = 62_914_560 + 65_536;
+export const SII_SALES_UPLOAD_MAX_BYTES = 2_097_152 + 65_536;
 
 /** The body limit for one catalog command path: the upload's, a quote draft's, or the JSON commands'. */
 export function catalogCommandMaxBytes(pathname: string): number {
   const pathOnly = pathname.split("?")[0];
   if (TENDER_ANNEXES_UPLOAD_PATH_RE.test(pathOnly)) return TENDER_ANNEXES_UPLOAD_MAX_BYTES;
+  if (SII_SALES_UPLOAD_PATH_RE.test(pathOnly)) return SII_SALES_UPLOAD_MAX_BYTES;
   if (CASE_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly) || BIDDER_DOCUMENT_UPLOAD_PATH_RE.test(pathOnly)) {
     return CASE_DOCUMENT_UPLOAD_MAX_BYTES;
   }

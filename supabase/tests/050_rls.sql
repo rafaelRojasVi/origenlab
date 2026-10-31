@@ -280,9 +280,26 @@ insert into expected_policies values
     ('evidence', 'prospect_search_run', 'origenlab_api', 'INSERT'),
     ('evidence', 'prospect_search_run', 'origenlab_worker', 'SELECT'),
     ('evidence', 'prospect_search_run', 'origenlab_worker', 'INSERT'),
-    ('evidence', 'prospect_search_run', 'origenlab_worker', 'UPDATE');
+    ('evidence', 'prospect_search_run', 'origenlab_worker', 'UPDATE'),
+    -- 20261028100000: crm.todo — api select/insert/update, no worker policy.
+    ('crm', 'todo', 'origenlab_api', 'SELECT'),
+    ('crm', 'todo', 'origenlab_api', 'INSERT'),
+    ('crm', 'todo', 'origenlab_api', 'UPDATE'),
+    -- 20261029100000: crm.person_name — api select/insert/update, worker select.
+    ('crm', 'person_name', 'origenlab_api', 'SELECT'),
+    ('crm', 'person_name', 'origenlab_api', 'INSERT'),
+    ('crm', 'person_name', 'origenlab_api', 'UPDATE'),
+    ('crm', 'person_name', 'origenlab_worker', 'SELECT'),
+    -- 20261030100000: crm.invoice — api select/insert/update, no worker policy.
+    ('crm', 'invoice', 'origenlab_api', 'SELECT'),
+    ('crm', 'invoice', 'origenlab_api', 'INSERT'),
+    ('crm', 'invoice', 'origenlab_api', 'UPDATE'),
+    -- 20261031100000: crm.invoice_payment — api select/insert/update, no worker policy.
+    ('crm', 'invoice_payment', 'origenlab_api', 'SELECT'),
+    ('crm', 'invoice_payment', 'origenlab_api', 'INSERT'),
+    ('crm', 'invoice_payment', 'origenlab_api', 'UPDATE');
 
-select is((select count(*)::int from expected_policies), 223, 'the matrix implies 223 policies');
+select is((select count(*)::int from expected_policies), 236, 'the matrix implies 236 policies');
 
 -- Posture.
 select is(

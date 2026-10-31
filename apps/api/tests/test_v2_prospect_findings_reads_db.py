@@ -82,7 +82,7 @@ def finding(db, *, email: str | None = None, org: str | None = None, person: str
             website: str | None = None, score: int = 50, logo: bool = False, acquired_ago=timedelta(hours=1)) -> str:
     """One finding as the worker loader stores it. Returns its id."""
     n = next(_SERIALS)
-    person = person or f"Persona Ficticia {n}"
+    person = person or "Persona Ficticia " + "".join("abcdefghij"[int(d)] for d in f"{n:03d}").title()
     org = org or f"Instituto Ficticio {n}"
     payload = {"source": "manual", "external_id": f"t-{n}", "person_name": person, "role": "Investigadora",
                "organization_name": org, "unit": "Lab de Prueba", "email": email,
@@ -204,6 +204,43 @@ def test_known_institution_new_person_is_new_with_reason(client, db, operators):
     assert item["state"] == "new"
     assert "Institución conocida: Instituto Ficticio Conocido" in item["reasons"]
     assert item["organization_candidates"] == [{"id": oid, "name": "Instituto Ficticio Conocido"}]
+
+
+def test_unit_next_to_its_institution_reaches_the_institution(client, db, operators):
+    oid = organization(db, "Universidad Ficticia Mayor")
+    rid = finding(db, email=None, org="Universidad Ficticia Mayor — Instituto Ficticio Menor")
+    item = next(i for i in _items(client, operators)["items"] if i["id"] == rid)
+    assert item["organization_candidates"] == [{"id": oid, "name": "Universidad Ficticia Mayor"}]
+    assert "Institución conocida: Universidad Ficticia Mayor" in item["reasons"]
+
+
+def test_person_without_email_known_by_name_from_mail(client, db, operators):
+    """Owner 2026-10-26: a finding with no email stayed in «Nuevos» though we had written to him."""
+    mailed(db, "otra.direccion@example.test", times=2)
+    with _owner(db) as conn:
+        conn.execute("update comms.message_participant set display_name = 'Rincones Ficticio, Anselmo' "
+                     "where address_norm = 'otra.direccion@example.test'")
+    rid = finding(db, email=None, person="Anselmo Ángel Rincones", org="Instituto Ficticio Lípidos")
+    body = _items(client, operators)
+    assert rid not in _ids(body)
+    item = next(i for i in _items(client, operators, view="conocidos")["items"] if i["id"] == rid)
+    assert item["state"] == "known"
+    assert "Ya nos escribimos con Rincones Ficticio, Anselmo (2 correos)" in item["reasons"]
+
+
+def test_person_known_by_name_from_crm(client, db, operators):
+    with _owner(db) as conn:
+        conn.execute("insert into crm.person (display_name, confirmation) values ('Eulalia Rincobar Tapia', 'confirmed')")
+    rid = finding(db, email="eulalia.nueva@example.test", person="Eulalia Rincobar")
+    item = next(i for i in _items(client, operators, view="conocidos")["items"] if i["id"] == rid)
+    assert "En el CRM hay una persona llamada Eulalia Rincobar Tapia" in item["reasons"]
+
+
+def test_same_surname_other_first_name_is_not_the_same_person(client, db, operators):
+    with _owner(db) as conn:
+        conn.execute("insert into crm.person (display_name, confirmation) values ('Hortensia Zamorano', 'confirmed')")
+    rid = finding(db, email=None, person="Clotilde Zamorano")
+    assert rid in _ids(_items(client, operators))
 
 
 def test_free_mail_domain_never_matches_an_organization(client, db, operators):

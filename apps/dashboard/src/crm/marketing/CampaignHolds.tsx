@@ -146,11 +146,14 @@ function LiftForm({ b, onDone }: { b: CampaignBlock; onDone: () => void }) {
  * The holds that are not about one campaign: a block on every campaign, and holds on V1
  * campaigns (the September wave-2 incident hold). Shown at the top of the Marketing section.
  */
-export function HoldsBanner({ onChanged }: { onChanged?: () => void }) {
+export function HoldsBanner({ onChanged, onlyGeneral = false }: { onChanged?: () => void; onlyGeneral?: boolean }) {
   const [state, reload] = useResource(fetchCampaignBlocks);
   if (state.kind !== "ready") return null;
   const h = state.data;
   const global = h.all_campaigns.block;
+  // Above the campaigns only a general block shows: it stops every send. The rest (old V1
+  // holds, the block form) lives in «Bajas y rebotes».
+  if (onlyGeneral && !global) return null;
   const done = () => {
     reload();
     onChanged?.();

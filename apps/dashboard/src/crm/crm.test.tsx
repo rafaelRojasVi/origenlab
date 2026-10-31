@@ -357,12 +357,12 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("shows an admin the eleven sections in order and marks the current one", async () => {
+  it("shows an admin the twelve sections in order and marks the current one", async () => {
     signedInAt(`#/crm/oportunidades`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/crm/resumen", "#/crm/oportunidades", "#/crm/cotizador", "#/crm/licitaciones", "#/crm/prospectos", "#/crm/organizaciones", "#/crm/personas",
+      "#/crm/resumen", "#/crm/oportunidades", "#/crm/cotizador", "#/crm/licitaciones", "#/crm/prospectos", "#/crm/pagos", "#/crm/organizaciones", "#/crm/personas",
       "#/crm/catalogo", "#/crm/marketing", "#/crm/historial", "#/crm/datos",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
@@ -430,6 +430,10 @@ describe("no write path in the CRM workspace", () => {
   const TENDER_API_CLIENT = "./tenders/tenderApi.ts";
   //  - the prospect client (prospects/prospectApi.ts) POSTs «Más tarde», «Descartar» and «Contactar» (2026-10-23).
   const PROSPECT_API_CLIENT = "./prospects/prospectApi.ts";
+  //  - the to-do client (todos/todoApi.ts) POSTs the six «Pendientes» commands.
+  const TODO_API_CLIENT = "./todos/todoApi.ts";
+  //  - the «Pagos» client (pagos/invoiceApi.ts) POSTs the SII CSV upload and three invoice commands.
+  const PAGOS_API_CLIENT = "./pagos/invoiceApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -442,11 +446,13 @@ describe("no write path in the CRM workspace", () => {
     for (const [f, src] of Object.entries(sources)) {
       if (
         f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT ||
-        f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === TENDER_API_CLIENT || f === PROSPECT_API_CLIENT
+        f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === TENDER_API_CLIENT || f === PROSPECT_API_CLIENT ||
+        f === TODO_API_CLIENT || f === PAGOS_API_CLIENT
       ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);
-      expect(src, f).not.toMatch(/\/operations\//);
+      // Bare /operations/* = V1 command boundary; allow /workspace/operations/* (read endpoints).
+      expect(src, f).not.toMatch(/(?<!\/workspace)\/operations\//);
     }
   });
 });

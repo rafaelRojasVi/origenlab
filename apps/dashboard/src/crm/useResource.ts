@@ -41,15 +41,27 @@ export function classifyError(err: unknown): Exclude<ResourceState<never>, { kin
  */
 const memory = new WeakMap<object, Map<string, unknown>>();
 const remembered = new Set<object>();
+const otherMemories = new Set<() => void>();
 
 export function clearResourceCache(): void {
   remembered.forEach((load) => memory.delete(load));
   remembered.clear();
+  otherMemories.forEach((clear) => clear());
+}
+
+/** A page memory kept outside `useResource` (a polling page) is dropped with this one. */
+export function onClearResourceCache(clear: () => void): void {
+  otherMemories.add(clear);
 }
 
 function sessionScope(session: AuthSessionState): string | null {
   if (session.kind !== "signed_in") return null;
   return [session.operator.operatorId, session.operator.role, session.profile?.id ?? ""].join("|");
+}
+
+/** Whose page memory this is (operator, role, profile), or null when nobody is signed in. */
+export function useMemoryScope(): string | null {
+  return sessionScope(useAuthSession().session);
 }
 
 function memoryKey(scope: string | null, deps: readonly unknown[]): string | null {

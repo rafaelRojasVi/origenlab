@@ -518,6 +518,19 @@ def test_a_first_quote_still_in_the_cotizador_is_the_next_step_not_a_reply() -> 
         assert card["next_action"]["text"] == f"{verb} la cotización 01300-26"
 
 
+def test_a_voided_quote_is_not_the_next_step() -> None:
+    """Owner 2026-10-27: a case whose quotes were all voided said «Terminar y enviar la cotización …» of
+    a voided draft. The next step follows the newest revision still alive, else there is none."""
+    quotes = [{"quote_id": q, "opportunity_id": "o1", "quote_number": n, "number_origin": "minted"}
+              for q, n in (("q1", "01300-26"), ("q2", "01301-26"))]
+    void = _rev("r2", "q2", 1, None, src=None, origin="authored", status="void", sent_at=None)
+    draft = _rev("r1", "q1", 1, None, src=None, origin="authored", status="draft", sent_at=None)
+    both_void = compose_pipeline([_opp("o1")], [], quotes, [void, {**draft, "status": "void"}], {}, [], {})[0]
+    assert both_void["next_action"]["text"] == "Registrar la cotización del caso"
+    one_alive = compose_pipeline([_opp("o1")], [], quotes, [void, draft], {}, [], {})[0]
+    assert one_alive["next_action"]["text"] == "Terminar y enviar la cotización 01300-26"
+
+
 def test_a_closed_case_carries_no_notes() -> None:
     """Decision 2026-10-09: a closed case never blocks. Owner 2026-10-12: nor does it show notes —
     «whatever, it's already closed»: a won, lost or abandoned case is «al día» with no attention."""
@@ -712,11 +725,14 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
         "/v2/workspace/opportunities/{opportunity_id}/purchase-order-candidates",
         "/v2/workspace/mail-sync",
         "/v2/workspace/operations",
+        "/v2/workspace/operations/infrastructure",
         "/v2/workspace/mail-quote-numbers",
         "/v2/workspace/history",
         "/v2/workspace/marketing",
         "/v2/workspace/marketing/taxonomy",
         "/v2/workspace/marketing/audience",
+        "/v2/workspace/marketing/analytics",
+        "/v2/workspace/marketing/analytics/people",
         "/v2/workspace/marketing/campaigns/{campaign_id}",
         "/v2/workspace/marketing/campaigns/{campaign_id}/freeze-preview",
         "/v2/workspace/marketing/campaigns/{campaign_id}/recipients",
@@ -1028,3 +1044,26 @@ def test_our_own_mail_never_suggests() -> None:
 def test_the_web_form_visitor_domain_is_suggested() -> None:
     card = _card([{**_WEB_FORM_ROW, "opportunity_id": "o9", "requester_read": None}])
     assert card["requester_suggestion"] == {"name": None, "domain": "lab-ficticio.example.test"}
+
+
+def _mail_row(gid: str, at: str, sender: str, **over) -> dict:
+    return {"opportunity_id": "o1", "sent_at": at, "subject": "Re: Cotización", "gmail_message_id": gid,
+            "sender": sender, "direction_hint": None, "comms_direction": "inbound", **over}
+
+
+def test_last_contacts_skips_automatic_mail() -> None:
+    """A bounce of our cc or an out-of-office is not the client writing (owner 2026-10-29)."""
+    rows = [
+        _mail_row("m1", "2026-10-23T12:00:00Z", "Persona <persona@ejemplo.invalid>"),
+        _mail_row("m2", "2026-10-26T15:02:00Z", "Mail Delivery System <Mailer-Daemon@correo.invalid>"),
+        _mail_row("m3", "2026-10-26T16:00:00Z", "Persona <persona@ejemplo.invalid>", triage_class="auto_reply"),
+        _mail_row("m4", "2026-10-26T17:00:00Z", "postmaster@correo.invalid", triage_class="bounce"),
+    ]
+    assert last_contacts(rows)["o1"]["inbound"]["at"] == "2026-10-23T12:00:00+00:00"
+
+
+def test_no_reply_only_marks_the_email_r18_read() -> None:
+    closing = _mail_row("m1", "2026-10-23T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=True)
+    assert last_contacts([closing])["o1"]["inbound"]["no_reply"] is True
+    later = _mail_row("m2", "2026-10-24T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=False)
+    assert "no_reply" not in last_contacts([closing, later])["o1"]["inbound"]

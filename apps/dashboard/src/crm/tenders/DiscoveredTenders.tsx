@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 import { crmHash, noticeRouteId, type CrmSection } from "../crmRoute";
 import { formatMoney } from "../money";
 import { Badge, Button, EmptyState, ExternalLink, ResourceGate, SearchInput, Skeleton, fmtDateTime, toast } from "../ui";
@@ -86,8 +86,8 @@ export function DiscoveredTenders({
   mayOpen: boolean;
   onPrepare: (code: string) => void;
 }) {
-  const load = useCallback(() => fetchDiscoveredTenders(), []);
-  const [state, reload] = useResource(load, []);
+  // The module's own loader, so the page memory shows the last list at once on coming back.
+  const [state, reload] = useResource(fetchDiscoveredTenders);
   const [family, setFamily] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("cierre");
@@ -153,7 +153,7 @@ export function DiscoveredTenders({
               {data.last_checked_at ? (
                 <span className="flex items-center gap-1.5 text-[11px] text-ink-faint sm:ml-auto">
                   <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-good" />
-                  Revisado {fmtDateTime(data.last_checked_at)} · se revisa cada 15 minutos
+                  Revisado {fmtDateTime(data.last_checked_at)} · se revisa cada hora
                 </span>
               ) : null}
             </dl>

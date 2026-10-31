@@ -86,23 +86,25 @@ line, ubicacion exactly one locator that appears as [[…]] inside that file, wi
 Never invent a file id or a locator; when you cannot point to one, leave citas empty."""
 
 
-def _cita() -> dict[str, Any]:
-    return {"type": "object", "additionalProperties": False, "required": ["archivo_id", "ubicacion"],
-            "properties": {"archivo_id": {"type": "string"}, "ubicacion": {"type": "string"}}}
-
-
-def _campo() -> dict[str, Any]:
-    return {"type": "object", "additionalProperties": False, "required": ["texto", "citas"],
-            "properties": {"texto": {"type": "string"}, "citas": {"type": "array", "items": _cita()}}}
+#: `cita` and `campo` are defined once and referenced: inlined 13 times (once per resumen field) the
+#: API refused every read with 400 "The compiled grammar is too large" (first production read,
+#: 2026-10-30). The answer has the same shape either way.
+_CITA: Final = {"$ref": "#/$defs/cita"}
 
 
 READ_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["resumen", "checklist", "items"],
+    "$defs": {
+        "cita": {"type": "object", "additionalProperties": False, "required": ["archivo_id", "ubicacion"],
+                 "properties": {"archivo_id": {"type": "string"}, "ubicacion": {"type": "string"}}},
+        "campo": {"type": "object", "additionalProperties": False, "required": ["texto", "citas"],
+                  "properties": {"texto": {"type": "string"}, "citas": {"type": "array", "items": _CITA}}},
+    },
     "properties": {
         "resumen": {"type": "object", "additionalProperties": False, "required": list(RESUMEN_FIELDS),
-                    "properties": {name: _campo() for name in RESUMEN_FIELDS}},
+                    "properties": {name: {"$ref": "#/$defs/campo"} for name in RESUMEN_FIELDS}},
         "checklist": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
             "required": ["documento", "tipo", "requiere_firma", "archivo_formulario_id", "fuente"],
@@ -111,7 +113,7 @@ READ_SCHEMA: dict[str, Any] = {
                 "tipo": {"type": "string", "enum": list(CHECKLIST_TYPES)},
                 "requiere_firma": {"type": "boolean"},
                 "archivo_formulario_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
-                "fuente": _cita(),
+                "fuente": _CITA,
             }}},
         "items": {"type": "array", "items": {
             "type": "object", "additionalProperties": False,
@@ -122,7 +124,7 @@ READ_SCHEMA: dict[str, Any] = {
                 "cantidad": {"type": "string"},
                 "unidad": {"type": "string"},
                 "requisitos": {"type": "array", "items": {"type": "string"}},
-                "citas": {"type": "array", "items": _cita()},
+                "citas": {"type": "array", "items": _CITA},
             }}},
     },
 }

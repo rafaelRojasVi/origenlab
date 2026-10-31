@@ -151,6 +151,23 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     expect(hidden).toEqual({ "en un caso": 1, proveedor: 2, "aviso automático": 4, "reenvío antiguo": 1, "mismo hilo": 1 });
   });
 
+  it("hides courier and loose-noreply senders as «aviso automático» even before re-triage (2026-10-29)", () => {
+    // Already-triaged rows: class is business_other/purchase_order (pre-rule-change), but the
+    // dashboard's widened check hides them without waiting for the worker to re-triage.
+    const { ask, hidden } = sortInbox([
+      r("dhl", { sender: "tracking@dhl.com", class: "purchase_order" }),
+      r("dhl-sub", { sender: "cl@express.dhl.com", class: "business_other" }),
+      // Deep subdomain: tracking.express.dhl.com — NOTIFICATION_DOMAIN must allow any depth.
+      // Use a neutral local part so the catch is NOTIFICATION_DOMAIN, not AUTOMATIC_SENDER.
+      r("dhl-deep", { sender: "tracking@tracking.express.dhl.com", class: "business_other" }),
+      r("icliente", { sender: "no_responder@icliente.com", class: "business_other" }),
+      r("noreply-loose", { sender: "drive-shares-dm-noreply@google.com", class: "business_other" }),
+      r("real", {}),
+    ]);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["real"]);
+    expect(hidden).toEqual({ "aviso automático": 5 });
+  });
+
   it("hides an email older than 14 days that contacto@ already answered on its thread (2026-10-19)", () => {
     const now = new Date("2026-10-30T12:00:00Z");
     const { ask, hidden } = sortInbox([
@@ -251,5 +268,45 @@ describe("sortInbox — which emails «Hoy» asks about", () => {
     const { ask, hidden } = sortInbox([r("oc", { class: "purchase_order", cases: [CASE] })]);
     expect(ask).toEqual([]);
     expect(hidden).toEqual({ "en un caso": 1 });
+  });
+
+  it("deduplicates by purchase-order number when po_refs read the same OC on two threads (goal 3)", () => {
+    // Two emails (different threads) that are the same OC: only the newest is asked about.
+    const { ask, hidden } = sortInbox([
+      r("oc-new", { class: "purchase_order", cases: [CASE], sent_at: "2026-10-10T10:00:00Z",
+                    purchase_order_numbers: ["4500000123"] }),
+      r("oc-old", { class: "purchase_order", cases: [CASE], sent_at: "2026-10-09T10:00:00Z",
+                    thread_id: "t-oc-old", purchase_order_numbers: ["4500000123"] }),
+    ], [card()]);
+    expect(ask.map((x) => x.assertion_id)).toEqual(["oc-new"]);
+    expect(hidden).toEqual({ "mismo hilo": 1 });
+  });
+});
+
+describe("wonProposal — po_quote_numbers filter (goal 2)", () => {
+  const byId = (c: OpportunityCardData) => new Map([[c.opportunity_id, c]]);
+  const po = { class: "purchase_order" as const, intent: null, cases: [CASE] };
+
+  it("with no po_quote_numbers, proposes all winnable revisions as before", () => {
+    expect(wonProposal({ ...po, po_quote_numbers: [] }, byId(card()))?.revisions.length).toBe(1);
+    expect(wonProposal({ ...po, po_quote_numbers: undefined }, byId(card()))?.revisions.length).toBe(1);
+  });
+
+  it("with po_quote_numbers, keeps only revisions whose quote_number matches", () => {
+    // Use two revisions with DIFFERENT quote numbers so the filter selects, not a no-op
+    const twoRevisions = card({}, [revision(1), { ...revision(2), quote_number: "01254-26" }]);
+    // "CN01253" matches correlative 1253 — only revision(1) with quote_number "01253-26"
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01253"] }, byId(twoRevisions))?.revisions.length).toBe(1);
+    // "01253-26" matches (year=26, correlative=1253) — only revision(1)
+    expect(wonProposal({ ...po, po_quote_numbers: ["01253-26"] }, byId(twoRevisions))?.revisions.length).toBe(1);
+    // "CN01254" matches correlative 1254 — only revision(2)
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01254"] }, byId(twoRevisions))?.revisions.length).toBe(1);
+    // Both tokens present → both revisions pass the filter
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN01253", "CN01254"] }, byId(twoRevisions))?.revisions.length).toBe(2);
+  });
+
+  it("returns null when po_quote_numbers is set but no revision matches (wrong quote)", () => {
+    // The OC PDF says CN09876 but the case's quote is 01253-26 — no match → stay for a person
+    expect(wonProposal({ ...po, po_quote_numbers: ["CN09876"] }, byId(card()))).toBeNull();
   });
 });

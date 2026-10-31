@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -45,6 +46,7 @@ from procrastinate import testing as procrastinate_testing
 from origenlab_worker.database import (
     TRIAGE_REQUIRED_POLICIES,
     TRIAGE_REQUIRED_PRIVILEGES,
+    VerifiedConnectionCache,
     WorkerTarget,
     open_verified_connection,
 )
@@ -92,8 +94,14 @@ class QueueContext:
     #: The prospect search sweep (`triage_cli.run_tender_worker` sets it): claims and runs a queued
     #: prospect search run, returns counts. None means the feature is off.
     prospect_search: Callable[[], dict[str, Any]] | None = field(default=None, repr=False)
+    #: Long-lived verified connection for sweep_untriaged (one at a time; set by run_triage_worker).
+    sweep_conn: VerifiedConnectionCache | None = field(default=None, repr=False)
     log: Callable[[dict[str, Any]], None] = lambda event: print(json.dumps(event, sort_keys=True), file=sys.stdout,
                                                                   flush=True)
+
+
+#: Thread-local storage for per-thread triage_message connections.
+_triage_locals: threading.local = threading.local()
 
 
 CONTEXT = QueueContext()
@@ -114,10 +122,25 @@ def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE,
         ctx = CONTEXT
         if ctx.target is None or ctx.store_factory is None or ctx.model is None:
             raise RuntimeError("queue_context_not_configured")
-        with open_verified_connection(ctx.target, application_name=APP_NAME_TRIAGE,
-                                      privileges=TRIAGE_REQUIRED_PRIVILEGES,
-                                      policies=TRIAGE_REQUIRED_POLICIES) as conn:
+        # Per-thread verified connection: triage runs at concurrency=2, so each thread needs its own.
+        # The cache is initialised lazily and reused across jobs in the same thread.
+        import psycopg
+        cache: VerifiedConnectionCache | None = getattr(_triage_locals, "cache", None)
+        if cache is None or getattr(_triage_locals, "cache_target", None) is not ctx.target:
+            cache = VerifiedConnectionCache(
+                ctx.target,
+                application_name=APP_NAME_TRIAGE,
+                privileges=TRIAGE_REQUIRED_PRIVILEGES,
+                policies=TRIAGE_REQUIRED_POLICIES,
+            )
+            _triage_locals.cache = cache
+            _triage_locals.cache_target = ctx.target
+        try:
+            conn = cache.get()
             result = triage_one(TriageDb(conn), ctx.store_factory(), source_record_id, ctx.model)
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            cache.invalidate()
+            raise
         ctx.log({"event": "triage_message", "outcome": result.outcome, "class": result.triage_class,
                  "model": result.model, "mentions": result.mentions})
 
@@ -127,10 +150,16 @@ def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE,
         ctx = CONTEXT
         if ctx.target is None:
             raise RuntimeError("queue_context_not_configured")
-        with open_verified_connection(ctx.target, application_name=APP_NAME_TRIAGE,
-                                      privileges=TRIAGE_REQUIRED_PRIVILEGES,
-                                      policies=TRIAGE_REQUIRED_POLICIES) as conn:
-            pending = TriageDb(conn).pending(since_days=DEFAULT_SINCE_DAYS, limit=SWEEP_LIMIT)
+        # Reuse the long-lived sweep connection; fall back to a per-call connection only if
+        # sweep_conn was not set up (e.g. unit tests that only exercise the queue schema).
+        if ctx.sweep_conn is not None:
+            with ctx.sweep_conn.connection() as conn:
+                pending = TriageDb(conn).pending(since_days=DEFAULT_SINCE_DAYS, limit=SWEEP_LIMIT)
+        else:
+            with open_verified_connection(ctx.target, application_name=APP_NAME_TRIAGE,
+                                          privileges=TRIAGE_REQUIRED_PRIVILEGES,
+                                          policies=TRIAGE_REQUIRED_POLICIES) as conn:
+                pending = TriageDb(conn).pending(since_days=DEFAULT_SINCE_DAYS, limit=SWEEP_LIMIT)
         # The app actually running this job (the CLI's, with the real connector), not this builder's.
         deferred = defer_triage(context.app, pending)
         ctx.log({"event": "triage_sweep", "found": len(pending), "deferred": deferred,
@@ -140,6 +169,18 @@ def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE,
 
 
 PROSPECT_SWEEP_LOCK = "prospect-search-sweep"
+#: Mercado Público discovery: hourly (was every 15 min until 2026-10-30). Tenders stay open for days;
+#: each run sends the whole open list (~4,800 codes) to the database, so the cadence is bandwidth.
+DISCOVERY_CRON = "0 * * * *"
+#: Every queue worker (capture, triage, tenders). Library defaults poll every 5 s and beat every 10 s;
+#: LISTEN/NOTIFY still hands a new job over at once, so slower polling only catches a missed notify.
+#: The stalled timeout stays 3× the heartbeat, or a live worker would look dead.
+WORKER_POLLING: dict[str, float] = {
+    "fetch_job_polling_interval": 30.0,
+    "abort_job_polling_interval": 30.0,
+    "update_heartbeat_interval": 60.0,
+    "stalled_worker_timeout": 180.0,
+}
 PROSPECT_DAILY_LOCK = "prospect-daily-enqueue"
 
 
@@ -153,7 +194,7 @@ def _register_tender_tasks(app: procrastinate.App) -> None:
             raise RuntimeError("queue_context_not_configured")
         ctx.log({"event": "bid_preparation_sweep", **ctx.bid_sweep()})
 
-    @app.periodic(cron="*/15 * * * *", periodic_id="discovery")
+    @app.periodic(cron=DISCOVERY_CRON, periodic_id="discovery")
     @app.task(name="tender_discovery", queue=TENDER_QUEUE, queueing_lock=DISCOVERY_LOCK, retry=False,
               pass_context=False)
     def tender_discovery(timestamp: int) -> None:
@@ -218,4 +259,4 @@ tender_app = build_app(queues=(TENDER_QUEUE,))
 __all__ = ["APP_NAME_QUEUE", "APP_NAME_TRIAGE", "BID_SWEEP_LOCK", "CONTEXT",
            "PROSPECT_DAILY_LOCK", "PROSPECT_SWEEP_LOCK", "QUEUE", "RETRY", "SEARCH_PATH",
            "TENDER_QUEUE", "QueueContext", "app", "build_app", "connector_for", "defer_triage",
-           "pool_configure", "tender_app"]
+           "pool_configure", "tender_app", "_triage_locals"]

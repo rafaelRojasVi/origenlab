@@ -68,7 +68,7 @@ def r14(snapshot: Snapshot):
 
 
 def test_rule_ids_name_r14_and_r15() -> None:
-    assert RULE_IDS[-3:-1] == ("R14", "R15")
+    assert RULE_IDS[13:15] == ("R14", "R15")
 
 
 def test_r14_records_a_new_number_on_an_email_another_rule_already_linked() -> None:

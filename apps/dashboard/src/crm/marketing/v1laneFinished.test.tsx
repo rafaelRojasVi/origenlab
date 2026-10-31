@@ -17,7 +17,7 @@ const TODAY = "2026-10-19";
 
 function crm(id: string, name: string, over: Partial<CampaignSummary> = {}): CampaignSummary {
   return {
-    campaign_id: id, name, status: "sent", recipients_by_state: {}, send_attempts: [], replies_recorded: 0,
+    campaign_id: id, name, status: "sent", recipients_by_state: {}, send_attempts: [],
     created_at: "2026-09-01T12:00:00Z", first_sent_at: null, last_sent_at: null, approved_at: null,
     ...over,
   } as unknown as CampaignSummary;

@@ -648,6 +648,7 @@ def test_a_stage_a_person_set_afterwards_is_not_corrected_and_the_refusal_is_a_4
 # acted on by a pass — the assertions name this test's own emails only.
 
 
+@pytest.mark.serial_db  # run_once scans the whole shared cluster: a parallel test's mail would be applied
 def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays_undoable(db, world) -> None:
     from origenlab_api.v2.commands import CommandRefused
     from origenlab_api.v2.mail_rules_auto import AutoMailRules
@@ -696,7 +697,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
         True, "Admin Ficticio", "probado en vista previa",
-        ["R1", "R11", "R12", "R13", "R14", "R15", "R16", "R2", "R3", "R4", "R7", "R9"])
+        ["R1", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R2", "R3", "R4", "R7", "R9"])
 
     # One pass: R1/R2 link, R7 opens the RFQ lead and (2026-10-15) R4 opens the new domain's case too.
     result = auto.run_once()
@@ -1130,3 +1131,21 @@ def test_r7_free_mail_request_adds_sender_as_participant(db, world) -> None:
         case_id, sender_email,
     )[0]
     assert count == 1
+
+
+def test_snapshot_carries_the_reading(db, world) -> None:
+    with _owner(db) as conn:
+        thanks = _mail(conn, thread=f"thread-thanks-{world['tag']}", direction_hint=None,
+                       sender=f"ana@{world['client_domain']}", recipients="contacto@origenlab.cl",
+                       subject="Re: Cotización")
+        _reading(conn, thanks, "triage:v4", {"class": "commercial", "reading": {
+            "intent": "quote_followup", "stage": "negotiating", "needs_reply": False,
+            "summary_es": "Agradece y avisará."}})
+        # The quote-number scan shares the assertion kind and is newer: it must not hide the reading.
+        _reading(conn, thanks, "quote_refs:v1", {"tokens": [], "version": 1})
+    _, _, snapshot = _repo(db).plan()
+    e = next(x for x in snapshot.evidence if x.id == thanks)
+    assert e.model_needs_reply is False
+    assert e.model_stage == "negotiating"
+    assert e.model_summary == "Agradece y avisará."
+    assert e.triage_class == "commercial"

@@ -83,3 +83,25 @@ def test_x_origenlab_origin_is_captured_as_machine_header() -> None:
     raw = _raw("Formulario enviado", headers={"X-OrigenLab-Origin": "web-quote-form/v1"})
     mail = parse_mail(raw)
     assert mail.machine_headers.get("x-origenlab-origin") == "web-quote-form/v1"
+
+
+def test_signature_kept_after_delimiter() -> None:
+    mail = parse_mail(_raw("Hola, cotizar X.\n--\nPedro Soto\nUniversidad Ficticia\n+56 9 1111 1111"))
+    assert mail.body == "Hola, cotizar X."
+    assert mail.signature_text == "Pedro Soto\nUniversidad Ficticia\n+56 9 1111 1111"
+
+
+def test_signature_never_from_quoted_history() -> None:
+    body = "Hola.\nEl lun, 6 oct 2026 a las 10:02, Ana escribió:\n> hola\n--\nAna Falsa\nOtra Institucion"
+    assert parse_mail(_raw(body)).signature_text == ""
+
+
+def test_signature_truncated() -> None:
+    mail = parse_mail(_raw("Hola.\n--\n" + "x" * 2000))
+    assert len(mail.signature_text) == 800
+
+
+def test_tail_text_last_lines() -> None:
+    lines = [f"linea {n}" for n in range(1, 21)]
+    mail = parse_mail(_raw("\n".join(lines)))
+    assert mail.tail_text == "\n".join(lines[-12:])

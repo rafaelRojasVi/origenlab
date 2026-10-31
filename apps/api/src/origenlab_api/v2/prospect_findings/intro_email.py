@@ -81,14 +81,63 @@ def build_saludo(
 
 # ── equipment list ────────────────────────────────────────────────────────────
 
-def _equipment_phrase(equipment: list[str]) -> str:
-    """«a, b y c» (lower-case first letter unless it starts with a brand cue)."""
-    if not equipment:
-        return "balanzas, agitadores, centrífugas"
-    items = [e[0].lower() + e[1:] if e else e for e in equipment]
+# The finding's equipment lines are machine-written and often English («OHAUS/Adam balances analíticas»,
+# «IKA stirrers y homogenizers»): the email names Spanish categories and the brands, never the raw lines.
+_CATEGORIES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("moisture", "humedad"), "analizadores de humedad"),
+    (("balance", "balanza"), "balanzas"),
+    (("rotary evaporator", "rotavap", "evaporador"), "evaporadores rotatorios"),
+    (("stirrer", "agitador", "shaker"), "agitadores"),
+    (("homogeniz", "homogeneiz", "ultra-turrax"), "homogeneizadores"),
+    (("centrifug", "centrífug"), "centrífugas"),
+    (("sonica", "ultrason", "ultrasonic"), "sonicadores"),
+    (("electrophoresis", "electroforesis"), "equipos de electroforesis"),
+    (("osmom", "osmóm"), "osmómetros"),
+)
+_BRANDS: tuple[str, ...] = ("OHAUS", "Adam", "IKA", "Hielscher", "Ortoalresa", "Löser", "SERVA")
+_DEFAULT_EQUIPMENT = ("balanzas", "agitadores", "centrífugas")
+_DEFAULT_BRANDS = "OHAUS, IKA, Ortoalresa"
+_HIELSCHER = "sonicadores Hielscher"  # named in every intro, so never in the brand list
+
+
+def _join_es(items: list[str]) -> str:
+    """«a, b y c» — «e» before a word that starts with the sound /i/ («Adam e IKA»)."""
     if len(items) == 1:
         return items[0]
-    return ", ".join(items[:-1]) + " y " + items[-1]
+    last = items[-1]
+    conj = "e" if last.lower().startswith(("i", "hi")) and not last.lower().startswith(("hie", "hia")) else "y"
+    return ", ".join(items[:-1]) + f" {conj} " + last
+
+
+def _equipment_phrase(equipment: list[str]) -> str:
+    """The Spanish categories the equipment lines name, in order and once each, always ending with
+    «sonicadores Hielscher» (owner 2026-10-27: every intro mentions them); the default categories when
+    none is recognised («balanzas analíticas, agitadores y sonicadores Hielscher»)."""
+    found: list[str] = []
+    for line in equipment:
+        low = line.lower()
+        for keys, label in _CATEGORIES:
+            if any(k in low for k in keys):
+                if label == "balanzas" and ("analít" in low or "analytic" in low):
+                    label = "balanzas analíticas"
+                if label not in found and not (label == "balanzas" and "balanzas analíticas" in found):
+                    found.append(label)
+    found = [c for c in found if c != "sonicadores"] or list(_DEFAULT_EQUIPMENT)
+    return _join_es([*found, _HIELSCHER])
+
+
+def _brands_phrase(equipment: list[str]) -> str:
+    """The brands the equipment lines name, in order of first mention (Hielscher is already named with
+    its sonicadores); the default trio otherwise."""
+    seen: list[tuple[int, str]] = []
+    text = " ".join(equipment).lower()
+    for brand in _BRANDS:
+        if brand == "Hielscher":
+            continue
+        match = re.search(rf"\b{re.escape(brand.lower())}\b", text)  # «conservación» is not SERVA
+        if match:
+            seen.append((match.start(), brand))
+    return _join_es([b for _, b in sorted(seen)]) if seen else _DEFAULT_BRANDS
 
 
 # ── source attribution ────────────────────────────────────────────────────────
@@ -175,6 +224,7 @@ def build_text(
     """Build the plain-text email body."""
     saludo = build_saludo(person_name, salutation_sex)
     equipos = _equipment_phrase(equipment)
+    marcas = _brands_phrase(equipment)
     fuente = _fuente(email_source_note, email_source_url, email_source_year)
 
     # Opening paragraph (no signer name — uses contacto@'s Gmail signature)
@@ -190,21 +240,21 @@ def build_text(
         p2 = (
             f"Vimos que su proyecto «{project_title}» fue adjudicado en {fund_label}, "
             f"felicitaciones. Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {equipos} y otros equipos de las marcas con que trabajamos "
-            f"(OHAUS, IKA, Hielscher, entre otras)."
+            f"ayudarle con {equipos}, y otros equipos de las marcas con que trabajamos "
+            f"({marcas}, entre otras)."
         )
     elif fund_label:
         p2 = (
             f"Vimos que fue adjudicado en {fund_label}, felicitaciones. "
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {equipos} y otros equipos de las marcas con que trabajamos "
-            f"(OHAUS, IKA, Hielscher, entre otras)."
+            f"ayudarle con {equipos}, y otros equipos de las marcas con que trabajamos "
+            f"({marcas}, entre otras)."
         )
     else:
         p2 = (
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {equipos} y otros equipos de las marcas con que trabajamos "
-            f"(OHAUS, IKA, Hielscher, entre otras)."
+            f"ayudarle con {equipos}, y otros equipos de las marcas con que trabajamos "
+            f"({marcas}, entre otras)."
         )
 
     p3 = (
@@ -240,6 +290,7 @@ def build_html(
     """Build the HTML email body (simple paragraphs, no external CSS)."""
     saludo = build_saludo(person_name, salutation_sex)
     equipos = _equipment_phrase(equipment)
+    marcas = _brands_phrase(equipment)
     fuente = _fuente(email_source_note, email_source_url, email_source_year)
 
     import html as _html  # stdlib
@@ -262,21 +313,21 @@ def build_html(
             f"Vimos que su proyecto «{_html.escape(project_title)}» fue adjudicado en "
             f"{_html.escape(fund_label)}, felicitaciones. "
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {_html.escape(equipos)} y otros equipos de las marcas con que trabajamos "
-            f"(OHAUS, IKA, Hielscher, entre otras)."
+            f"ayudarle con {_html.escape(equipos)}, y otros equipos de las marcas con que trabajamos "
+            f"({marcas}, entre otras)."
         )
     elif fund_label:
         p2 = (
             f"Vimos que fue adjudicado en {_html.escape(fund_label)}, felicitaciones. "
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {_html.escape(equipos)} y otros equipos de las marcas con que trabajamos "
-            f"(OHAUS, IKA, Hielscher, entre otras)."
+            f"ayudarle con {_html.escape(equipos)}, y otros equipos de las marcas con que trabajamos "
+            f"({marcas}, entre otras)."
         )
     else:
         p2 = (
             f"Si en esta etapa está equipando su laboratorio, podemos "
-            f"ayudarle con {_html.escape(equipos)} y otros equipos de las marcas con que trabajamos "
-            f"(OHAUS, IKA, Hielscher, entre otras)."
+            f"ayudarle con {_html.escape(equipos)}, y otros equipos de las marcas con que trabajamos "
+            f"({marcas}, entre otras)."
         )
 
     p3 = (

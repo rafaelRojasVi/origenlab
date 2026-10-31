@@ -10,7 +10,8 @@ export type CrmSection =
   | "datos"
   | "cotizador"
   | "licitaciones"
-  | "prospectos";
+  | "prospectos"
+  | "pagos";
 
 /** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive.
  *  «decidir» is the «Por ordenar» section linked from «Hoy». */
@@ -33,6 +34,7 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "cotizador", label: "Cotizador", group: "comercial", quoting: true },
   { id: "licitaciones", label: "Licitaciones", group: "comercial" },
   { id: "prospectos", label: "Prospectos", group: "comercial" },
+  { id: "pagos", label: "Pagos", group: "comercial" },
   { id: "organizaciones", label: "Organizaciones", group: "comercial" },
   { id: "personas", label: "Personas", group: "comercial" },
   { id: "catalogo", label: "Catálogo", group: "comercial" },

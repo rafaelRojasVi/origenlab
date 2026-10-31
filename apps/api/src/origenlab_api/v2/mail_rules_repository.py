@@ -68,6 +68,7 @@ from origenlab_api.v2.mail_rules import (
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     RECORD_AUTHORED_QUOTE_SENT,
+    REPLY_WINDOW_DAYS,
     SETTLE_DAYS,
     SYSTEM_LABEL,
     UNCONFIRM_ORGANIZATION_RECORD,
@@ -131,7 +132,9 @@ def _json(value: Any) -> Any:
 #: they must not hide a live email from the rules.
 _EVIDENCE_SQL = """
 select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
-       requester.value as requester_match, quote_refs.value as quote_refs, ai.intent as model_intent,
+       requester.value as requester_match, quote_refs.value as quote_refs, po_refs.value as po_refs, ai.intent as model_intent,
+       ai.stage as model_stage, ai.needs_reply as model_needs_reply, ai.summary as model_summary,
+       ai.triage_class,
        case_match.value as case_match, web_form.is_web_form, web_form.reply_to
   from evidence.source_record sr
   join lateral (select cm.id, cm.direction, cm.provider_thread_id from comms.message cm
@@ -152,8 +155,20 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         limit 1
   ) quote_refs on true
   left join lateral (
-       -- The newest triage reading's AI intent, when the model read the email.
-       select a.value -> 'reading' ->> 'intent' as intent from evidence.assertion a
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'po_refs:v1'
+        limit 1
+  ) po_refs on true
+  left join lateral (
+       -- The newest triage reading: the AI's intent, stage, needs_reply and summary when the model
+       -- read the email, and the rules' class (bounce, auto_reply, …) either way.
+       select a.value -> 'reading' ->> 'intent' as intent,
+              a.value -> 'reading' ->> 'stage' as stage,
+              case jsonb_typeof(a.value -> 'reading' -> 'needs_reply')
+                   when 'boolean' then (a.value -> 'reading' ->> 'needs_reply')::boolean end as needs_reply,
+              a.value -> 'reading' ->> 'summary_es' as summary,
+              a.value ->> 'class' as triage_class
+         from evidence.assertion a
         where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
         order by substring(a.value_norm from 9)::int desc
         limit 1
@@ -193,11 +208,16 @@ select oe.source_record_id::text as source_record_id, oe.opportunity_id::text as
 #: Sales cases only (`case_kind.py`): R1–R15 never link, advance, reopen or close a tender. An email
 #: already linked to a tender keeps that link in `linked_case_ids` (so no rule opens a second case
 #: for it), but the tender is not a case the planner can act on.
+#: `paused_until`: «En pausa hasta…» is an open «Retomar: …» task due later (`CaseMove`). A
+#: «Recordarme…» reminder is a task too, but not a pause.
 _CASES_SQL = """
-select id::text as id, title, stage, version, organization_id::text as organization_id,
-       closed_at is not null as closed
-  from crm.opportunity
- where kind = 'sale'
+select o.id::text as id, o.title, o.stage, o.version, o.organization_id::text as organization_id,
+       o.closed_at is not null as closed,
+       (select min(t.due_at) from crm.task t
+         where t.opportunity_id = o.id and t.status = 'open' and t.due_at > now()
+           and t.title like 'Retomar:%') as paused_until
+  from crm.opportunity o
+ where o.kind = 'sale'
 """
 _QUOTES_SQL = """
 select q.id::text as quote_id, q.opportunity_id::text as opportunity_id, q.quote_number,
@@ -267,7 +287,7 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
 """
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
-AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16"})
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18", "R19"})
 #: R15: the institutions «por confirmar», what created them (the receipt of their
 #: `organization.created` event), and the PDF file name of each quote on their cases that is still
 #: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
@@ -350,8 +370,16 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             requester_checked=bool(requester),
             requester_organization_id=(requester.get("organization_id") if requester_matched else None),
             requester_organization_name=(requester.get("organization_name") if requester_matched else None),
-            body_quote_tokens=tuple(str(t) for t in ((_json(r.get("quote_refs")) or {}).get("tokens") or ())),
+            body_quote_tokens=tuple(dict.fromkeys(
+                str(t) for src in ((_json(r.get("quote_refs")) or {}).get("tokens") or (),
+                                   (_json(r.get("po_refs")) or {}).get("tokens") or ())
+                for t in src
+            )),
             model_intent=r.get("model_intent"),
+            model_stage=r.get("model_stage"),
+            model_needs_reply=r.get("model_needs_reply"),
+            model_summary=r.get("model_summary"),
+            triage_class=r.get("triage_class"),
             case_match=_json(r.get("case_match")) or None,
             extra_headers=({"x-origenlab-origin": WEB_QUOTE_ORIGIN} if r.get("is_web_form") else {}),
             reply_to=(r.get("reply_to") if r.get("is_web_form") else None),
@@ -382,7 +410,8 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                   organization_id=r["organization_id"], closed=bool(r["closed"]),
                   thread_ids=tuple(sorted(case_threads.get(r["id"], ()))),
                   quotes=tuple(by_case.get(r["id"], ())),
-                  people=tuple(sorted(case_people.get(r["id"], ()))))
+                  people=tuple(sorted(case_people.get(r["id"], ()))),
+                  paused_until=r["paused_until"].isoformat() if r["paused_until"] else None)
         for r in rows()
     )
 
@@ -412,6 +441,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
     # R14: the window of sent mail it may record (Operaciones lists the same 60 days).
     cur.execute("select now() - make_interval(days => %s)", (LATE_QUOTE_WINDOW_DAYS,))
     since = cur.fetchone()[0]
+    # R17: the window of client replies it may act on.
+    cur.execute("select now() - make_interval(days => %s)", (REPLY_WINDOW_DAYS,))
+    reply_since = cur.fetchone()[0]
 
     # R15: institutions «por confirmar» and their settled quotes.
     cur.execute(_INSTITUTIONS_SQL, {"days": int(settle_days)})
@@ -435,7 +467,8 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                             "sent_at": g.get("received_at"), "direction": "inbound"}
     return Snapshot(evidence=tuple(evidence), cases=cases, organizations=organizations,
                     applied_evidence_ids=applied, forwards=tuple(forwards), applied_pairs=pairs,
-                    institutions=institutions, late_quote_since=since.isoformat() if since else None), display
+                    institutions=institutions, late_quote_since=since.isoformat() if since else None,
+                    reply_since=reply_since.isoformat() if reply_since else None), display
 
 
 # ─────────────────────────────────────────────────────────────── the repository ──
@@ -785,7 +818,14 @@ class MailRulesRepository(V2CaseCommandRepository):
             result = self._run_step(cur, operator, command, inputs, receipt_id)
             done.append({"command": command, **{k: result.get(k) for k in _RESULT_KEYS if k in result}})
 
-        if rule in ("R5", "R6"):
+        if rule == "R17":
+            # Back to «Enviada» — unless a person moved the case since; then there is nothing of ours to undo.
+            cur.execute("select stage, version from crm.opportunity where id = %s for update", (case_id,))
+            row = cur.fetchone()
+            if row is not None and row[0] == "negotiating":
+                run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
+                                         "stage": "quoting", "note": note})
+        if rule in ("R5", "R6", "R19"):
             came_from = "negotiating" if rule == "R5" else action.get("from_stage")
             run(CORRECT_CASE_STAGE, {"opportunity_id": case_id, "to_stage": came_from, "note": note})
             if rule == "R5" and action.get("from_stage") == "quoting":
@@ -858,6 +898,9 @@ class MailRulesRepository(V2CaseCommandRepository):
             org_id = created.get("organization_id")
             if rule in ("R4", "R10") and org_id:
                 kept = self._retire_mail_organization(cur, org_id, action, note, run)
+        if rule == "R18":
+            # R18 changed nothing in the CRM: its undo receipt is what puts the email back in «Responder».
+            done.append({"command": "no_reply_withdrawn"})
         if not done:
             raise CommandRefused(409, "nothing_to_undo", "this action left nothing that can be reversed")
         return done, kept

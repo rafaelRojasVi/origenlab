@@ -17,6 +17,8 @@ import type { CaseThread } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { useResource } from "../useResource";
 import { fmtDateTime, isSafeExternalHref } from "../ui";
+import { PersonGuessRow } from "../authoring/PersonGuessRow";
+import { useMayRunCaseCommands } from "../caseCommands";
 import { MailMessage, useMayReadMail } from "./MailMessage";
 
 const KIND: Record<CaseThread["kind"], { label: string; className: string }> = {
@@ -30,6 +32,8 @@ const SHOWN = 3;
 function Thread({ t, opportunityId, mayRead }: { t: CaseThread; opportunityId: string; mayRead: boolean }) {
   const [all, setAll] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
+  const [answered, setAnswered] = useState<Set<string>>(new Set());
+  const mayAnswer = useMayRunCaseCommands();
   const messages = all ? t.messages : t.messages.slice(0, SHOWN);
   const url = inSharedMailbox(t.url);
   const kind = KIND[t.kind] ?? KIND.cliente;
@@ -120,6 +124,12 @@ function Thread({ t, opportunityId, mayRead }: { t: CaseThread; opportunityId: s
               ) : (
                 <span className="flex items-center gap-2 py-1 text-xs">{body}</span>
               )}
+              {(m.person_guesses ?? []).filter((g) => !answered.has(g.guess_id)).map((g) => (
+                <div key={g.guess_id} className="mb-1.5 ml-5">
+                  <PersonGuessRow guess={g} mayAnswer={mayAnswer}
+                    onAnswered={() => setAnswered((a) => new Set([...a, g.guess_id]))} />
+                </div>
+              ))}
             </li>
           );
         })}

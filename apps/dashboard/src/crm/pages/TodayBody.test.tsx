@@ -60,6 +60,20 @@ function card(over: Partial<OpportunityCardData> = {}, sentAt = "2026-09-20T12:0
 const task = (id: string, due: string, version = 1) => ({ task_id: id, title: `Tarea ${id}`, due_at: due, version, owner: null });
 
 describe("today lists", () => {
+  it("leaves a closing reply («gracias, te aviso», mail rule R18) out of «Responder» and counts the follow-up from it", () => {
+    const closing = (at: string) => ({ outbound: null, inbound: { at, subject: null, url: null, no_reply: true } });
+    // Quote on 20 Sept, «gracias, lo evaluamos» on 3 Oct: nothing to answer; the 3-day follow-up is due on the 6th.
+    const thanked = card({ last_contact: closing("2026-10-03T12:00:00Z") }, "2026-09-20T12:00:00Z");
+    expect(repliesToAnswer([thanked], NOW)).toEqual([]);
+    expect(followUpsDue([thanked], NOW).map((f) => [f.card.opportunity_id, f.days, f.rhythm])).toEqual([
+      [thanked.opportunity_id, 3, "primero"],
+    ]);
+    // A won case's «acuso recibo»: off the list, and no follow-up on a won case.
+    const won = card({ stage: "won", closed_at: "2026-10-01T12:00:00Z", last_contact: closing("2026-10-03T12:00:00Z") }, "2026-09-20T12:00:00Z");
+    expect(repliesToAnswer([won], NOW)).toEqual([]);
+    expect(followUpsDue([won], NOW)).toEqual([]);
+  });
+
   it("takes tasks due by tonight, overdue first, and leaves later ones out", () => {
     const c = card({ open_tasks: [task("a", "2026-10-06T20:00:00Z"), task("b", "2026-10-04T12:00:00Z"), task("c", "2026-10-09T12:00:00Z")] });
     expect(tasksDue([c], NOW).map((t) => [t.task.task_id, t.overdueDays])).toEqual([

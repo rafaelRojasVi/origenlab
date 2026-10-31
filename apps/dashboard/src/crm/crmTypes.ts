@@ -196,14 +196,20 @@ export interface MailTouch {
   at: string;
   subject: string | null;
   url: string | null;
+  /** Inbound only: mail rule R18 read it as needing no answer («gracias, te aviso»); «Quitar» clears it. */
+  no_reply?: boolean;
 }
 
 export interface QuoteCard {
   quote_id: string;
   quote_number: string;
   number_origin: string | null;
+  /** Once the case is won: the quotation it was won with, or one of the alternatives not chosen. */
+  outcome?: QuoteOutcome | null;
   revisions: RevisionCard[];
 }
+
+export type QuoteOutcome = "won" | "not_chosen";
 
 export interface Attention {
   code: string;
@@ -346,7 +352,6 @@ export interface CampaignSummary {
   last_sent_at: string | null;
   recipients_by_state: Record<string, number>;
   send_attempts: { submission_state: string; delivery_state: string; count: number }[];
-  replies_recorded: number;
   /** Accepted attempts grouped by the day (America/Santiago) they were accepted on. */
   send_batches?: SendBatch[];
   /** Attempts with no acceptance date (rejected, never submitted). */
@@ -421,12 +426,13 @@ export interface V1LaneCampaign {
   /** The email as sent, when the API has it (kept outside the repository). */
   html?: string | null;
   subject?: string | null;
+  /** Its sends are already in the CRM: the campaign row is the campaign, the plan feeds the calendar. */
+  imported?: boolean;
 }
 
 export interface MarketingResponse {
   campaigns: CampaignSummary[];
   contact_controls: { kind: string; scope: string; count: number }[];
-  replies_note: string;
   /** Where campaigns (and drafts) are stored, as the API reports it. */
   storage?: { table: string; database: string };
   authoring?: { drafts_enabled: boolean; freeze_enabled?: boolean; recontact_review_enabled?: boolean; planning_enabled?: boolean };
@@ -573,7 +579,17 @@ export interface HistoryResponse {
 }
 
 
-/** `GET /v2/workspace/opportunities/{id}/threads`: the case's emails as Gmail cadenas. */
+/** A «¿Es …?» guess about who wrote an email: `question_es` is the sentence to show. */
+export interface PersonGuess {
+  guess_id: string;
+  address: string;
+  person_id: string;
+  person_name: string;
+  organization_name: string | null;
+  reasons: string[];
+  question_es: string;
+}
+
 export interface CaseThreadMessage {
   message_id: string | null;
   sent_at: string | null;
@@ -583,6 +599,8 @@ export interface CaseThreadMessage {
   subject: string | null;
   has_pdf: boolean;
   url: string | null;
+  /** Guesses about the sender; absent from an older API. */
+  person_guesses?: PersonGuess[];
 }
 
 export interface CaseThread {
@@ -596,6 +614,7 @@ export interface CaseThread {
   messages: CaseThreadMessage[];
 }
 
+/** `GET /v2/workspace/opportunities/{id}/threads`: the case's emails as Gmail cadenas. */
 export interface CaseThreadsResponse {
   opportunity_id: string;
   threads: CaseThread[];

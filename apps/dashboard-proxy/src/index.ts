@@ -364,6 +364,9 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
   const responseHeaders = new Headers(upstreamResponse.headers);
   responseHeaders.delete(API_AUTH_HEADER);
+  // The runtime hands over the decoded body and re-encodes it for the browser from Content-Encoding;
+  // the upstream length is the compressed one, so it must not travel with the decoded body.
+  responseHeaders.delete("Content-Length");
   responseHeaders.delete("Set-Cookie");
   responseHeaders.delete("Set-Cookie2");
   if (isAuthPath(upstreamPath as string)) {

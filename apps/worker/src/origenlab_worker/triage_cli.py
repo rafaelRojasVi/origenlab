@@ -5,6 +5,9 @@ points (docs/OPERATIONS.md §8.11).
   worker on queue `triage` until SIGTERM. The periodic sweep defers new messages every minute.
 * `triage-once [--since-days N] [--limit N] [--dry-run]` — one pass without the queue: the owner's
   backfill and smoke test. `--dry-run` lists how many messages are pending and writes nothing.
+* `people-backfill [--since-days 90] [--limit N] [--sample N] [--apply]` — `people:v1` (who wrote it)
+  for mail triaged before that reading existed: one people-only model call per inbound email a
+  person wrote. Without `--apply` nothing is written; `--sample N` prices the run first.
 * `forward-backfill [--since-days N] [--limit N] [--apply]` — reads only the forwards we sent of the
   last days for who really asked (spec 2026-10-14); never re-runs the triage, never calls a model.
   Without `--apply` it reads and counts and writes nothing.
@@ -63,6 +66,7 @@ from origenlab_worker.triage import (
     SweepCounts,
     TriageDb,
     backfill_forwards,
+    backfill_people,
     backfill_quote_refs,
     triage_one,
 )
@@ -194,6 +198,79 @@ def run_quote_refs_backfill(args: Any, env: Mapping[str, str], started: float, *
     """Past emails read for the quote numbers their body names (`quote_refs:v1`); dry run by default."""
     return _run_backfill("quote_refs_backfill", "pending_quote_refs", backfill_quote_refs, args, env, started,
                          open_connection=open_connection, store_factory=store_factory)
+
+
+PEOPLE_BACKFILL_DAYS = 90
+
+
+def run_people_backfill(args: Any, env: Mapping[str, str], started: float, *,
+                        open_connection: OpenConnection = _open_triage_connection,
+                        store_factory: Callable[[StorageConfig], Any] | None = None,
+                        reader_factory: Callable[[str], Any] = anthropic_reader) -> int:
+    """`people:v1` for the last days' mail triaged before it existed (`triage.backfill_people`).
+
+    Plain run: counts only, no model, nothing written. `--sample N`: the model reads the first N
+    pending emails and the line prices them (`sample_usd`) and the whole list (`estimated_usd_all`,
+    `_price_people_run`; `limit_reached` when `--limit` cut the list); written only with `--apply`.
+    A model outage mid-run ends `failed` with the counts so far. `--apply` alone: every pending
+    email. Resumable — rerun it after a stop. Needs `ORIGENLAB_WORKER_ANTHROPIC_API_KEY` whenever
+    the model runs; `ORIGENLAB_WORKER_TRIAGE_MODEL` picks the model (default as the triage)."""
+    sample = None if args.sample is None else max(1, min(int(args.sample), 1000))
+    mode = "apply" if args.apply else ("sample" if sample is not None else "dry_run")
+    line: dict[str, Any] = {"event": "people_backfill", "mode": mode, "exit": EXIT_OK, "error": None}
+    try:
+        try:
+            model = check_model_id((env.get(ENV_TRIAGE_MODEL) or DEFAULT_MODEL).strip())
+        except ValueError:
+            raise ConfigRefused("triage_model_invalid") from None
+        storage = StorageConfig.from_env(env)
+        database = remote_worker_target(env.get(ENV_DATABASE_URL) or "", expected_host=env.get(ENV_EXPECTED_HOST),
+                                        ca_file=write_ca_file(env.get(ENV_CA_PEM) or ""))
+        reader = None
+        if args.apply or sample is not None:
+            key = (env.get(ENV_ANTHROPIC_API_KEY) or "").strip()
+            if not key:
+                raise ConfigRefused("anthropic_api_key_missing")
+            reader = reader_factory(key)
+        store = (store_factory or (lambda s: S3EmlStore(s.client())))(storage)
+        since = max(1, min(int(args.since_days), 3650))
+        limit = max(1, min(int(args.limit), 5000))
+        line.update(model=model, since_days=since)
+        with open_connection(database) as conn:
+            db = TriageDb(conn)
+            pending = db.pending_people(since_days=since, limit=limit)
+            # `limit_reached`: the list was cut at `--limit` — more mail is pending than `found`, the
+            # estimate covers only `found`, and `--apply` needs another pass.
+            line["limit_reached"] = len(pending) >= limit
+            counts = backfill_people(db, store, reader, pending, apply=bool(args.apply), sample=sample, model=model)
+        line.update(counts)
+        _price_people_run(line, counts, model)
+    except ConfigRefused as exc:
+        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
+    except Exception as exc:  # noqa: BLE001 — the class, never the text
+        line.update(getattr(exc, "counts", None) or {})
+        line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
+    return _emit(line, started)
+
+
+def _price_people_run(line: dict[str, Any], counts: dict[str, int], model: str) -> None:
+    """`sample_usd` (what the model calls cost) and `estimated_usd_all`: the cost per email looked
+    at — skipped ones count as free — times `found`, so mail the run will skip is not priced."""
+    from decimal import Decimal
+
+    from origenlab_api.v2.model_spend import UnpricedModel, cost_usd
+
+    if not counts["model_calls"]:
+        return
+    try:
+        spent = cost_usd(model, input_tokens=counts["input_tokens"], output_tokens=counts["output_tokens"])
+    except UnpricedModel:
+        line["sample_usd"] = "unpriced"
+        return
+    line["sample_usd"] = str(spent)
+    looked_at = counts["read"] + counts["skipped"]
+    if looked_at:
+        line["estimated_usd_all"] = str((spent / looked_at * counts["found"]).quantize(Decimal("0.0001")))
 
 
 def _run_backfill(event: str, pending: str, backfill: Callable[..., dict[str, int]], args: Any,
@@ -338,9 +415,16 @@ def bid_config_from_env(env: Mapping[str, str], *,
 
 
 def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
-    """One sweep on a fresh verified connection: what the `bid_preparation_sweep` task runs."""
+    """One sweep reusing a long-lived verified connection: what `bid_preparation_sweep` runs.
+
+    The connection is verified once when first established and reused across sweeps; a
+    broken connection is replaced and re-verified on the next sweep call.  The
+    ``reconnect`` parameter passed to ``run_bid_sweep`` is the cache's own context-
+    manager accessor so a mid-preparation reconnect also skips re-verification.
+    """
     from datetime import UTC, datetime
 
+    from origenlab_worker.database import VerifiedConnectionCache
     from origenlab_worker.tender.job import (
         BID_REQUIRED_POLICIES,
         BID_REQUIRED_PRIVILEGES,
@@ -348,20 +432,22 @@ def bid_sweep_for(config: BidConfig) -> Callable[[], dict[str, Any]]:
         run_bid_sweep,
     )
 
-    def connect() -> Any:
-        # A remote target carries TCP keepalives (`database.KEEPALIVES`): the session stays up
-        # through a model call of several minutes.
-        return open_verified_connection(config.database, application_name=APP_NAME_BID,
-                                        privileges=BID_REQUIRED_PRIVILEGES, policies=BID_REQUIRED_POLICIES)
+    # Created once per call to bid_sweep_for (i.e. once per tender-child process).
+    _cache = VerifiedConnectionCache(
+        config.database,
+        application_name=APP_NAME_BID,
+        privileges=BID_REQUIRED_PRIVILEGES,
+        policies=BID_REQUIRED_POLICIES,
+    )
 
     def sweep() -> dict[str, Any]:
         from origenlab_worker.drive_client import DriveRest
 
-        with connect() as conn:
+        with _cache.connection() as conn:
             store = S3EmlStore(config.storage.client(), bucket=DOCUMENTS_BUCKET)
             drive = DriveRest(config.drive) if config.drive is not None else None
             return run_bid_sweep(conn, store, config.reader, config.models, now=lambda: datetime.now(UTC),
-                                 reconnect=connect, drive=drive, drive_target=config.drive_target)
+                                 reconnect=_cache.connection, drive=drive, drive_target=config.drive_target)
 
     return sweep
 
@@ -467,8 +553,9 @@ def _serve_tenders(config: BidConfig, *, discovery: Callable[[], dict[str, Any]]
         with task_queue.tender_app.replace_connector(task_queue.connector_for(config.database)) as app:
             async with app.open_async():
                 # One preparation at a time: the monthly cap relies on a single spender.
+                from origenlab_worker.task_queue import WORKER_POLLING
                 await app.run_worker_async(queues=[task_queue.TENDER_QUEUE], concurrency=1, name="tenders",
-                                           install_signal_handlers=True, delete_jobs="successful")
+                                           install_signal_handlers=True, delete_jobs="successful", **WORKER_POLLING)
 
     asyncio.run(serve())
 
@@ -523,10 +610,18 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
         _idle_until_terminated()
         return EXIT_OK
     try:
+        from origenlab_worker.database import VerifiedConnectionCache
+
         config = triage_config_from_env(env)
         task_queue.CONTEXT.target = config.database
         task_queue.CONTEXT.store_factory = lambda: S3EmlStore(config.storage.client())
         task_queue.CONTEXT.model = config.model
+        task_queue.CONTEXT.sweep_conn = VerifiedConnectionCache(
+            config.database,
+            application_name=task_queue.APP_NAME_TRIAGE,
+            privileges=task_queue.TRIAGE_REQUIRED_PRIVILEGES,
+            policies=task_queue.TRIAGE_REQUIRED_POLICIES,
+        )
         revision = env.get("RENDER_GIT_COMMIT", "")
         task_queue.CONTEXT.revision = revision if re.fullmatch(r"[0-9a-f]{40}", revision) else None
         line["model"] = config.model_name if config.model_enabled else "off"
@@ -537,8 +632,9 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
             # own app, so a copy would leave every sweep in the module's in-memory connector.
             with task_queue.app.replace_connector(task_queue.connector_for(config.database)) as app:
                 async with app.open_async():
+                    from origenlab_worker.task_queue import WORKER_POLLING
                     await app.run_worker_async(queues=[task_queue.QUEUE], concurrency=WORKER_CONCURRENCY,
-                                               install_signal_handlers=True, delete_jobs="successful")
+                                               install_signal_handlers=True, delete_jobs="successful", **WORKER_POLLING)
 
         asyncio.run(serve())
         line["mode"] = "stopped"

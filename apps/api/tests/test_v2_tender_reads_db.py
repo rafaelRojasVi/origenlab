@@ -239,8 +239,41 @@ def test_the_list_is_readable_by_a_viewer_and_holds_no_bidder_field(db, operator
     assert response.status_code == 200
     assert set(row_of(response.json(), tender)) == {
         "id", "version", "code", "title", "institution", "closes_at", "status", "amount",
-        "offer_quote_number", "preparation"}
+        "offer_quote_number", "offer_status", "preparation", "annex_count", "reading"}
+    assert "bidder_ready" not in response.json()
     assert client.get("/v2/tenders").status_code == 401
+
+
+def test_the_list_carries_what_the_steps_need_without_the_reads_themselves(db, operators, client) -> None:
+    """The list draws the page's steps: anexos on the case, the offer's status, what a ready read
+    found — counted in the database, never the read's `result` itself — and, for sales, whether the
+    bidder's data is saved."""
+    tender = open_tender(db, operators, closes_at=tomorrow_at(12, 3))
+    add_offer(db, operators, tender, number="09021-26", status="draft", tax_base=None, lines_total=100)
+    sha = "cd" * 32
+    result = '{"checklist": [{"documento": "Anexo 1"}, {"documento": "Anexo 2"}], "items": [{"linea": 1}], ' \
+             '"resumen": {"objeto": {"texto": "Texto que la lista no debe traer"}}}'
+    with _owner(db) as conn:
+        doc = conn.execute(
+            "insert into crm.opportunity_document (opportunity_id, kind, storage_path, sha256, content_type, "
+            "byte_size, original_filename, source, attached_by_operator_id) values "
+            "(%s, 'tender_annex', %s, %s, 'application/pdf', 1000, 'bases.pdf', 'upload', %s) returning id::text",
+            (tender["id"], f"opportunities/{tender['id']}/{sha}.pdf", sha, operators["sales"].operator_id)
+        ).fetchone()[0]
+        conn.execute(
+            "insert into evidence.bid_preparation (opportunity_id, phase, status, annex_document_ids, "
+            "requested_by_operator_id, result) values (%s, 'read', 'ready', %s, %s, %s::jsonb)",
+            (tender["id"], [doc], operators["sales"].operator_id, result))
+    response = client.get("/v2/tenders", headers=headers("sales"))
+    listed = row_of(response.json(), tender)
+    assert listed["annex_count"] == 1
+    assert listed["offer_status"] == "draft"
+    assert listed["reading"] == {"documents": 2, "items": 1}
+    assert listed["preparation"] == {"read": "ready", "fill": None}
+    assert "Texto que la lista no debe traer" not in response.text
+    assert response.json()["bidder_ready"] is False
+    page = client.get(f"/v2/tenders/{tender['id']}", headers=headers("sales")).json()
+    assert page["tender"]["reading"] == {"documents": 2, "items": 1} and page["tender"]["annex_count"] == 1
 
 
 # ------------------------------------------------------------------ the page

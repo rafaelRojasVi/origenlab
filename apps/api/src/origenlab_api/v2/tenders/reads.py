@@ -45,7 +45,9 @@ select o.id::text as id, o.version as version, o.tender_status as status, o.titl
        r.id::text as revision_id, r.status as revision_status, r.quote_currency as revision_currency,
        r.tax_base as revision_tax_base, r.tax_total as revision_tax_total,
        r.grand_total as revision_grand_total,
-       (select sum(l.line_total_qc) from crm.quote_line l where l.quote_revision_id = r.id) as lines_total
+       (select sum(l.line_total_qc) from crm.quote_line l where l.quote_revision_id = r.id) as lines_total,
+       (select count(*) from crm.opportunity_document d
+         where d.opportunity_id = o.id and d.kind = 'tender_annex' and d.removed_at is null) as annex_count
   from crm.opportunity o
   left join lateral (
         select n2.* from crm.opportunity_evidence e
@@ -113,9 +115,12 @@ def _instant(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def tender_row(row: dict[str, Any], preparation: dict[str, str | None], *, offer_price: bool = True) -> dict[str, Any]:
+def tender_row(row: dict[str, Any], preparation: dict[str, str | None], *, offer_price: bool = True,
+               reading: dict[str, int] | None = None) -> dict[str, Any]:
     """`TenderRow` (spec §6.10) from one `_TENDER_ROWS` row and the latest status of each phase.
-    Without `offer_price` (a viewer) the amount is the notice's estimate only."""
+    Without `offer_price` (a viewer) the amount is the notice's estimate only. `reading` is what a
+    ready read found (documents, items), for the list's progress; `annex_count` and `offer_status`
+    too — the list draws the same steps as the page from them."""
     return {
         "id": row["id"],
         "version": int(row["version"]),
@@ -130,7 +135,10 @@ def tender_row(row: dict[str, Any], preparation: dict[str, str | None], *, offer
         "status": row["status"],
         "amount": _amount(row, offer_price=offer_price),
         "offer_quote_number": row["offer_quote_number"] if row["revision_id"] is not None else None,
+        "offer_status": row["revision_status"] if row["revision_id"] is not None else None,
         "preparation": {"read": preparation.get("read"), "fill": preparation.get("fill")},
+        "annex_count": int(row["annex_count"] or 0),
+        "reading": reading,
     }
 
 
@@ -217,20 +225,54 @@ class TenderReadRepository:
             found.setdefault(r["opportunity_id"], {})[r["phase"]] = r
         return found
 
+    def _latest_statuses(self, cur: Any, ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
+        """The newest preparation per case and phase, as the list needs it: its status and, for a
+        read, how many documents and items it found — never the `result` and `outputs` documents
+        themselves (tens of kB each; the list read all of them just to show a status)."""
+        if not ids:
+            return {}
+        cur.execute(
+            """
+            select distinct on (opportunity_id, phase)
+                   opportunity_id::text as opportunity_id, phase, status,
+                   coalesce(jsonb_array_length(case when jsonb_typeof(result->'checklist') = 'array'
+                                                    then result->'checklist' end), 0) as documents,
+                   coalesce(jsonb_array_length(case when jsonb_typeof(result->'items') = 'array'
+                                                    then result->'items' end), 0) as items
+              from evidence.bid_preparation
+             where opportunity_id = any(%s::uuid[])
+             order by opportunity_id, phase, requested_at desc, id desc
+            """,
+            (ids,),
+        )
+        found: dict[str, dict[str, dict[str, Any]]] = {}
+        for r in _row_dicts(cur):
+            found.setdefault(r["opportunity_id"], {})[r["phase"]] = r
+        return found
+
     def list_tenders(self, status: str | None = None, *, offer_prices: bool = True) -> dict[str, Any]:
         with self._read() as cur:
             cur.execute(_TENDER_ROWS + _ORDER)
             rows = _row_dicts(cur)
-            prep = self._latest_preparations(cur, [r["id"] for r in rows])
+            prep = self._latest_statuses(cur, [r["id"] for r in rows])
+            bidder_ready = current_bidder_profile(cur) is not None if offer_prices else None
         counts = {s: 0 for s in TENDER_STATUSES}
         for r in rows:
             counts[r["status"]] += 1
         shown = [r for r in rows if status is None or r["status"] == status]
-        tenders = [
-            tender_row(r, {p: (prep.get(r["id"], {}).get(p) or {}).get("status") for p in PHASES},
-                       offer_price=offer_prices) for r in shown
-        ]
-        return {"tenders": tenders, "counts": counts}
+        tenders = []
+        for r in shown:
+            phases = prep.get(r["id"], {})
+            read = phases.get("read")
+            reading = ({"documents": int(read["documents"]), "items": int(read["items"])}
+                       if read and read["status"] == "ready" else None)
+            tenders.append(tender_row(r, {p: (phases.get(p) or {}).get("status") for p in PHASES},
+                                      offer_price=offer_prices, reading=reading))
+        body: dict[str, Any] = {"tenders": tenders, "counts": counts}
+        # The bidder's data is sales' and admin's; a viewer's list says nothing of it.
+        if bidder_ready is not None:
+            body["bidder_ready"] = bidder_ready
+        return body
 
     def discovered(self, now: datetime) -> dict[str, Any]:
         """«En Mercado Público»: the open notices the discovery sweep kept that fit the catalog."""
@@ -265,7 +307,7 @@ class TenderReadRepository:
             spend = spend_summary(cur, "licitaciones", now)
             bidder_ready = current_bidder_profile(cur) is not None
         tender = {
-            **tender_row(row, {p: (prep.get(p) or {}).get("status") for p in PHASES}),
+            **tender_row(row, {p: (prep.get(p) or {}).get("status") for p in PHASES}, reading=_reading(prep.get("read"))),
             "portal_url": portal_url(row["code"]) if row["code"] else None,
             "notice_head_summary": head_summary(row),
         }
@@ -289,6 +331,18 @@ class TenderReadRepository:
             "spend": spend,
             "bidder_ready": bidder_ready,
         }
+
+
+def _reading(read: dict[str, Any] | None) -> dict[str, int] | None:
+    """What a ready read found, counted from its full row (the page has it already)."""
+    if not read or read["status"] != "ready" or not isinstance(read.get("result"), dict):
+        return None
+    result = read["result"]
+
+    def count(key: str) -> int:
+        return len(result[key]) if isinstance(result.get(key), list) else 0
+
+    return {"documents": count("checklist"), "items": count("items")}
 
 
 def _preparation(row: dict[str, Any] | None) -> dict[str, Any] | None:

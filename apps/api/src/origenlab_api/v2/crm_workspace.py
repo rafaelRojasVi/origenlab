@@ -47,6 +47,7 @@ from origenlab_api.v2.campaign_state import (  # noqa: F401 - re-exported from h
     _compute_campaign_content_state,
 )
 from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
+from origenlab_api.v2.case_won import quote_outcome
 from origenlab_api.v2.drive_ledgers import (  # noqa: F401 - DriveLink, load_drive_ledgers: this module's API
     DRIVE_FILE_URL,
     DRIVE_FOLDER_URL,
@@ -58,9 +59,11 @@ from origenlab_api.v2.mail_rules import (
     FREE_MAIL_DOMAINS,
     OWN_DOMAINS,
     WEB_FORM_REPLY_TO_SQL,
+    is_automatic_mail,
     mail_direction,
     web_form_enquirer,
 )
+from origenlab_api.v2.marketing_analytics import read_analytics, read_people
 from origenlab_api.v2.marketing_audience import (
     address_ref,
     addresses_in,
@@ -263,7 +266,8 @@ _SQL_PIPELINE_OPPS = f"""
     select op.id::text as opportunity_id, op.title, op.stage, op.version,
            op.organization_id::text as organization_id, o.name as organization_name,
            o.confirmation as organization_confirmation, o.version as organization_version,
-           op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason
+           op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
+           op.won_quote_id::text as won_quote_id, op.won_revision_no
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
      where {sale_cases("op")}
@@ -376,7 +380,17 @@ _SQL_PIPELINE_SOURCES = """
 # drops one message instead of failing the read. A web-quote-form submission (`web_form_reply_to`)
 # counts as received from its Reply-To.
 _SQL_PIPELINE_CONTACT = """
-    with case_threads as (
+    with no_reply_ids as materialized (
+        -- Mail rule R18 read these emails as needing no answer, and nobody removed it («Quitar»).
+        select r.response_body->>'evidence_id' as evidence_id
+          from platform.command_receipt r
+         where r.command_name = 'apply_mail_rule' and r.status = 'completed'
+           and r.response_body->>'rule_id' = 'R18'
+           and not exists (select 1 from platform.command_receipt u
+                            where u.command_name = 'undo_mail_rule_action' and u.status = 'completed'
+                              and u.response_body->>'undoes_receipt_id' = r.id::text)
+    ),
+    case_threads as (
         select oe.opportunity_id, sr.payload->>'gmail_thread_id' as thread_id
           from crm.opportunity_evidence oe
           join evidence.source_record sr on sr.id = oe.source_record_id
@@ -403,7 +417,12 @@ _SQL_PIPELINE_CONTACT = """
            -- a suggestion for «Asignar institución», never a CRM fact.
            (select a.value->'reading'->>'requester_organization' from evidence.assertion a
              where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value ? 'reading'
-             order by a.created_at desc limit 1) as requester_read
+             order by a.created_at desc limit 1) as requester_read,
+           -- The triage's class (bounce, auto_reply, …): mail no person wrote is not a touch.
+           (select a.value->>'class' from evidence.assertion a
+             where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm ~ '^triage:v[0-9]+$'
+             order by substring(a.value_norm from 9)::int desc limit 1) as triage_class,
+           sr.id::text in (select evidence_id from no_reply_ids) as no_reply
       from case_threads ct
       join evidence.source_record sr
         on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
@@ -516,16 +535,20 @@ def authored_contents(rev: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def case_money(revisions: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def case_money(revisions: Iterable[Mapping[str, Any]], won: tuple[str, int] | None = None) -> list[dict[str, Any]]:
     """The case's amount for the card, the board column and the panel header: the neto of the
     LAST SENT vigente revision (owner 2026-10-12), not a sum — a later quotation usually replaces
-    an earlier one for the same request. One entry, or none for a case without a vigente revision.
+    an earlier one for the same request. A won case's is the revision it was won with (`won`:
+    quote id and revision number), whichever was sent last (owner 2026-10-30: alternatives).
+    One entry, or none for a case without a vigente revision.
     Its currency is "unread" (net_total "1") when that revision's PDF was never read; it also
     names the quotation and when it was sent, and how many vigente quotations the case has."""
     live = [r for r in revisions if r.get("is_active") and delivered(r)]
-    if not live:
+    winner = next((r for r in revisions if won and r.get("_quote_id") == won[0]
+                   and r.get("revision_no") == won[1]), None)
+    if not live and winner is None:
         return []
-    last = max(live, key=_sort_key_sent)
+    last = winner or max(live, key=_sort_key_sent)
     c = last.get("contents")
     net = _money(c.get("net_total")) if c else None
     cur = c.get("currency") if c else None
@@ -609,6 +632,110 @@ def _instant(value: Any) -> float:
 
 
 _REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|rv|fw|fwd|tr|aw|wg|sv)\s*:\s*)+", re.IGNORECASE)
+
+
+_MONTHS_ES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+#: Where a person's name, address or institution was learned (people first, Task 7).
+LEARNED_BY_PERSON = "lo agregó una persona"
+LEARNED_FROM_HEADER = "nombre en el correo"
+LEARNED_BY_SYSTEM = "lo propuso el sistema"
+
+#: The people rules' apply receipts (`people_rules_repository.APPLY_COMMAND`/`UNDO_COMMAND`), named
+#: here so this read module does not import the write side.
+_PEOPLE_APPLY = "apply_people_rule"
+_PEOPLE_UNDO = "undo_people_rule"
+
+
+def day_es(value: Any) -> str | None:
+    """«21 oct»: the day an email was sent, in Santiago."""
+    when = value if isinstance(value, datetime) else _aware(value)
+    if when is None:
+        return None
+    from zoneinfo import ZoneInfo
+
+    local = when.astimezone(ZoneInfo("America/Santiago"))
+    return f"{local.day} {_MONTHS_ES[local.month - 1]}"
+
+
+def learned_from(*, machine: bool, by_rules: bool, name_source: str | None, sent: Any) -> str:
+    """The muted line beside a name, address or institution on the contact page."""
+    if name_source == "operator":
+        return LEARNED_BY_PERSON
+    if name_source == "display_name":
+        return LEARNED_FROM_HEADER
+    if by_rules or name_source == "signature":
+        day = day_es(sent)
+        return f"firma del correo {day}" if day else "firma del correo"
+    return LEARNED_BY_SYSTEM if machine else LEARNED_BY_PERSON
+
+
+def person_provenance(cur: Any, person_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(other names, provenance) of one person: every live name, active address and open
+    institution, where it was learned, whether the machine proposed it (`machine` — «Quitar» and
+    «Confirmar» apply) and the people-rule receipt that made it (`receipt_id`, null when none or
+    undone). `quitar_archives_person` says that receipt created the whole person (P3): its «Quitar»
+    archives the contact, not just that row."""
+    cur.execute(
+        """
+        select 'name' as kind, n.id::text as id, n.name_display as label, n.confirmation, n.source,
+               n.origin_source_record_id::text as origin, n.created_at
+          from crm.person_name n where n.person_id = %(p)s::uuid and n.removed_at is null
+        union all
+        select 'address', cp.id::text, cp.value_display, cp.confirmation, null,
+               cp.origin_source_record_id::text, cp.created_at
+          from crm.contact_point cp where cp.person_id = %(p)s::uuid and cp.status = 'active'
+        union all
+        select 'affiliation', a.id::text, o.name, a.confirmation, null,
+               a.origin_source_record_id::text, a.created_at
+          from crm.affiliation a join crm.organization o on o.id = a.organization_id
+         where a.person_id = %(p)s::uuid and a.valid_to is null
+         order by 1, 7, 2
+        """,
+        {"p": person_id},
+    )
+    facts = cur.fetchall()
+    ids = [f[1] for f in facts]
+    receipts: dict[str, str] = {}
+    creates_person: set[str] = set()
+    sent: dict[str, Any] = {}
+    if ids:
+        cur.execute(
+            """
+            select r.id::text, x.fact_id, r.response_body ->> 'rule_id'
+              from platform.command_receipt r
+             cross join lateral (values (r.response_body -> 'created' ->> 'person_name_id'),
+                                        (r.response_body -> 'created' ->> 'contact_point_id'),
+                                        (r.response_body -> 'created' ->> 'affiliation_id')) as x(fact_id)
+             where r.command_name = %(apply)s and r.status = 'completed' and x.fact_id = any(%(ids)s)
+               and not exists (select 1 from platform.command_receipt u
+                                where u.command_name = %(undo)s and u.status = 'completed'
+                                  and u.response_body ->> 'undoes_receipt_id' = r.id::text)
+            """,
+            {"apply": _PEOPLE_APPLY, "undo": _PEOPLE_UNDO, "ids": ids},
+        )
+        found = cur.fetchall()
+        receipts = {fact_id: rid for rid, fact_id, _rule in found}
+        creates_person = {fact_id for _rid, fact_id, rule in found if rule == "P3"}
+        origins = sorted({f[5] for f in facts if f[5]})
+        if origins:
+            cur.execute("select id::text, coalesce(payload ->> 'sent_at', created_at::text) "
+                        "from evidence.source_record where id = any(%s::uuid[])", (origins,))
+            sent = dict(cur.fetchall())
+    names: list[dict[str, Any]] = []
+    provenance: list[dict[str, Any]] = []
+    for kind, fact_id, label, confirmation, source, origin, _created in facts:
+        machine = confirmation == "machine_proposed"
+        provenance.append({
+            "kind": kind, "id": fact_id, "label": label,
+            "source_es": learned_from(machine=machine, by_rules=fact_id in receipts, name_source=source,
+                                      sent=sent.get(origin) if origin else None),
+            "machine": machine, "receipt_id": receipts.get(fact_id),
+            "quitar_archives_person": fact_id in creates_person,
+        })
+        if kind == "name":
+            names.append({"id": fact_id, "name": label, "source": source, "confirmation": confirmation,
+                          "machine": machine})
+    return names, provenance
 
 
 def case_threads(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> list[dict[str, Any]]:
@@ -718,6 +845,8 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             enquirers[oid] = (at, enquirer)
         direction = mail_direction(row.get("sender"), row.get("direction_hint"), row.get("comms_direction"),
                                    row.get("web_form_reply_to"))
+        if direction == "inbound" and not enquirer and is_automatic_mail(row.get("sender"), row.get("triage_class")):
+            continue  # a bounce or an out-of-office: nobody on the client's side wrote it
         if direction == "inbound":
             read = (row.get("requester_read") or "").strip()
             if read and (oid not in reads or reads[oid][0] < at):
@@ -736,6 +865,8 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             "subject": row.get("subject"),
             "url": gmail_url(row.get("gmail_message_id")),
         }
+        if direction == "inbound" and row.get("no_reply"):
+            out[row["opportunity_id"]][direction]["no_reply"] = True
         if enquirer:
             # A web-quote-form submission: the From's name is OrigenLab's own, never the client's.
             continue
@@ -876,6 +1007,7 @@ def compose_pipeline(
                     "drive_pending": (link is None and bool(src.get("has_eml") or r.get("sent_has_eml"))
                                       and r.get("status") != "void" and sha is not None),
                     "quote_number": q["quote_number"],
+                    "_quote_id": q["quote_id"],
                     "contents": quote_contents(r) or authored_contents(r),
                     "_recipients": src.get("recipients"),
                 }
@@ -886,11 +1018,14 @@ def compose_pipeline(
                     "quote_id": q["quote_id"],
                     "quote_number": q["quote_number"],
                     "number_origin": q.get("number_origin"),
+                    "outcome": quote_outcome(q["quote_id"], opp.get("won_quote_id")),
                     "revisions": [{k: v for k, v in rc.items() if not k.startswith("_")} for rc in rev_cards],
                 }
             )
 
         latest = max(all_revs, key=_sort_key_sent) if all_revs else None
+        # The next step follows the newest revision still alive: a voided one is no work to finish.
+        live_latest = max((r for r in all_revs if r.get("status") != "void"), key=_sort_key_sent, default=None)
         requesting = [o for o in orgs_by_opp.get(oid, []) if o["role"] == "requesting_institution"]
         organization = None
         if opp.get("organization_id"):
@@ -1010,7 +1145,8 @@ def compose_pipeline(
                 "quotes": quote_cards,
                 "quote_numbers": [q["quote_number"] for q in quote_cards],
                 "revision_count": len(all_revs),
-                "money": case_money(all_revs),
+                "money": case_money(all_revs, (opp["won_quote_id"], opp["won_revision_no"])
+                                    if opp.get("won_quote_id") else None),
                 # The documents a person attached to the case (its purchase order), newest first.
                 "documents": docs_by_opp.get(oid, []),
                 "latest_revision": (
@@ -1038,7 +1174,7 @@ def compose_pipeline(
                 # written after the client's last email as answered.
                 "last_note": note_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
-                or suggest_next_action(opp, blocked, latest, last_contact=(contacts or {}).get(oid)),
+                or suggest_next_action(opp, blocked, live_latest, last_contact=(contacts or {}).get(oid)),
             }
         )
     return cards
@@ -1243,8 +1379,10 @@ class CrmWorkspaceRepository:
         self._drive: Mapping[str, DriveLink] = drive or {}
         self._statement_timeout_ms = statement_timeout_ms
         from origenlab_api.v2.operations import FactsCache
+        from origenlab_api.v2.infrastructure import RenderCache
 
         self._facts_cache = FactsCache(30)
+        self._render_cache = RenderCache()
 
     @property
     def drive_configured(self) -> bool:
@@ -1476,9 +1614,13 @@ class CrmWorkspaceRepository:
                        c.audience_frozen_at::text, c.content_frozen_at::text, c.content_sha256,
                        c.audience_criteria,
                        case when c.origin_source_record_id is not null then 'imported_v1' else 'native_v2' end as origin,
+                       case when sr.dedupe_key like 'migration_manifest:v1-sent-campaign:%'
+                            then substr(sr.dedupe_key, length('migration_manifest:v1-sent-campaign:') + 1) end
+                         as v1_campaign_key,
                        m.address_norm as sender_address, m.display_name as sender_name
                   from outbound.campaign c
                   left join comms.mailbox m on m.id = c.mailbox_id
+                  left join evidence.source_record sr on sr.id = c.origin_source_record_id
                  order by c.created_at desc
                 """
             )
@@ -1540,7 +1682,6 @@ class CrmWorkspaceRepository:
             c["hold"] = campaign_hold(holds, c["campaign_id"])
             c["recipients_by_state"] = recip.get(c["campaign_id"], {})
             c["send_attempts"] = attempts.get(c["campaign_id"], [])
-            c["replies_recorded"] = replies.get(c["campaign_id"], 0)
             c["send_batches"] = batches.get(c["campaign_id"], [])
             c["attempts_without_date"] = undated.get(c["campaign_id"], 0)
             t = totals.get(c["campaign_id"])
@@ -1571,7 +1712,6 @@ class CrmWorkspaceRepository:
             "campaigns": campaigns,
             "holds": {k: v for k, v in holds.items() if k != "by_campaign"},
             "contact_controls": controls,
-            "replies_note": ENTITY_NOTES["campaign_replies"]["note"],
             "storage": {"table": "outbound.campaign", "database": database},
         }
 
@@ -1781,6 +1921,16 @@ class CrmWorkspaceRepository:
             rows[0]["hold_refusals"] = list(cur.fetchone()[0])
             inputs = read_marketing_audience_inputs(cur)
         return plan_freeze(load_taxonomy(), inputs, rows[0], criteria, recontact_review=recontact_review)
+
+    def marketing_analytics(self) -> dict[str, Any]:
+        """Reach, blocks, responses, quote requests, cases and CRM coverage (marketing_analytics)."""
+        with self._read() as cur:
+            return read_analytics(cur)
+
+    def marketing_people(self, **query: Any) -> dict[str, Any]:
+        """The people behind one analytics figure — the rows that figure counts."""
+        with self._read() as cur:
+            return read_people(cur, **query)
 
     def campaign_blocks(self) -> dict[str, Any]:
         """Every active campaign safety block, the latest lifted ones, and each target's version."""
@@ -2011,8 +2161,11 @@ class CrmWorkspaceRepository:
 
     # -- CRM authoring reads
 
-    def person_authoring(self, person_id: str) -> dict[str, Any] | None:
-        """Full authoring view of one person: contact points, affiliations, notes, references."""
+    def person_authoring(self, person_id: str, guesses: Any = None) -> dict[str, Any] | None:
+        """Full authoring view of one person: contact points, affiliations, notes, references, and
+        (people first) the other names, where each name, address and institution was learned
+        (`provenance`) and the «¿Es …?» guesses about them — `guesses(person_id)` is the people
+        rules' `guesses_for_person`, absent where they are not mounted."""
         with self._read() as cur:
             cur.execute(
                 """
@@ -2096,6 +2249,7 @@ class CrmWorkspaceRepository:
                 (person_id, person_id, person_id, person_id, person_id),
             )
             ref_row = cur.fetchone()
+            other_names, provenance = person_provenance(cur, person_id)
             refs = {
                 "campaign_recipients": ref_row[0],
                 "opportunity_participants": ref_row[1],
@@ -2128,6 +2282,9 @@ class CrmWorkspaceRepository:
             "notes": notes,
             "references": refs,
             "removal": {"allowed": False, "reasons": reasons},
+            "other_names": other_names,
+            "provenance": provenance,
+            "guesses": list(guesses(person_id)) if guesses is not None else [],
             "authoring": None,  # injected by the route from request.app.state
         }
 
@@ -2412,11 +2569,13 @@ class CrmWorkspaceRepository:
             "institution_memory": institution_memory,
         }
 
-    def opportunity_threads(self, opportunity_id: str) -> dict[str, Any] | None:
+    def opportunity_threads(self, opportunity_id: str, person_guesses: Any = None) -> dict[str, Any] | None:
         """Every captured email on the Gmail threads of one case, grouped by thread (`case_threads`).
 
         The threads are the ones `_SQL_PIPELINE_CONTACT` reads: any thread with an email linked to
         the case, plus the threads its quote revisions came from. `None` when the case does not exist.
+        Each message carries `person_guesses`, the «¿Es …?» guesses about its sender:
+        `person_guesses(message_ids)` is the people rules' `guesses_for_case` (empty without them).
         """
         with self._read() as cur:
             cur.execute("select 1 from crm.opportunity where id = %s::uuid", (opportunity_id,))
@@ -2459,7 +2618,13 @@ class CrmWorkspaceRepository:
                 """
             )
             suppliers = [r[0] for r in cur.fetchall()]
-        return {"opportunity_id": opportunity_id, "threads": case_threads(rows, suppliers)}
+        threads = case_threads(rows, suppliers)
+        messages = [m for t in threads for m in t["messages"]]
+        found = person_guesses([m["message_id"] for m in messages if m.get("message_id")]) \
+            if person_guesses is not None and messages else {}
+        for m in messages:
+            m["person_guesses"] = list(found.get(m.get("message_id"), []))
+        return {"opportunity_id": opportunity_id, "threads": threads}
 
     def lookup(self, q: str) -> dict[str, Any]:
         """«¿Ya lo tenemos?»: where a correo, name or domain already is (`system_lookup.lookup`)."""
@@ -2869,6 +3034,14 @@ class CrmWorkspaceRepository:
             return build_operations(facts, now.isoformat())
 
         return self._facts_cache.get(load)
+
+    def infrastructure(self, render_api_key: str | None = None) -> dict[str, Any]:
+        """«Costos e infraestructura»: Supabase usage from SQL + Render via API (cached 10 min)."""
+        from origenlab_api.v2.infrastructure import RenderClient, read_infrastructure
+
+        client = RenderClient(render_api_key) if render_api_key else None
+        with self._read() as cur:
+            return read_infrastructure(cur, client, self._render_cache)
 
     def mail_sync(self) -> dict[str, Any]:
         """Whether the Gmail capture is running. Its age is measured by the database clock, never

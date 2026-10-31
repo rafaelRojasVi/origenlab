@@ -1444,3 +1444,21 @@ describe("Case drawer commands (including add-case-organization)", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });
+
+describe("compressed upstream replies (2026-10-30, Render bandwidth)", () => {
+  it("asks the API for gzip", () => {
+    const headers = buildUpstreamHeaders(TEST_ENV, new Headers({ Accept: "application/json" }));
+    expect(headers.get("Accept-Encoding")).toBe("gzip");
+  });
+
+  it("drops the upstream Content-Length so a decoded body never carries the compressed length", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ status: "ok" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Content-Encoding": "gzip", "Content-Length": "12" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await handleRequest(requestWithOrigin("https://dashboard.origenlab.cl/api/health"), TEST_ENV);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Length")).toBeNull();
+  });
+});

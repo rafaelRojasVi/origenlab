@@ -110,8 +110,11 @@ Rules:
   stored normalized `role_key`, and `daterange(valid_from, valid_to, '[)')`.
 - `valid_to > valid_from` when `valid_to` is set. Leaving an organization
   closes `valid_to`. **Affiliation rows are never deleted.**
-- **Nothing ever infers an affiliation from an email address.** A work address
-  may produce an affiliation *assertion*; an operator confirms it.
+- **An email address alone never makes an affiliation.** The people rules
+  (§3.6.6, P2–P5) may record one by themselves when the sender's own signature
+  names the institution; it is `machine_proposed`, logged in «Hecho
+  automáticamente» and undone with «Quitar». An operator may confirm it.
+  (Owner-approved 2026-10-27.)
 
 ### 2.5 Contact point — the channel, and only the channel
 
@@ -138,7 +141,9 @@ E.164), `value_display`, nullable `person_id`, nullable `organization_id`,
   known, the person absent because they are not. A named-looking address is
   `individual_owner_unknown`; calling it a shared mailbox is a claim an operator makes
   deliberately and justifies, never a value a boundary picks because the row shape allowed
-  it. Neither value creates a `person`.
+  it. Neither value creates a `person`: a named-looking address does not create a person.
+  P3 creates a `machine_proposed` person only from a signature that states a full name and
+  an institution already in the CRM (§3.6.6, owner-approved 2026-10-27).
 - **A contact point is never a substitute for an affiliation.** On a `work`
   row, `organization_id` means "this organization operates this mailbox", never
   "this person works at this organization".
@@ -173,10 +178,29 @@ a fifth subject requires a migration adding a fifth typed FK, not a text
 
 ### 2.7 Merges
 
-An organization or person merge sets `merged_into` on the loser, repoints
-every FK and every external identifier inside the same transaction, and writes
-one merge domain event. Merges are never inferred: an operator command
-performs them. A merge can never collide on `(kind, value_norm)` in
+An organization or person merge sets `merged_into` on the loser, archives it,
+moves the loser's rows to the winner inside the same transaction, and writes
+one merge domain event. Merges are performed by an operator command, or by
+people rule P5 when one address and a signature prove two proposed records are
+the same person (never two confirmed ones). P5 records every moved row so
+«Quitar» restores them exactly (§3.6.6, owner-approved 2026-10-27).
+
+What a person merge moves:
+
+- **Operator `merge-people`:** repoints contact points, case participants,
+  campaign recipients and person notes; an open affiliation the winner already
+  has at the same organization is closed on the loser, any other is repointed
+  to the winner. A frozen campaign recipient cannot be rewritten
+  (`campaign_recipient_snapshot_guard`), and `origenlab_api` holds no UPDATE
+  on `crm.affiliation.person_id`, so the command is refused today when the
+  loser has a frozen recipient or an affiliation the winner lacks.
+- **P5:** repoints contact points, case participants, *unfrozen* campaign
+  recipients and person notes; a frozen recipient keeps the loser. Each of the
+  loser's open affiliations is closed (`valid_to = greatest(today,
+  valid_from + 1)`) and, when the winner lacks it, the same affiliation is
+  opened for the winner — never repointed.
+
+A merge can never collide on `(kind, value_norm)` in
 `contact_point`, because that value was already globally unique before the
 merge. `outbound.contact_control` is keyed by normalized text, deliberately
 not by FK, so safety facts survive every merge.
@@ -675,7 +699,7 @@ else (R7, R8) stays a proposal in Revisión.
   offers R4's steps with the name instead of a domain (institution «por confirmar», case in
   «Enviada», quote) and, like R4, waits for «Aplicar». R3–R6 always wait for «Aplicar».
   **2026-10-14 (owner: «the system acts by itself, I remove what is wrong»).** The timer runs
-  **R1, R2, R3, R4, R7, R9, R11, R12, R13, R14, R15 and R16**. **R16** (2026-10-21): contacto@ emails the PDF of a quote the Cotizador approved — the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; the email's year, else the year before; never a «(borrador)» print) name an `authored` revision that is approved, not superseded, not yet sent, and approved before the email left — and that revision moves `approved → sent` (`sent_at` the email's, `sent_message_id` its `comms.message`, `pdf_sha256` the attachment's) while the case walks to «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several such PDFs in one email are each sent (one message may send one revision of each quote: `quote_revision_sent_message_key` is `unique (sent_message_id, quote_id)` since `20261021100000`); PDFs of several cases (a request and the case «Nueva cotización» opened beside it, as Ygaero on 2026-10-19) each move their own case, the email linked there; a closed case among them, an email a person put elsewhere, or an open case of its thread no PDF names leave it to a person (a closed case's old thread does not, as Golden Omega's on 2026-10-20). It is the automatic form of `link_sent_message` ([`WORKFLOWS.md`](WORKFLOWS.md)), runs once per email, waits a pass while another rule acts on that email, and is not undone (an issued revision never returns to approved; a wrong one is voided in the Cotizador). R15 reads emailed historical quotes only. **R14** (2026-10-19): a sent quote on an email already linked to exactly one open case, whose number no case records, is recorded there under R1's gates (requesting institution, open stage, no other-year correlative), without a second link — the one rule that still reads an email another rule acted on, once. **R15** (2026-10-19): confirming an institution «por confirmar» is no longer a person's act only — one that R4, R10 or «Completar con la cotización» created, not a supplier nor free mail, is confirmed once a quote to it has stood three days without being undone, renamed first from its quote PDFs' one institution segment when it was named after its domain (none, several, or a generic kind-word → a person); the confirmation names no operator (`confirmed_by_operator_id` empty, a `worker` event with `confirmed_from: mail_rule`) so it never reads as a person having looked; «Deshacer» runs `unconfirm-organization-record` through the rules' undo. R14 reads only mail sent in the last 60 days. Both are off until the owner sets their deploy flags. **R13** (2026-10-15): a quote sent on a new thread lands on the client's open request that has no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names it) instead of opening a second case; R3 and R4 then open a case only for a client with no open request, by themselves, undone with «Quitar». **R12** (2026-10-15): an inbound email no thread or quote number
+  **R1, R2, R3, R4, R7, R9, R11, R12, R13, R14, R15, R16 and R17**. **R17** (2026-10-26): the client answering on a case in «Enviada» moves it to «Conversación» (`quoting → negotiating`) — an inbound email already on exactly one open case in `quoting`, sent after that case's live quote revision was sent and in the last 14 days, from neither OrigenLab nor a supplier, its subject not an automatic reply, the case not «En pausa» (an open «Retomar: …» task due later — a reply like «se evaluará el año entrante» is why it was paused); it reads an email R1 (or a person) already linked, once, and «Quitar» walks the case back to «Enviada» unless a person moved it since. **R16** (2026-10-21): contacto@ emails the PDF of a quote the Cotizador approved — the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; the email's year, else the year before; never a «(borrador)» print) name an `authored` revision that is approved, not superseded, not yet sent, and approved before the email left — and that revision moves `approved → sent` (`sent_at` the email's, `sent_message_id` its `comms.message`, `pdf_sha256` the attachment's) while the case walks to «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several such PDFs in one email are each sent (one message may send one revision of each quote: `quote_revision_sent_message_key` is `unique (sent_message_id, quote_id)` since `20261021100000`); PDFs of several cases (a request and the case «Nueva cotización» opened beside it, as Ygaero on 2026-10-19) each move their own case, the email linked there; a closed case among them, an email a person put elsewhere, or an open case of its thread no PDF names leave it to a person (a closed case's old thread does not, as Golden Omega's on 2026-10-20). It is the automatic form of `link_sent_message` ([`WORKFLOWS.md`](WORKFLOWS.md)), runs once per email, waits a pass while another rule acts on that email, and is not undone (an issued revision never returns to approved; a wrong one is voided in the Cotizador). R15 reads emailed historical quotes only. **R14** (2026-10-19): a sent quote on an email already linked to exactly one open case, whose number no case records, is recorded there under R1's gates (requesting institution, open stage, no other-year correlative), without a second link — the one rule that still reads an email another rule acted on, once. **R15** (2026-10-19): confirming an institution «por confirmar» is no longer a person's act only — one that R4, R10 or «Completar con la cotización» created, not a supplier nor free mail, is confirmed once a quote to it has stood three days without being undone, renamed first from its quote PDFs' one institution segment when it was named after its domain (none, several, or a generic kind-word → a person); the confirmation names no operator (`confirmed_by_operator_id` empty, a `worker` event with `confirmed_from: mail_rule`) so it never reads as a person having looked; «Deshacer» runs `unconfirm-organization-record` through the rules' undo. R14 reads only mail sent in the last 60 days. Both are off until the owner sets their deploy flags. **R13** (2026-10-15): a quote sent on a new thread lands on the client's open request that has no quote yet (a recipient wrote on it or asked through a forward, a recipient's domain is its institution's, or the PDF names it) instead of opening a second case; R3 and R4 then open a case only for a client with no open request, by themselves, undone with «Quitar». **R12** (2026-10-15): an inbound email no thread or quote number
   places joins the case the worker's context matcher (`case_match:v1`) is sure of — rules «exact»,
   or the AI's pick with confidence «high» — before R7 would open a second request; a supplier
   writing about a client's deal goes to the client's case the same way; a won case keeps it
@@ -711,6 +735,43 @@ else (R7, R8) stays a proposal in Revisión.
   stage guard only when its latest `opportunity.staged` event is a worker
   event. Since 2026-10-10 a `lost` case reopens by an ordinary stage move
   anyway; a case an undo discarded never does.
+
+**People rules — who wrote each email** (owner-approved 2026-10-27, spec
+`2026-10-27-people-first-design.md`). The worker reads each inbound email a
+person wrote into one `message_triage` assertion `people:v1` (the sender's
+address, the name in its header, what its own signature states, who else was
+on it) and never writes `crm.*`. The API plans the unapplied readings of the
+last 90 days against the CRM (`people_rules.py`) and runs the **strong** ones by
+itself on the automatic timer, before the mail rules, only while
+`ORIGENLAB_V2_AUTO_PEOPLE_ENABLED` is on (default off) and the same admin switch
+is on, on that admin's behalf. Each strong action is one transaction and one
+receipt (`apply_people_rule`); every row it creates is `machine_proposed`,
+every event `actor_kind = 'worker'` with `payload.attribution.source =
+people_rules`; Hoy lists it in «Hecho automáticamente» (P1 is not listed) and
+«Quitar» undoes exactly the recorded rows, refusing when a person edited one
+since; what it took back is not learned again from the next email (an undone
+name, institution or merge blocks that name for that person, that institution
+for that person, or that pair of persons; an undone merge is also a «No» for
+its address). A **weak** one is a «¿Es …?» guess with Sí/No and writes nothing until
+answered. Shared mailboxes, `individual_owner_unknown` addresses, our own
+domains, generic mailboxes and readings without a name get nothing; an address
+that signs with two different names never gets a strong action; a free-mail
+domain never names an institution.
+
+| Rule | Tier | When | What it records |
+|---|---|---|---|
+| P1 | strong | the address is already a live person's contact point | the email is that person's (resolves the participant) |
+| P1b | strong | a full name (header or signature) is surely that person's — another form of their name, or the person had no name yet — and no other person's | the name as a `crm.person_name` of that person |
+| P2 | strong | an unknown address whose signature names exactly one person, of the one institution it states, which that person already belongs to | the address as that person's contact point (`work`, or `personal` on free mail) |
+| P3 | strong | an unknown address whose signature states a full name nobody has and an institution that is exactly one CRM organization | a new person with that address and that affiliation |
+| P4 | strong | a known person with no open affiliation; the signature names exactly one CRM institution and the email is surely theirs | the affiliation |
+| P5 | strong | a known address whose signature names one other person; both of the signature's institution; not both confirmed | merge into the confirmed (else older) person; loser's affiliations closed and reopened on the winner; frozen campaign recipients never move |
+| W1 | weak | a name points to one person but something strong is missing (only part of the name, a first name only, no signature, another institution, two confirmed persons) | nothing until answered (sales or admin): «Sí» attaches the address to that person as the operator's act (`confirmed`); «No» is recorded, never asked again, and keeps P2/P5 from joining that pair |
+
+Mail captured before `people:v1` existed is read once by the worker's
+`people-backfill` (90 days, one people-only model call per email); the owner
+reads `python -m origenlab_api.v2.people_dry_run` (read-only, masked) once
+before turning the flag on.
 
 ## 4. Products, manufacturers and suppliers
 
@@ -1307,8 +1368,45 @@ the changed fields, never their values.
 candidate, writing «Por qué ahora» + «Equipos»), nullable FK `prospect_search_run_id`. Spend cap:
 US$ 10/month under feature key `prospectos`.
 
-Counts by schema: `crm` 27, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **63**.
+### 7.14 «Pendientes» de Hoy — built 2026-10-27
+
+The operators keep one shared list of loose to-dos on «Hoy»: a line of text, optionally urgent,
+optionally dated (a Santiago day), optionally tied to a case, ordered by hand inside two groups
+(urgent first). It is not `crm.task` (a case follow-up with a due instant) and never changes a
+case's stage.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 68 | `crm.todo` | one line of the shared «Pendientes» list | `body` 1–500 characters after trimming; `position` a fractional order inside its group (smaller = higher); `status` ∈ {`open`,`done`,`deleted`} with `done` ⇔ `completed_at` set; `version` ≥ 1 (optimistic concurrency); optional `opportunity_id` and `due_on`; **never physically deleted** (`platform.reject_mutation` — a removed line is `status = 'deleted'`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
+| 69 | `crm.person_name` | another name a person is known by (from a message display name or signature, or typed by an operator) | `source` ∈ {`display_name`,`signature`,`operator`}; `confirmation` ∈ {`machine_proposed`,`confirmed`}; at most one live row per (`person_id`, `name_norm`); **never physically deleted** (soft-removed via `removed_at`); `origenlab_api` select/insert + UPDATE of `removed_at`/`removed_by_operator_id` and `confirmation` (`20261029110000`, «Confirmar» on the contact page) only, `origenlab_worker` select |
+
+Domain events added: aggregate kind `todo` with `todo.created`, `todo.updated`, `todo.moved`,
+`todo.completed`, `todo.reopened`, `todo.deleted`.
+
+### 7.15 «Pagos» — built 2026-10-28
+
+The sales documents of the SII «Registro de Ventas», and whether each was paid. There is no SII
+API for the register: an operator downloads the month's CSV (sii.cl → Registro de Compras y
+Ventas → VENTA → «Descargar Detalles») and uploads it on «Pagos». SII never knows whether a client
+paid, so «Pagada» is an operator's act. Each document belongs to a case. The import finds the
+client organization by RUT, else by an earlier document of that RUT, else by name, and attaches
+the one case whose quote has the document's neto (authored, or read off the PDF), else the
+client's only won case; otherwise a person attaches it. A document no person has touched is
+guessed again on every later import.
+
+| # | Schema.table | Unique responsibility | Key invariant |
+|---|---|---|---|
+| 70 | `crm.invoice` | one SII sales document (factura 33, exenta 34, nota de débito 56, nota de crédito 61) | (`doc_type`, `folio`) unique — a re-uploaded month adds nothing; CLP amounts ≥ 0; a nota names the document it adjusts (`reference_doc_type`, `reference_folio`); `opportunity_id` set ⇔ `case_link` ∈ {`machine`,`operator`}; `paid_on` only on a 33/34; `version` ≥ 1; **never physically deleted** (`platform.reject_mutation`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
+| 71 | `crm.invoice_payment` | one payment (abono) recorded against a factura: `paid_on`, `amount` | `amount` > 0 (CLP); the factura's `paid_on` is set by the payment that leaves nothing owed, cleared when a removal takes the payments below it; a wrong payment is removed once (`removed_at` ⇔ `removed_by_operator_id`), **never physically deleted**; `origenlab_api` select/insert + UPDATE of the two removal columns, `origenlab_worker` no access |
+
+A payment is recorded by `invoice.paid` (payload: `amount`, `payment_id`, `fully_paid`) and removed
+by `invoice.unpaid` (payload: `payment_id`) — no new event type.
+
+Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.case_set`,
+`invoice.paid`, `invoice.unpaid`.
+
+Counts by schema: `crm` 31, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **67**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns

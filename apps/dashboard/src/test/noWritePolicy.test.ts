@@ -42,7 +42,7 @@ describe("dashboard read-only policy", () => {
   //    it as a permanent unsubscribe; an admin dismisses a false positive), and the admin-only
   //    *block* / *unblock*, which place or lift a campaign safety block that only refuses. None
   //    approves, schedules or sends anything, and none lifts a confirmed unsubscribe.
-  //  - crmAuthoringApi.ts's POST to the 29 CRM authoring commands: freeform create/update/archive
+  //  - crmAuthoringApi.ts's POST to the 31 CRM authoring commands: freeform create/update/archive
   //    of person/organization/contact_point, affiliations, product lines, supplier candidates,
   //    and notes. All go through the API's Deciding role check (sales or admin).
   //  - mailRules.ts's POST to the two admin-only email → cases commands: apply the rules'
@@ -135,6 +135,15 @@ describe("dashboard read-only policy", () => {
   const PROSPECT_API_PATHS = ["/v2/commands/contact-prospect", "/v2/commands/edit-prospect",
     "/v2/commands/prepare-prospect-email", "/v2/commands/request-prospect-search",
     "/v2/commands/review-prospect"];
+  // «Pendientes» (shared to-do list on «Hoy»): six commands, one POST site.
+  const TODO_API_FILE = "../crm/todos/todoApi.ts";
+  const TODO_API_PATHS = ["/v2/commands/complete-todo", "/v2/commands/create-todo",
+    "/v2/commands/delete-todo", "/v2/commands/move-todo", "/v2/commands/reopen-todo",
+    "/v2/commands/update-todo"];
+  // «Pagos» (SII sales register): the CSV upload and three commands, one POST site.
+  const PAGOS_API_FILE = "../crm/pagos/invoiceApi.ts";
+  const PAGOS_API_PATHS = ["/v2/commands/import-invoices", "/v2/commands/mark-invoice-paid",
+    "/v2/commands/mark-invoice-unpaid", "/v2/commands/set-invoice-case"];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -180,6 +189,9 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/add-note",
     "/v2/commands/revise-note",
     "/v2/commands/archive-note",
+    // People first (2026-10-28): «Sí» / «No» on a «¿Es …?» guess, «Confirmar» on a learned fact.
+    "/v2/commands/answer-person-guess",
+    "/v2/commands/confirm-person-fact",
   ];
 
   it("allows only the logout POST, the campaign-command POST, the CRM authoring POST, the email-rules POST and the case-command POST", () => {
@@ -256,6 +268,28 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === PAGOS_API_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...PAGOS_API_PATHS].sort())) {
+          hits.push(`${path} (pagos command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
+      if (path === TODO_API_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...TODO_API_PATHS].sort())) {
+          hits.push(`${path} (todo command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path === TENDER_API_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -312,7 +346,7 @@ describe("dashboard read-only policy", () => {
   });
 
   it("names no V2 command outside the campaign, CRM authoring, email-rules, case-command and quote clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE]);
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE, TODO_API_FILE, PAGOS_API_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);

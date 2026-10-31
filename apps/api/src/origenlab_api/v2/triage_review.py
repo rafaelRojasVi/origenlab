@@ -33,11 +33,12 @@ from origenlab_api.v2.case_commands import CASE_STAGES
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS
 
 REVIEW_TRIAGE = "review_triage"
 VERDICTS: tuple[str, ...] = ("approved", "corrected", "rejected")
 TRIAGE_CLASSES: tuple[str, ...] = (
-    "outbound", "bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty",
+    "outbound", "bounce", "auto_reply", "calendar", "unsubscribe", "bulk", "notification", "empty", "unreadable",
     "tender_notice", "purchase_order", "lost", "quote_followup", "quote_request", "business_other",
 )
 TRIAGE_STAGES: tuple[str, ...] = (*CASE_STAGES, "not_a_case", "unclear")
@@ -124,13 +125,36 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
        r.value, r.created_at, r.review,
        m.subject, m.internal_date as sent_at, m.direction, m.provider_thread_id as thread_id,
        snd.address_norm as sender,
-       -- The sender's domain belongs to a registered supplier or manufacturer.
-       exists (select 1 from crm.organization_domain d join crm.organization o on o.id = d.organization_id
-                where d.removed_at is null and d.domain_norm = split_part(snd.address_norm, '@', 2)
-                  and (o.kind in ('supplier', 'manufacturer')
-                       or exists (select 1 from crm.organization_relationship rel
-                                   where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
-                                     and (rel.valid_to is null or rel.valid_to > current_date)))) as sender_is_supplier,
+       -- The sender's domain belongs to a registered supplier or manufacturer, or the sender's
+       -- exact free-mail address was among the recipients of a supplier RFQ we sent, or an email
+       -- from that address was AI-read as a supplier_offer (goal 4, owner 2026-10-29).
+       (exists (select 1 from crm.organization_domain d join crm.organization o on o.id = d.organization_id
+                 where d.removed_at is null and d.domain_norm = split_part(snd.address_norm, '@', 2)
+                   and (o.kind in ('supplier', 'manufacturer')
+                        or exists (select 1 from crm.organization_relationship rel
+                                    where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
+                                      and (rel.valid_to is null or rel.valid_to > current_date))))
+        or (snd.address_norm is not null
+            and split_part(snd.address_norm, '@', 2) = any(%(free_mail_domains)s)
+            and (exists (select 1
+                           from evidence.source_record sr2
+                           join comms.message m2 on m2.provider_message_id = sr2.payload ->> 'gmail_message_id'
+                           join comms.message_participant p2 on p2.message_id = m2.id
+                                and p2.role in ('to', 'cc') and p2.address_norm = snd.address_norm
+                          where sr2.kind = 'gmail_message'
+                            and m2.direction = 'outbound'
+                            and sr2.payload ->> 'direction_hint' = 'supplier_rfq')
+                 or exists (select 1
+                              from evidence.source_record sr3
+                              join comms.message m3 on m3.provider_message_id = sr3.payload ->> 'gmail_message_id'
+                              join comms.message_participant p3 on p3.message_id = m3.id
+                                   and p3.role = 'from' and p3.address_norm = snd.address_norm
+                             where sr3.kind = 'gmail_message'
+                               and m3.direction = 'inbound'
+                               and exists (select 1 from evidence.assertion a3
+                                            where a3.source_record_id = sr3.id and a3.kind = 'message_triage'
+                                              and a3.value_norm ~ '^triage:v[0-9]+$'
+                                              and a3.value -> 'reading' ->> 'intent' = 'supplier_offer'))))) as sender_is_supplier,
        coalesce((select json_agg(json_build_object('opportunity_id', o.id, 'title', o.title, 'stage', o.stage,
                                                    'version', o.version, 'closed_at', o.closed_at,
                                                    'close_reason', o.close_reason) order by o.id)
@@ -176,6 +200,9 @@ select r.id::text as assertion_id, r.source_record_id::text as source_record_id,
   join comms.message m on 'gmail_message:' || m.provider_message_id = sr.dedupe_key
   left join lateral (select p.address_norm from comms.message_participant p
                       where p.message_id = m.id and p.role = 'from' limit 1) snd on true
+  left join lateral (select a.value as po_refs from evidence.assertion a
+                      where a.source_record_id = r.source_record_id and a.kind = 'message_triage'
+                        and a.value_norm = 'po_refs:v1' limit 1) po_refs on true
  where coalesce((r.value ->> 'needs_model')::boolean, false)
    and (%(status)s = 'all' or (%(status)s = 'pending') = (r.review is null))
    -- An email a tender holds — itself, or any email of its thread — is the tender's: «Licitaciones»
@@ -274,7 +301,8 @@ class TriageReviewRepository(CommandTransaction):
         if status not in LIST_STATUSES:
             raise CommandRefused(422, "status_invalid", f"status is one of {', '.join(LIST_STATUSES)}")
         with self._read() as cur:
-            cur.execute(_LIST_SQL, {"status": status, "limit": max(1, min(int(limit), MAX_LIST))})
+            cur.execute(_LIST_SQL, {"status": status, "limit": max(1, min(int(limit), MAX_LIST)),
+                                    "free_mail_domains": list(FREE_MAIL_DOMAINS)})
             names = [d[0] for d in cur.description]
             rows = [dict(zip(names, row, strict=True)) for row in cur.fetchall()]
             wanted = sorted({oid for row in rows if row.get("case_match_value")
@@ -288,6 +316,7 @@ class TriageReviewRepository(CommandTransaction):
         for row in rows:
             value = row["value"] or {}
             reading = value.get("reading") or {}
+            po_refs = row.get("po_refs") or {}
             items.append({
                 "assertion_id": row["assertion_id"],
                 "source_record_id": row["source_record_id"],
@@ -313,6 +342,8 @@ class TriageReviewRepository(CommandTransaction):
                 "transitions": reading.get("linked_cases") or [],
                 "review": row["review"],
                 "case_match": case_match_view(row, cases),
+                "po_quote_numbers": po_refs.get("tokens") or [],
+                "purchase_order_numbers": po_refs.get("purchase_order_numbers") or [],
             })
         return {"status": status, "items": items,
                 "vocabulary": {"classes": list(TRIAGE_CLASSES), "stages": list(TRIAGE_STAGES),

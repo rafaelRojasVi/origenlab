@@ -61,11 +61,23 @@ def test_a_calendar_invitation_is_noise() -> None:
     assert cls(mail(types=("multipart/mixed", "text/calendar"))) == "calendar"
 
 
-def test_a_purchase_order_beats_a_no_reply_portal_sender() -> None:
-    m = mail(sender="noreply@portal.invalid", subject="Orden de Compra 4500123 emitida",
+def test_a_purchase_order_from_a_bulk_sender_is_purchase_order() -> None:
+    # Business signals (step 5) still beat the bulk check (step 6): a portal at a non-notification
+    # domain (not dhl.com / icliente.com) and without a no-reply local part is a purchase order.
+    m = mail(sender="portal@compras.portal.invalid", subject="Orden de Compra 4500123 emitida",
              headers={"list-unsubscribe": "<x>"})
     v = classify(TriageInput("inbound", ("INBOX",), m))
     assert v.triage_class == "purchase_order" and v.needs_model
+
+
+def test_a_purchase_order_beats_a_no_reply_portal_sender() -> None:
+    # Business signals (step 5) beat a plain noreply@ sender: only NOTIFICATION_DOMAINS and
+    # non-start-of-local no-reply forms (drive-shares-dm-noreply@, no_responder@) are
+    # caught early (step 4b); noreply@/no-reply@ at the local-part start falls through.
+    m = mail(sender="noreply@portal.invalid", subject="Orden de Compra 4500123 emitida",
+             headers={"list-unsubscribe": "<x>"})
+    v = classify(TriageInput("inbound", ("INBOX",), m))
+    assert v.triage_class == "purchase_order"
 
 
 def test_an_oc_attachment_is_a_purchase_order_and_its_number_is_kept() -> None:
@@ -238,3 +250,33 @@ def test_external_mail_with_forged_web_quote_header_stays_inbound_not_web_quote(
     v = classify(TriageInput("inbound", ("INBOX",), m))
     assert v.triage_class == "quote_request"
     assert "header:x-origenlab-origin" not in v.reasons
+
+
+# ------------------------------------------------------------------ notification noise (2026-10-29)
+
+def test_dhl_domain_is_notification() -> None:
+    assert cls(mail(sender="tracking@dhl.com", subject="Tu paquete fue entregado")) == "notification"
+
+
+def test_dhl_subdomain_is_notification() -> None:
+    # express.dhl.com ends with .dhl.com
+    assert cls(mail(sender="cl.noreply@express.dhl.com", subject="Detalles del envío")) == "notification"
+
+
+def test_icliente_domain_is_notification() -> None:
+    assert cls(mail(sender="contacto@icliente.com", subject="Te contactaremos a la brevedad")) == "notification"
+
+
+def test_drive_noreply_is_notification_via_loose_pattern() -> None:
+    # «drive-shares-dm-noreply@» — «-noreply» after «dm» matches the loose pattern
+    assert cls(mail(sender="drive-shares-dm-noreply@google.com", subject="Solicitud de acceso")) == "notification"
+
+
+def test_no_responder_is_notification_via_loose_pattern() -> None:
+    # «no_responder» at address start matches the loose pattern
+    assert cls(mail(sender="no_responder@portal.invalid", subject="Tu solicitud fue recibida")) == "notification"
+
+
+def test_notification_domain_beats_oc_subject() -> None:
+    """A courier notice with «OC» in the subject is still notification, not purchase_order."""
+    assert cls(mail(sender="tracking@dhl.com", subject="OC 4500000123 entregada hoy")) == "notification"

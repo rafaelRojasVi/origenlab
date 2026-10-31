@@ -69,6 +69,11 @@ class ForwardedRequest:
         return asdict(self)
 
 
+def is_forward_subject(subject: str | None) -> bool:
+    """Whether a subject starts with a forward prefix («RV:», «Fwd:», «TR:» …), after any «Re:»."""
+    return bool(_FORWARD_PREFIX.match(subject or ""))
+
+
 def is_candidate(sender: str | None, subject: str | None, *, extra_senders: Iterable[str] = ()) -> bool:
     """A message we sent (contacto@, the Labdelivery mailbox, or a configured personal address of
     Tatiana) whose subject starts with a forward prefix. Everything else skips this module at once."""
@@ -237,4 +242,4 @@ def _from_marketplace(lines: list[str], sender: str, subject: str) -> ForwardedR
         origin=_origin(sender), subject=subject)
 
 
-__all__ = ["FORWARDED_VALUE_NORM", "ForwardedRequest", "is_candidate", "read_forward"]
+__all__ = ["FORWARDED_VALUE_NORM", "ForwardedRequest", "is_candidate", "is_forward_subject", "read_forward"]

@@ -85,6 +85,68 @@ export interface OperationsPayload {
 
 export const fetchOperations = () => fetchJsonGet<OperationsPayload>(operatorApiUrl(OPERATIONS_PATH));
 
+// ---------------------------------------------------------------------------
+// «Costos e infraestructura» — GET /v2/workspace/operations/infrastructure
+// ---------------------------------------------------------------------------
+
+export const INFRASTRUCTURE_PATH = "/v2/workspace/operations/infrastructure";
+
+export interface InfraTable {
+  table: string;
+  bytes: number;
+}
+
+export interface InfraSupabase {
+  database_bytes: number | null;
+  database_bytes_error?: string;
+  largest_tables: InfraTable[] | null;
+  largest_tables_error?: string;
+  mail_bytes: number | null;
+  mail_count: number | null;
+  mail_bytes_this_month: number | null;
+  mail_bytes_error?: string;
+  plan: string;
+  plan_monthly_usd: number;
+  database_gb_included: number;
+  file_storage_gb_included: number;
+}
+
+export interface InfraService {
+  id: string;
+  name: string;
+  type: string;
+  plan: string;
+  suspended: boolean;
+  price_usd: number | null;
+  bandwidth_bytes_this_month: number;
+}
+
+export interface InfraRenderAvailable {
+  available: true;
+  services: InfraService[];
+  workspace_plan: string;
+  workspace_monthly_usd: number;
+  bandwidth_bytes_this_month: number;
+  bandwidth_gb_included: number;
+  bandwidth_overage_usd_per_100_gb: number;
+}
+
+export interface InfraRenderUnavailable {
+  available: false;
+  reason: string;
+}
+
+export type InfraRender = InfraRenderAvailable | InfraRenderUnavailable;
+
+export interface InfraPayload {
+  supabase: InfraSupabase;
+  render: InfraRender;
+  monthly_cost_usd: number;
+  plans_as_of: string;
+}
+
+export const fetchInfrastructure = () => fetchJsonGet<InfraPayload>(operatorApiUrl(INFRASTRUCTURE_PATH));
+
 export interface RuleGuide {
   /** When it applies, in one sentence. */
   cuando: string;
@@ -194,6 +256,24 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "Se envía «CN09876A-Empresa Ficticia.pdf» (revisión A aprobada en el Cotizador) → la cotización 09876A queda enviada y el caso en «Enviada».",
   },
+  R17: {
+    cuando: "El cliente responde en un caso que está en «Enviada», después de recibir la cotización y en los últimos 14 días. No cuenta un correo nuestro, de un proveedor ni una respuesta automática (fuera de la oficina).",
+    hace: "Pasa el caso a «Conversación». «Quitar» lo devuelve a «Enviada».",
+    automatica: true,
+    ejemplo: "«Estamos evaluando la oferta, les aviso» en el hilo de la cotización 09876 → el caso pasa a «Conversación».",
+  },
+  R18: {
+    cuando: "El cliente escribe en un caso abierto o ganado, en los últimos 14 días, y la lectura de la IA dice que nadie necesita responderle: agradece, avisa que está evaluando, acusa recibo. No cuenta un correo nuestro, de un proveedor, un rebote ni una respuesta automática.",
+    hace: "Saca el correo de «Responder»; el seguimiento (3 · 14 · 30 días) cuenta desde ese correo. No cambia nada en el caso. «Quitar» lo devuelve a «Responder».",
+    automatica: true,
+    ejemplo: "«Gracias, estamos analizando varias ofertas, te aviso» → sale de «Responder» y el seguimiento vuelve en 3 días.",
+  },
+  R19: {
+    cuando: "El correo más reciente del cliente en un caso abierto (que no está «En pausa») dice, según la lectura de la IA del texto, que no sigue: compró a otro proveedor, se canceló o lo verán el próximo año. El remitente debe ser de la institución del caso o escribir desde su propio hilo.",
+    hace: "Marca el caso «Perdida». Si el remitente no es de la institución del caso, queda como propuesta. «Quitar» reabre el caso donde estaba.",
+    automatica: true,
+    ejemplo: "«La compra ya se efectuó a otro proveedor» en el hilo de la cotización 09876 → el caso pasa a «Perdida».",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -213,6 +293,9 @@ const RULE_WHY: Record<string, string> = {
   R14: "el correo ya estaba en el caso",
   R15: "cotización enviada hace 3 días o más",
   R16: "se envió el PDF del Cotizador",
+  R17: "el cliente respondió a la cotización",
+  R18: "el cliente cerró la conversación",
+  R19: "el correo del cliente dice que no sigue",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -234,6 +317,12 @@ export function actionSentence(a: OpsAction): string {
     verb = `Registró ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
   } else if (rule === "R16") {
     verb = `Marcó enviada ${a.quote_number ? `la cotización ${a.quote_number}` : "una cotización"} en ${target}`;
+  } else if (rule === "R17") {
+    verb = `Pasó a «Conversación» ${target}`;
+  } else if (rule === "R18") {
+    verb = `No requiere respuesta el correo de${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
+  } else if (rule === "R19") {
+    verb = `Marcó perdido ${target}`;
   } else if (rule === "R15") {
     verb = `Confirmó la institución${a.organization_name ? ` «${a.organization_name}»` : ""}`;
   } else {

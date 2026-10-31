@@ -11,6 +11,7 @@ import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import { STAGE_LABEL } from "./stage";
 import { mayBeWonFrom, stagePath, winnableRevisions } from "./caseCommands";
+import { parseQuoteNumber } from "./quoteNumbers";
 
 /** The queue (a read). The verdict is posted by `mailRules.ts`, the Revisión mail tools' one write client. */
 export const TRIAGE_PATHS = {
@@ -45,7 +46,7 @@ export interface TriageSuggestion {
   stage: string;
   version: number;
   closed: boolean;
-  /** Layer-1 signals: pdf_quote, thread_pdf_quote, text_quote, same_thread, domain, institution_name, product, sender_on_case. */
+  /** Layer-1 signals: pdf_quote, thread_pdf_quote, text_quote, same_thread, domain, institution_name, product, sender_on_case, person_on_case. */
   signals: string[];
   from: "rules" | "model";
   reason_es: string | null;
@@ -71,6 +72,7 @@ export const SIGNAL_LABEL: Record<string, string> = {
   institution_name: "nombra la institución",
   product: "mismo producto",
   sender_on_case: "la persona está en el caso",
+  person_on_case: "la misma persona del caso",
 };
 
 /** The reason line of a suggestion: the model's own words when it chose, otherwise the signals. */
@@ -128,6 +130,10 @@ export interface TriageReading {
   review: TriageReview | null;
   /** Absent from an older API. */
   case_match?: TriageCaseMatch | null;
+  /** Quote tokens from OC PDF attachments (po_refs:v1); absent from an older API. */
+  po_quote_numbers?: string[];
+  /** PO numbers found in OC PDF attachments (po_refs:v1); absent from an older API. */
+  purchase_order_numbers?: string[];
 }
 
 export interface TriageReadings {
@@ -151,6 +157,7 @@ export const CLASS_LABEL: Record<string, string> = {
   bulk: "Masivo",
   notification: "Notificación",
   empty: "Vacío",
+  unreadable: "Ilegible",
 };
 
 export const INTENT_LABEL: Record<string, string> = {
@@ -206,16 +213,33 @@ export function isPurchaseOrder(r: Pick<TriageReading, "class" | "intent">): boo
   return r.class === "purchase_order" || r.intent === "purchase_order";
 }
 
+/** True when a po_refs token (e.g. «CN09876», «09876-26») matches a revision's quote_number (e.g. «09876-26»). */
+function tokenMatchesRevision(token: string, revisionQuoteNumber: string): boolean {
+  const parsed = parseQuoteNumber(token, 0);
+  if (!parsed) return false;
+  const rev = parseQuoteNumber(revisionQuoteNumber, 0);
+  if (!rev) return false;
+  if (parsed.year === 0) return parsed.correlative === rev.correlative;  // no year: match by correlative only
+  return parsed.year === rev.year && parsed.correlative === rev.correlative;
+}
+
 export function wonProposal(
-  r: Pick<TriageReading, "class" | "intent" | "cases">,
+  r: Pick<TriageReading, "class" | "intent" | "cases" | "po_quote_numbers">,
   cards: ReadonlyMap<string, OpportunityCardData>,
 ): WonProposal | null {
   if (!isPurchaseOrder(r) || r.cases.length !== 1) return null;
   const only = r.cases[0];
   const card = cards.get(only.opportunity_id);
   if (!card || !mayBeWonFrom(card.stage) || card.closed_at) return null;
-  const revisions = winnableRevisions(card);
+  let revisions = winnableRevisions(card);
   if (revisions.length === 0) return null;
+  // When the OC PDF names specific quote numbers, keep only revisions that match one of them.
+  // If none match, the suggestion is wrong — return null so the row stays for a person.
+  const poTokens = r.po_quote_numbers;
+  if (poTokens && poTokens.length > 0) {
+    revisions = revisions.filter((rev) => poTokens.some((t) => tokenMatchesRevision(t, rev.quote_number)));
+    if (revisions.length === 0) return null;
+  }
   return { case: { ...only, stage: card.stage, version: card.version ?? only.version }, card, revisions };
 }
 
@@ -336,7 +360,13 @@ export type HiddenReason = "en un caso" | "proveedor" | "aviso automático" | "r
 export const ANSWERED_HIDE_DAYS = 14;
 
 const AUTOMATIC_SENDER = /^(no-?reply|do-?not-?reply|mensajeria|newsletter|news|marketing|notifications?|info|customer\.assistance|gemini-notes)$/;
-const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound"]);
+/** Courier and autoresponder domains: dhl.com, any subdomain depth, icliente.com (owner 2026-10-29). */
+const NOTIFICATION_DOMAIN = /^(dhl\.com|(?:[^.]+\.)*dhl\.com|icliente\.com)$/;
+/** Looser no-reply pattern for the full local part: catches «drive-shares-dm-noreply@» (non-start)
+ *  and «no_responder@» / «no-responder@» (Spanish form at start). Does NOT match plain «noreply» /
+ *  «no-reply» at the local-part start — those fall through to AUTOMATIC_SENDER. */
+const LOOSE_NO_REPLY_LOCAL = /(?:^no[-_.]responder|[-_.]no[-_.]?(?:reply|responder))(?:[-_.+]|$)/;
+const AUTOMATIC_CLASSES = new Set(["bulk", "notification", "auto_reply", "bounce", "calendar", "unsubscribe", "empty", "outbound", "unreadable"]);
 
 function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCardData>, now: Date): Exclude<HiddenReason, "mismo hilo"> | null {
   if (holdingCases(r, cards, now).length > 0) return wonProposal(r, cards) || reopenProposal(r, cards, now) ? null : "en un caso";
@@ -347,7 +377,8 @@ function hiddenReason(r: TriageReading, cards: ReadonlyMap<string, OpportunityCa
   // sees a deal with no case; a platform's notice only when there is a case to suggest.
   if ((r.sender_is_supplier || r.intent === "supplier_offer") && !hasCaseMatch(r)) return "proveedor";
   const suggestsCase = (r.case_match?.suggestions.length ?? 0) > 0;
-  if ((AUTOMATIC_SENDER.test(local) || AUTOMATIC_CLASSES.has(r.class ?? "")) && !suggestsCase) return "aviso automático";
+  const isAutoSender = AUTOMATIC_SENDER.test(local) || LOOSE_NO_REPLY_LOCAL.test(local) || NOTIFICATION_DOMAIN.test(domain);
+  if ((isAutoSender || AUTOMATIC_CLASSES.has(r.class ?? "")) && !suggestsCase) return "aviso automático";
   if (hasCaseMatch(r)) return null;
   return null;
 }
@@ -371,13 +402,18 @@ export function sortInbox(
   const rank = (r: TriageReading) => (wonProposal(r, byId) || reopenProposal(r, byId, now) ? 0 : 1);
   const newest = [...items].sort((a, b) => rank(a) - rank(b) || (b.sent_at ?? "").localeCompare(a.sent_at ?? ""));
   const seen = new Set<string>();
+  const seenPO = new Set<string>();
   const ask: TriageReading[] = [];
   for (const r of newest) {
     const why = hiddenReason(r, byId, now);
     if (why) { count(why); continue; }
     const thread = r.thread_id ?? r.assertion_id;
     if (seen.has(thread)) { count("mismo hilo"); continue; }
+    // One row per purchase-order number: the same OC arriving on different threads is the same OC.
+    const poNums = r.purchase_order_numbers ?? [];
+    if (poNums.length > 0 && poNums.every((n) => seenPO.has(n))) { count("mismo hilo"); continue; }
     seen.add(thread);
+    for (const n of poNums) seenPO.add(n);
     ask.push(r);
   }
   return { ask, hidden };

@@ -390,11 +390,24 @@ _REVIEW_JOIN = """
 #: Open notices only: seen in Mercado Público's open list in the last two days (the sweep refreshes
 #: `last_seen_at` every run), not withdrawn, closing in the future (or with no date yet). The head is
 #: cut down to what a row shows; the match is the worker's (`relevance`), so nothing is re-read here.
+#: The list's notices, carrying only what a row draws (the notice's own page reads the rest): the
+#: buyer's name and region, and of the stored match the first `LISTED_ITEMS` items with their
+#: name, description, quantity and unit — not every item's category path, which made the list's
+#: answer ~0.9 MB for ~450 notices (2026-10-30).
+LISTED_ITEMS = 2
+
 DISCOVERED_SQL = """
 select n.id::text as id, n.codigo_externo as code, n.title, n.buyer_name, n.closes_at, n.published_at,
-       n.first_seen_at, n.source_status, n.relevance,
-       jsonb_build_object('Comprador', n.head->'Comprador', 'MontoEstimado', n.head->'MontoEstimado',
-                          'Moneda', n.head->'Moneda') as head,
+       n.first_seen_at, n.source_status,
+       case when jsonb_typeof(n.relevance->'items') = 'array' then jsonb_set(n.relevance, '{items}', coalesce(
+         (select jsonb_agg(jsonb_build_object('name', i->'name', 'description', i->'description',
+                                              'quantity', i->'quantity', 'unit', i->'unit') order by k)
+            from jsonb_array_elements(n.relevance->'items') with ordinality as e(i, k)
+           where k <= """ + str(LISTED_ITEMS) + """), '[]'::jsonb))
+            else n.relevance end as relevance,
+       jsonb_build_object('Comprador', jsonb_build_object('NombreOrganismo', n.head->'Comprador'->'NombreOrganismo',
+                                                          'RegionUnidad', n.head->'Comprador'->'RegionUnidad'),
+                          'MontoEstimado', n.head->'MontoEstimado', 'Moneda', n.head->'Moneda') as head,
        (n.head ? 'Comprador') as detail,
        case when o.closed_at is null then o.id::text end as opportunity_id,
        r.verdict, r.reason as review_reason, r.reviewed_at, op.display_name as reviewed_by
