@@ -14,7 +14,7 @@ from origenlab_worker.database import local_test_target, open_verified_connectio
 from v2_command_harness import build_disposable_database, needs_worker_db, worker_dsn
 
 pytestmark = needs_worker_db
-NOW = datetime(2026, 10, 19, 15, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)  # record_usage stamps the real clock, so the cap window must too
 
 
 @pytest.fixture(scope="module")
