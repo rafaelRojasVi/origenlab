@@ -152,6 +152,9 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
   let last = performance.now();
   let frameCallback: Parameters<Showroom['onFrame']>[0] | null = null;
   const anchorNames = Object.keys(model.anchors);
+  const ray = new THREE.Raycaster();
+  const hidden: Record<string, boolean> = {};
+  let occlusionTick = 0;
 
   const frame = (now: number) => {
     raf = 0;
@@ -175,10 +178,31 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
     if (frameCallback) {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
+      // Un marcador tapado por el propio equipo (la cara delantera vista desde
+      // atrás) se oculta. El rayo se lanza cada pocos cuadros, no en todos.
+      if (++occlusionTick % 6 === 0) {
+        for (const name of anchorNames) {
+          const at = world(model.anchors[name]);
+          const toAnchor = at.clone().sub(camera.position);
+          const reach = toAnchor.length();
+          ray.set(camera.position, toAnchor.normalize());
+          ray.camera = camera;
+          ray.far = reach;
+          // Sólo tapa lo opaco: vidrio, muestra y burbujas no ocultan el marcador.
+          const opaque = (item: THREE.Intersection) => {
+            const material = (item.object as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+            const first = Array.isArray(material) ? material[0] : material;
+            return Boolean(first) && !(first!.transparent && first!.opacity < 0.98) && !(item.object as THREE.Object3D & { isSprite?: boolean }).isSprite;
+          };
+          const hit = ray.intersectObject(model.root, true).find(opaque);
+          // 20 mm de margen: un ancla puede estar dentro de su propia pieza (una perilla).
+          hidden[name] = Boolean(hit && hit.distance < reach - 0.2);
+        }
+      }
       const out: AnchorPositions = {};
       for (const name of anchorNames) {
         const p = world(model.anchors[name]).project(camera);
-        out[name] = p.z < 1 ? { x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h } : null;
+        out[name] = p.z < 1 && !hidden[name] ? { x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h } : null;
       }
       frameCallback(out);
     }
