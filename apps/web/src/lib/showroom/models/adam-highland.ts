@@ -711,21 +711,23 @@ export function build(): BuiltModel {
         if (shieldT < 2.0) return (shieldT - 1.0) * LIFT;
         if (shieldT < 3.0) return LIFT;
         if (shieldT < 4.0) return (4.0 - shieldT) * LIFT;
-        return Math.max(0, Math.sin((shieldT - 4) * 0.5) * 5);
+        return 0;
       })();
 
       const finalLift = level < 0.01 ? 0 : shieldLift;
       shieldGroup.position.y = (BH + PAN_SUPPORT_H - 2) + finalLift;
 
-      /* muestra visible cuando el protector está suficientemente arriba */
-      const showSample = finalLift > 40 && level > 0.4;
+      /* la muestra se coloca con el protector arriba y se queda en el plato;
+         al apagar, el ciclo se recorre al revés y se retira con el protector arriba */
+      const showSample = shieldT > 1.6 && level > 0.05;
       if (showSample !== sampleVisible) {
         sampleVisible = showSample;
         sampleGroup.visible = sampleVisible;
       }
 
       /* lectura: sube cuando la muestra es visible */
-      readTarget = sampleVisible && shieldT > 2.5 ? 15.24 : 0.0;
+      // La lectura sube cuando el protector ya volvió a cerrar, y se mantiene.
+      readTarget = sampleVisible && shieldT > 3.8 ? 15.24 : 0.0;
       readValue += (readTarget - readValue) * Math.min(1, dt * 1.8);
 
       /* apagar pantalla cuando level cae a cero */
