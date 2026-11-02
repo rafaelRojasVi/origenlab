@@ -269,25 +269,15 @@ export function build(): BuiltModel {
       color: SERVA_BLUE,
       roughness: 0.48,
       clearcoat: 0.3,
-      transparent: true,
-      opacity: 0.92,
-      depthWrite: false,
+      // Opaco. Semitransparente, sus piezas se cruzaban con el tampón y el
+      // acrílico (todos transparentes) y el orden de dibujo cambiaba al girar.
     }),
   );
-  // Cada pieza del marco lleva su propio renderOrder: con el mismo valor, three.js
-  // las reordenaba por distancia al girar y los colores se distorsionaban.
-  let divOrder = 0.1;
   const divH = TH - WL - BASE_H;
   const divW = GW + 20;       // ancho del divisor, est.
   const divWL = 6;            // grosor de la pared del divisor, est.
 
-  // Pared posterior del divisor (cierra la cámara interior por detrás)
-  {
-    const m = new THREE.Mesh(keep(new THREE.BoxGeometry(divW, divH, divWL)), divMat);
-    m.position.set(0, BASE_H + 0.5 + divH / 2, TD / 2 - WL - divWL / 2 - 4);
-    m.renderOrder = 2 + (divOrder += 0.1);
-    tankGroup.add(m);
-  }
+  // (La pared de cierre del marco quedaba entre la cámara y el gel: se omite.)
   // Paredes laterales del divisor
   for (const xSide of [-divW / 2, divW / 2] as [number, number]) {
     const m = new THREE.Mesh(
@@ -295,21 +285,12 @@ export function build(): BuiltModel {
       divMat,
     );
     m.position.set(xSide, BASE_H + 0.5 + divH / 2, WL + (TD - WL * 2 - divWL) / 2 - TD / 2);
-    m.renderOrder = 2 + (divOrder += 0.1);
     tankGroup.add(m);
   }
 
   // ── TAMPÓN (líquido visible a través de las paredes) ─────────────────
-  // Cámara exterior (tampón inferior, 450 ml) — ocupa el espacio alrededor del divisor
-  {
-    const m = new THREE.Mesh(
-      keep(new THREE.BoxGeometry(TW - WL * 2, BASE_H + 60, TD - WL * 2)),
-      bufferMat,
-    );
-    m.position.set(0, WL + (BASE_H + 60) / 2, 0);
-    m.renderOrder = 3;
-    tankGroup.add(m);
-  }
+  // (La caja del tampón exterior se omite: un volumen azul transparente que
+  // envolvía todo y desordenaba el dibujo de las demás piezas al girar.)
   // Cámara interior (tampón superior, 200 ml) — sobre el gel
   {
     const innerBufH = UPPER_BUF_Y - GEL_TOP - WELL_H;
