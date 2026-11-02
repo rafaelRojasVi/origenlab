@@ -400,6 +400,21 @@ describe("Hoy actions", () => {
     expect(screen.getByTestId("today-task-t2")).toBeInTheDocument();
   });
 
+  it("a task leaves on the click, before the server answers, and comes back when the server refuses", async () => {
+    const c1 = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2)] });
+    stub();
+    renderToday([c1]);
+    let answer: (r: Response) => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { answer = resolve; })));
+    const row = screen.getByTestId("today-task-t1");
+    fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+    fireEvent.click(within(row).getByRole("menuitem", { name: "Hecho" }));
+    expect(row).toHaveClass("crm-row-out");
+    answer(new Response(JSON.stringify({ error: { code: "conflict", details: { code: "stale_version" } } }), { status: 409 }));
+    expect(await screen.findByTestId("toaster")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("today-task-t1")).not.toHaveClass("crm-row-out"));
+  });
+
   it("completes a task, and postpones another a week by writing it again and cancelling it", async () => {
     // Two separate cases so both rows appear; actions are in the ⋯ menu.
     const calls = stub();

@@ -165,7 +165,7 @@ function WonRow({ reading: r, proposal, onDone, onCaseChanged }: {
   onCaseChanged: () => void;
 }) {
   const mayDecide = useMayRunCaseCommands();
-  const { leaving, gone, leave } = useLeave(r);
+  const { leaving, gone, leave, restore } = useLeave(r);
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<string | null>(proposal.revisions.length === 1 ? proposal.revisions[0].revision_id : null);
   const keys = useRef({ advance: newCaseCommandKey(), won: newCaseCommandKey(), reviewed: false });
@@ -203,11 +203,12 @@ function WonRow({ reading: r, proposal, onDone, onCaseChanged }: {
 
   async function discard() {
     setBusy(true);
+    leave();
     try {
       await reviewTriage({ assertion_id: r.assertion_id, verdict: "rejected", corrected: {}, note: "OC descartada desde Hoy" });
-      leave();
       onDone();
     } catch (err) {
+      restore();
       toast(refusalMessage(err, "No se pudo descartar."), "bad");
     } finally {
       setBusy(false);
@@ -266,7 +267,7 @@ function ReopenRow({ reading: r, proposal, onDone, onCaseChanged }: {
   onCaseChanged: () => void;
 }) {
   const mayDecide = useMayRunCaseCommands();
-  const { leaving, gone, leave } = useLeave(r);
+  const { leaving, gone, leave, restore } = useLeave(r);
   const [busy, setBusy] = useState(false);
   const reopenKey = useRef(newCaseCommandKey());
   const url = gmailUrl(r);
@@ -304,11 +305,12 @@ function ReopenRow({ reading: r, proposal, onDone, onCaseChanged }: {
 
   async function discard() {
     setBusy(true);
+    leave();
     try {
       await reviewTriage({ assertion_id: r.assertion_id, verdict: "rejected", corrected: {}, note: "No se reabre; descartado desde Hoy" });
-      leave();
       onDone();
     } catch (err) {
+      restore();
       toast(refusalMessage(err, "No se pudo descartar."), "bad");
     } finally {
       setBusy(false);
@@ -351,7 +353,7 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
   onCaseChanged: () => void;
 }) {
   const mayDecide = useMayRunCaseCommands();
-  const { leaving, gone, leave } = useLeave(r);
+  const { leaving, gone, leave, restore } = useLeave(r);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const openKey = useRef(newCaseCommandKey());
@@ -396,14 +398,15 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
   async function belongsToClosed() {
     if (!match || !suggestion) return;
     setBusy(true);
+    leave();
     try {
       await reviewTriage({ assertion_id: match.assertion_id, verdict: "approved", corrected: {},
         note: `Es del caso cerrado · ${suggestion.opportunity_id}` });
       await reviewTriage({ assertion_id: r.assertion_id, verdict: "approved", corrected: {},
         note: `Es del caso cerrado «${suggestion.title ?? ""}»` });
-      leave();
       onDone();
     } catch (err) {
+      restore();
       toast(refusalMessage(err, "No se pudo guardar la respuesta."), "bad");
     } finally {
       setBusy(false);
@@ -427,11 +430,12 @@ function InboxRow({ reading: r, openable, vocabulary, onDone, onCaseChanged }: {
 
   async function discard() {
     setBusy(true);
+    leave();
     try {
       await reviewTriage({ assertion_id: r.assertion_id, verdict: "rejected", corrected: {}, note: "Descartado desde Hoy" });
-      leave();
       onDone();
     } catch (err) {
+      restore();
       toast(refusalMessage(err, "No se pudo descartar."), "bad");
     } finally {
       setBusy(false);

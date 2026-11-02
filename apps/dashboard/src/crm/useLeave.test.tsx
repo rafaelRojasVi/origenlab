@@ -23,4 +23,23 @@ describe("useLeave", () => {
     act(() => result.current.leave());
     expect(result.current.gone).toBe(true);
   });
+
+  it("brings the row back when restored mid-exit, and the pending exit does not finish", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useLeave());
+    act(() => result.current.leave());
+    act(() => result.current.restore());
+    expect(result.current).toMatchObject({ leaving: false, gone: false });
+    act(() => vi.advanceTimersByTime(500));
+    expect(result.current.gone).toBe(false);
+  });
+
+  it("brings back a row that had already gone", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useLeave());
+    act(() => result.current.leave());
+    act(() => vi.advanceTimersByTime(180));
+    act(() => result.current.restore());
+    expect(result.current).toMatchObject({ leaving: false, gone: false });
+  });
 });
