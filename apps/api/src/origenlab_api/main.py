@@ -14,7 +14,7 @@ from origenlab_api.backends.factory import validate_api_settings
 from origenlab_api.errors import register_exception_handlers
 from origenlab_api.http_security import configure_http_security, openapi_docs_enabled
 from origenlab_api.request_id import RequestIdMiddleware
-from origenlab_api.request_logging import RequestLoggingMiddleware
+from origenlab_api.request_tracing import RequestTracingMiddleware
 from origenlab_api.response_timing import ResponseTimingMiddleware
 from origenlab_api.mirror import router as mirror_router
 from origenlab_api.routes import (
@@ -83,14 +83,18 @@ def create_app() -> FastAPI:
     configure_http_security(app, settings)
     # Starlette runs the last-added middleware outermost.  Add in this order so the
     # outermost (last-added) middleware wraps all others:
-    #   RequestLoggingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
-    # RequestLoggingMiddleware is outermost so it measures total dispatch time.
+    #   RequestTracingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
+    # RequestTracingMiddleware is outermost so it measures total dispatch time.
     # Innermost: replies leave compressed when the caller accepts gzip (the dashboard Worker does).
     # Render bills outbound bandwidth and JSON shrinks 5-10x (2026-10-30). Under 1 KB is not worth it.
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(ResponseTimingMiddleware)
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(
+        RequestTracingMiddleware,
+        slow_request_threshold_ms=settings.request_slow_threshold_ms,
+        high_query_count_threshold=settings.request_high_query_count,
+    )
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(operator.router)

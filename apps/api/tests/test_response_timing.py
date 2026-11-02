@@ -28,7 +28,12 @@ def test_health_includes_timing_headers(monkeypatch: pytest.MonkeyPatch) -> None
     assert process_ms is not None
     assert re.fullmatch(r"\d+\.\d{2}", process_ms)
     assert server_timing is not None
-    assert re.fullmatch(r"app;dur=\d+\.\d{2}", server_timing)
+    # RequestTracingMiddleware (outermost) appends the db entry to what
+    # ResponseTimingMiddleware wrote; accept both the legacy and the new format.
+    assert re.fullmatch(
+        r'app;dur=\d+\.\d{2}(, db;dur=\d+\.\d{2};desc="\d+ queries")?',
+        server_timing,
+    )
 
 
 def test_automation_status_includes_timing_and_sqlite_storage(
@@ -72,7 +77,10 @@ def test_automation_status_includes_timing_and_sqlite_storage(
     response = client.get("/operator/automation-status")
     assert response.status_code == 200
     assert re.fullmatch(r"\d+\.\d{2}", response.headers.get("X-Process-Time-Ms") or "")
-    assert re.fullmatch(r"app;dur=\d+\.\d{2}", response.headers.get("Server-Timing") or "")
+    assert re.fullmatch(
+        r'app;dur=\d+\.\d{2}(, db;dur=\d+\.\d{2};desc="\d+ queries")?',
+        response.headers.get("Server-Timing") or "",
+    )
     body = response.json()
     assert body["sqlite_storage"]["status"] == "healthy"
     assert body["sqlite_storage"]["mutation"] is False
@@ -93,4 +101,7 @@ def test_timing_and_request_id_headers_both_present(monkeypatch: pytest.MonkeyPa
     assert response.status_code == 200
     assert response.headers.get("X-Request-ID") == "timing-order-test"
     assert re.fullmatch(r"\d+\.\d{2}", response.headers.get("X-Process-Time-Ms") or "")
-    assert re.fullmatch(r"app;dur=\d+\.\d{2}", response.headers.get("Server-Timing") or "")
+    assert re.fullmatch(
+        r'app;dur=\d+\.\d{2}(, db;dur=\d+\.\d{2};desc="\d+ queries")?',
+        response.headers.get("Server-Timing") or "",
+    )

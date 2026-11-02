@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Any, Iterator
 
+from origenlab_api.query_counter import CountingCursor
 from origenlab_api.settings import Settings
 
 try:
@@ -48,11 +49,17 @@ def postgres_connection(settings: Settings) -> Iterator[Any]:
     url = settings.require_postgres_url()
     timeout_ms = settings.postgres_statement_timeout_ms
     options = f"-c statement_timeout={timeout_ms}"
+    # Add the counting cursor when psycopg is available, so every execute on
+    # V1 Postgres mirrors increments the per-request query counter.
+    connect_kwargs: dict[str, Any] = {}
+    if CountingCursor is not None:
+        connect_kwargs["cursor_factory"] = CountingCursor
     try:
         with pg.connect(
             normalize_postgres_url(url),
             connect_timeout=10,
             options=options,
+            **connect_kwargs,
         ) as conn:
             yield conn
     except PostgresBackendUnavailableError:
