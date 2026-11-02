@@ -78,7 +78,8 @@ describe("the Cotizador section", () => {
     expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/crm/licitaciones");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("aria-current", "page");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/crm/cotizador");
-    expect(screen.getByRole("tablist", { name: "Cotizaciones abiertas" })).toBeInTheDocument();
+    // The Cotizador is its own chunk: it arrives a moment after the shell.
+    expect(await screen.findByRole("tablist", { name: "Cotizaciones abiertas" })).toBeInTheDocument();
     expect(await screen.findByText("Esta cotización no existe.")).toBeInTheDocument();
   });
 
@@ -93,7 +94,7 @@ describe("the Cotizador section", () => {
     expect(menu.queryByRole("link", { name: "Cotizador" })).not.toBeInTheDocument();
     expect(menu.getByRole("link", { name: "Oportunidades" })).toBeInTheDocument();
     expect(menu.getByRole("link", { name: "Licitaciones" })).toBeInTheDocument();
-    expect(screen.getByText("Sólo ventas y administración pueden cotizar.")).toBeInTheDocument();
+    expect(await screen.findByText("Sólo ventas y administración pueden cotizar.")).toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(paths.some((p) => p.startsWith("/v2/quotes"))).toBe(false);
     expect(localStorage.getItem("cotizador:tabs:op-viewer")).toBeNull();

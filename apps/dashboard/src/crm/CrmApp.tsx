@@ -1,26 +1,32 @@
-import { useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useState, type MouseEvent, type ReactNode } from "react";
 import { SHARED_ACCOUNT, asShared } from "./sharedAccount";
 import { MailSyncBanner } from "./MailSyncBanner";
-import { Toaster } from "./ui";
+import { Skeleton, Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
 import { CRM_GROUP_LABEL, CRM_NAV, crmHash, sectionTitle, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
-import { HistoryPage } from "./pages/HistoryPage";
-import { OperacionesPage } from "./pages/OperacionesPage";
 import type { ShellRoute } from "./shellRoute";
-import { MarketingPage } from "./pages/MarketingPage";
-import { OrganizationsPage } from "./pages/OrganizationsPage";
 import { OverviewPage } from "./pages/OverviewPage";
-import { PeoplePage } from "./pages/PeoplePage";
-import { PipelinePage } from "./pages/PipelinePage";
-import { CatalogPage } from "./pages/CatalogPage";
-import { CotizadorModulePage } from "./pages/CotizadorModulePage";
-import { LicitacionesPage } from "./tenders/LicitacionesPage";
-import { PagosPage } from "./pagos/PagosPage";
-import { ProspectosPage } from "./prospects/ProspectosPage";
 import { useMayOpenCotizador } from "./quotes/openOrCreateQuote";
+import { lazyPage } from "../lib/lazyPage";
 import { useTheme, type ThemeChoice } from "../lib/theme";
+
+/**
+ * Hoy is where every session lands, so it ships with the shell; every other section is its own
+ * chunk, fetched the first time it is opened (the browser keeps it after that).
+ */
+const PipelinePage = lazyPage(() => import("./pages/PipelinePage").then((m) => m.PipelinePage));
+const OrganizationsPage = lazyPage(() => import("./pages/OrganizationsPage").then((m) => m.OrganizationsPage));
+const PeoplePage = lazyPage(() => import("./pages/PeoplePage").then((m) => m.PeoplePage));
+const CatalogPage = lazyPage(() => import("./pages/CatalogPage").then((m) => m.CatalogPage));
+const CotizadorModulePage = lazyPage(() => import("./pages/CotizadorModulePage").then((m) => m.CotizadorModulePage));
+const LicitacionesPage = lazyPage(() => import("./tenders/LicitacionesPage").then((m) => m.LicitacionesPage));
+const ProspectosPage = lazyPage(() => import("./prospects/ProspectosPage").then((m) => m.ProspectosPage));
+const PagosPage = lazyPage(() => import("./pagos/PagosPage").then((m) => m.PagosPage));
+const MarketingPage = lazyPage(() => import("./pages/MarketingPage").then((m) => m.MarketingPage));
+const HistoryPage = lazyPage(() => import("./pages/HistoryPage").then((m) => m.HistoryPage));
+const OperacionesPage = lazyPage(() => import("./pages/OperacionesPage").then((m) => m.OperacionesPage));
 
 /**
  * The dashboard: one shell, one navigation, one sign-in. The CRM sections over the V2 durable
@@ -83,7 +89,9 @@ export function CrmApp({ route }: { route: ShellRoute }) {
         <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
           <div key={routeKey} className="animate-fade-in-up">
-            <Section section={route.section} id={route.id} tab={route.tab} pane={route.pane} navigate={navigate} />
+            <Suspense fallback={<Skeleton rows={6} />}>
+              <Section section={route.section} id={route.id} tab={route.tab} pane={route.pane} navigate={navigate} />
+            </Suspense>
           </div>
         </main>
       </div>
