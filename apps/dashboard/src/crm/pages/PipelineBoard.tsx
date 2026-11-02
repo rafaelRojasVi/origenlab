@@ -20,6 +20,8 @@ import type { OpportunityCardData } from "../crmTypes";
 import { ageTone, contactLine, conversation, displayName, isDelivered, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate } from "../ui";
+import { GrowingListEnd } from "../GrowingListEnd";
+import { useGrowingList } from "../useGrowingList";
 import { formatMoney } from "../money";
 
 export type BoardSort = "recent" | "oldest" | "replied" | "name";
@@ -199,33 +201,7 @@ export function Board({
                     {droppable ? "Suelta aquí" : "Sin oportunidades"}
                   </p>
                 ) : (
-                  inCol.map((c, i) => {
-                    const activity = activityTimestamp(c);
-                    const previousActivity = i > 0 ? activityTimestamp(inCol[i - 1]) : null;
-                    const band = byDate ? ageBucket(activity == null ? null : new Date(activity).toISOString(), at) : null;
-                    const prev = byDate && i > 0
-                      ? ageBucket(previousActivity == null ? null : new Date(previousActivity).toISOString(), at)
-                      : null;
-                    const label = band && (i === 0 || band !== prev) ? AGE_BUCKETS.find((b) => b.key === band)?.label : null;
-                    return (
-                      <Fragment key={c.opportunity_id}>
-                        {label && inCol.length > 4 ? (
-                          <p className="flex items-center gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint" data-testid={`board-band-${band}`}>
-                            {label}
-                            <span aria-hidden="true" className="h-px flex-1 bg-line-strong" />
-                          </p>
-                        ) : null}
-                        <BoardCard
-                          card={c}
-                          onOpen={onOpen}
-                          now={at}
-                          drag={drag}
-                          index={i}
-                          compact={col.key === "ganada" || col.key === "perdida"}
-                        />
-                      </Fragment>
-                    );
-                  })
+                  <ColumnCards cards={inCol} columnKey={col.key} byDate={byDate} at={at} onOpen={onOpen} drag={drag} />
                 )}
               </div>
             </section>
@@ -233,6 +209,57 @@ export function Board({
         })}
       </div>
     </div>
+  );
+}
+
+/** One column's cards, drawn in slices: Ganada and Perdida hold every closed case. */
+function ColumnCards({
+  cards,
+  columnKey,
+  byDate,
+  at,
+  onOpen,
+  drag,
+}: {
+  cards: OpportunityCardData[];
+  columnKey: BoardColumnKey;
+  byDate: boolean;
+  at: Date;
+  onOpen: (id: string) => void;
+  drag: DragHook | null;
+}) {
+  const { shown, hidden, showMore, endRef } = useGrowingList(cards);
+  return (
+    <>
+      {shown.map((c, i) => {
+        const activity = activityTimestamp(c);
+        const previousActivity = i > 0 ? activityTimestamp(cards[i - 1]) : null;
+        const band = byDate ? ageBucket(activity == null ? null : new Date(activity).toISOString(), at) : null;
+        const prev = byDate && i > 0
+          ? ageBucket(previousActivity == null ? null : new Date(previousActivity).toISOString(), at)
+          : null;
+        const label = band && (i === 0 || band !== prev) ? AGE_BUCKETS.find((b) => b.key === band)?.label : null;
+        return (
+          <Fragment key={c.opportunity_id}>
+            {label && cards.length > 4 ? (
+              <p className="flex items-center gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint" data-testid={`board-band-${band}`}>
+                {label}
+                <span aria-hidden="true" className="h-px flex-1 bg-line-strong" />
+              </p>
+            ) : null}
+            <BoardCard
+              card={c}
+              onOpen={onOpen}
+              now={at}
+              drag={drag}
+              index={i}
+              compact={columnKey === "ganada" || columnKey === "perdida"}
+            />
+          </Fragment>
+        );
+      })}
+      <GrowingListEnd hidden={hidden} onMore={showMore} endRef={endRef} />
+    </>
   );
 }
 

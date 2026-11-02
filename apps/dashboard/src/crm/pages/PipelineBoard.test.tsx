@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { stagePath } from "../caseCommands";
@@ -349,5 +349,32 @@ describe("money per column", () => {
     expect(screen.getByTestId("board-money-enviada")).toHaveTextContent("$ 1.250.000 neto + 1 sin leer");
     expect(screen.getByTestId("board-money-solicitada")).toHaveTextContent("$ 0 neto");
     expect(screen.getByRole("heading", { name: "Solicitada / En estudio" })).toBeInTheDocument();
+  });
+});
+
+describe("Board · long columns", () => {
+  it("draws a long column 40 cards at a time, counting and totalling all of them", () => {
+    let seen: IntersectionObserverCallback = () => undefined;
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(cb: IntersectionObserverCallback) { seen = cb; }
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      const lost = Array.from({ length: 100 }, () =>
+        card({ stage: "lost", closed_at: "2026-09-01T12:00:00Z", close_reason: "Sin respuesta" }));
+      render(<Board cards={lost} onOpen={() => undefined} now={NOW} />);
+      const column = screen.getByTestId("board-column-perdida");
+      expect(screen.getByTestId("board-count-perdida")).toHaveTextContent("100");
+      expect(within(column).getAllByTestId(/^board-card-/)).toHaveLength(40);
+      fireEvent.click(within(column).getByRole("button", { name: "Mostrar más (60)" }));
+      expect(within(column).getAllByTestId(/^board-card-/)).toHaveLength(80);
+      // Scrolling the end into view draws the rest.
+      act(() => seen([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+      expect(within(column).getAllByTestId(/^board-card-/)).toHaveLength(100);
+      expect(within(column).queryByRole("button", { name: /Mostrar más/ })).not.toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
