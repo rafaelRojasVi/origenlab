@@ -26,7 +26,7 @@
  */
 import * as THREE from 'three';
 import type { BuiltModel } from '../types';
-import { SANS, canvasTexture, disposer, lathe, type Draw } from './kit';
+import { SANS, canvasTexture, disposer, lathe, roundedBox, type Draw } from './kit';
 
 /* ── dimensiones oficiales ────────────────────────────────────────────────── */
 const BW = 174;
@@ -144,7 +144,8 @@ export function build(): BuiltModel {
   /* ── falda azul de la base ──────────────────────────────────────────── */
   const SKIRT_H = 12;
   const SKIRT_BEVEL = 3;
-  const skirtGeo = keep(new THREE.ExtrudeGeometry(makePlan(5), {
+  // Más ancha que el cuerpo con su bisel (11 mm): con 5 quedaba escondida dentro.
+  const skirtGeo = keep(new THREE.ExtrudeGeometry(makePlan(13), {
     depth: Math.max(SKIRT_H - SKIRT_BEVEL * 2, 1),
     bevelEnabled: true,
     bevelSize: SKIRT_BEVEL,
@@ -173,6 +174,43 @@ export function build(): BuiltModel {
   consoleGroup.position.set(0, BH * 0.48, 129);
   consoleGroup.rotation.x = -0.16;   // ~9° inclinado hacia atrás
   root.add(consoleGroup);
+
+  // Carcasa de la consola: un bloque blanco que une el panel con el cuerpo.
+  // Sin él, de lado, el panel se veía como una pantalla flotando.
+  {
+    const pod = new THREE.Mesh(keep(roundedBox(144 + 10, 60 + 8, 20, 5)), bodyMat); // panel 144 × 60 mm
+    pod.position.set(0, 0, -8);
+    pod.castShadow = true;
+    consoleGroup.add(pod);
+  }
+
+  /* ── costados: ranura de agarre y marca ──────────────────────────────── */
+  {
+    const gripTex = canvasTexture(512, 128, (g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = '#b3bac5';
+      g.beginPath();
+      g.roundRect(8, h * 0.3, w * 0.62, h * 0.4, h * 0.2);
+      g.fill();
+      g.fillStyle = '#8c95a3';
+      g.beginPath();
+      g.roundRect(14, h * 0.4, w * 0.6, h * 0.2, h * 0.1);
+      g.fill();
+      g.fillStyle = '#1e5fb4';
+      g.font = `800 ${h * 0.46}px ${SANS}`;
+      g.textBaseline = 'middle';
+      g.textAlign = 'right';
+      g.fillText('ADAM', w - 10, h / 2);
+    });
+    keep(gripTex.texture);
+    const gripMat = keep(new THREE.MeshStandardMaterial({ map: gripTex.texture, transparent: true, roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -2 }));
+    for (const side of [-1, 1] as const) {
+      const plate = new THREE.Mesh(keep(new THREE.PlaneGeometry(150, 38)), gripMat);
+      plate.rotation.y = side * Math.PI / 2;
+      plate.position.set(side * (W + 12.4), BH * 0.5, -8);
+      root.add(plate);
+    }
+  }
 
   /* ── panel frontal — LCD y bezel ─────────────────────────────────────── */
   let screenOn = false;
