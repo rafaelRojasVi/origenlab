@@ -195,8 +195,9 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
             return Boolean(first) && !(first!.transparent && first!.opacity < 0.98) && !(item.object as THREE.Object3D & { isSprite?: boolean }).isSprite;
           };
           const hit = ray.intersectObject(model.root, true).find(opaque);
-          // 20 mm de margen: un ancla puede estar dentro de su propia pieza (una perilla).
-          hidden[name] = Boolean(hit && hit.distance < reach - 0.2);
+          // 60 mm de margen: un ancla puede estar dentro o justo detrás de su pieza
+          // (una perilla, un rotor bajo el borde de la cámara); sólo un cuerpo entero la tapa.
+          hidden[name] = Boolean(hit && hit.distance < reach - 0.6);
         }
       }
       const out: AnchorPositions = {};

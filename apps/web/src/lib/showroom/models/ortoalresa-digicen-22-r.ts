@@ -392,22 +392,23 @@ export function build(): BuiltModel {
   // etiqueta del panel (modelo + logo)
   const panelLabelTex = canvasTexture(512, 48, (g, w, h) => {
     g.clearRect(0, 0, w, h);
-    g.fillStyle = '#2c2e32';
-    g.font = `400 17px ${SANS}`;
+    // Claro sobre el panel oscuro: en oscuro no se leía.
+    g.fillStyle = '#c9ccd1';
+    g.font = `500 20px ${SANS}`;
     g.textBaseline = 'middle';
     g.fillText('digicen 22 R', 10, h / 2);
     g.textAlign = 'right';
-    g.fillStyle = '#c83010';
-    g.font = `700 17px ${SANS}`;
-    g.fillText('orto', w / 2 + 56, h / 2);
-    g.fillStyle = '#2c2e32';
-    g.font = `700 17px ${SANS}`;
-    g.fillText('alresa', w - 8, h / 2);
+    g.fillStyle = '#e04a2a';
+    g.font = `700 15px ${SANS}`;
+    g.fillText('orto', w - 8, h * 0.28);
+    g.fillStyle = '#f4f4f2';
+    g.font = `700 26px ${SANS}`;
+    g.fillText('alresa', w - 8, h * 0.68);
     g.textAlign = 'left';
   });
   keep(panelLabelTex.texture);
   const panelLabel = new THREE.Mesh(
-    keep(new THREE.PlaneGeometry(PANEL_W - 10, 13)),
+    keep(new THREE.PlaneGeometry(PANEL_W - 10, 17)),
     keep(new THREE.MeshStandardMaterial({ map: panelLabelTex.texture, roughness: 0.5, transparent: true })),
   );
   panelLabel.position.set(PANEL_X, BTN_Y - 8, BTN_Z + 2);
@@ -581,15 +582,17 @@ export function build(): BuiltModel {
 
   const rotorAnchor = new THREE.Object3D();
   // apunta hacia el centro del rotor: hub rojo y cubetas con cúpula
-  rotorAnchor.position.set(0, ROTOR_ORIG_Y - 20, 40);
+  rotorAnchor.position.set(0, ROTOR_ORIG_Y + 8, 40); // a la altura de la boca de la cámara
   body.add(rotorAnchor);
 
   const lidAnchor = new THREE.Object3D();
-  lidAnchor.position.set(0, H_LID / 2, LID_DEPTH * 0.5);
+  // Sobre la cara interior de la tapa, la que mira al visitante con la tapa abierta.
+  lidAnchor.position.set(0, -4, LID_DEPTH * 0.5);
   lidGroup.add(lidAnchor);
 
   const bodyAnchor = new THREE.Object3D();
-  bodyAnchor.position.set(0, BODY_Y + H_BODY / 2, 0);
+  // En el costado izquierdo (rejilla de refrigeración), no en el centro del bloque.
+  bodyAnchor.position.set(-W / 2 - 4, BODY_Y + H_BODY * 0.4, D * 0.15);
   body.add(bodyAnchor);
 
   // ── estado de animación ────────────────────────────────────────────────────

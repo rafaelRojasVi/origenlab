@@ -272,6 +272,9 @@ export function build(): BuiltModel {
       depthWrite: false,
     }),
   );
+  // Cada pieza del marco lleva su propio renderOrder: con el mismo valor, three.js
+  // las reordenaba por distancia al girar y los colores se distorsionaban.
+  let divOrder = 0.1;
   const divH = TH - WL - BASE_H;
   const divW = GW + 20;       // ancho del divisor, est.
   const divWL = 6;            // grosor de la pared del divisor, est.
@@ -280,7 +283,7 @@ export function build(): BuiltModel {
   {
     const m = new THREE.Mesh(keep(new THREE.BoxGeometry(divW, divH, divWL)), divMat);
     m.position.set(0, BASE_H + divH / 2, TD / 2 - WL - divWL / 2 - 4);
-    m.renderOrder = 2;
+    m.renderOrder = 2 + (divOrder += 0.1);
     tankGroup.add(m);
   }
   // Paredes laterales del divisor
@@ -290,7 +293,7 @@ export function build(): BuiltModel {
       divMat,
     );
     m.position.set(xSide, BASE_H + divH / 2, WL + (TD - WL * 2 - divWL) / 2 - TD / 2);
-    m.renderOrder = 2;
+    m.renderOrder = 2 + (divOrder += 0.1);
     tankGroup.add(m);
   }
 

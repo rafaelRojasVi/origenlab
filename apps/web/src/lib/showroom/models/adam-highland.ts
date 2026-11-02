@@ -55,7 +55,7 @@ export function build(): BuiltModel {
     clearcoat: 0.28, clearcoatRoughness: 0.58,
   }));
   const yellowMat = keep(new THREE.MeshPhysicalMaterial({
-    color: 0xf5c518, roughness: 0.56, metalness: 0.0, clearcoat: 0.15,
+    color: 0xf5c518, side: THREE.DoubleSide, roughness: 0.56, metalness: 0.0, clearcoat: 0.15,
   }));
   const panMat = keep(new THREE.MeshPhysicalMaterial({
     color: 0xcfd4da, metalness: 0.90, roughness: 0.16,
@@ -376,11 +376,18 @@ export function build(): BuiltModel {
   /* Segmentos de toroide (media luna) en cada esquina del panel frontal,
      curveando con la forma del cuerpo.                                   */
   for (const sign of [-1, 1] as const) {
-    const taraGeo = keep(new THREE.TorusGeometry(13, 5.5, 10, 32, Math.PI * 0.68));
-    const tara = new THREE.Mesh(taraGeo, yellowMat);
-    tara.position.set(sign * (PANEL_W / 2 - 18), -PANEL_H / 2 + 2, 3.5);
-    tara.rotation.z = sign > 0 ? -Math.PI * 0.14 : Math.PI * 1.14;
-    tara.castShadow = true;
+    // Almohadilla plana, al ras de la consola, como en la foto: una cuña amarilla
+    // en la esquina inferior (antes era un toro que sobresalía como un anillo).
+    const padShape = new THREE.Shape();
+    padShape.moveTo(0, 0);
+    padShape.lineTo(34, 0);
+    padShape.quadraticCurveTo(34, 20, 6, 24);
+    padShape.quadraticCurveTo(0, 24, 0, 18);
+    padShape.lineTo(0, 0);
+    const padGeo = keep(new THREE.ExtrudeGeometry(padShape, { depth: 1.2, bevelEnabled: true, bevelSize: 1, bevelThickness: 0.8, bevelSegments: 3 }));
+    const tara = new THREE.Mesh(padGeo, yellowMat);
+    tara.scale.x = sign > 0 ? -1 : 1;
+    tara.position.set(sign * (PANEL_W / 2 - 2), -PANEL_H / 2 + 1, 3.2);
     consoleGroup.add(tara);
 
     /* etiqueta ">0/T<" */
@@ -397,7 +404,7 @@ export function build(): BuiltModel {
       keep(new THREE.PlaneGeometry(12, 6)),
       keep(new THREE.MeshBasicMaterial({ map: taraTex, transparent: true })),
     );
-    taraLabel.position.set(sign * (PANEL_W / 2 - 18), -PANEL_H / 2 + 2, 9.5);
+    taraLabel.position.set(sign * (PANEL_W / 2 - 16), -PANEL_H / 2 + 10, 5.6);
     taraLabel.renderOrder = 2;
     consoleGroup.add(taraLabel);
   }
