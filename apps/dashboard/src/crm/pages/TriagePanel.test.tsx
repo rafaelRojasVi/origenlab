@@ -148,6 +148,16 @@ describe("«Correos sin caso» · ¿marcar ganada?", () => {
     expect(onCaseChanged).not.toHaveBeenCalled();
   });
 
+  it("«Descartar» takes the row away before the server answers, and brings it back with the reason when refused", async () => {
+    stub([reading("oc", { class: "purchase_order", cases: [PO_CASE] })], { "/v2/commands/review-triage": 409 });
+    renderPanel([card()]);
+    const row = await screen.findByTestId("won-proposal");
+    fireEvent.click(within(row).getByRole("button", { name: "Descartar" }));
+    expect(row).toHaveClass("crm-row-out");
+    expect(await screen.findByText(/No se pudo descartar|refused_in_test|rechaz/)).toBeInTheDocument();
+    expect(screen.getByTestId("won-proposal")).not.toHaveClass("crm-row-out");
+  });
+
   it("says what was done when the win is refused after the verdict, and does not record the verdict twice on retry", async () => {
     const calls = stub([reading("oc", { class: "purchase_order", cases: [PO_CASE] })], { "/v2/commands/record-case-won": 409 });
     renderPanel([card()]);

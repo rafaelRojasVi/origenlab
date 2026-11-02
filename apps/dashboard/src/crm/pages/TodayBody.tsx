@@ -570,7 +570,7 @@ function ReplyQueueRow({
   now: Date;
 }) {
   const { card } = reply;
-  const { leaving, gone, leave } = useLeave(reply);
+  const { leaving, gone, leave, restore } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip" | "handled">(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const keys = useRef([newCaseCommandKey()]);
@@ -598,6 +598,7 @@ function ReplyQueueRow({
   async function noAnswerNeeded() {
     setBusy("skip");
     const next = new Date(now.getTime() + WEEK_MS);
+    leave();
     try {
       for (const [i, c] of [card, ...reply.others].entries()) {
         const quote = c.latest_revision?.quote_number ?? c.quote_numbers[0] ?? "";
@@ -608,8 +609,9 @@ function ReplyQueueRow({
         );
       }
       toast(`Listo. Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
-      leave(); onClearItem(); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       skipKeys.current = [];
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
@@ -617,14 +619,16 @@ function ReplyQueueRow({
 
   async function handled() {
     setBusy("handled");
+    leave();
     try {
       await addNote(
         { subject_kind: "opportunity", subject_id: card.opportunity_id, body: `Atendido: el cliente escribió el ${fmtDate(reply.at)} tras ganar el caso; respondido por otro medio o sin respuesta pendiente.` },
         handledKey.current,
       );
       toast("Listo. Queda anotado en el caso.");
-      leave(); onClearItem(); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       handledKey.current = newCaseCommandKey();
       toast(refusalOf(err)?.message ?? "No se pudo anotar el caso.", "bad");
     } finally { setBusy(null); }
@@ -632,6 +636,7 @@ function ReplyQueueRow({
 
   async function toConversation() {
     setBusy("move");
+    leave();
     try {
       await moveCase(
         { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
@@ -640,8 +645,9 @@ function ReplyQueueRow({
         null, keys.current,
       );
       toast("Pasó a «Conversación».");
-      leave(); onClearItem(); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       keys.current = [newCaseCommandKey()];
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
@@ -786,7 +792,7 @@ function TaskQueueRow({
   now: Date;
 }) {
   const { card, task, overdueDays } = due;
-  const { leaving, gone, leave } = useLeave(due);
+  const { leaving, gone, leave, restore } = useLeave(due);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<null | "done" | "snooze">(null);
@@ -805,11 +811,13 @@ function TaskQueueRow({
 
   async function done() {
     setBusy("done");
+    leave();
     try {
       await completeTask({ task_id: task.task_id, task_version: task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
       toast("Tarea hecha.");
-      leave(); onClearItem(); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       keys.current.done = newCaseCommandKey();
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
@@ -818,6 +826,7 @@ function TaskQueueRow({
   async function snooze() {
     setBusy("snooze");
     const next = new Date(Math.max(now.getTime(), Date.parse(task.due_at)) + WEEK_MS);
+    leave();
     try {
       await createTask(
         { opportunity_id: card.opportunity_id, title: task.title, due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
@@ -825,8 +834,9 @@ function TaskQueueRow({
       );
       await cancelTask({ task_id: task.task_id, task_version: task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       toast(`Pospuesta al ${fmtDate(next.toISOString())}.`);
-      leave(); onClearItem(); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
       toast(caseRefusalText(err), "bad");
       onChanged();
@@ -910,7 +920,7 @@ function FollowUpQueueRow({
   now: Date;
 }) {
   const f = followUp;
-  const { leaving, gone, leave } = useLeave(f);
+  const { leaving, gone, leave, restore } = useLeave(f);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<null | "done" | "snooze">(null);
@@ -935,11 +945,14 @@ function FollowUpQueueRow({
   async function markDone() {
     if (!f.task) return;
     setBusy("done");
+    setMenuOpen(false);
+    leave();
     try {
       await completeTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: "Hecho desde «Hoy»." }, keys.current.done);
       toast("Seguimiento hecho.");
-      leave(); onClearItem(); setMenuOpen(false); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       keys.current.done = newCaseCommandKey();
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
@@ -949,6 +962,8 @@ function FollowUpQueueRow({
     setBusy("snooze");
     const base = f.task ? Math.max(now.getTime(), Date.parse(f.task.task.due_at)) : now.getTime();
     const next = new Date(base + WEEK_MS);
+    setMenuOpen(false);
+    leave();
     try {
       await createTask(
         { opportunity_id: f.card.opportunity_id, title: f.task?.task.title ?? `Seguimiento de ${quote}`.trim(), due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
@@ -958,8 +973,9 @@ function FollowUpQueueRow({
         await cancelTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       }
       toast(`Te lo recuerdo el ${fmtDate(next.toISOString())}.`);
-      leave(); onClearItem(); setMenuOpen(false); onChanged();
+      onClearItem(); onChanged();
     } catch (err) {
+      restore();
       keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
       toast(caseRefusalText(err), "bad");
       onChanged();
