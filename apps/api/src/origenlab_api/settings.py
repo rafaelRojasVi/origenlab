@@ -410,6 +410,16 @@ class Settings(BaseSettings):
     POST /auth/dev/principal-session signs in as. Needs ORIGENLAB_DEV_LOGIN_ENABLED and a
     loopback database; refused in production."""
     dev_profile_principal_email: str | None = None
+    # --- Per-request tracing thresholds ------------------------------------
+    # Controls when RequestTracingMiddleware logs at INFO vs DEBUG.
+    # Defaults are deliberately permissive for a 3-user app: tune in the
+    # Render environment without redeploying code.
+    """Requests longer than this many milliseconds are logged at INFO.  Default 500 ms."""
+    request_slow_threshold_ms: int = 500
+    """Requests with more DB queries than this threshold are logged at INFO (N+1 signal).
+    Default 25: a page that legitimately needs 20 queries has headroom before the alert."""
+    request_high_query_count: int = 25
+
     """Comma-separated browser origins for dashboard static site (no wildcards)."""
     api_cors_origins: str | None = None
     """Comma-separated Host header values allowed in production (e.g. api.origenlab.cl)."""

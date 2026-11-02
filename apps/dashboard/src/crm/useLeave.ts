@@ -11,10 +11,13 @@ function prefersReducedMotion(): boolean {
  * A row that has done its job leaves now: `leaving` starts its 180 ms exit (`crm-row-out`),
  * `gone` drops it. The reload that confirms the change runs behind it.
  *
+ * A row may leave the moment it is clicked, before the server answers; `restore` brings it back
+ * when the server refuses, so the operator sees the refusal next to the row it belongs to.
+ *
  * `data` is the row's own record. A reload that still returns the row hands it a new record, and
  * the row shows again: a change that did not take it off the list must not hide it.
  */
-export function useLeave(data?: unknown): { leaving: boolean; gone: boolean; leave: () => void } {
+export function useLeave(data?: unknown): { leaving: boolean; gone: boolean; leave: () => void; restore: () => void } {
   const [leaving, setLeaving] = useState(false);
   const [gone, setGone] = useState(false);
   const timer = useRef<number | null>(null);
@@ -38,5 +41,11 @@ export function useLeave(data?: unknown): { leaving: boolean; gone: boolean; lea
     }
     timer.current = window.setTimeout(() => setGone(true), LEAVE_MS);
   }, []);
-  return { leaving, gone, leave };
+  const restore = useCallback(() => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
+    setLeaving(false);
+    setGone(false);
+  }, []);
+  return { leaving, gone, leave, restore };
 }

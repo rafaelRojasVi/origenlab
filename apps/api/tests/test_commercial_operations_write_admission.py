@@ -117,6 +117,7 @@ def test_write_connection_uses_write_dsn_only(
             *,
             connect_timeout: int,
             options: str,
+            **_kwargs: object,  # accept cursor_factory and other future kwargs
         ) -> FakeConnection:
             observed["url"] = url
             observed["connect_timeout"] = connect_timeout
