@@ -45,6 +45,8 @@ import {
   initials,
   toast,
 } from "../ui";
+import { GrowingListEnd } from "../GrowingListEnd";
+import { useGrowingList } from "../useGrowingList";
 import { useResource } from "../useResource";
 import { splitAddress } from "../address";
 
@@ -250,11 +252,7 @@ function Pipeline({
       ) : visible.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {visible.map((card, i) => (
-            <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={(id) => open(id)} />
-          ))}
-        </div>
+        <CardGrid cards={visible} onOpen={(id) => open(id)} />
       ) : (
         <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} sort={sort} />
       )}
@@ -285,6 +283,23 @@ function Pipeline({
           />
         </Modal>
       ) : null}
+    </>
+  );
+}
+
+/** Every case as a card, drawn in slices: the list holds closed cases too. */
+function CardGrid({ cards, onOpen }: { cards: OpportunityCardData[]; onOpen: (id: string) => void }) {
+  const { shown, hidden, showMore, endRef } = useGrowingList(cards);
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
+        {shown.map((card, i) => (
+          <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={onOpen} />
+        ))}
+      </div>
+      <div className="mt-3">
+        <GrowingListEnd hidden={hidden} onMore={showMore} endRef={endRef} />
+      </div>
     </>
   );
 }
