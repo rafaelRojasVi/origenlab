@@ -18,6 +18,7 @@ export default defineConfig({
       // registre la revisión profesional y dejen de servirse con noindex.
       filter: (page) =>
         !page.includes('/logo-lab/') &&
+        !page.includes('/sala-lab/') &&
         !page.includes('/privacidad/') &&
         !page.includes('/cookies/') &&
         !page.includes('/aviso-legal/') &&
@@ -26,5 +27,27 @@ export default defineConfig({
   ],
   vite: {
     plugins: [tailwindcss()],
+    build: {
+      rolldownOptions: {
+        output: {
+          // La sala 3D se pide bajo demanda: three.js (con las piezas comunes de
+          // los modelos), la escena y cada modelo van en fragmentos `scene-*`,
+          // que validate:dist mide aparte del presupuesto de página y que ningún
+          // HTML puede enlazar en su carga inicial.
+          codeSplitting: {
+            groups: [
+              {
+                name(id) {
+                  if (/[\\/]node_modules[\\/]three[\\/]/.test(id) || /[\\/]showroom[\\/]models[\\/]kit\.ts$/.test(id)) return 'scene-three';
+                  if (/[\\/]showroom[\\/]scene\.ts$/.test(id)) return 'scene-stage';
+                  const model = id.match(/[\\/]showroom[\\/]models[\\/]([\w-]+)\.ts$/);
+                  return model ? `scene-${model[1]}` : null;
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
   },
 });

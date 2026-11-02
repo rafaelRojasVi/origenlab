@@ -48,6 +48,7 @@ assert(pages.length >= 20, `dist: se esperaban al menos 20 páginas, hay ${pages
  */
 const INTERNAL = [
   'logo-lab/index.html',
+  'sala-lab/index.html',
   '404.html',
   'privacidad/index.html',
   'cookies/index.html',
@@ -248,6 +249,8 @@ assert(
 const robots = readFileSync(join(dist, 'robots.txt'), 'utf8');
 assert(robots.includes('Sitemap: https://origenlab.cl/sitemap-index.xml'), 'robots.txt: sitemap mal referenciado');
 assert(robots.includes('Disallow: /logo-lab/'), 'robots.txt: /logo-lab/ debe quedar fuera del índice');
+assert(robots.includes('Disallow: /sala-lab/'), 'robots.txt: /sala-lab/ debe quedar fuera del índice');
+assert(!sitemapUrls.some((url) => url.includes('/sala-lab')), 'sitemap: contiene la página interna /sala-lab/');
 assert(robots.includes('Disallow: /email/'), 'robots.txt: /email/ debe quedar fuera del índice');
 for (const route of SUPPRESSED_ROUTES) {
   assert(robots.includes(`Disallow: ${route}`), `robots.txt: ${route} debe quedar fuera del índice`);
@@ -277,13 +280,13 @@ for (const route of SUPPRESSED_ROUTES) {
  * pantalla, nunca con movimiento reducido. Se mide aparte, con su propio techo,
  * y se comprueba que ningún HTML lo enlace directamente.
  */
-const onDemand = (file) => /^scene\.[\w-]+\.js$/.test(file.split(/[\\/]/).pop());
+const onDemand = (file) => /^scene-[\w-]+\.[\w-]+\.js$/.test(file.split(/[\\/]/).pop());
 const jsFiles = walk(dist, '.js');
 const js = jsFiles.filter((file) => !onDemand(file)).reduce((total, file) => total + statSync(file).size, 0);
 const scene = jsFiles.filter(onDemand).reduce((total, file) => total + statSync(file).size, 0);
 for (const file of walk(dist, '.html')) {
   const html = readFileSync(file, 'utf8');
-  assert(!/<script[^>]+src="[^"]*\/scene\.[\w-]+\.js"/.test(html) && !/rel="modulepreload"[^>]+scene\./.test(html),
+  assert(!/<script[^>]+src="[^"]*\/scene-[\w-]+\.[\w-]+\.js"/.test(html) && !/rel="modulepreload"[^>]+scene-/.test(html),
     `${relative(dist, file)}: la sala 3D se enlaza en la carga inicial`);
 }
 const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).size, 0);
@@ -291,7 +294,9 @@ const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).si
 // CSS 64 kB: Astro 7.4 dejó el CSS en 60.012 bytes (2026-10-22), 12 sobre el límite anterior.
 const kb = (bytes) => (bytes / 1000).toFixed(1);
 assert(js < 15_000, `dist: ${kb(js)} kB de JavaScript (presupuesto 15 kB)`);
-assert(scene < 600_000, `dist: ${kb(scene)} kB en la sala 3D bajo demanda (techo 600 kB)`);
+// three.js pesa ~560 kB; cada modelo, decenas. El techo cubre la biblioteca y
+// los siete modelos juntos, aunque una página sólo pide los que muestra.
+assert(scene < 900_000, `dist: ${kb(scene)} kB en la sala 3D bajo demanda (techo 900 kB)`);
 assert(css < 64_000, `dist: ${kb(css)} kB de CSS (presupuesto 64 kB)`);
 
 if (failed) {

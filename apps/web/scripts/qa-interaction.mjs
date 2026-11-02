@@ -371,7 +371,7 @@ console.log('\nMovimiento reducido');
   check(!(await showroom.evaluate((el) => el.hasAttribute('data-ready'))), 'la escena 3D no arranca');
   check(await showroom.locator('[data-showroom-photo] img').isVisible(), 'la fotografía del equipo sigue visible');
   check(
-    !(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /\/scene\.[\w-]+\.js/.test(entry.name)))),
+    !(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /\/scene-[\w-]+\.[\w-]+\.js/.test(entry.name)))),
     'el fragmento de three.js no se descarga',
   );
 

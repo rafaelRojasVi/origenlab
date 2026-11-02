@@ -1,0 +1,63 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import Showroom from '../components/home/Showroom.astro';
+import { showroomEntries } from '../lib/showroom/catalog';
+
+/**
+ * Sala de pruebas de los modelos 3D. Superficie interna, como /logo-lab/:
+ * `noindex`, fuera del sitemap, `Disallow` en robots.txt y `X-Robots-Tag` en
+ * .htaccess (comprobado por `validate:dist`).
+ *
+ * Muestra cada equipo modelado en su sala, con sus vistas y marcadores, para
+ * revisarlos antes de decidir cuál y cómo aparece en la portada. Cada sala se
+ * carga sólo al acercarse a la pantalla. `?solo=<id>` deja una sola.
+ */
+---
+
+<Layout
+  title="Sala de pruebas 3D | OrigenLab"
+  description="Revisión interna de los equipos modelados en 3D con las medidas de la documentación de cada fabricante, antes de llevarlos a la portada."
+  noindex
+>
+  <PageIntro
+    title="Sala de pruebas 3D"
+    lead="Un equipo por fabricante, modelado con las medidas de su documentación oficial. Página interna: no se indexa."
+  />
+
+  <section class="shell section sala-lab">
+    {
+      showroomEntries.map((entry) => (
+        <article class="sala-lab__item" id={entry.id} data-sala-item={entry.id}>
+          <h2 class="t-label">{entry.brand} · {entry.name}</h2>
+          <Showroom id={entry.id} />
+        </article>
+      ))
+    }
+  </section>
+</Layout>
+
+<style>
+  .sala-lab {
+    display: grid;
+    gap: 4rem;
+  }
+  .sala-lab__item {
+    border-top: 1px solid var(--color-hairline);
+    padding-top: 1.5rem;
+    max-width: 44rem;
+  }
+  .sala-lab__item h2 {
+    margin-bottom: 1rem;
+  }
+</style>
+
+<script>
+  /* `?solo=<id>` deja una sola sala: útil para revisar un modelo a pantalla. */
+  const solo = new URLSearchParams(location.search).get('solo');
+  if (solo) {
+    for (const item of document.querySelectorAll<HTMLElement>('[data-sala-item]')) {
+      if (item.dataset.salaItem !== solo) item.remove();
+    }
+  }
+</script>

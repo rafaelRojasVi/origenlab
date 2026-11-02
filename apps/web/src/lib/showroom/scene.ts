@@ -1,5 +1,5 @@
 /**
- * Escena de estudio para un equipo modelado: luz, sombra de contacto, cámara
+ * Escena de estudio para cualquier equipo modelado (`models/*.ts`): luz, sombra de contacto, cámara
  * orbital, vistas con nombre y marcadores que siguen a las piezas.
  *
  * Se carga sólo cuando la portada lo pide (import dinámico): el resto del
@@ -13,22 +13,22 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { buildUp400St } from './up400st';
+import type { BuiltModel } from './types';
 
-export type ViewName = 'general' | 'pantalla' | 'sonotrodo' | 'lateral';
-export type AnchorName = 'screen' | 'tip' | 'transducer' | 'mount';
+export type AnchorPositions = Record<string, { x: number; y: number } | null>;
 
 export interface Showroom {
   setPower(on: boolean): void;
-  goTo(view: ViewName): void;
+  /** `general` o el nombre de una vista del modelo. */
+  goTo(view: string): void;
   /** Posición en píxeles del lienzo de cada ancla, o `null` si queda detrás. */
-  onFrame(callback: (anchors: Record<AnchorName, { x: number; y: number } | null>) => void): void;
+  onFrame(callback: (anchors: AnchorPositions) => void): void;
   dispose(): void;
 }
 
 const MM = 0.01;
 
-export function createShowroom(canvas: HTMLCanvasElement): Showroom {
+export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Showroom {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -69,11 +69,11 @@ export function createShowroom(canvas: HTMLCanvasElement): Showroom {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const model = buildUp400St();
+  const yaw = model.yaw ?? 0.55;
   const stage = new THREE.Group();
   stage.add(model.root);
   stage.scale.setScalar(MM);
-  stage.rotation.y = 0.55;
+  stage.rotation.y = yaw;
   scene.add(stage);
 
   // Centrar el conjunto sobre el origen, apoyado en el suelo.
@@ -87,35 +87,32 @@ export function createShowroom(canvas: HTMLCanvasElement): Showroom {
   /* ── vistas, calculadas desde las piezas y no a mano ── */
   const world = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3());
   const worldDir = (v: THREE.Vector3) => v.clone().transformDirection(stage.matrixWorld);
-  // La vista general encuadra el conjunto entero (sin la varilla por encima
-  // del equipo) con un margen, en alto y en ancho según el lienzo.
+
+  // La vista general encuadra el conjunto entero (hasta `frameTop`, si el
+  // modelo lo da) con un margen, en alto y en ancho según el lienzo.
   const framed = new THREE.Box3().setFromObject(model.root);
-  framed.max.y = world(model.anchors.body).y + 1.3;
+  if (model.frameTop !== undefined) framed.max.y = Math.min(framed.max.y, model.frameTop * MM);
   const framedSize = framed.getSize(new THREE.Vector3());
 
-  const views = (): Record<ViewName, { pos: THREE.Vector3; at: THREE.Vector3 }> => {
-    const general = framed.getCenter(new THREE.Vector3());
+  const general = () => {
+    const at = framed.getCenter(new THREE.Vector3());
     const half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     const across = Math.hypot(framedSize.x, framedSize.z) * 0.8;
     const distance = Math.max(framedSize.y / 2 / half, across / 2 / (half * camera.aspect)) * 1.18;
-    const screenAt = world(model.anchors.screen);
-    const tipAt = world(model.anchors.tip);
-    const bodyAt = world(model.anchors.body);
-    const screenDir = worldDir(model.normals.screen).add(new THREE.Vector3(0, 0.25, 0)).normalize();
-    const sideDir = worldDir(model.normals.side).add(new THREE.Vector3(0.15, 0.1, 0)).normalize();
-    return {
-      general: { at: general, pos: general.clone().add(new THREE.Vector3(0.32, 0.18, 1).normalize().multiplyScalar(distance)) },
-      pantalla: { at: screenAt, pos: screenAt.clone().addScaledVector(screenDir, 2.4) },
-      sonotrodo: { at: tipAt.clone().add(new THREE.Vector3(0, 0.15, 0)), pos: tipAt.clone().add(new THREE.Vector3(1.4, 0.55, 2.6)) },
-      lateral: { at: bodyAt, pos: bodyAt.clone().addScaledVector(sideDir, 6.5) },
-    };
+    return { at, pos: at.clone().add(new THREE.Vector3(0.32, 0.18, 1).normalize().multiplyScalar(distance)) };
+  };
+  const viewFor = (name: string) => {
+    const view = model.views[name];
+    if (!view) return general();
+    const at = world(view.target);
+    return { at, pos: at.clone().addScaledVector(worldDir(view.direction).normalize(), view.distance * MM) };
   };
 
   let tween: { fromP: THREE.Vector3; fromT: THREE.Vector3; toP: THREE.Vector3; toT: THREE.Vector3; t: number } | null = null;
   let idle = true;
-  const goTo = (name: ViewName) => {
+  const goTo = (name: string) => {
     idle = name === 'general' && idle;
-    const v = views()[name];
+    const v = viewFor(name);
     tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0 };
   };
   canvas.addEventListener('pointerdown', () => {
@@ -131,7 +128,7 @@ export function createShowroom(canvas: HTMLCanvasElement): Showroom {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     if (idle && !tween) {
-      const v = views().general;
+      const v = general();
       camera.position.copy(v.pos);
       controls.target.copy(v.at);
     }
@@ -154,12 +151,7 @@ export function createShowroom(canvas: HTMLCanvasElement): Showroom {
   let raf = 0;
   let last = performance.now();
   let frameCallback: Parameters<Showroom['onFrame']>[0] | null = null;
-  const anchorObjects: Record<AnchorName, THREE.Object3D> = {
-    screen: model.anchors.screen,
-    tip: model.anchors.tip,
-    transducer: model.anchors.transducer,
-    mount: model.anchors.mount,
-  };
+  const anchorNames = Object.keys(model.anchors);
 
   const frame = (now: number) => {
     raf = 0;
@@ -175,7 +167,7 @@ export function createShowroom(canvas: HTMLCanvasElement): Showroom {
       controls.target.lerpVectors(tween.fromT, tween.toT, e);
       if (tween.t >= 1) tween = null;
     } else if (idle) {
-      stage.rotation.y = 0.55 + Math.sin(t * 0.25) * 0.18;
+      stage.rotation.y = yaw + Math.sin(t * 0.25) * 0.18;
     }
     controls.update();
     model.update(dt, t, level);
@@ -183,9 +175,9 @@ export function createShowroom(canvas: HTMLCanvasElement): Showroom {
     if (frameCallback) {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      const out = {} as Record<AnchorName, { x: number; y: number } | null>;
-      for (const name of Object.keys(anchorObjects) as AnchorName[]) {
-        const p = world(anchorObjects[name]).project(camera);
+      const out: AnchorPositions = {};
+      for (const name of anchorNames) {
+        const p = world(model.anchors[name]).project(camera);
         out[name] = p.z < 1 ? { x: ((p.x + 1) / 2) * w, y: ((1 - p.y) / 2) * h } : null;
       }
       frameCallback(out);

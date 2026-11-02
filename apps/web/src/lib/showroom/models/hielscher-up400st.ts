@@ -18,84 +18,14 @@
  * objeto y expone las piezas que la escena necesita animar o señalar.
  */
 import * as THREE from 'three';
-
-export interface Up400St {
-  /** Todo el conjunto, en milímetros. */
-  root: THREE.Group;
-  /** Puntos que la escena señala con un marcador y a los que lleva la cámara. */
-  anchors: {
-    screen: THREE.Object3D;
-    tip: THREE.Object3D;
-    transducer: THREE.Object3D;
-    mount: THREE.Object3D;
-    body: THREE.Object3D;
-  };
-  /** Normales hacia fuera de la pantalla y del costado rotulado, en el marco del conjunto. */
-  normals: { screen: THREE.Vector3; side: THREE.Vector3 };
-  /** Avanza la animación; `level` va de 0 (apagado) a 1 (sonicando). */
-  update(dt: number, t: number, level: number): void;
-  setPower(on: boolean): void;
-  dispose(): void;
-}
+import type { BuiltModel } from '../types';
+import { SANS, canvasTexture, lathe, roundedBox, type Draw } from './kit';
 
 const W = 144;
 const D = 184;
 const H = 183;
 const BEVEL = 5;
-const SANS = '"Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif';
-
-type Draw = (g: CanvasRenderingContext2D, w: number, h: number) => void;
-
-function canvasTexture(w: number, h: number, draw: Draw) {
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const g = canvas.getContext('2d')!;
-  draw(g, w, h);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return {
-    texture,
-    redraw() {
-      draw(g, w, h);
-      texture.needsUpdate = true;
-    },
-  };
-}
-
-function roundedBox(w: number, h: number, d: number, r: number) {
-  const s = new THREE.Shape();
-  const x = -w / 2;
-  const y = -h / 2;
-  s.moveTo(x + r, y);
-  s.lineTo(x + w - r, y);
-  s.quadraticCurveTo(x + w, y, x + w, y + r);
-  s.lineTo(x + w, y + h - r);
-  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  s.lineTo(x + r, y + h);
-  s.quadraticCurveTo(x, y + h, x, y + h - r);
-  s.lineTo(x, y + r);
-  s.quadraticCurveTo(x, y, x + r, y);
-  const g = new THREE.ExtrudeGeometry(s, {
-    depth: d - 2 * r,
-    bevelEnabled: true,
-    bevelSize: r,
-    bevelThickness: r,
-    bevelSegments: 4,
-  });
-  g.translate(0, 0, -(d - 2 * r) / 2);
-  return g;
-}
-
-function lathe(points: [number, number][], segments = 96) {
-  return new THREE.LatheGeometry(
-    points.map(([r, y]) => new THREE.Vector2(r, y)),
-    segments,
-  );
-}
-
-export function buildUp400St(): Up400St {
+export function build(): BuiltModel {
   const root = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
   const keep = <T extends { dispose(): void }>(item: T) => {
@@ -619,8 +549,13 @@ export function buildUp400St(): Up400St {
 
   return {
     root,
-    anchors: { screen: screenAnchor, tip, transducer, mount: star, body: bodyAnchor },
-    normals: { screen: outward.clone(), side: new THREE.Vector3(0, 0, 1) },
+    anchors: { screen: screenAnchor, tip, transducer, mount: star },
+    views: {
+      pantalla: { target: screenAnchor, direction: outward.clone().add(new THREE.Vector3(0, 0.25, 0)), distance: 240 },
+      sonotrodo: { target: tip, direction: new THREE.Vector3(0.45, 0.2, 1), distance: 300 },
+      lateral: { target: bodyAnchor, direction: new THREE.Vector3(0.15, 0.1, 1), distance: 650 },
+    },
+    frameTop: bodyY + H + 40,
     setPower(on) {
       powered = on;
       if (on) screenOn = true;

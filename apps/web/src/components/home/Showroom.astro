@@ -1,67 +1,36 @@
 ---
 import ModelPhoto from '../ui/ModelPhoto.astro';
-import { brandModels } from '../../data/brandModels';
-import { imageForModel } from '../../data/productImages';
+import { imageForModel, imageForProduct } from '../../data/productImages';
+import { showroomEntry } from '../../lib/showroom/catalog';
 
 /**
- * Sala de equipo de la portada: el Hielscher UP400St en 3D.
+ * Sala de equipo: un equipo modelado en 3D sobre su fotografía oficial.
  *
- * El modelo está construido en código con las medidas del plano de dimensiones
- * oficial (`src/lib/showroom/up400st.ts`). Se puede girar, encender y recorrer
- * por vistas, y cuatro marcadores explican sus partes.
+ * Cada modelo está construido en código con las medidas de la documentación
+ * del fabricante (`src/lib/showroom/models/`). Se puede girar, poner en marcha
+ * y recorrer por vistas, y unos marcadores numerados explican sus partes.
  *
  * Mejora progresiva estricta. Lo que llega en el HTML es la fotografía oficial
  * del equipo, con su fila VERIFIED, y el pie. La escena 3D sólo se carga si hay
  * WebGL, si el visitante no pidió movimiento reducido y cuando la figura está
  * cerca de la pantalla; hasta que dibuja su primer cuadro, la foto sigue ahí.
- * Sin JavaScript, la portada queda exactamente con la foto.
+ * Sin JavaScript, queda exactamente la foto.
  *
- * Las cifras de los marcadores no se escriben aquí: salen de los criterios del
- * modelo en `brandModels.ts`, que citan su fuente oficial.
+ * Los textos y las cifras de los marcadores no se escriben aquí: vienen de
+ * `src/lib/showroom/content/<id>.ts`, que los lee de los datos con fuente.
  */
-const MODEL_ID = 'hielscher-up400st';
-const model = brandModels.find((entry) => entry.id === MODEL_ID);
-const image = imageForModel(MODEL_ID);
-const criterion = (label: string) => model?.criteria.find((item) => item.label === label)?.value;
-
-const hotspots = [
-  {
-    anchor: 'screen',
-    title: 'Pantalla y registro',
-    body: [criterion('Registro'), criterion('Amplitud') && `Amplitud: ${criterion('Amplitud')?.toLowerCase()}`],
-    view: 'pantalla',
-  },
-  {
-    anchor: 'tip',
-    title: 'Sonotrodo intercambiable',
-    body: [criterion('Sonotrodos'), criterion('Volumen de muestra')],
-    view: 'sonotrodo',
-  },
-  {
-    anchor: 'transducer',
-    title: 'Potencia y frecuencia',
-    body: [[criterion('Potencia'), criterion('Frecuencia')].filter(Boolean).join(' · ')],
-    view: 'lateral',
-  },
-  {
-    anchor: 'mount',
-    title: 'Montaje en soporte',
-    body: ['Se fija a la varilla del soporte con una perilla; el sonotrodo queda centrado sobre el vaso.'],
-    view: 'general',
-  },
-].map((spot, index) => ({ ...spot, numeral: index + 1, body: spot.body.filter(Boolean) as string[] }));
-
-const views = [
-  { id: 'general', label: 'Vista general' },
-  { id: 'pantalla', label: 'Pantalla' },
-  { id: 'sonotrodo', label: 'Sonotrodo' },
-  { id: 'lateral', label: 'Lateral' },
-];
+interface Props {
+  id: string;
+}
+const entry = showroomEntry(Astro.props.id);
+const image = entry && ('modelId' in entry.photo ? imageForModel(entry.photo.modelId) : imageForProduct(entry.photo.productId));
+const hotspots = (entry?.hotspots ?? []).filter((spot) => spot.body.length > 0).map((spot, index) => ({ ...spot, numeral: index + 1 }));
+const domId = (part: string) => `sala-${entry?.id}-${part}`;
 ---
 
 {
-  model && image && (
-    <figure class="showroom" data-showroom aria-labelledby="showroom-caption">
+  entry && image && (
+    <figure class="showroom" data-showroom={entry.id} aria-labelledby={domId('pie')}>
       <div class="showroom__stage">
         <div class="showroom__photo" data-showroom-photo>
           <ModelPhoto image={image} size="hero" priority ratio="4 / 5" />
@@ -74,13 +43,13 @@ const views = [
                 type="button"
                 class="hotspot__dot"
                 aria-expanded="false"
-                aria-controls={`hotspot-${spot.anchor}`}
+                aria-controls={domId(spot.anchor)}
                 data-view={spot.view}
               >
                 <span aria-hidden="true">{spot.numeral}</span>
                 <span class="sr-only">{spot.title}</span>
               </button>
-              <div class="hotspot__note" id={`hotspot-${spot.anchor}`} role="note">
+              <div class="hotspot__note" id={domId(spot.anchor)} role="note">
                 <p class="hotspot__title">{spot.title}</p>
                 {spot.body.map((line) => <p>{line}</p>)}
               </div>
@@ -90,12 +59,14 @@ const views = [
       </div>
 
       <div class="showroom__bar" data-showroom-bar hidden>
-        <button type="button" class="showroom__power" data-showroom-power aria-pressed="false">
-          <span class="showroom__led" aria-hidden="true" />
-          <span data-power-label>Encender</span>
-        </button>
+        {entry.power ? (
+          <button type="button" class="showroom__power" data-showroom-power aria-pressed="false" data-on={entry.power.on} data-off={entry.power.off}>
+            <span class="showroom__led" aria-hidden="true" />
+            <span data-power-label>{entry.power.on}</span>
+          </button>
+        ) : <span />}
         <div class="showroom__views" role="group" aria-label="Vistas del equipo">
-          {views.map((view, index) => (
+          {entry.views.map((view, index) => (
             <button type="button" class="showroom__view" data-showroom-view={view.id} aria-pressed={index === 0 ? 'true' : 'false'}>
               {view.label}
             </button>
@@ -103,9 +74,9 @@ const views = [
         </div>
       </div>
 
-      <figcaption class="showroom__caption t-data" id="showroom-caption">
-        <span class="showroom__model">Hielscher {model.name}</span>
-        <span>Procesador ultrasónico</span>
+      <figcaption class="showroom__caption t-data" id={domId('pie')}>
+        <span class="showroom__model">{entry.brand} {entry.name}</span>
+        <span>{entry.kind}</span>
         <span class="showroom__mode" data-showroom-mode>Fotografía oficial del fabricante</span>
       </figcaption>
     </figure>
@@ -303,12 +274,13 @@ const views = [
 
 <script>
   /**
-   * Carga la escena 3D sólo cuando sirve: con WebGL, sin movimiento reducido y
-   * con la figura cerca de la pantalla. Hasta su primer cuadro la fotografía
-   * oficial sigue visible, de modo que un fallo de carga deja la portada como
-   * estaba y no en blanco.
+   * Carga cada escena 3D sólo cuando sirve: con WebGL, sin movimiento reducido
+   * y con la figura cerca de la pantalla. Hasta su primer cuadro la fotografía
+   * oficial sigue visible, de modo que un fallo de carga deja la página como
+   * estaba y no en blanco. Vale para una sala o para varias en la misma página.
    */
-  const figure = document.querySelector<HTMLElement>('[data-showroom]');
+  import { modelLoaders } from '../../lib/showroom/loaders';
+
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function webglAvailable() {
@@ -320,79 +292,81 @@ const views = [
     }
   }
 
-  if (figure && !reduced && webglAvailable()) {
+  async function boot(figure: HTMLElement) {
+    const id = figure.dataset.showroom ?? '';
+    const load = modelLoaders[id];
+    if (!load) return;
     const canvas = figure.querySelector<HTMLCanvasElement>('[data-showroom-canvas]')!;
     const hotspotLayer = figure.querySelector<HTMLElement>('[data-showroom-hotspots]')!;
     const bar = figure.querySelector<HTMLElement>('[data-showroom-bar]')!;
-    const power = figure.querySelector<HTMLButtonElement>('[data-showroom-power]')!;
-    const powerLabel = figure.querySelector<HTMLElement>('[data-power-label]')!;
+    const power = figure.querySelector<HTMLButtonElement>('[data-showroom-power]');
+    const powerLabel = figure.querySelector<HTMLElement>('[data-power-label]');
     const mode = figure.querySelector<HTMLElement>('[data-showroom-mode]')!;
     const viewButtons = Array.from(figure.querySelectorAll<HTMLButtonElement>('[data-showroom-view]'));
     const spots = Array.from(figure.querySelectorAll<HTMLElement>('.hotspot'));
+    try {
+      await document.fonts.ready;
+      const [{ createShowroom }, module] = await Promise.all([import('../../lib/showroom/scene'), load()]);
+      canvas.hidden = false;
+      const room = createShowroom(canvas, module.build());
 
-    const boot = async () => {
-      try {
-        await document.fonts.ready;
-        const { createShowroom } = await import('../../lib/showroom/scene');
-        canvas.hidden = false;
-        const room = createShowroom(canvas);
-        type View = Parameters<typeof room.goTo>[0];
+      const setView = (view: string) => {
+        room.goTo(view);
+        for (const button of viewButtons) button.setAttribute('aria-pressed', String(button.dataset.showroomView === view));
+      };
+      for (const button of viewButtons) button.addEventListener('click', () => setView(button.dataset.showroomView ?? 'general'));
 
-        const setView = (id: View) => {
-          room.goTo(id);
-          for (const button of viewButtons) button.setAttribute('aria-pressed', String(button.dataset.showroomView === id));
-        };
-        for (const button of viewButtons) button.addEventListener('click', () => setView(button.dataset.showroomView as View));
+      power?.addEventListener('click', () => {
+        const on = power.getAttribute('aria-pressed') !== 'true';
+        power.setAttribute('aria-pressed', String(on));
+        if (powerLabel) powerLabel.textContent = (on ? power.dataset.off : power.dataset.on) ?? '';
+        room.setPower(on);
+      });
 
-        power.addEventListener('click', () => {
-          const on = power.getAttribute('aria-pressed') !== 'true';
-          power.setAttribute('aria-pressed', String(on));
-          powerLabel.textContent = on ? 'Apagar' : 'Encender';
-          room.setPower(on);
-        });
-
-        for (const spot of spots) {
-          const dot = spot.querySelector<HTMLButtonElement>('.hotspot__dot')!;
-          dot.addEventListener('click', () => {
-            const open = dot.getAttribute('aria-expanded') === 'true';
-            for (const other of spots) other.querySelector('.hotspot__dot')!.setAttribute('aria-expanded', 'false');
-            if (!open) {
-              dot.setAttribute('aria-expanded', 'true');
-              setView(dot.dataset.view as View);
-            }
-          });
-        }
-
-        let first = true;
-        room.onFrame((anchors) => {
-          for (const spot of spots) {
-            const at = anchors[spot.dataset.anchor as keyof typeof anchors];
-            spot.toggleAttribute('data-hidden', !at);
-            if (at) spot.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
-          }
-          if (first) {
-            first = false;
-            figure.setAttribute('data-ready', '');
-            hotspotLayer.hidden = false;
-            bar.hidden = false;
-            mode.textContent = 'Modelo 3D con las medidas del plano oficial · arrastre para girar';
+      for (const spot of spots) {
+        const dot = spot.querySelector<HTMLButtonElement>('.hotspot__dot')!;
+        dot.addEventListener('click', () => {
+          const open = dot.getAttribute('aria-expanded') === 'true';
+          for (const other of spots) other.querySelector('.hotspot__dot')!.setAttribute('aria-expanded', 'false');
+          if (!open) {
+            dot.setAttribute('aria-expanded', 'true');
+            setView(dot.dataset.view ?? 'general');
           }
         });
-      } catch (error) {
-        canvas.hidden = true;
-        console.warn('Sala 3D no disponible; queda la fotografía.', error);
       }
-    };
 
+      let first = true;
+      room.onFrame((anchors) => {
+        for (const spot of spots) {
+          const at = anchors[spot.dataset.anchor ?? ''];
+          spot.toggleAttribute('data-hidden', !at);
+          if (at) spot.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
+        }
+        if (first) {
+          first = false;
+          figure.setAttribute('data-ready', '');
+          hotspotLayer.hidden = false;
+          bar.hidden = false;
+          mode.textContent = 'Modelo 3D con las medidas del fabricante · arrastre para girar';
+        }
+      });
+    } catch (error) {
+      canvas.hidden = true;
+      console.warn(`Sala 3D «${id}» no disponible; queda la fotografía.`, error);
+    }
+  }
+
+  if (!reduced && webglAvailable()) {
     const near = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          near.disconnect();
-          void boot();
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          near.unobserve(entry.target);
+          void boot(entry.target as HTMLElement);
         }
       },
       { rootMargin: '200px' },
     );
-    near.observe(figure);
+    for (const figure of document.querySelectorAll<HTMLElement>('[data-showroom]')) near.observe(figure);
   }
 </script>

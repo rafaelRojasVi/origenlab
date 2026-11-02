@@ -1,9 +1,11 @@
 User-agent: *
 Allow: /
 
-# Superficies internas: página de trabajo de marca y fuentes HTML de la firma
-# de correo. Se sirven porque el hosting es estático, pero no son parte del sitio.
+# Superficies internas: página de trabajo de marca, sala de pruebas de los
+# modelos 3D y fuentes HTML de la firma de correo. Se sirven porque el hosting
+# es estático, pero no son parte del sitio.
 Disallow: /logo-lab/
+Disallow: /sala-lab/
 Disallow: /email/
 
 # Páginas legales: existen y se enlazan, pero no se indexan mientras falte la
