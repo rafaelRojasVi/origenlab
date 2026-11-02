@@ -32,8 +32,10 @@
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/three": "0.170.0",
     "astro": "^7.4.0",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "three": "0.170.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

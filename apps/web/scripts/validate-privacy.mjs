@@ -125,7 +125,11 @@ for (const file of pages) {
 for (const file of scripts) {
   const body = readFileSync(file, 'utf8');
   const rel = relative(dist, file);
-  const remote = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)]
+  // Los URI de espacio de nombres XML del W3C (`http://www.w3.org/2000/svg`)
+  // son identificadores que el navegador nunca pide; three.js crea elementos con
+  // ellos. Se exceptúan sólo esos, por su forma exacta.
+  const remote = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)(\/[^"'`]*)?/gi)]
+    .filter((match) => !(match[2] === 'www.w3.org' && /^\/(1999\/xhtml|2000\/svg|1998\/Math\/MathML|1999\/xlink|XML\/1998\/namespace)$/.test(match[3] ?? '')))
     .map((match) => match[2])
     .filter((host) => host && !host.endsWith('origenlab.cl'));
   assert(remote.length === 0, `${rel}: sin destino remoto${remote.length ? ` (${[...new Set(remote)].join(', ')})` : ''}`);

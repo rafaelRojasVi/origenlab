@@ -69,8 +69,10 @@ Reglas: un solo acento en todo el sitio; sin degradados; el color nunca es el
 
 #### Las seis tintas de familia
 
-Añadidas en la revisión del 2026-09-07 y **sólo** para la constelación del hero
-y la fila del índice que le corresponde. No aparecen en ningún otro sitio.
+Añadidas en la revisión del 2026-09-07 para la constelación del hero, que el
+2026-11-02 dejó su sitio a la sala 3D. Hoy sólo `family-sonicacion` se usa, en
+los marcadores de la sala 3D (el equipo que muestra es de esa familia). No
+aparecen en ningún otro sitio.
 
 | Token | Valor | Familia | Sobre `paper` |
 |---|---|---|---|
@@ -139,15 +141,19 @@ un tercero exige la misma justificación que estos dos:
    script, y el movimiento no existe hasta que el script marca el riel: sin
    script no hay control y por tanto tampoco movimiento.
 
-**La constelación del hero no es un bucle.** Todo su movimiento es respuesta a
-una acción: `transform: scale` y `opacity` sobre el nodo y su conector. Con
-`prefers-reduced-motion: reduce` desaparecen las transiciones, el estado cambia
-de golpe y la relación entre el diagrama y el índice sigue funcionando.
+**La sala 3D del hero** (2026-11-02) es la única escena con movimiento continuo
+y es mejora progresiva: el HTML trae la fotografía oficial del equipo y
+three.js se pide con `import()` sólo con WebGL, sin
+`prefers-reduced-motion: reduce` y cuando la figura se acerca a la pantalla. El
+bucle se detiene fuera de pantalla y con la pestaña oculta. Fuera del lienzo
+todo son botones normales con `aria-pressed` y `aria-expanded`. El fragmento se
+mide aparte del presupuesto de 15 kB (`validate:dist`), porque no forma parte
+de la carga de ninguna página.
 
 Medido en la revisión del 2026-09-07: CLS 0,0000 en las seis rutas principales a
 390, 768 y 1440 px, y ni un píxel de desplazamiento horizontal. Todo lo que se
-mueve compone (`transform` y `opacity`) y la caja de la constelación reserva su
-alto con `aspect-ratio`.
+mueve compone (`transform` y `opacity`) y la caja de la sala 3D reserva su alto
+con `aspect-ratio`.
 
 **Revelado al desplazarse** (`[data-reveal]`, definido en `global.css`): una
 transición de opacidad y 12 px de desplazamiento vertical cuando el elemento
@@ -226,7 +232,7 @@ estas resuelve el problema.
 | `ui/LegalDraftNotice` | Estado de borrador de las rutas legales |
 | `ui/PendingFactsTable` | Datos legales que faltan, nombrados uno a uno |
 | `home/Hero` | Portada: titular a escala propia, constelación e índice de alcance enlazado |
-| `home/SampleConstellation` | La marca como ancla y seis nodos de capacidad, unidos al índice del hero |
+| `home/Showroom` | El equipo en 3D (Hielscher UP400St, medidas del plano oficial) sobre la fotografía oficial como respaldo; se gira, se enciende y se recorre por vistas |
 | `home/BrandRail` | Riel horizontal de las siete marcas, una sola altura, gris, con control de pausa |
 | `home/EquipmentFamilies` | Las seis familias, en cuatro composiciones distintas |
 | `home/FamilyMotif` | Diagrama de qué le hace el equipo a la muestra, para las familias sin fotografía |
@@ -283,8 +289,8 @@ en blanco al llegar.
 
 - Fichas dentro de fichas, o una rejilla de tres fichas iguales.
 - Un segundo verde, un degradado, una sombra o un segundo radio. Las seis tintas
-  de familia no son un segundo acento: viven sólo en la constelación del hero y
-  en su índice, y centrifugación reutiliza el teal del sistema.
+  de familia no son un segundo acento: sólo `family-sonicacion` sigue en uso, en
+  los marcadores de la sala 3D del hero.
 - Versalitas con tracking fuera del rol `.t-label`.
 - Repetir el aviso de disponibilidad en cada fila.
 - Cualquier script, tipografía o imagen servida desde un tercero.

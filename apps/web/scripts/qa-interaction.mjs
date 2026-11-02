@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * QA de interacción sobre `dist/`: teclado, menú móvil, constelación del hero,
+ * QA de interacción sobre `dist/`: teclado, menú móvil, sala 3D del hero,
  * riel de marcas, movimiento reducido y enlaces internos. Complementa
  * `qa-screenshots.mjs`, que cubre la parte visual.
  *
@@ -48,7 +48,8 @@ const server = createServer((req, res) => {
 });
 await new Promise((resolve) => server.listen(0, resolve));
 const base = `http://localhost:${server.address().port}`;
-const browser = await chromium.launch();
+// WebGL por software, para que la sala 3D también arranque sin GPU.
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 
 /* -- 1. Menú móvil: abrir, Escape, clic fuera, foco de vuelta -------------- */
 console.log('\nMenú móvil (375 px)');
@@ -153,102 +154,85 @@ console.log('\nTeclado (1440 px)');
   await context.close();
 }
 
-/* -- 2a. Constelación del hero: la relación va en las dos direcciones ----- */
+/* -- 2a. Sala 3D del hero e índice de alcance ------------------------------ */
 
 /**
- * El diagrama no es decoración: es la mitad de una interacción cuya otra mitad
- * es el índice de alcance. Si el vínculo se rompe queda un dibujo de seis
- * puntos y una tabla, y la página sigue pareciendo correcta. De ahí esta
- * sección.
+ * La sala 3D es mejora progresiva: el HTML trae la fotografía oficial y la
+ * escena sólo la sustituye cuando ha dibujado su primer cuadro. Se comprueba
+ * que llegue, que sus controles sean botones normales con estado anunciado,
+ * que el lienzo no aporte nada a tecnologías de asistencia y que no pida nada
+ * fuera del dominio.
  *
- * También se comprueba lo que no debe pasar: que el diagrama, que lleva
- * `aria-hidden`, no aporte nada enfocable ni un segundo juego de enlaces.
+ * El índice de familias sigue debajo: seis filas, seis destinos internos.
  */
-console.log('\nConstelación del hero (1440 px)');
+console.log('\nSala 3D del hero (1440 px)');
 {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
+  const foreign = [];
+  page.on('request', (request) => {
+    if (!request.url().startsWith(base)) foreign.push(request.url());
+  });
   await page.goto(`${base}/`, { waitUntil: 'load' });
 
-  const figure = page.locator('[data-constellation]');
-  check(await figure.count() === 1, 'hay una constelación en la portada');
+  const figure = page.locator('[data-showroom]');
+  check(await figure.count() === 1, 'hay una sala de equipo en la portada');
   check(
-    await figure.evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
-    'el diagrama está oculto a tecnologías de asistencia',
+    await figure.locator('[data-showroom-photo] img').count() === 1,
+    'la fotografía oficial llega en el HTML, antes de cualquier script',
   );
   check(
-    await figure.locator('a, button, [tabindex]').count() === 0,
-    'el diagrama no aporta nada enfocable (los enlaces son las filas)',
+    await figure.locator('[data-showroom-canvas]').evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
+    'el lienzo 3D está oculto a tecnologías de asistencia',
   );
 
-  const nodes = page.locator('[data-family-node]');
+  await figure.scrollIntoViewIfNeeded();
+  const ready = await figure
+    .evaluate((el) => new Promise((resolve) => {
+      if (el.hasAttribute('data-ready')) return resolve(true);
+      const watch = new MutationObserver(() => el.hasAttribute('data-ready') && resolve(true));
+      watch.observe(el, { attributes: true });
+      setTimeout(() => resolve(false), 20000);
+    }));
+  check(ready, 'la escena 3D dibuja y sustituye a la fotografía');
+
+  if (ready) {
+    const power = figure.locator('[data-showroom-power]');
+    check(await power.isVisible(), 'el botón de encendido es visible');
+    await power.click();
+    check(await power.getAttribute('aria-pressed') === 'true', 'encender anuncia el estado');
+    await power.click();
+    check(await power.getAttribute('aria-pressed') === 'false', 'y apagar también');
+
+    const views = figure.locator('[data-showroom-view]');
+    check(await views.count() === 4, `cuatro vistas (${await views.count()})`);
+    await views.nth(2).click();
+    const pressed = await views.evaluateAll((els) => els.map((el) => el.getAttribute('aria-pressed')));
+    check(
+      pressed.filter((value) => value === 'true').length === 1 && pressed[2] === 'true',
+      `sólo la vista elegida queda marcada (${pressed.join(', ')})`,
+    );
+
+    const dots = figure.locator('.hotspot__dot');
+    check(await dots.count() === 4, `cuatro marcadores (${await dots.count()})`);
+    await dots.first().focus();
+    await page.keyboard.press('Enter');
+    check(await dots.first().getAttribute('aria-expanded') === 'true', 'un marcador se abre con el teclado');
+    const note = await dots.first().getAttribute('aria-controls');
+    // La nota entra con una transición corta: se espera a que termine.
+    const shown = Boolean(note) && await page.locator(`#${note}`).waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
+    check(shown, 'y su nota queda visible');
+  }
+  check(foreign.length === 0, `la sala no pide nada fuera del dominio (${foreign.join(', ') || 'nada'})`);
+
   const rows = page.locator('[data-family-row]');
-  check(await nodes.count() === 6, `seis nodos de capacidad (${await nodes.count()})`);
   check(await rows.count() === 6, `seis filas de índice (${await rows.count()})`);
-
-  // Cada fila es un enlace con destino propio, y ninguna repite el destino.
   const hrefs = await rows.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
   check(
     hrefs.every((href) => typeof href === 'string' && href.startsWith('/') && href.endsWith('/')),
     `las seis filas llevan a una ruta interna (${hrefs.join(', ')})`,
   );
   check(new Set(hrefs).size === 6, 'las seis filas llevan a destinos distintos');
-
-  // Los nodos no son equidistantes: seis puntos repartidos en sextos se leerían
-  // como un ciclo, y el mensaje de la portada es el contrario.
-  const radii = await nodes.evaluateAll((els) =>
-    els.map((el) => {
-      const parent = el.parentElement.getBoundingClientRect();
-      const box = el.getBoundingClientRect();
-      const cx = parent.left + parent.width / 2;
-      const cy = parent.top + parent.height / 2;
-      return Math.round(Math.hypot(box.left + box.width / 2 - cx, box.top + box.height / 2 - cy));
-    }),
-  );
-  const spread = Math.max(...radii) - Math.min(...radii);
-  check(spread > 8, `los nodos están a radios distintos, no en un círculo (${spread} px de diferencia)`);
-
-  // Del índice al diagrama.
-  const first = rows.first();
-  const familyId = await first.evaluate((el) => el.dataset.familyRow);
-  await first.hover();
-  check(
-    await figure.evaluate((el) => el.hasAttribute('data-active')),
-    'el cursor sobre una fila enciende el diagrama',
-  );
-  check(
-    await page.locator(`[data-family-node="${familyId}"]`).evaluate((el) =>
-      el.hasAttribute('data-node-active'),
-    ),
-    'se enciende el nodo de esa familia y no otro',
-  );
-  await page.mouse.move(0, 0);
-  check(
-    !(await figure.evaluate((el) => el.hasAttribute('data-active'))),
-    'al salir el cursor el diagrama vuelve a reposo',
-  );
-
-  // Con el teclado, que es el caso que se rompe sin que nadie lo note.
-  await first.focus();
-  check(
-    await first.evaluate((el) => el.hasAttribute('data-row-active')),
-    'el foco de teclado en una fila la marca activa',
-  );
-  check(
-    await page.locator(`[data-family-node="${familyId}"]`).evaluate((el) =>
-      el.hasAttribute('data-node-active'),
-    ),
-    'y enciende su nodo en el diagrama',
-  );
-
-  // Del diagrama al índice.
-  await page.locator(`[data-family-node="${familyId}"]`).hover();
-  check(
-    await page.locator(`[data-family-row="${familyId}"]`).evaluate((el) =>
-      el.hasAttribute('data-row-active'),
-    ),
-    'apuntar un nodo enciende su fila del índice',
-  );
 
   await context.close();
 }
@@ -380,22 +364,16 @@ console.log('\nMovimiento reducido');
   const smooth = await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior);
   check(smooth !== 'smooth', `scroll-behavior es "${smooth}"`);
 
-  // La constelación conserva la interacción y pierde el movimiento: el estado
-  // cambia de golpe, que sigue siendo legible.
-  const figure = page.locator('[data-constellation]');
-  const transitions = await page
-    .locator('[data-family-node] .cnode__dot')
-    .evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).transitionDuration))]);
+  // Con movimiento reducido la sala 3D no se carga: queda la fotografía oficial.
+  const showroom = page.locator('[data-showroom]');
+  await showroom.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(1500);
+  check(!(await showroom.evaluate((el) => el.hasAttribute('data-ready'))), 'la escena 3D no arranca');
+  check(await showroom.locator('[data-showroom-photo] img').isVisible(), 'la fotografía del equipo sigue visible');
   check(
-    transitions.every((value) => value === '0s'),
-    `los nodos no tienen transición con movimiento reducido (${transitions.join(', ')})`,
+    !(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /\/scene\.[\w-]+\.js/.test(entry.name)))),
+    'el fragmento de three.js no se descarga',
   );
-  await page.locator('[data-family-row]').first().hover();
-  check(
-    await figure.evaluate((el) => el.hasAttribute('data-active')),
-    'la relación fila-nodo sigue funcionando con movimiento reducido',
-  );
-  await page.mouse.move(0, 0);
 
   // El riel tiene que ser una fila estática legible, no una marquesina parada:
   // sin copia del bucle, sin control que no controla nada, y con las siete

@@ -270,12 +270,28 @@ for (const route of SUPPRESSED_ROUTES) {
 
 /* -- Peso ----------------------------------------------------------------- */
 
-const js = walk(dist, '.js').reduce((total, file) => total + statSync(file).size, 0);
+/*
+ * La sala 3D de la portada (three.js y el modelo) es la única excepción al
+ * presupuesto, y sólo porque no forma parte de la carga de ninguna página: es
+ * un fragmento que se pide con `import()` cuando la figura se acerca a la
+ * pantalla, nunca con movimiento reducido. Se mide aparte, con su propio techo,
+ * y se comprueba que ningún HTML lo enlace directamente.
+ */
+const onDemand = (file) => /^scene\.[\w-]+\.js$/.test(file.split(/[\\/]/).pop());
+const jsFiles = walk(dist, '.js');
+const js = jsFiles.filter((file) => !onDemand(file)).reduce((total, file) => total + statSync(file).size, 0);
+const scene = jsFiles.filter(onDemand).reduce((total, file) => total + statSync(file).size, 0);
+for (const file of walk(dist, '.html')) {
+  const html = readFileSync(file, 'utf8');
+  assert(!/<script[^>]+src="[^"]*\/scene\.[\w-]+\.js"/.test(html) && !/rel="modulepreload"[^>]+scene\./.test(html),
+    `${relative(dist, file)}: la sala 3D se enlaza en la carga inicial`);
+}
 const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).size, 0);
 // Bytes, informados en kB de 1.000 para que el mensaje y el límite usen la misma unidad.
 // CSS 64 kB: Astro 7.4 dejó el CSS en 60.012 bytes (2026-10-22), 12 sobre el límite anterior.
 const kb = (bytes) => (bytes / 1000).toFixed(1);
 assert(js < 15_000, `dist: ${kb(js)} kB de JavaScript (presupuesto 15 kB)`);
+assert(scene < 600_000, `dist: ${kb(scene)} kB en la sala 3D bajo demanda (techo 600 kB)`);
 assert(css < 64_000, `dist: ${kb(css)} kB de CSS (presupuesto 64 kB)`);
 
 if (failed) {
