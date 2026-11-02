@@ -5,9 +5,9 @@ Checked properties:
 * Query string never logged.
 * Server-Timing response header carries ``db;dur=…;desc="N queries"``.
 * Query counters reset between requests.
-* Slow requests log at INFO; fast requests log at DEBUG.
-* High query-count logs at INFO (N+1 signal); normal count logs at DEBUG.
-* Health path never escalates to INFO.
+* Every request logs at INFO; a slow one is a WARNING marked ``SLOW``.
+* A high query count is a WARNING marked ``MANY_QUERIES`` (N+1 signal).
+* Health path stays at DEBUG.
 * No query string or body in any log line.
 """
 from __future__ import annotations
@@ -165,21 +165,22 @@ def test_query_counters_reset_between_requests(caplog) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Threshold logic — INFO vs DEBUG
+# Threshold logic — INFO vs WARNING
 # ---------------------------------------------------------------------------
 
-def test_fast_request_logs_at_debug(caplog) -> None:
-    """A request faster than the threshold is logged at DEBUG, not INFO."""
+def test_fast_request_logs_at_info(caplog) -> None:
+    """A request under both thresholds keeps its plain INFO line, as before tracing."""
     # Use a very high threshold so the test request is always "fast".
     client = TestClient(_app(slow_ms=100_000))
     with caplog.at_level(logging.DEBUG, logger="origenlab_api.request_tracing"):
         client.get("/v2/cases/abc")
     assert caplog.records
-    assert caplog.records[0].levelno == logging.DEBUG
+    assert caplog.records[0].levelno == logging.INFO
+    assert "SLOW" not in caplog.records[0].getMessage()
 
 
-def test_slow_request_logs_at_info(caplog) -> None:
-    """A request that exceeds the slow threshold is logged at INFO."""
+def test_slow_request_logs_a_marked_warning(caplog) -> None:
+    """A request that exceeds the slow threshold is a WARNING marked SLOW."""
     import time
 
     app = FastAPI()
@@ -197,13 +198,14 @@ def test_slow_request_logs_at_info(caplog) -> None:
     with caplog.at_level(logging.DEBUG, logger="origenlab_api.request_tracing"):
         client.get("/slow")
     assert caplog.records
-    assert caplog.records[0].levelno == logging.INFO, (
-        f"expected INFO for slow request, got {caplog.records[0].levelno}"
+    assert caplog.records[0].levelno == logging.WARNING, (
+        f"expected WARNING for slow request, got {caplog.records[0].levelno}"
     )
+    assert caplog.records[0].getMessage().endswith(" SLOW")
 
 
-def test_high_query_count_logs_at_info(caplog) -> None:
-    """A request with more queries than the threshold is logged at INFO."""
+def test_high_query_count_logs_a_marked_warning(caplog) -> None:
+    """A request with more queries than the threshold is a WARNING marked MANY_QUERIES."""
     app = FastAPI()
     app.add_middleware(
         RequestTracingMiddleware,
@@ -221,13 +223,14 @@ def test_high_query_count_logs_at_info(caplog) -> None:
     with caplog.at_level(logging.DEBUG, logger="origenlab_api.request_tracing"):
         client.get("/many")
     assert caplog.records
-    assert caplog.records[0].levelno == logging.INFO, (
-        f"expected INFO for high query count, got {caplog.records[0].levelno}"
+    assert caplog.records[0].levelno == logging.WARNING, (
+        f"expected WARNING for high query count, got {caplog.records[0].levelno}"
     )
+    assert caplog.records[0].getMessage().endswith(" 5q 5ms MANY_QUERIES")
 
 
-def test_normal_query_count_logs_at_debug(caplog) -> None:
-    """A request with fewer queries than the threshold is logged at DEBUG."""
+def test_normal_query_count_logs_at_info(caplog) -> None:
+    """A request with fewer queries than the threshold keeps its plain INFO line."""
     app = FastAPI()
     app.add_middleware(
         RequestTracingMiddleware,
@@ -245,15 +248,15 @@ def test_normal_query_count_logs_at_debug(caplog) -> None:
     with caplog.at_level(logging.DEBUG, logger="origenlab_api.request_tracing"):
         client.get("/few")
     assert caplog.records
-    assert caplog.records[0].levelno == logging.DEBUG
+    assert caplog.records[0].levelno == logging.INFO
 
 
 # ---------------------------------------------------------------------------
-# Health endpoint is exempt from INFO escalation
+# Health endpoint stays at DEBUG
 # ---------------------------------------------------------------------------
 
 def test_health_always_debug_even_when_slow(caplog) -> None:
-    """The /health path never escalates to INFO regardless of duration or count."""
+    """The /health path stays at DEBUG regardless of duration or count."""
     import time
 
     app = FastAPI()
@@ -272,7 +275,7 @@ def test_health_always_debug_even_when_slow(caplog) -> None:
         client.get("/health")
     assert caplog.records
     assert caplog.records[0].levelno == logging.DEBUG, (
-        "health endpoint must not log at INFO"
+        "health endpoint must stay at DEBUG"
     )
 
 

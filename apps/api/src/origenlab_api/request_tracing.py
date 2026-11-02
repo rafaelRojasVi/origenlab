@@ -32,8 +32,8 @@ from origenlab_api.query_counter import get_request_stats, reset_request_stats
 from origenlab_api.response_timing import is_untimed_path
 
 logger = logging.getLogger(__name__)
-# Match the pattern in request_logging.py: add a stderr handler at INFO so the
-# line appears in Render logs even when uvicorn has not configured this logger.
+# Uvicorn configures only its own loggers, and an unconfigured one inherits the root's WARNING:
+# without its own stderr handler at INFO, every per-request line was dropped in production.
 # DEBUG lines reach pytest's caplog but not production stderr (filtered by level).
 if not logger.handlers:
     _handler = logging.StreamHandler(sys.stderr)
@@ -128,20 +128,27 @@ class RequestTracingMiddleware:
             is_high_query = query_count >= self._high_query
             is_health = path == _HEALTH_PATH
 
-            level = logging.DEBUG
-            if (is_slow or is_high_query) and not is_health:
+            # Every request keeps its INFO line in Render's log view; a slow or query-heavy one is
+            # a WARNING with a marker to search for. Health checks stay at DEBUG.
+            flags = [f for f, on in (("SLOW", is_slow), ("MANY_QUERIES", is_high_query)) if on]
+            if is_health:
+                level = logging.DEBUG
+            elif flags:
+                level = logging.WARNING
+            else:
                 level = logging.INFO
 
             if logger.isEnabledFor(level):
                 logger.log(
                     level,
-                    "%s %s %d %.0fms %dq %.0fms",
+                    "%s %s %d %.0fms %dq %.0fms%s",
                     method,
                     template,
                     status,
                     elapsed_ms,
                     query_count,
                     total_db_ms,
+                    "".join(f" {f}" for f in flags),
                 )
         except Exception:  # noqa: BLE001
             pass  # logging must never raise into a request

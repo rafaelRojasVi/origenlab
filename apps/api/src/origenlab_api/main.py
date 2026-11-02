@@ -83,8 +83,8 @@ def create_app() -> FastAPI:
     configure_http_security(app, settings)
     # Starlette runs the last-added middleware outermost.  Add in this order so the
     # outermost (last-added) middleware wraps all others:
-    #   RequestLoggingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
-    # RequestLoggingMiddleware is outermost so it measures total dispatch time.
+    #   RequestTracingMiddleware → ResponseTimingMiddleware → RequestIdMiddleware
+    # RequestTracingMiddleware is outermost so it measures total dispatch time.
     # Innermost: replies leave compressed when the caller accepts gzip (the dashboard Worker does).
     # Render bills outbound bandwidth and JSON shrinks 5-10x (2026-10-30). Under 1 KB is not worth it.
     app.add_middleware(GZipMiddleware, minimum_size=1000)
