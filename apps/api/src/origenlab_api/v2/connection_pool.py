@@ -30,6 +30,7 @@ from typing import Any
 
 import psycopg_pool
 
+from origenlab_api.query_counter import CountingCursor
 
 #: A connection handed back this recently is trusted without a liveness probe. The probe is a
 #: full round trip to the database's region (~180 ms from Oregon to São Paulo), and a page load
@@ -66,6 +67,11 @@ class V2ConnectionPool:
         kwargs: dict[str, Any] = dict(connect_kwargs or {})
         # Repositories always open connections with autocommit=False; enforce it.
         kwargs["autocommit"] = False
+        # Per-request query counting: wire in the counting cursor factory so every
+        # execute increments the request's ContextVar counter.  Caller-supplied
+        # cursor_factory (uncommon) is preserved via setdefault.
+        if CountingCursor is not None:
+            kwargs.setdefault("cursor_factory", CountingCursor)
         # Kept separately so connect_options is inspectable without accessing pool internals.
         self._connect_options: dict[str, Any] = dict(kwargs)
         self._pool = psycopg_pool.ConnectionPool(
