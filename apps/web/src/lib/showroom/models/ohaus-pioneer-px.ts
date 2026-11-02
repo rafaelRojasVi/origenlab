@@ -64,11 +64,11 @@ export function build(): BuiltModel {
   // ── Materiales ──────────────────────────────────────────────────────────────
   const bodyMat = keep(
     new THREE.MeshPhysicalMaterial({
-      color: 0xf0ede8,
-      roughness: 0.32,
+      color: 0xe8e8e4,
+      roughness: 0.42,
       metalness: 0,
-      clearcoat: 0.5,
-      clearcoatRoughness: 0.22,
+      clearcoat: 0.25,
+      clearcoatRoughness: 0.4,
     }),
   );
   const panMat = keep(
@@ -84,7 +84,10 @@ export function build(): BuiltModel {
   const footRingMat = keep(
     new THREE.MeshStandardMaterial({ color: 0xe03030, roughness: 0.35, metalness: 0.05 }),
   );
+  // Vidrio con un leve tono verde, como el canto del vidrio real: incoloro se perdía.
   const glassMat  = keep(labGlass());
+  glassMat.color.set(0xd6ece6);
+  glassMat.opacity = 0.3;
   // MeshBasicMaterial para la tapa: no recibe iluminación ni entorno, así
   // el panel horizontal no refleja los tonos cálidos del HDRI como losa roja.
   const topGlassMat = keep(
@@ -125,12 +128,12 @@ export function build(): BuiltModel {
 
   const drawConsole = (g: CanvasRenderingContext2D, w: number, h: number) => {
     // Fondo del panel de consola (ligeramente más oscuro que el cuerpo blanco)
-    g.fillStyle = '#eae7e2';
+    // Panel gris claro, más oscuro que el cuerpo blanco: así se lee la consola.
+    g.fillStyle = '#c9cccd';
     g.fillRect(0, 0, w, h);
-    // Borde interior oscuro (simula panel hundido)
-    g.strokeStyle = '#c0bdb8';
-    g.lineWidth = 3;
-    g.strokeRect(1.5, 1.5, w - 3, h - 3);
+    g.strokeStyle = '#9ea2a5';
+    g.lineWidth = 4;
+    g.strokeRect(2, 2, w - 4, h - 4);
 
     // ── Franja roja superior (rasgo de marca OHAUS) ──
     const stripeH = h * 0.065;
@@ -151,13 +154,13 @@ export function build(): BuiltModel {
     const lh = h * 0.42;
 
     // Marco bezel negro del LCD
-    g.fillStyle = '#1a1a1a';
+    g.fillStyle = '#2b2e31';
     g.beginPath();
-    g.roundRect(lx - 5, ly - 5, lw + 10, lh + 10, 5);
+    g.roundRect(lx - 7, ly - 7, lw + 14, lh + 14, 6);
     g.fill();
 
     // Pantalla: blanco puro con retroiluminación cuando encendida
-    const lcdBg = screenOn ? '#f8fffe' : '#cccfcc';
+    const lcdBg = screenOn ? '#f3f8f6' : '#8f9893';
     g.fillStyle = lcdBg;
     g.fillRect(lx, ly, lw, lh);
 
@@ -194,11 +197,12 @@ export function build(): BuiltModel {
       }
     } else {
       // Apagada: segmentos tenues
-      g.fillStyle = '#b0b4b0';
-      g.font = `700 ${lh * 0.46}px "Courier New", monospace`;
-      g.textAlign = 'center';
+      // Apagada: los segmentos se adivinan sobre el LCD gris.
+      g.fillStyle = 'rgba(40, 48, 44, 0.18)';
+      g.font = `700 ${lh * 0.54}px "Courier New", monospace`;
+      g.textAlign = 'right';
       g.textBaseline = 'middle';
-      g.fillText('– – – – –', lx + lw / 2, ly + lh * 0.48);
+      g.fillText('8.8888', lx + lw - 8, ly + lh * 0.44);
     }
 
     // ── Burbuja de nivel (bola de aire, a la derecha del LCD) ────────────────
@@ -226,25 +230,25 @@ export function build(): BuiltModel {
     labels.forEach(([top, bot], i) => {
       const kx = lx + i * kyW + kyW / 2;
       // Tecla
-      g.fillStyle = '#d0cdc8';
+      g.fillStyle = '#55595d';
       g.beginPath();
-      g.roundRect(kx - kyW * 0.44, kyTop + 2, kyW * 0.88, kyH - 4, 3);
+      g.roundRect(kx - kyW * 0.44, kyTop + 2, kyW * 0.88, kyH - 4, 4);
       g.fill();
-      g.strokeStyle = '#b0aca6';
+      g.strokeStyle = '#3c3f42';
       g.lineWidth = 0.8;
       g.stroke();
       // Label: fuente compacta con maxWidth para que «Function» no desborde
       const fSz = h * 0.037;
       const maxLabelW = kyW * 0.86;
-      g.fillStyle = '#1e1e1e';
-      g.font = `500 ${fSz}px ${SANS}`;
+      g.fillStyle = '#ffffff';
+      g.font = `600 ${fSz * 1.15}px ${SANS}`;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       const cy = bot ? kyTop + kyH * 0.32 : kyTop + kyH * 0.50;
       g.fillText(top, kx, cy, maxLabelW);
       if (bot) {
-        g.fillStyle = '#505050';
-        g.font = `400 ${fSz * 0.80}px ${SANS}`;
+        g.fillStyle = '#d6d9dc';
+        g.font = `400 ${fSz * 0.9}px ${SANS}`;
         g.fillText(bot, kx, kyTop + kyH * 0.70, maxLabelW);
       }
     });
@@ -259,7 +263,7 @@ export function build(): BuiltModel {
     g.fill();
     g.beginPath();
     g.arc(logoX, logoY, logoR * 0.55, 0, Math.PI * 2);
-    g.fillStyle = '#dddad4';
+    g.fillStyle = '#c9cccd';
     g.fill();
     g.fillStyle = '#c01010';
     g.font = `700 ${logoR * 0.72}px ${SANS}`;
@@ -274,7 +278,8 @@ export function build(): BuiltModel {
   const consoleMat = keep(
     new THREE.MeshStandardMaterial({
       map: consoleTex.texture,
-      roughness: 0.55,
+      roughness: 0.6,
+      envMapIntensity: 0.35,
       // Sin clearcoat: a 0° (vista frontal) el clearcoat producía un destello
       // blanco que tapaba la textura del canvas. MeshStandardMaterial muestra
       // la pantalla y las teclas con claridad desde la vista perpendicular.
@@ -367,8 +372,8 @@ export function build(): BuiltModel {
   // ── Patas de goma (rojas, anchas y bajas con aro más claro) ─────────────────
   const FW = 13;   // radio de la pata
   const FH = 10;   // altura de la pata (disco bajo y ancho)
-  const FINX = 26; // inset desde el borde del cuerpo (X)
-  const FINZ = 24; // inset desde el borde del cuerpo (Z)
+  const FINX = 12; // inset desde el borde del cuerpo (X): en la esquina, para que se vean
+  const FINZ = 10; // inset desde el borde del cuerpo (Z)
 
   // Patas parcialmente bajo el cuerpo: centro en Y=-FH/3 → tope visible a Y=+FH/6 (dentro del bevel).
   const FOOT_CY = -(FH / 3);
@@ -438,13 +443,15 @@ export function build(): BuiltModel {
   const X_SF_POS = D - X_SF;  // X del poste delantero = 219
   const X_SR_POS = X_SR;      // X del poste trasero  = 24
 
+  // Marco en gris claro satinado: en el mismo blanco del cuerpo no se distinguía.
+  const frameMat = keep(new THREE.MeshPhysicalMaterial({ color: 0xd3d6d8, roughness: 0.3, metalness: 0.35, clearcoat: 0.4 }));
   // 4 postes
   const postGeo = keep(new THREE.BoxGeometry(POST_W, H_SH, POST_W));
   for (const [px, pz] of [
     [X_SF_POS, -SH_Z], [X_SF_POS, SH_Z],
     [X_SR_POS, -SH_Z], [X_SR_POS, SH_Z],
   ] as const) {
-    const post = new THREE.Mesh(postGeo, bodyMat);
+    const post = new THREE.Mesh(postGeo, frameMat);
     post.position.set(px, H_BODY + H_SH / 2, pz);
     post.castShadow = true;
     root.add(post);
@@ -490,12 +497,12 @@ export function build(): BuiltModel {
   const baseBarH = keep(new THREE.BoxGeometry(X_SF_POS - X_SR_POS - POST_W, 5, 5));
   const baseBarW = keep(new THREE.BoxGeometry(5, 5, SH_Z * 2 - POST_W));
   for (const pz of [-SH_Z, SH_Z]) {
-    const b = new THREE.Mesh(baseBarH, bodyMat);
+    const b = new THREE.Mesh(baseBarH, frameMat);
     b.position.set((X_SF_POS + X_SR_POS) / 2, H_BODY + 2.5, pz);
     root.add(b);
   }
   for (const px of [X_SF_POS, X_SR_POS]) {
-    const b = new THREE.Mesh(baseBarW, bodyMat);
+    const b = new THREE.Mesh(baseBarW, frameMat);
     b.position.set(px, H_BODY + 2.5, 0);
     root.add(b);
   }
@@ -618,6 +625,21 @@ export function build(): BuiltModel {
   let lastRedraw = 0;
   const DOOR_MAX = HALF_DOOR_Z * 0.96;
 
+  // Todo sube lo que miden las patas: antes quedaban bajo el suelo y no se veían.
+  const LIFT = FH;
+  const lifted = new THREE.Group();
+  for (const child of [...root.children]) lifted.add(child);
+  lifted.position.y = LIFT;
+  root.add(lifted);
+
+  // Ranura gris alrededor del cuerpo, donde la cara vertical se encuentra con la pendiente.
+  {
+    const grooveMat = keep(new THREE.MeshStandardMaterial({ color: 0x9a9ea1, roughness: 0.6 }));
+    const front = new THREE.Mesh(keep(new THREE.BoxGeometry(1.2, 2.2, W - 8)), grooveMat);
+    front.position.set(D + BEVEL + 0.4, SL_BOT.y - 2, 0);
+    lifted.add(front);
+  }
+
   return {
     root,
     anchors: {
@@ -648,7 +670,7 @@ export function build(): BuiltModel {
         distance:  500,
       },
     },
-    frameTop: H_TOT + 12,
+    frameTop: H_TOT + 12 + FH,
     yaw: -Math.PI / 2 + 0.55, // la consola mira a +X: se gira para que quede de frente, en tres cuartos
 
     setPower(on: boolean) {
