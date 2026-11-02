@@ -177,9 +177,11 @@ console.log('\nSala 3D del hero (1440 px)');
 
   const figure = page.locator('[data-showroom]');
   check(await figure.count() === 1, 'hay una sala de equipo en la portada');
+  // La foto de cada equipo llega en el HTML; la escena la oculta al dibujar
+  // (con movimiento reducido se comprueba más abajo que sigue visible).
   check(
-    await figure.locator('[data-showroom-photo] img').count() === 1,
-    'la fotografía oficial llega en el HTML, antes de cualquier script',
+    await figure.locator('[data-showroom-photo] img').count() >= 1,
+    'las fotografías oficiales llegan en el HTML, antes de cualquier script',
   );
   check(
     await figure.locator('[data-showroom-canvas]').evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
@@ -197,14 +199,15 @@ console.log('\nSala 3D del hero (1440 px)');
   check(ready, 'la escena 3D dibuja y sustituye a la fotografía');
 
   if (ready) {
-    const power = figure.locator('[data-showroom-power]');
+    const bar = figure.locator('[data-showroom-bar]:not([hidden])');
+    const power = bar.locator('[data-showroom-power]');
     check(await power.isVisible(), 'el botón de encendido es visible');
     await power.click();
     check(await power.getAttribute('aria-pressed') === 'true', 'encender anuncia el estado');
     await power.click();
     check(await power.getAttribute('aria-pressed') === 'false', 'y apagar también');
 
-    const views = figure.locator('[data-showroom-view]');
+    const views = bar.locator('[data-showroom-view]');
     check(await views.count() === 4, `cuatro vistas (${await views.count()})`);
     await views.nth(2).click();
     const pressed = await views.evaluateAll((els) => els.map((el) => el.getAttribute('aria-pressed')));
@@ -213,7 +216,7 @@ console.log('\nSala 3D del hero (1440 px)');
       `sólo la vista elegida queda marcada (${pressed.join(', ')})`,
     );
 
-    const dots = figure.locator('.hotspot__dot');
+    const dots = figure.locator('[data-showroom-hotspots]:not([hidden]) .hotspot__dot');
     check(await dots.count() === 4, `cuatro marcadores (${await dots.count()})`);
     await dots.first().focus();
     await page.keyboard.press('Enter');
@@ -222,6 +225,23 @@ console.log('\nSala 3D del hero (1440 px)');
     // La nota entra con una transición corta: se espera a que termine.
     const shown = Boolean(note) && await page.locator(`#${note}`).waitFor({ state: 'visible', timeout: 5000 }).then(() => true, () => false);
     check(shown, 'y su nota queda visible');
+  }
+  // Selector de tareas: cambia de equipo en el mismo lienzo.
+  const tasks = figure.locator('[data-pick]');
+  if (ready && await tasks.count() > 1) {
+    const canvases = await figure.locator('canvas').count();
+    await tasks.nth(1).click();
+    const second = await tasks.nth(1).getAttribute('data-pick');
+    const switched = await figure.evaluate((el, id) => new Promise((resolve) => {
+      const done = () => el.dataset.active === id && !el.hasAttribute('data-swapping');
+      if (done()) return resolve(true);
+      const watch = new MutationObserver(() => done() && resolve(true));
+      watch.observe(el, { attributes: true });
+      setTimeout(() => resolve(done()), 20000);
+    }), second);
+    check(switched, `elegir otra tarea cambia el equipo (${second})`);
+    check(await tasks.nth(1).getAttribute('aria-pressed') === 'true', 'la tarea elegida queda marcada');
+    check(await figure.locator('canvas').count() === canvases, 'sigue habiendo un solo lienzo 3D');
   }
   check(foreign.length === 0, `la sala no pide nada fuera del dominio (${foreign.join(', ') || 'nada'})`);
 
@@ -369,7 +389,7 @@ console.log('\nMovimiento reducido');
   await showroom.scrollIntoViewIfNeeded();
   await page.waitForTimeout(1500);
   check(!(await showroom.evaluate((el) => el.hasAttribute('data-ready'))), 'la escena 3D no arranca');
-  check(await showroom.locator('[data-showroom-photo] img').isVisible(), 'la fotografía del equipo sigue visible');
+  check(await showroom.locator('[data-showroom-photo]:not([hidden]) img').isVisible(), 'la fotografía del equipo sigue visible');
   check(
     !(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /\/scene-[\w-]+\.[\w-]+\.js/.test(entry.name)))),
     'el fragmento de three.js no se descarga',

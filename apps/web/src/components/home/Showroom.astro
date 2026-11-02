@@ -2,83 +2,123 @@
 import ModelPhoto from '../ui/ModelPhoto.astro';
 import { imageForModel, imageForProduct } from '../../data/productImages';
 import { showroomEntry } from '../../lib/showroom/catalog';
+import type { ShowroomEntry } from '../../lib/showroom/content/types';
 
 /**
- * Sala de equipo: un equipo modelado en 3D sobre su fotografía oficial.
+ * Sala de equipo: equipos modelados en 3D sobre su fotografía oficial.
  *
  * Cada modelo está construido en código con las medidas de la documentación
  * del fabricante (`src/lib/showroom/models/`). Se puede girar, poner en marcha
  * y recorrer por vistas, y unos marcadores numerados explican sus partes.
  *
+ * Con `id` muestra un equipo. Con `items` muestra varios en un solo escenario:
+ * una fila de tareas («Sonicar», «Pesar»…) elige cuál, y el equipo cambia en
+ * el mismo lienzo. Un solo WebGL dibuja a la vez, y cada modelo se descarga
+ * sólo cuando se elige.
+ *
  * Mejora progresiva estricta. Lo que llega en el HTML es la fotografía oficial
- * del equipo, con su fila VERIFIED, y el pie. La escena 3D sólo se carga si hay
- * WebGL, si el visitante no pidió movimiento reducido y cuando la figura está
- * cerca de la pantalla; hasta que dibuja su primer cuadro, la foto sigue ahí.
- * Sin JavaScript, queda exactamente la foto.
+ * del equipo, con su fila VERIFIED, y el pie; sin 3D, la fila de tareas cambia
+ * la fotografía. La escena 3D sólo se carga si hay WebGL, si el visitante no
+ * pidió movimiento reducido ni ahorro de datos, si el dispositivo no declara
+ * poca memoria y cuando la figura está cerca de la pantalla; hasta que dibuja
+ * su primer cuadro, la foto sigue ahí.
  *
  * Los textos y las cifras de los marcadores no se escriben aquí: vienen de
  * `src/lib/showroom/content/<id>.ts`, que los lee de los datos con fuente.
  */
 interface Props {
-  id: string;
+  id?: string;
+  items?: { id: string; task: string }[];
 }
-const entry = showroomEntry(Astro.props.id);
-const image = entry && ('modelId' in entry.photo ? imageForModel(entry.photo.modelId) : imageForProduct(entry.photo.productId));
-const hotspots = (entry?.hotspots ?? []).filter((spot) => spot.body.length > 0).map((spot, index) => ({ ...spot, numeral: index + 1 }));
-const domId = (part: string) => `sala-${entry?.id}-${part}`;
+const picks = Astro.props.items ?? (Astro.props.id ? [{ id: Astro.props.id, task: '' }] : []);
+const entries = picks
+  .map((pick) => ({ pick, entry: showroomEntry(pick.id) }))
+  .filter((item): item is { pick: { id: string; task: string }; entry: ShowroomEntry } => Boolean(item.entry))
+  .map(({ pick, entry }) => ({
+    entry,
+    task: pick.task,
+    image: 'modelId' in entry.photo ? imageForModel(entry.photo.modelId) : imageForProduct(entry.photo.productId),
+    hotspots: entry.hotspots.filter((spot) => spot.body.length > 0).map((spot, index) => ({ ...spot, numeral: index + 1 })),
+  }))
+  .filter((item) => item.image);
+const selector = entries.length > 1;
+const first = entries[0];
+const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
 ---
 
 {
-  entry && image && (
-    <figure class="showroom" data-showroom={entry.id} aria-labelledby={domId('pie')}>
-      <div class="showroom__stage">
-        <div class="showroom__photo" data-showroom-photo>
-          <ModelPhoto image={image} size="hero" priority ratio="4 / 5" />
-        </div>
-        <canvas class="showroom__canvas" data-showroom-canvas aria-hidden="true" hidden />
-        <div class="showroom__hotspots" data-showroom-hotspots hidden>
-          {hotspots.map((spot) => (
-            <div class="hotspot" data-anchor={spot.anchor}>
-              <button
-                type="button"
-                class="hotspot__dot"
-                aria-expanded="false"
-                aria-controls={domId(spot.anchor)}
-                data-view={spot.view}
-              >
-                <span aria-hidden="true">{spot.numeral}</span>
-                <span class="sr-only">{spot.title}</span>
-              </button>
-              <div class="hotspot__note" id={domId(spot.anchor)} role="note">
-                <p class="hotspot__title">{spot.title}</p>
-                {spot.body.map((line) => <p>{line}</p>)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div class="showroom__bar" data-showroom-bar hidden>
-        {entry.power ? (
-          <button type="button" class="showroom__power" data-showroom-power aria-pressed="false" data-on={entry.power.on} data-off={entry.power.off}>
-            <span class="showroom__led" aria-hidden="true" />
-            <span data-power-label>{entry.power.on}</span>
-          </button>
-        ) : <span />}
-        <div class="showroom__views" role="group" aria-label="Vistas del equipo">
-          {entry.views.map((view, index) => (
-            <button type="button" class="showroom__view" data-showroom-view={view.id} aria-pressed={index === 0 ? 'true' : 'false'}>
-              {view.label}
+  first && (
+    <figure
+      class:list={['showroom', { 'showroom--selector': selector }]}
+      data-showroom={selector ? 'selector' : first.entry.id}
+      data-active={first.entry.id}
+      aria-labelledby={domId(first.entry.id, 'pie')}
+    >
+      {selector && (
+        <div class="showroom__tasks" role="group" aria-label="Elija una tarea de laboratorio">
+          {entries.map((item, index) => (
+            <button type="button" class="showroom__task" data-pick={item.entry.id} aria-pressed={index === 0 ? 'true' : 'false'}>
+              {item.task}
             </button>
           ))}
         </div>
+      )}
+      <div class="showroom__stage">
+        {entries.map((item, index) => (
+          <div class="showroom__photo" data-showroom-photo data-entry={item.entry.id} hidden={index > 0}>
+            <ModelPhoto image={item.image} size="hero" priority={index === 0} ratio="4 / 5" />
+          </div>
+        ))}
+        <canvas class="showroom__canvas" data-showroom-canvas aria-hidden="true" hidden />
+        {entries.map((item) => (
+          <div class="showroom__hotspots" data-showroom-hotspots data-entry={item.entry.id} hidden>
+            {item.hotspots.map((spot) => (
+              <div class="hotspot" data-anchor={spot.anchor}>
+                <button
+                  type="button"
+                  class="hotspot__dot"
+                  aria-expanded="false"
+                  aria-controls={domId(item.entry.id, spot.anchor)}
+                  data-view={spot.view}
+                >
+                  <span aria-hidden="true">{spot.numeral}</span>
+                  <span class="sr-only">{spot.title}</span>
+                </button>
+                <div class="hotspot__note" id={domId(item.entry.id, spot.anchor)} role="note">
+                  <p class="hotspot__title">{spot.title}</p>
+                  {spot.body.map((line) => <p>{line}</p>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
 
-      <figcaption class="showroom__caption t-data" id={domId('pie')}>
-        <span class="showroom__model">{entry.brand} {entry.name}</span>
-        <span>{entry.kind}</span>
-        <span class="showroom__mode" data-showroom-mode>Fotografía oficial del fabricante</span>
-      </figcaption>
+      {entries.map((item) => (
+        <div class="showroom__bar" data-showroom-bar data-entry={item.entry.id} hidden>
+          {item.entry.power ? (
+            <button type="button" class="showroom__power" data-showroom-power aria-pressed="false" data-on={item.entry.power.on} data-off={item.entry.power.off}>
+              <span class="showroom__led" aria-hidden="true" />
+              <span data-power-label>{item.entry.power.on}</span>
+            </button>
+          ) : <span />}
+          <div class="showroom__views" role="group" aria-label="Vistas del equipo">
+            {item.entry.views.map((view, index) => (
+              <button type="button" class="showroom__view" data-showroom-view={view.id} aria-pressed={index === 0 ? 'true' : 'false'}>
+                {view.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {entries.map((item, index) => (
+        <figcaption class="showroom__caption t-data" id={domId(item.entry.id, 'pie')} data-entry={item.entry.id} hidden={index > 0}>
+          <span class="showroom__model">{item.entry.brand} {item.entry.name}</span>
+          <span>{item.entry.kind}</span>
+          <span class="showroom__mode" data-showroom-mode>Fotografía oficial del fabricante</span>
+        </figcaption>
+      ))}
     </figure>
   )
 }
@@ -270,18 +310,64 @@ const domId = (part: string) => `sala-${entry?.id}-${part}`;
       transition: none;
     }
   }
+
+  /* --- selector de tareas -------------------------------------------------- */
+  .showroom__tasks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    margin-bottom: 1rem;
+  }
+  .showroom__task {
+    min-height: 2.25rem;
+    padding: 0 0.875rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: 999px;
+    background: var(--color-paper);
+    color: var(--color-ink-600);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  }
+  .showroom__task:hover {
+    color: var(--color-ink-950);
+    border-color: var(--color-ink-600);
+  }
+  .showroom__task[aria-pressed='true'] {
+    background: var(--color-ink-950);
+    border-color: var(--color-ink-950);
+    color: var(--color-paper);
+  }
+  .showroom__task:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+  .showroom__canvas {
+    transition: opacity 0.35s ease;
+  }
+  .showroom[data-swapping] .showroom__canvas {
+    opacity: 0 !important;
+  }
 </style>
 
 <script>
   /**
-   * Carga cada escena 3D sólo cuando sirve: con WebGL, sin movimiento reducido
-   * y con la figura cerca de la pantalla. Hasta su primer cuadro la fotografía
-   * oficial sigue visible, de modo que un fallo de carga deja la página como
-   * estaba y no en blanco. Vale para una sala o para varias en la misma página.
+   * Carga la escena 3D sólo cuando sirve: con WebGL, sin movimiento reducido ni
+   * ahorro de datos, sin poca memoria declarada y con la figura cerca de la
+   * pantalla. Hasta su primer cuadro la fotografía oficial sigue visible, de
+   * modo que un fallo de carga deja la página como estaba y no en blanco.
+   *
+   * Con selector, el equipo elegido cambia en el mismo lienzo: un solo WebGL.
+   * Sin 3D, el selector cambia la fotografía.
    */
   import { modelLoaders } from '../../lib/showroom/loaders';
+  import type { Showroom } from '../../lib/showroom/scene';
 
+  type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+  const nav = navigator as Nav;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const lowEnd = (nav.deviceMemory !== undefined && nav.deviceMemory < 4) || nav.connection?.saveData === true;
 
   function webglAvailable() {
     try {
@@ -291,38 +377,65 @@ const domId = (part: string) => `sala-${entry?.id}-${part}`;
       return false;
     }
   }
+  const use3d = !reduced && !lowEnd && webglAvailable();
 
-  async function boot(figure: HTMLElement) {
-    const id = figure.dataset.showroom ?? '';
-    const load = modelLoaders[id];
-    if (!load) return;
+  function setup(figure: HTMLElement) {
     const canvas = figure.querySelector<HTMLCanvasElement>('[data-showroom-canvas]')!;
-    const hotspotLayer = figure.querySelector<HTMLElement>('[data-showroom-hotspots]')!;
-    const bar = figure.querySelector<HTMLElement>('[data-showroom-bar]')!;
-    const power = figure.querySelector<HTMLButtonElement>('[data-showroom-power]');
-    const powerLabel = figure.querySelector<HTMLElement>('[data-power-label]');
-    const mode = figure.querySelector<HTMLElement>('[data-showroom-mode]')!;
-    const viewButtons = Array.from(figure.querySelectorAll<HTMLButtonElement>('[data-showroom-view]'));
-    const spots = Array.from(figure.querySelectorAll<HTMLElement>('.hotspot'));
-    try {
-      await document.fonts.ready;
-      const [{ createShowroom }, module] = await Promise.all([import('../../lib/showroom/scene'), load()]);
-      canvas.hidden = false;
-      const room = createShowroom(canvas, module.build());
+    const tasks = Array.from(figure.querySelectorAll<HTMLButtonElement>('[data-pick]'));
+    const part = (selector: string, id: string) => figure.querySelector<HTMLElement>(`${selector}[data-entry="${id}"]`);
+    let active = figure.dataset.active ?? '';
+    let room: Showroom | null = null;
+    let ready = false;
+    let loading = 0;
 
+    const show = (id: string) => {
+      for (const el of figure.querySelectorAll<HTMLElement>('[data-entry]')) {
+        const mine = el.dataset.entry === id;
+        // Con 3D, la foto ya no se muestra; los marcadores y la barra sólo con 3D.
+        if (el.matches('[data-showroom-photo]')) el.hidden = !mine || ready;
+        else if (el.matches('[data-showroom-hotspots], [data-showroom-bar]')) el.hidden = !mine || !ready;
+        else el.hidden = !mine;
+      }
+      for (const button of tasks) button.setAttribute('aria-pressed', String(button.dataset.pick === id));
+      figure.dataset.active = id;
+      figure.setAttribute('aria-labelledby', `sala-${id}-pie`);
+    };
+
+    const resetControls = (id: string) => {
+      const bar = part('[data-showroom-bar]', id);
+      const power = bar?.querySelector<HTMLButtonElement>('[data-showroom-power]');
+      const label = power?.querySelector<HTMLElement>('[data-power-label]');
+      if (power && label) {
+        power.setAttribute('aria-pressed', 'false');
+        label.textContent = power.dataset.on ?? '';
+      }
+      for (const button of bar?.querySelectorAll<HTMLButtonElement>('[data-showroom-view]') ?? []) {
+        button.setAttribute('aria-pressed', String(button.dataset.showroomView === 'general'));
+      }
+      for (const dot of part('[data-showroom-hotspots]', id)?.querySelectorAll('.hotspot__dot') ?? []) dot.setAttribute('aria-expanded', 'false');
+    };
+
+    // Controles: cada barra y cada capa de marcadores actúa sobre la escena
+    // sólo mientras su equipo es el elegido.
+    for (const bar of figure.querySelectorAll<HTMLElement>('[data-showroom-bar]')) {
+      const id = bar.dataset.entry ?? '';
+      const views = Array.from(bar.querySelectorAll<HTMLButtonElement>('[data-showroom-view]'));
       const setView = (view: string) => {
+        if (active !== id || !room) return;
         room.goTo(view);
-        for (const button of viewButtons) button.setAttribute('aria-pressed', String(button.dataset.showroomView === view));
+        for (const button of views) button.setAttribute('aria-pressed', String(button.dataset.showroomView === view));
       };
-      for (const button of viewButtons) button.addEventListener('click', () => setView(button.dataset.showroomView ?? 'general'));
-
+      for (const button of views) button.addEventListener('click', () => setView(button.dataset.showroomView ?? 'general'));
+      const power = bar.querySelector<HTMLButtonElement>('[data-showroom-power]');
+      const label = power?.querySelector<HTMLElement>('[data-power-label]');
       power?.addEventListener('click', () => {
+        if (active !== id || !room) return;
         const on = power.getAttribute('aria-pressed') !== 'true';
         power.setAttribute('aria-pressed', String(on));
-        if (powerLabel) powerLabel.textContent = (on ? power.dataset.off : power.dataset.on) ?? '';
+        if (label) label.textContent = (on ? power.dataset.off : power.dataset.on) ?? '';
         room.setPower(on);
       });
-
+      const spots = Array.from(part('[data-showroom-hotspots]', id)?.querySelectorAll<HTMLElement>('.hotspot') ?? []);
       for (const spot of spots) {
         const dot = spot.querySelector<HTMLButtonElement>('.hotspot__dot')!;
         dot.addEventListener('click', () => {
@@ -334,39 +447,76 @@ const domId = (part: string) => `sala-${entry?.id}-${part}`;
           }
         });
       }
+    }
 
-      let first = true;
-      room.onFrame((anchors) => {
-        for (const spot of spots) {
-          const at = anchors[spot.dataset.anchor ?? ''];
-          spot.toggleAttribute('data-hidden', !at);
-          if (at) spot.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
-        }
-        if (first) {
-          first = false;
-          figure.setAttribute('data-ready', '');
-          hotspotLayer.hidden = false;
-          bar.hidden = false;
+    const onFrame = (anchors: Record<string, { x: number; y: number } | null>) => {
+      const layer = part('[data-showroom-hotspots]', active);
+      for (const spot of layer?.querySelectorAll<HTMLElement>('.hotspot') ?? []) {
+        const at = anchors[spot.dataset.anchor ?? ''];
+        spot.toggleAttribute('data-hidden', !at);
+        if (at) spot.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
+      }
+      if (!ready) {
+        ready = true;
+        figure.setAttribute('data-ready', '');
+        for (const mode of figure.querySelectorAll<HTMLElement>('[data-showroom-mode]')) {
           mode.textContent = 'Modelo 3D con las medidas del fabricante · arrastre para girar';
         }
-      });
-    } catch (error) {
-      canvas.hidden = true;
-      console.warn(`Sala 3D «${id}» no disponible; queda la fotografía.`, error);
+        show(active);
+      }
+    };
+
+    const boot = async () => {
+      const load = modelLoaders[active];
+      if (!load) return;
+      try {
+        await document.fonts.ready;
+        const [{ createShowroom }, module] = await Promise.all([import('../../lib/showroom/scene'), load()]);
+        canvas.hidden = false;
+        room = createShowroom(canvas, module.build());
+        room.onFrame(onFrame);
+      } catch (error) {
+        canvas.hidden = true;
+        console.warn('Sala 3D no disponible; queda la fotografía.', error);
+      }
+    };
+
+    const pick = async (id: string) => {
+      if (id === active) return;
+      const previous = active;
+      active = id;
+      show(id);
+      resetControls(id);
+      if (!room || !modelLoaders[id]) return;
+      const ticket = ++loading;
+      figure.setAttribute('data-swapping', '');
+      try {
+        const [module] = await Promise.all([modelLoaders[id](), new Promise((done) => setTimeout(done, 350))]);
+        if (ticket !== loading) return;
+        room.setModel(module.build());
+      } catch (error) {
+        console.warn(`Sala 3D «${id}» no disponible.`, error);
+        active = previous;
+        show(previous);
+      } finally {
+        if (ticket === loading) figure.removeAttribute('data-swapping');
+      }
+    };
+    for (const button of tasks) button.addEventListener('click', () => void pick(button.dataset.pick ?? ''));
+
+    if (use3d) {
+      const near = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            near.disconnect();
+            void boot();
+          }
+        },
+        { rootMargin: '200px' },
+      );
+      near.observe(figure);
     }
   }
 
-  if (!reduced && webglAvailable()) {
-    const near = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          near.unobserve(entry.target);
-          void boot(entry.target as HTMLElement);
-        }
-      },
-      { rootMargin: '200px' },
-    );
-    for (const figure of document.querySelectorAll<HTMLElement>('[data-showroom]')) near.observe(figure);
-  }
+  for (const figure of document.querySelectorAll<HTMLElement>('[data-showroom]')) setup(figure);
 </script>

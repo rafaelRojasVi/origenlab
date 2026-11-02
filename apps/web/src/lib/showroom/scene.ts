@@ -23,14 +23,18 @@ export interface Showroom {
   goTo(view: string): void;
   /** Posición en píxeles del lienzo de cada ancla, o `null` si queda detrás. */
   onFrame(callback: (anchors: AnchorPositions) => void): void;
+  /** Cambia el equipo en el mismo escenario (un solo lienzo, un solo WebGL). */
+  setModel(model: BuiltModel): void;
   dispose(): void;
 }
 
 const MM = 0.01;
 
-export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Showroom {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): Showroom {
+  // En pantallas pequeñas (teléfonos) se dibuja con menos resolución y sombra.
+  const small = Math.min(window.innerWidth, window.innerHeight) < 700;
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !small, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, small ? 1.5 : 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -52,7 +56,7 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
   const key = new THREE.DirectionalLight(0xffffff, 2.4);
   key.position.set(-4, 9, 6);
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
   Object.assign(key.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5 });
   key.shadow.radius = 6;
   key.shadow.bias = -0.0004;
@@ -69,30 +73,39 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
   ground.receiveShadow = true;
   scene.add(ground);
 
-  const yaw = model.yaw ?? 0.55;
   const stage = new THREE.Group();
-  stage.add(model.root);
   stage.scale.setScalar(MM);
-  stage.rotation.y = yaw;
   scene.add(stage);
 
-  // Centrar el conjunto sobre el origen, apoyado en el suelo.
-  stage.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(model.root);
-  const center = box.getCenter(new THREE.Vector3());
-  stage.position.x -= center.x;
-  stage.position.z -= center.z;
-  stage.updateMatrixWorld(true);
-
-  /* ── vistas, calculadas desde las piezas y no a mano ── */
   const world = (o: THREE.Object3D) => o.getWorldPosition(new THREE.Vector3());
   const worldDir = (v: THREE.Vector3) => v.clone().transformDirection(stage.matrixWorld);
 
-  // La vista general encuadra el conjunto entero (hasta `frameTop`, si el
-  // modelo lo da) con un margen, en alto y en ancho según el lienzo.
-  const framed = new THREE.Box3().setFromObject(model.root);
-  if (model.frameTop !== undefined) framed.max.y = Math.min(framed.max.y, model.frameTop * MM);
-  const framedSize = framed.getSize(new THREE.Vector3());
+  // Estado del equipo montado; `mount` lo rehace al cambiar de equipo.
+  let model = initial;
+  let yaw = 0.55;
+  const framed = new THREE.Box3();
+  const framedSize = new THREE.Vector3();
+  let anchorNames: string[] = [];
+  const mount = (next: BuiltModel) => {
+    model = next;
+    yaw = next.yaw ?? 0.55;
+    stage.add(next.root);
+    stage.position.set(0, 0, 0);
+    stage.rotation.set(0, yaw, 0);
+    // Centrar el conjunto sobre el origen, apoyado en el suelo.
+    stage.updateMatrixWorld(true);
+    const center = new THREE.Box3().setFromObject(next.root).getCenter(new THREE.Vector3());
+    stage.position.x -= center.x;
+    stage.position.z -= center.z;
+    stage.updateMatrixWorld(true);
+    // La vista general encuadra el conjunto entero (hasta `frameTop`, si el
+    // modelo lo da) con un margen, en alto y en ancho según el lienzo.
+    framed.setFromObject(next.root);
+    if (next.frameTop !== undefined) framed.max.y = Math.min(framed.max.y, next.frameTop * MM);
+    framed.getSize(framedSize);
+    anchorNames = Object.keys(next.anchors);
+  };
+  mount(initial);
 
   const general = () => {
     const at = framed.getCenter(new THREE.Vector3());
@@ -151,7 +164,6 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
   let raf = 0;
   let last = performance.now();
   let frameCallback: Parameters<Showroom['onFrame']>[0] | null = null;
-  const anchorNames = Object.keys(model.anchors);
   const ray = new THREE.Raycaster();
   const hidden: Record<string, boolean> = {};
   let occlusionTick = 0;
@@ -226,6 +238,18 @@ export function createShowroom(canvas: HTMLCanvasElement, model: BuiltModel): Sh
     setPower(on) {
       powered = on;
       model.setPower(on);
+    },
+    setModel(next) {
+      stage.remove(model.root);
+      model.dispose();
+      for (const name of Object.keys(hidden)) delete hidden[name];
+      powered = false;
+      level = 0;
+      mount(next);
+      idle = true;
+      const v = general();
+      tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0 };
+      start();
     },
     goTo,
     onFrame(callback) {

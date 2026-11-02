@@ -64,7 +64,17 @@ const families = equipmentScope.map((entry, index) => ({
     </div>
 
     <div class="hero__figure">
-      <Showroom id="hielscher-up400st" />
+      <Showroom
+        items={[
+          { id: 'hielscher-up400st', task: 'Sonicar' },
+          { id: 'ika-t25-digital', task: 'Dispersar' },
+          { id: 'ortoalresa-digicen-22-r', task: 'Centrifugar' },
+          { id: 'ohaus-pioneer-px', task: 'Pesar' },
+          { id: 'adam-highland', task: 'Pesar en terreno' },
+          { id: 'loeser-i-osmometer', task: 'Osmolalidad' },
+          { id: 'serva-bluevertical-prime', task: 'Electroforesis' },
+        ]}
+      />
     </div>
   </div>
 
