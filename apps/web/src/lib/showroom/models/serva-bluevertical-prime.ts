@@ -231,30 +231,32 @@ export function build(): BuiltModel {
   // Dos pilares laterales (el azul visible a través del acrílico)
   for (const xPos of [-TW / 2 + WL + 10, TW / 2 - WL - 10] as [number, number]) {
     const pillar = new THREE.Mesh(
-      keep(new THREE.BoxGeometry(14, BASE_H, TD - WL * 2 - 6)),
+      keep(new THREE.BoxGeometry(14, BASE_H - WL - 0.6, TD - WL * 2 - 6)),
       bluePlasticMat,
     );
-    pillar.position.set(xPos, BASE_H / 2, 0);
+    // Sobre el fondo del tanque, no dentro: compartían la cara y = 0 y parpadeaban.
+    pillar.position.set(xPos, WL + 0.6 + (BASE_H - WL - 0.6) / 2, 0);
     pillar.castShadow = true;
     tankGroup.add(pillar);
   }
   // Barra frontal del pie
   {
     const bar = new THREE.Mesh(
-      keep(new THREE.BoxGeometry(TW - WL * 2 - 2, BASE_H, 10)),
+      keep(new THREE.BoxGeometry(TW - WL * 2 - 2, BASE_H - WL - 0.6, 9)),
       bluePlasticMat,
     );
-    bar.position.set(0, BASE_H / 2, -(TD / 2 - WL - 5));
+    // 1 mm separada de la pared: su cara coincidía con la cara interior del acrílico.
+    bar.position.set(0, WL + 0.6 + (BASE_H - WL - 0.6) / 2, -(TD / 2 - WL - 5.5));
     bar.castShadow = true;
     tankGroup.add(bar);
   }
   // Barra trasera del pie
   {
     const bar = new THREE.Mesh(
-      keep(new THREE.BoxGeometry(TW - WL * 2 - 2, BASE_H, 10)),
+      keep(new THREE.BoxGeometry(TW - WL * 2 - 2, BASE_H - WL - 0.6, 9)),
       bluePlasticMat,
     );
-    bar.position.set(0, BASE_H / 2, TD / 2 - WL - 5);
+    bar.position.set(0, WL + 0.6 + (BASE_H - WL - 0.6) / 2, TD / 2 - WL - 5.5);
     bar.castShadow = true;
     tankGroup.add(bar);
   }
@@ -282,7 +284,7 @@ export function build(): BuiltModel {
   // Pared posterior del divisor (cierra la cámara interior por detrás)
   {
     const m = new THREE.Mesh(keep(new THREE.BoxGeometry(divW, divH, divWL)), divMat);
-    m.position.set(0, BASE_H + divH / 2, TD / 2 - WL - divWL / 2 - 4);
+    m.position.set(0, BASE_H + 0.5 + divH / 2, TD / 2 - WL - divWL / 2 - 4);
     m.renderOrder = 2 + (divOrder += 0.1);
     tankGroup.add(m);
   }
@@ -292,7 +294,7 @@ export function build(): BuiltModel {
       keep(new THREE.BoxGeometry(divWL, divH, TD - WL * 2 - divWL)),
       divMat,
     );
-    m.position.set(xSide, BASE_H + divH / 2, WL + (TD - WL * 2 - divWL) / 2 - TD / 2);
+    m.position.set(xSide, BASE_H + 0.5 + divH / 2, WL + (TD - WL * 2 - divWL) / 2 - TD / 2);
     m.renderOrder = 2 + (divOrder += 0.1);
     tankGroup.add(m);
   }
