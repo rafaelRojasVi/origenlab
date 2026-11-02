@@ -292,7 +292,8 @@ export function build(): BuiltModel {
 
     const btnCY = 52 * sy;           // centro Y de la fila de botones (52/60 del panel)
     /* marcadores de botones (cinco círculos en arco) */
-    const bxs = [-42, -20, 0, 20, 42];
+    // Bucle más estrecho: las almohadillas amarillas de las esquinas quedan fuera.
+    const bxs = [-30, -15, 0, 15, 30];
     for (let i = 0; i < 5; i++) {
       const bpx = w / 2 + bxs[i] * sx;
       g.strokeStyle = '#c0c8d4';
@@ -306,7 +307,7 @@ export function build(): BuiltModel {
     g.strokeStyle = '#1e88e5';
     g.lineWidth = 3 * sx;
     g.beginPath();
-    g.ellipse(w / 2, btnCY, 50 * sx, 7 * sy, 0, 0, Math.PI * 2);
+    g.ellipse(w / 2, btnCY, 38 * sx, 7 * sy, 0, 0, Math.PI * 2);
     g.stroke();
   };
 
@@ -331,11 +332,11 @@ export function build(): BuiltModel {
   /* ── botones 3D (cilindros sobre el panel) ───────────────────────────── */
   /* Disposición en arco (de izq-abajo a der-arriba) como en la fotografía */
   const btnDefs: [number, number, string][] = [
-    [-42, -22, '⏻'],
-    [-20, -22, 'Smpl'],
+    [-30, -22, '⏻'],
+    [-15, -22, 'Smpl'],
     [  0, -22, 'Mode'],
-    [ 20, -22, 'Print'],
-    [ 42, -22, '%'],
+    [ 15, -22, 'Print'],
+    [ 30, -22, '%'],
   ];
   const btnGeo = keep(new THREE.CylinderGeometry(6.5, 6.5, 3.5, 28));
   btnGeo.rotateX(Math.PI / 2);
@@ -379,12 +380,13 @@ export function build(): BuiltModel {
     // Almohadilla plana, al ras de la consola, como en la foto: una cuña amarilla
     // en la esquina inferior (antes era un toro que sobresalía como un anillo).
     const padShape = new THREE.Shape();
+    // Más pequeña y baja: ocupa la esquina, sin llegar a los botones.
     padShape.moveTo(0, 0);
-    padShape.lineTo(34, 0);
-    padShape.quadraticCurveTo(34, 20, 6, 24);
-    padShape.quadraticCurveTo(0, 24, 0, 18);
+    padShape.lineTo(26, 0);
+    padShape.quadraticCurveTo(24, 13, 4, 16);
+    padShape.quadraticCurveTo(0, 16, 0, 12);
     padShape.lineTo(0, 0);
-    const padGeo = keep(new THREE.ExtrudeGeometry(padShape, { depth: 1.2, bevelEnabled: true, bevelSize: 1, bevelThickness: 0.8, bevelSegments: 3 }));
+    const padGeo = keep(new THREE.ExtrudeGeometry(padShape, { depth: 0.6, bevelEnabled: true, bevelSize: 0.6, bevelThickness: 0.4, bevelSegments: 3 }));
     const tara = new THREE.Mesh(padGeo, yellowMat);
     tara.scale.x = sign > 0 ? -1 : 1;
     tara.position.set(sign * (PANEL_W / 2 - 2), -PANEL_H / 2 + 1, 3.2);
@@ -404,7 +406,7 @@ export function build(): BuiltModel {
       keep(new THREE.PlaneGeometry(12, 6)),
       keep(new THREE.MeshBasicMaterial({ map: taraTex, transparent: true })),
     );
-    taraLabel.position.set(sign * (PANEL_W / 2 - 16), -PANEL_H / 2 + 10, 5.6);
+    taraLabel.position.set(sign * (PANEL_W / 2 - 12), -PANEL_H / 2 + 6, 4.6);
     taraLabel.renderOrder = 2;
     consoleGroup.add(taraLabel);
   }
