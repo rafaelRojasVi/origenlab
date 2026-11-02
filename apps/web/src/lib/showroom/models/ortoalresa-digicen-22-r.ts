@@ -65,8 +65,11 @@ export function build(): BuiltModel {
   const fasciaMat = keep(new THREE.MeshPhysicalMaterial({
     color: C_FASCIA, roughness: 0.38, metalness: 0.06, clearcoat: 0.35, clearcoatRoughness: 0.4,
   }));
+  // La tapa se vuelve transparente al cerrarse, para ver el rotor girar dentro
+  // (opacidad animada en `update`).
   const lidMat = keep(new THREE.MeshPhysicalMaterial({
     color: C_LID, roughness: 0.35, metalness: 0.06, clearcoat: 0.45, clearcoatRoughness: 0.35,
+    transparent: true, opacity: 1,
   }));
   const chamberMat = keep(new THREE.MeshPhysicalMaterial({
     color: 0xcdd2d6, metalness: 0.8, roughness: 0.16, side: THREE.DoubleSide,
@@ -527,9 +530,10 @@ export function build(): BuiltModel {
   lidGroup.add(lidBody);
 
   // cara interior de la tapa (gris más oscuro)
+  const lidInnerMat = keep(new THREE.MeshPhysicalMaterial({ color: 0x888a8e, roughness: 0.55, metalness: 0.05, transparent: true, opacity: 1 }));
   const lidInner = new THREE.Mesh(
     keep(new THREE.PlaneGeometry(W - 22, LID_DEPTH - 14)),
-    keep(new THREE.MeshPhysicalMaterial({ color: 0x888a8e, roughness: 0.55, metalness: 0.05 })),
+    lidInnerMat,
   );
   lidInner.rotation.x = Math.PI / 2;
   lidInner.position.set(0, 1.5, LID_DEPTH / 2);
@@ -587,7 +591,7 @@ export function build(): BuiltModel {
 
   const lidAnchor = new THREE.Object3D();
   // Sobre la cara interior de la tapa, la que mira al visitante con la tapa abierta.
-  lidAnchor.position.set(0, -4, LID_DEPTH * 0.5);
+  lidAnchor.position.set(-W * 0.28, -4, LID_DEPTH * 0.82);
   lidGroup.add(lidAnchor);
 
   const bodyAnchor = new THREE.Object3D();
@@ -639,6 +643,13 @@ export function build(): BuiltModel {
       const targetLid = powered ? LID_CLOSED : LID_OPEN;
       lidAngle += (targetLid - lidAngle) * Math.min(1, dt * 1.4);
       lidGroup.rotation.x = lidAngle;
+      // 0 abierta … 1 cerrada: al cerrar, la tapa pasa a vidrio ahumado.
+      const shut = THREE.MathUtils.clamp((lidAngle - LID_OPEN) / (LID_CLOSED - LID_OPEN), 0, 1);
+      const see = THREE.MathUtils.smoothstep(shut, 0.55, 1);
+      lidMat.opacity = 1 - 0.78 * see;
+      lidInnerMat.opacity = 1 - 0.9 * see;
+      lidMat.depthWrite = lidInnerMat.depthWrite = see < 0.05;
+      for (const part of lidGroup.children) part.renderOrder = see > 0.05 ? 6 : 0;
 
       // pantalla
       if (screenOn) {
