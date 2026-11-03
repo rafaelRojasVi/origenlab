@@ -1031,6 +1031,27 @@ def test_our_reply_to_the_visitor_stays_outbound_and_answers_the_web_form_case(d
     assert [m["direction"] for m in thread_out["messages"]] == ["outbound", "inbound"]
 
 
+def test_a_second_web_form_from_the_same_visitor_joins_the_first_case(db, world) -> None:
+    """One visitor, one form per product (owner, 2026-11-03): the first opens the request, the
+    second adds to it — found by the visitor, a participant of the case, though the form's own
+    sender is contacto@ — and «Quitar» takes it back off."""
+    visitor = f"ana@{world['new_domain']}"
+    with _owner(db) as conn:
+        first = _web_form_mail(conn, reply_to=visitor)
+    case_id = _apply_only(db, world, first)["case_id"]
+    with _owner(db) as conn:
+        second = _web_form_mail(conn, reply_to=visitor)
+    joined = _apply_only(db, world, second)
+    assert (joined["rule_id"], joined["case_id"]) == ("R12", case_id)
+    assert _one(db, "select count(*) from crm.opportunity_evidence oe join evidence.source_record sr "
+                    "on sr.id = oe.source_record_id where oe.opportunity_id = %s and oe.unlinked_at is null",
+                case_id) == (2,)
+
+    _repo(db).undo(_operator(world["admin"]), joined["command_receipt_id"], "era otra solicitud")
+    assert _one(db, "select count(*) from crm.opportunity_evidence where opportunity_id = %s "
+                    "and unlinked_at is null", case_id) == (1,)
+
+
 def test_self_sent_message_without_the_web_form_marker_is_not_an_r7_request(db, world) -> None:
     with _owner(db) as conn:
         unmarked = _web_form_mail(conn, reply_to=f"ana@{world['new_domain']}", marked=False)

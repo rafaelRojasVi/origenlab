@@ -280,6 +280,16 @@ select distinct o.id::text, f.payload ->> 'original_email'
                       and oe.source_record_id::text = f.payload ->> 'forwarded_message_id'))
  where f.kind = 'forwarded_request' and f.review_status = 'promoted'
 """
+#: The addresses of a case's current participants: a quote's recipient, a web-form visitor, a
+#: forward's customer. The person behind a participant counts by each of their email addresses.
+_PARTICIPANT_PEOPLE_SQL = """
+select distinct p.opportunity_id::text, cp.value_norm
+  from crm.opportunity_participant p
+  join crm.contact_point cp
+    on cp.kind = 'email'
+   and (cp.id = p.contact_point_id or (p.person_id is not null and cp.person_id = p.person_id))
+ where p.valid_to is null
+"""
 _APPLIED_EVIDENCE_SQL = """
 select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
   from platform.command_receipt
@@ -428,9 +438,14 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
     cur.execute(_FORWARD_PEOPLE_SQL)
     by_case = {c.id: c for c in cases}
     extra: dict[str, set[str]] = {}
-    for case_id, email in cur.fetchall():
-        if case_id in by_case and email:
-            extra.setdefault(case_id, set()).add(email.strip().lower())
+    pairs = cur.fetchall()
+    # So is anyone the case names as a participant: the client a quote was made for may never have
+    # written to contacto@ (a supplier passed the request on), yet their next web form is this case's.
+    cur.execute(_PARTICIPANT_PEOPLE_SQL)
+    for case_id, email in [*pairs, *cur.fetchall()]:
+        email = (email or "").strip().lower()
+        if case_id in by_case and email and domain_of(email) not in OWN_DOMAINS:
+            extra.setdefault(case_id, set()).add(email)
     if extra:
         cases = tuple(replace(c, people=tuple(sorted(set(c.people) | extra.get(c.id, set())))) for c in cases)
 

@@ -227,7 +227,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     ejemplo: "«Fwd: Solicitud cotización Gradillas» de un cliente con caso abierto → queda en ese caso.",
   },
   R12: {
-    cuando: "Llega un correo que ni el hilo ni un número de cotización ubican, y el sistema reconoce su caso con seguridad: la IA lo elige con confianza alta (por la persona, la institución, el producto) o las señales del correo coinciden exactamente. También el correo de un proveedor sobre el negocio de un cliente.",
+    cuando: "Llega un correo que ni el hilo ni un número de cotización ubican, y el sistema reconoce su caso con seguridad: la IA lo elige con confianza alta (por la persona, la institución, el producto) o las señales del correo coinciden exactamente. También el correo de un proveedor sobre el negocio de un cliente, y el formulario del sitio web de alguien que ya tiene un caso abierto (por la persona o su institución).",
     hace: "Lo vincula a ese caso en vez de abrir otra solicitud. Si la confianza es media o baja, queda como sugerencia «Parece del caso…» en Correos sin caso. Cada «Quitar» le enseña a la IA que ese no era el caso.",
     automatica: true,
     ejemplo: "Un cliente escribe desde un hilo nuevo «¿plazo de entrega de la centrífuga?» → queda en su caso abierto de la centrífuga.",
