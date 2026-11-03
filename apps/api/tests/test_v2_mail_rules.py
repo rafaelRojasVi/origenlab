@@ -1288,6 +1288,41 @@ def test_external_message_with_origin_header_is_plain_inbound() -> None:
     assert action.case_title != "Solicitud de cotización — sitio web"
 
 
+def web_form(**over) -> MailEvidence:
+    base = dict(id="e-web", direction="outbound", sender="contacto@origenlab.cl",
+                recipients=("contacto@origenlab.cl",), subject="Solicitud de cotización — sitio web — U. Ficticia",
+                documents=(), thread_id="t-web-9", extra_headers={"x-origenlab-origin": WEB_QUOTE_ORIGIN},
+                reply_to="ana@lab-ficticio.example.test")
+    base.update(over)
+    return mail(**base)
+
+
+def test_a_web_form_from_a_person_of_one_open_case_joins_it_instead_of_opening_another() -> None:
+    """Owner 2026-11-03: a supplier's referral, then one form per product, made three cases."""
+    c = case(id="c-3", people=("ana@lab-ficticio.example.test",))
+    action = only(Snapshot(evidence=(web_form(),), cases=(c,), organizations=()))
+    assert (action.rule_id, action.mode, action.case_id) == ("R12", "auto", "c-3")
+    assert action.commands[0]["command"] == "link_case_evidence"
+    assert "formulario del sitio web" in action.reasons[0]
+
+
+def test_a_web_form_from_an_institution_with_one_open_case_joins_it() -> None:
+    o = org(id="o-4", domains=("lab-ficticio.example.test",))
+    action = only(Snapshot(evidence=(web_form(),), cases=(case(id="c-4", organization_id="o-4"),), organizations=(o,)))
+    assert (action.rule_id, action.case_id) == ("R12", "c-4")
+
+
+def test_a_web_form_still_opens_a_request_when_no_or_several_cases_or_only_free_mail_match() -> None:
+    gmail = "e@gmail.com"
+    o = org(id="o-4", domains=("gmail.com",))
+    for cases, visitor in (((), "ana@lab-ficticio.example.test"),
+                           ((case(id="c-1", people=(gmail,)), case(id="c-2", people=(gmail,))), gmail),
+                           ((case(id="c-1", organization_id="o-4"),), gmail),
+                           ((case(id="c-1", people=(gmail,), closed=True, stage="lost"),), gmail)):
+        action = only(Snapshot(evidence=(web_form(reply_to=visitor),), cases=cases, organizations=(o,)))
+        assert action.rule_id == "R7", (cases, action)
+
+
 def test_web_form_enquirer_needs_an_own_sender_and_the_marked_reply_to() -> None:
     """The case reads' predicate is R7's: From on an own domain and a marked Reply-To."""
     from origenlab_api.v2.mail_rules import mail_direction, web_form_enquirer

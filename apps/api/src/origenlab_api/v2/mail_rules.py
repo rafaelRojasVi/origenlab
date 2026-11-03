@@ -842,6 +842,26 @@ CREATE_REQUEST_FROM_FORWARD_STEP = "create_request_from_forward"
 ADD_CASE_SENDER_PARTICIPANT = "add_case_sender_participant"
 
 
+def _client_open_case(email: str, ix: _Index) -> tuple[CaseState, str] | None:
+    """The one open case already speaking with this client — by the address, or else by the
+    institution of its domain (never free mail, never a supplier) — and why; None when there are
+    none or several. R11 and the web form (R12) join it instead of opening another request."""
+    email = (email or "").strip().lower()
+    d = domain_of(email) if "@" in email else ""
+    named = d and d not in FREE_MAIL_DOMAINS and d not in OWN_DOMAINS
+    open_cases = [c for c in ix.cases.values() if not c.closed]
+    by_person = [c for c in open_cases if email and email in c.people]
+    if len(by_person) == 1:
+        return by_person[0], "el cliente ya escribe en este caso"
+    if by_person:
+        return None
+    domain_orgs = {o.id for o in ix.by_domain.get(d, []) if not o.is_supplier} if named else set()
+    by_institution = [c for c in open_cases if c.organization_id in domain_orgs]
+    if len(by_institution) == 1:
+        return by_institution[0], "caso abierto de la institución del cliente"
+    return None
+
+
 def _plan_forward(f: ForwardRequest, ix: _Index) -> PlannedAction:
     """R11 (owner, 2026-10-14: «the system acts, I remove what is wrong»). A forwarded request
     joins the one open case already speaking with that customer, or of the customer's institution;
@@ -856,14 +876,10 @@ def _plan_forward(f: ForwardRequest, ix: _Index) -> PlannedAction:
         return PlannedAction(f.id, "R8", NONE, (
             f"la lectura (IA) de otros correos de {d} es una oferta de proveedor: no se abre solicitud",))
     who = f.customer_name or email or "cliente sin nombre"
-    open_cases = [c for c in ix.cases.values() if not c.closed]
-    by_person = [c for c in open_cases if email and email in c.people]
     domain_orgs = [o for o in ix.by_domain.get(d, []) if not o.is_supplier] if named else []
-    by_institution = [c for c in open_cases if c.organization_id in {o.id for o in domain_orgs}]
-    joined = by_person if len(by_person) == 1 else by_institution if not by_person and len(by_institution) == 1 else []
-    if joined:
-        c = joined[0]
-        why = ("el cliente ya escribe en este caso" if by_person else "caso abierto de la institución del cliente")
+    joined = _client_open_case(email, ix)
+    if joined is not None:
+        c, why = joined
         reasons = [f"solicitud reenviada de {who}", why]
         return PlannedAction(f.id, "R11", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                              organization_id=c.organization_id, commands=({"command": ATTACH_FORWARD, "inputs": {
@@ -990,6 +1006,13 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         rt_domain = domain_of(e.reply_to)
         e_as_inbound = replace(e, direction="inbound", sender=e.reply_to,
                                model_intent="quote_request", requester_checked=True)
+        # A visitor who already has an open case — a quote made for them, an earlier form — adds to
+        # it, as a forward does (R11): one form per product must not open one case each (owner,
+        # 2026-11-03: two forms + a supplier's referral made three cases for one request).
+        joined = _client_open_case(e.reply_to, ix)
+        if joined is not None:
+            c, why = joined
+            return _link_rule(e_as_inbound, "R12", [c], f"formulario del sitio web: {why}", None)
         return _inbound_rules(e_as_inbound, ix, [rt_domain] if rt_domain else [])
 
     if e.direction == "outbound":
