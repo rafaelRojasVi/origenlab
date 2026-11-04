@@ -159,6 +159,14 @@ describe("«Pagos»", () => {
     await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-27" }));
   });
 
+  it("«Pagada entera» pays all that is left, today, in one click", async () => {
+    renderPage();
+    const row = (await screen.findAllByTestId("invoice-row")).find((r) => within(r).queryByText("Factura 9001")) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Pagada entera" }));
+    await waitFor(() => expect(markInvoicePaid).toHaveBeenCalledWith({ invoice_id: "i-1", invoice_version: 1, paid_on: "2026-10-28" }));
+    expect(toasts).toContain("Factura 9001 pagada hoy");
+  });
+
   it("records half as an abono, and the row shows what was paid and what is left", async () => {
     renderPage();
     const row = (await screen.findAllByTestId("invoice-row")).find((r) => within(r).queryByText("Factura 9001")) as HTMLElement;
