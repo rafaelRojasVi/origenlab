@@ -7,7 +7,8 @@ import { invoiceRefusal, markInvoicePaid, type Invoice } from "./invoiceApi";
  * «Registrar pago…»: the day and how much — all that is left by default, «50 %» one click away (the
  * owner's usual advance: half of the factura), any other amount typed. Less than what is left records an abono and the
  * factura stays «Por cobrar» with what is still owed; the payment that leaves nothing makes it
- * «Pagada». Used by the list row and by «Ver factura»; `large` is the factura's size.
+ * «Pagada». «Pagada entera» beside it does the common case in one click: all that is left, paid today. Used by the list
+ * row and by «Ver factura»; `large` is the factura's size.
  */
 const clp = (n: number) => formatMoney(String(n), "CLP") ?? "—";
 const digits = (text: string) => Number(text.replace(/\D/g, "") || "0");
@@ -58,20 +59,45 @@ export function PayForm({
     setOpen(false);
     opener.current?.focus();
   };
+
+  async function payAll() {
+    setBusy(true);
+    try {
+      await markInvoicePaid({ invoice_id: i.invoice_id, invoice_version: i.version, paid_on: today });
+      toast(`${label} pagada hoy`);
+    } catch (err) {
+      toast(refusal(err), "bad");
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  }
+
   if (!open) {
     return (
-      <button
-        ref={opener}
-        type="button"
-        className={`inline-flex items-center justify-center rounded-md bg-accent font-medium text-on-solid hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${large ? "min-h-11 px-4 text-[15px]" : "h-8 px-3 text-[13px]"}`}
-        onClick={() => {
-          setAmount(left);
-          setDay(today);
-          setOpen(true);
-        }}
-      >
-        Registrar pago…
-      </button>
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <button
+          ref={opener}
+          type="button"
+          className={`inline-flex items-center justify-center rounded-md bg-accent font-medium text-on-solid hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${large ? "min-h-11 px-4 text-[15px]" : "h-8 px-3 text-[13px]"}`}
+          onClick={() => {
+            setAmount(left);
+            setDay(today);
+            setOpen(true);
+          }}
+        >
+          Registrar pago…
+        </button>
+        <Button
+          variant="secondary"
+          className={large ? "min-h-11 px-4 text-[15px]" : "h-8 px-3 text-[13px]"}
+          busy={busy}
+          busyLabel="Guardando…"
+          onClick={() => void payAll()}
+        >
+          Pagada entera
+        </Button>
+      </span>
     );
   }
 
