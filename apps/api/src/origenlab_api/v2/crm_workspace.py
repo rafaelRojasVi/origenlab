@@ -267,9 +267,15 @@ _SQL_PIPELINE_OPPS = f"""
            op.organization_id::text as organization_id, o.name as organization_name,
            o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
-           op.won_quote_id::text as won_quote_id, op.won_revision_no
+           op.won_quote_id::text as won_quote_id, op.won_revision_no,
+           -- A case opened from a forwarded request (Solicitudes): who asked, as the worker read it.
+           -- Its emails come from Labdelivery or our own mailbox, so «Asignar institución» suggests
+           -- from these when no client email on the case does.
+           fr.payload->>'original_email' as forwarded_email, fr.payload->>'company' as forwarded_company
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
+      left join evidence.source_record fr
+        on fr.id = op.origin_source_record_id and fr.kind = 'forwarded_request'
      where {sale_cases("op")}
      order by op.updated_at desc, op.id
 """
@@ -891,6 +897,17 @@ def _sort_key_sent(rev: Mapping[str, Any]) -> tuple[str, int]:
     return (str(rev.get("sent_at") or ""), int(rev.get("revision_no") or 0))
 
 
+def forwarded_requester(email: str | None, company: str | None) -> tuple[str | None, str | None]:
+    """«Asignar institución»'s suggestion for a case opened from a forwarded request: the company
+    the worker read and the customer's institutional domain (never free mail, never our own)."""
+    name = (company or "").strip()[:200] or None
+    address = (email or "").strip().lower()
+    domain = address.rsplit("@", 1)[1] if "@" in address else None
+    if domain in FREE_MAIL_DOMAINS or domain in OWN_DOMAINS:
+        domain = None
+    return name, domain
+
+
 def compose_pipeline(
     opportunities: list[Mapping[str, Any]],
     case_organizations: list[Mapping[str, Any]],
@@ -1048,6 +1065,8 @@ def compose_pipeline(
             attention.append("no_requesting_institution")
             inbound_seen = ((contacts or {}).get(oid) or {}).get("inbound") or {}
             read, domain = inbound_seen.get("_requester_read"), inbound_seen.get("_requester_domain")
+            if not (read or domain):
+                read, domain = forwarded_requester(opp.get("forwarded_email"), opp.get("forwarded_company"))
             if read or domain:
                 suggestion = {"name": read, "domain": domain}
         if not quote_cards:

@@ -1031,6 +1031,21 @@ def test_nothing_to_suggest_from_free_mail_without_a_reading() -> None:
     assert card["requester_suggestion"] is None
 
 
+def test_a_forwarded_request_case_suggests_the_customer_domain_and_company() -> None:
+    # Opened from Solicitudes: no client email on the case, only the Labdelivery forward.
+    card = _card([], forwarded_email="Paula.Ficticia@semillas-ficticias.example.test", forwarded_company=None)
+    assert card["requester_suggestion"] == {"name": None, "domain": "semillas-ficticias.example.test"}
+    card = _card([], forwarded_email="ana.ficticia@gmail.com", forwarded_company="Instituto Ficticio")
+    assert card["requester_suggestion"] == {"name": "Instituto Ficticio", "domain": None}
+    card = _card([], forwarded_email="ana.ficticia@gmail.com", forwarded_company=None)
+    assert card["requester_suggestion"] is None
+
+
+def test_a_client_email_beats_the_forwarded_request() -> None:
+    card = _card([_CLIENT_ROW], forwarded_email="x@otra-ficticia.example.test", forwarded_company="Otra")
+    assert card["requester_suggestion"]["domain"] == "centro-ficticio.example.test"
+
+
 def test_a_case_with_an_institution_suggests_nothing() -> None:
     card = _card([_CLIENT_ROW], organization_id="org1", organization_name="Instituto Ficticio")
     assert card["requester_suggestion"] is None
