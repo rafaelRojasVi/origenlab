@@ -79,6 +79,7 @@ from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_c
     quote_contents,
 )
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
+from origenlab_api.v2.web_quote_form import SUBJECT_PREFIX as WEB_FORM_SUBJECT_PREFIX
 from origenlab_api.v2.tenders.reads import TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
 
 
@@ -855,6 +856,10 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             continue  # a bounce or an out-of-office: nobody on the client's side wrote it
         if direction == "inbound":
             read = (row.get("requester_read") or "").strip()
+            subject = " ".join((row.get("subject") or "").split())
+            if not read and enquirer and subject.startswith(WEB_FORM_SUBJECT_PREFIX):
+                # The form's required «Institución o empresa», which it writes into the subject.
+                read = subject[len(WEB_FORM_SUBJECT_PREFIX):].strip()
             if read and (oid not in reads or reads[oid][0] < at):
                 reads[oid] = (at, read[:200])
             writer = enquirer or next((addr for _, addr in getaddresses([row.get("sender") or ""]) if "@" in addr), None)

@@ -1046,6 +1046,21 @@ def test_a_client_email_beats_the_forwarded_request() -> None:
     assert card["requester_suggestion"]["domain"] == "centro-ficticio.example.test"
 
 
+def test_a_web_form_suggests_the_institution_the_visitor_typed() -> None:
+    # Free-mail visitor, nothing read by the model: the form's own «Institución o empresa» (in the subject).
+    row = {**_WEB_FORM_ROW, "opportunity_id": "o9", "web_form_reply_to": "ana.ficticia@gmail.com",
+           "subject": "Solicitud de cotización — sitio web — Ficticia & Cia Ltda"}
+    assert _card([row])["requester_suggestion"] == {"name": "Ficticia & Cia Ltda", "domain": None}
+    read = {**row, "requester_read": "Laboratorio Ficticio"}
+    assert _card([read])["requester_suggestion"]["name"] == "Laboratorio Ficticio"
+
+
+def test_only_a_web_form_subject_is_read_as_an_institution() -> None:
+    row = {**_CLIENT_ROW, "requester_read": None, "sender": "ana.ficticia@gmail.com",
+           "subject": "Solicitud de cotización — sitio web — Ficticia & Cia Ltda"}
+    assert _card([row])["requester_suggestion"] is None
+
+
 def test_a_case_with_an_institution_suggests_nothing() -> None:
     card = _card([_CLIENT_ROW], organization_id="org1", organization_name="Instituto Ficticio")
     assert card["requester_suggestion"] is None
@@ -1058,7 +1073,7 @@ def test_our_own_mail_never_suggests() -> None:
 
 def test_the_web_form_visitor_domain_is_suggested() -> None:
     card = _card([{**_WEB_FORM_ROW, "opportunity_id": "o9", "requester_read": None}])
-    assert card["requester_suggestion"] == {"name": None, "domain": "lab-ficticio.example.test"}
+    assert card["requester_suggestion"] == {"name": "Universidad Ficticia", "domain": "lab-ficticio.example.test"}
 
 
 def _mail_row(gid: str, at: str, sender: str, **over) -> dict:
