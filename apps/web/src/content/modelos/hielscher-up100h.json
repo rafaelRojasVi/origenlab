@@ -43,9 +43,24 @@
       "source": "https://www.hielscher.com/100h_p.htm"
     }
   ],
-  "accessories": [],
+  "accessories": [
+    "Sonotrodos MS1, MS2, MS3, MS7 y MS10 (titanio, de 1 a 10 mm de punta)"
+  ],
   "related": [],
-  "faqs": [],
+  "faqs": [
+    {
+      "q": "¿Qué volumen de muestra procesa el UP100H?",
+      "a": "De 0,1 a 500 ml según el sonotrodo: las puntas finas (1 a 3 mm) sirven para volúmenes pequeños y las gruesas (7 a 10 mm) para volúmenes mayores."
+    },
+    {
+      "q": "¿El generador y el transductor van separados?",
+      "a": "No. En el UP100H están en una sola carcasa de mano con una única conexión de alimentación, a diferencia de la serie St, que lleva el transductor aparte."
+    },
+    {
+      "q": "¿Se puede usar durante periodos largos?",
+      "a": "Sí: el fabricante lo indica para operación continua."
+    }
+  ],
   "official_url": "https://www.hielscher.com/100h_p.htm",
   "official_pdf_url": "https://www.hielscher.com/wp-content/uploads/FactSheet-sonicator-UP100H-eng-14022024.pdf",
   "image_id": "hielscher-up100h",
