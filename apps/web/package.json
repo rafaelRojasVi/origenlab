@@ -8,7 +8,7 @@
     "preview": "astro preview",
     "check": "astro check",
     "lint": "astro check",
-    "validate:content": "node scripts/validate-content.mjs",
+    "validate:content": "node scripts/validate-content.mjs && node scripts/validate-content.mjs --self-test",
     "validate:catalog": "node scripts/validate-catalog.mjs",
     "validate:images": "node --experimental-strip-types scripts/validate-images.mjs",
     "export:email-signature": "node scripts/export-email-signature-assets.mjs",

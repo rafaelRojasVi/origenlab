@@ -24,6 +24,10 @@
  * encabezado que declare `title`. No hace peticiones de red: que las fuentes
  * sigan respondiendo lo comprueba `npm run verify:sources`.
  *
+ * `--self-test` aplica el validador a fixtures negativos (clave prohibida, fuente
+ * no http, image_id inválido, marca no aprobada, etc.) y comprueba que
+ * `content.config.ts` construye zod desde el esquema.
+ *
  * Ejecutar: npm run validate:content
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
@@ -95,6 +99,83 @@ const allImageIds = new Set(productImages.map((row) => row.id));
 
 /* -- Modelos ------------------------------------------------------------------ */
 
+/** Todos los errores de un modelo, ya con el nombre del archivo. `slugs` son los modelos que existen. */
+function modelErrors(file, data, slugs) {
+  const found = [];
+  check(data, schema, '', found);
+  if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+    const id = file.replace(/\.json$/, '');
+    if (typeof data.slug === 'string' && data.slug !== id) found.push(`slug «${data.slug}» debe ser «${id}»`);
+    if (typeof data.brand === 'string' && !APPROVED_BRAND_IDS.includes(data.brand))
+      found.push(`brand «${data.brand}» no está en APPROVED_BRAND_IDS`);
+    if (typeof data.image_id === 'string') {
+      if (!allImageIds.has(data.image_id)) found.push(`image_id «${data.image_id}» no existe en productImages.ts`);
+      else if (!verifiedImageIds.has(data.image_id))
+        found.push(`image_id «${data.image_id}» no tiene fila VERIFIED en productImages.ts`);
+    }
+    if (typeof data.showroom_id === 'string' && !existsSync(join(showroomDir, `${data.showroom_id}.ts`)))
+      found.push(`showroom_id «${data.showroom_id}» no tiene escena en src/lib/showroom/content/`);
+    if (Array.isArray(data.related)) {
+      for (const other of data.related) {
+        if (other === id) found.push('related no puede nombrar al propio modelo');
+        else if (!slugs.has(other)) found.push(`related «${other}» no es un modelo de la colección`);
+      }
+    }
+  }
+  return found.map((message) => `${file}: ${message}`);
+}
+
+/* -- Autoprueba: los casos negativos se conservan, no se prueban a mano ------- */
+
+function selfTest() {
+  const base = JSON.parse(readFileSync(join(modelosDir, 'hielscher-up400st.json'), 'utf8'));
+  const slugs = new Set(['hielscher-up400st', 'hielscher-up200st']);
+  const run = (mutate) => {
+    const data = structuredClone(base);
+    mutate(data);
+    return modelErrors('hielscher-up400st.json', data, slugs).join('\n');
+  };
+  const cases = [
+    ['modelo válido', (d) => d, null],
+    ['clave price', (d) => (d.price = '1'), 'price está prohibido'],
+    ['clave stock', (d) => (d.stock = 3), 'stock está prohibido'],
+    ['clave lead_time', (d) => (d.lead_time = '2 semanas'), 'lead_time está prohibido'],
+    ['clave warranty', (d) => (d.warranty = '1 año'), 'warranty está prohibido'],
+    ['clave ajena', (d) => (d.color = 'rojo'), 'color no está en el esquema'],
+    ['falta lead', (d) => delete d.lead, 'lead es obligatorio y falta'],
+    ['familia fuera del enum', (d) => (d.family = 'otra'), 'family «otra» no está en'],
+    ['marca no aprobada', (d) => (d.brand = 'acme'), 'brand «acme» no está en APPROVED_BRAND_IDS'],
+    ['source vacío', (d) => (d.specs[0].source = ''), 'specs[0].source must be a URL'],
+    ['source javascript:', (d) => (d.specs[0].source = 'javascript:alert(1)'), 'specs[0].source must be a URL'],
+    ['source ftp', (d) => (d.specs[0].source = 'ftp://x.y/z'), 'specs[0].source must be a URL'],
+    ['official_url sin http', (d) => (d.official_url = 'www.hielscher.com'), 'official_url must be a URL'],
+    ['image_id inexistente', (d) => (d.image_id = 'no-existe'), 'no existe en productImages.ts'],
+    ['image_id sin fila VERIFIED', (d) => (d.image_id = 'ortoalresa-bioprocen-22-r'), 'no tiene fila VERIFIED'],
+    ['showroom_id sin escena', (d) => (d.showroom_id = 'no-existe'), 'no tiene escena'],
+    ['slug distinto del archivo', (d) => (d.slug = 'otro'), 'slug «otro» debe ser'],
+    ['related inexistente', (d) => (d.related = ['fantasma']), 'related «fantasma» no es un modelo'],
+    ['headline demasiado largo', (d) => (d.headline = 'x'.repeat(121)), 'headline mide 121'],
+  ];
+  for (const [name, mutate, expected] of cases) {
+    const out = run(mutate);
+    if (expected === null) assert(out === '', `autoprueba «${name}»: debía pasar y dio\n${out}`);
+    else assert(out.includes(expected), `autoprueba «${name}»: se esperaba «${expected}» y salió «${out}»`);
+  }
+  // La definición zod se construye desde el esquema JSON: una sola fuente de verdad.
+  const config = readFileSync(join(root, 'src/content.config.ts'), 'utf8');
+  assert(/from '\.\/content\/modelos\.schema\.json'/.test(config), 'content.config.ts debe importar modelos.schema.json');
+  if (failed) {
+    console.error(`\nvalidate:content --self-test: FALLA`);
+    process.exit(1);
+  }
+  console.log(`validate:content --self-test: OK (${cases.length} casos)`);
+}
+
+if (process.argv.includes('--self-test')) {
+  selfTest();
+  process.exit(0);
+}
+
 const files = existsSync(modelosDir) ? readdirSync(modelosDir).filter((f) => f.endsWith('.json')).sort() : [];
 const parsed = new Map();
 for (const file of files) {
@@ -105,35 +186,8 @@ for (const file of files) {
   }
 }
 const slugs = new Set([...parsed.keys()].map((file) => file.replace(/\.json$/, '')));
-
 for (const [file, data] of parsed) {
-  const errors = [];
-  check(data, schema, '', errors);
-  for (const message of errors) assert(false, `${file}: ${message}`);
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) continue;
-
-  const id = file.replace(/\.json$/, '');
-  if (typeof data.slug === 'string') assert(data.slug === id, `${file}: slug «${data.slug}» debe ser «${id}»`);
-  if (typeof data.brand === 'string')
-    assert(APPROVED_BRAND_IDS.includes(data.brand), `${file}: brand «${data.brand}» no está en APPROVED_BRAND_IDS`);
-  if (typeof data.image_id === 'string') {
-    assert(allImageIds.has(data.image_id), `${file}: image_id «${data.image_id}» no existe en productImages.ts`);
-    assert(
-      !allImageIds.has(data.image_id) || verifiedImageIds.has(data.image_id),
-      `${file}: image_id «${data.image_id}» no tiene fila VERIFIED en productImages.ts`,
-    );
-  }
-  if (typeof data.showroom_id === 'string')
-    assert(
-      existsSync(join(showroomDir, `${data.showroom_id}.ts`)),
-      `${file}: showroom_id «${data.showroom_id}» no tiene escena en src/lib/showroom/content/`,
-    );
-  if (Array.isArray(data.related)) {
-    for (const other of data.related) {
-      assert(other !== id, `${file}: related no puede nombrar al propio modelo`);
-      assert(other === id || slugs.has(other), `${file}: related «${other}» no es un modelo de la colección`);
-    }
-  }
+  for (const message of modelErrors(file, data, slugs)) assert(false, message);
 }
 
 /* -- Aplicaciones ------------------------------------------------------------- */
