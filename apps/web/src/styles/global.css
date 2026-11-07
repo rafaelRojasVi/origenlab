@@ -587,6 +587,11 @@
         animation-timeline: view();
         animation-range: entry 0% entry 35%;
       }
+      @media print {
+        .rv {
+          animation: none;
+        }
+      }
     }
   }
 }

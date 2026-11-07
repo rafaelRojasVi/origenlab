@@ -439,7 +439,7 @@ console.log('\nSala 3D del hero (375 px, montaje diferido)');
 
 /**
  * La fila de marcas de la portada es estática: ni marquesina ni control de
- * pausa (no hay movimiento que parar, WCAG 2.2.2). Las seis marcas visibles en
+ * pausa (no hay movimiento que parar, WCAG 2.2.2). Las marcas visibles en
  * la portada, en el orden de la lista cerrada; OHAUS queda fuera por decisión
  * del titular (`HOME_HIDDEN_BRAND_IDS`).
  */
@@ -451,17 +451,14 @@ console.log('\nRiel de marcas (1440 px)');
 
   const brands = page.locator('[data-home-brands]');
   check(await brands.count() === 1, 'hay exactamente un riel de marcas en la portada');
-  const ORDER = [
-    'Hielscher Ultrasonics',
-    'Ortoalresa',
-    'IKA',
-    'Adam Equipment',
-    'Löser Messtechnik',
-    'SERVA Electrophoresis',
-  ];
+  // Orden de la lista cerrada, sin las marcas ocultas en la portada: se deriva de brands.ts.
+  const brandNames = Object.fromEntries(
+    [...brandsSource.matchAll(/\n {4}id: '([\w-]+)',[\s\S]*?\n {4}name: '([^']+)'/g)].map(([, id, name]) => [id, name]),
+  );
+  const ORDER = idList('APPROVED_BRAND_IDS').filter((id) => !HIDDEN_ON_HOME.includes(id)).map((id) => brandNames[id]);
   const expected = idList('APPROVED_BRAND_IDS').filter((id) => !HIDDEN_ON_HOME.includes(id)).length;
   const links = await brands.locator('.home-rail a').count();
-  check(links === expected && links === ORDER.length, `un enlace por marca visible en la portada (${links} de ${expected})`);
+  check(links === expected && links === ORDER.length && ORDER.every(Boolean), `un enlace por marca visible en la portada (${links} de ${expected})`);
   const names = await brands.locator('.home-rail__name').allTextContents();
   check(
     JSON.stringify(names.map((name) => name.trim())) === JSON.stringify(ORDER),
@@ -477,7 +474,7 @@ console.log('\nRiel de marcas (1440 px)');
   );
   check(
     await brands.locator('.home-rail__logo').evaluateAll((els) => els.every((el) => el.getBoundingClientRect().width > 0)),
-    'las seis marcas se leen a la vez',
+    'todas las marcas se leen a la vez',
   );
   const opacities = await brands.locator('.home-rail__logo').evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
   check(opacities.length === 1, `los logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`);
@@ -519,11 +516,12 @@ console.log('\nMovimiento reducido');
     'el fragmento de three.js no se descarga',
   );
 
-  // El riel es una fila estática y las seis marcas se leen a la vez.
+  // El riel es una fila estática y las marcas se leen a la vez.
   const visibleLogos = await page
     .locator('[data-home-brands] .home-rail__logo')
     .evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().width > 0).length);
-  check(visibleLogos === 6, `las seis marcas se leen a la vez (${visibleLogos})`);
+  const shownBrands = idList('APPROVED_BRAND_IDS').filter((id) => !HIDDEN_ON_HOME.includes(id)).length;
+  check(visibleLogos === shownBrands, `las ${shownBrands} marcas se leen a la vez (${visibleLogos})`);
   // Sin movimiento, ningún bloque de la portada queda a medio revelar.
   const faded = await page.evaluate(() => [...document.querySelectorAll('.rv')].filter((el) => getComputedStyle(el).opacity !== '1').length);
   check(faded === 0, `con movimiento reducido ningún .rv queda atenuado (${faded})`);
@@ -1073,7 +1071,7 @@ console.log('\nPortada y cómo comprar');
   );
   const hiddenNames = models.filter((entry) => HIDDEN_ON_HOME.includes(entry.brand)).map((entry) => entry.name);
   check(
-    hiddenNames.length > 0 && !hiddenNames.some((name) => foots.some((foot) => foot.split(' · ').includes(name))),
+    hiddenNames.every((hidden) => !foots.some((foot) => foot.split(' · ').includes(hidden))),
     'Home: las tarjetas no nombran modelos de la marca oculta',
   );
   const h1 = (await wide.locator('h1').first().textContent())?.replace(/\s+/g, ' ').trim();

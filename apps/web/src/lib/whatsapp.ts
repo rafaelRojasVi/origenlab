@@ -1,8 +1,5 @@
 import { contact } from '../data/contact';
 
-/** Nota mono bajo el botón de WhatsApp (tablero «Mensaje»): quién responde y cuándo. */
-export const WHATSAPP_REPLY_NOTE = 'Le responde una persona del equipo, en horario hábil.';
-
 export interface WhatsAppQuoteOptions {
   productName?: string;
   brandName?: string;

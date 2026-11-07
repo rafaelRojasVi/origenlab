@@ -2,7 +2,7 @@
 import Button from './Button.astro';
 import Icon from './Icon.astro';
 import { site } from '../../config/site';
-import { buildWhatsAppQuoteUrl, WHATSAPP_REPLY_NOTE } from '../../lib/whatsapp';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { ctaLabels } from '../../lib/ctaLabels';
 
 /**
@@ -10,14 +10,13 @@ import { ctaLabels } from '../../lib/ctaLabels';
  * la página, con el titular a la izquierda y las dos acciones apiladas a la
  * derecha. Es la única superficie invertida de cada página además del pie.
  *
- * El correo y el teléfono ya no se repiten aquí: viven en el pie. WhatsApp se
- * nombra por su canal y su nota dice quién responde.
+ * El correo y el teléfono ya no se repiten aquí: viven en el pie.
  *
  * `primary` decide cuál de las dos acciones lleva el relleno: el formulario de
  * cotización (por omisión, y siempre en la portada) o WhatsApp.
  */
 interface Props {
-  /** Se acepta por compatibilidad con las páginas que aún lo pasan; la banda ya no lleva índice. */
+  /** Obsoleto: la banda ya no lleva índice. Sólo lo pasan las fichas de modelo (T4); se borra con ellas. */
   index?: number;
   title: string;
   body: string;
@@ -68,7 +67,6 @@ const whatsappFirst = primary === 'whatsapp';
           </>
         )
       }
-      <p class="t-label band__note">{WHATSAPP_REPLY_NOTE}</p>
     </div>
   </div>
 </section>
@@ -103,10 +101,6 @@ const whatsappFirst = primary === 'whatsapp';
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-  .band__note {
-    margin-top: 0.25rem;
-    color: var(--color-onink-500);
   }
   @media (max-width: 1023.98px) {
     .band {
