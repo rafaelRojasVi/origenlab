@@ -655,6 +655,26 @@ for (const story of STORY_PAGES) {
     await context.close();
   }
 
+  console.log(`\nHistoria de producto ${story.path} (375 px, nivel automático)`);
+  {
+    // Un teléfono recibe el lienzo (nivel medio), no la imagen fija: con un
+    // solo contexto WebGL, el del escenario, y sin bloquear el desplazamiento.
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    await page.addInitScript(webglCounter);
+    await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
+    await page.locator('[data-story]').scrollIntoViewIfNeeded();
+    check(await waitReady(page), 'ProductStory: el 3D arranca en un teléfono sin ?tier=');
+    const tier = await page.locator('[data-story] canvas').getAttribute('data-tier');
+    check(tier === 'medium', `ProductStory: un teléfono recibe el nivel medio (${tier})`);
+    const contexts = await page.evaluate(() => window.__webgl);
+    check(contexts === 1, `ProductStory: un solo contexto WebGL (${contexts})`);
+    const touch = await page.locator('[data-story] canvas').evaluate((el) => getComputedStyle(el).touchAction);
+    check(touch === 'pan-y', `ProductStory: el lienzo deja desplazar la página con el dedo (touch-action: ${touch})`);
+    check(await page.locator('[data-story]').getAttribute('data-mode') === 'tap', 'ProductStory: en un teléfono se avanza por toque');
+    await context.close();
+  }
+
   console.log(`\nHistoria de producto ${story.path} (375 px, avance por toque)`);
   {
     const context = await browser.newContext({ viewport: { width: 375, height: 812 } });

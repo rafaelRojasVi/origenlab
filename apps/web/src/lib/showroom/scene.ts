@@ -18,11 +18,16 @@ import type { BuiltModel } from './types';
 export type AnchorPositions = Record<string, { x: number; y: number } | null>;
 
 /**
- * Nivel de calidad del dibujo. `high`: sombra suave por mapa de sombras y
- * resolución hasta 2×. `medium`: sin mapa de sombras (una mancha de contacto
- * dibujada la sustituye) y resolución hasta 1,5×. Los dos usan los mismos
- * materiales físicos y la luz de entorno del estudio. El nivel `low` no tiene
- * escena: es la imagen fija de la página.
+ * Nivel de calidad del dibujo. Regla: la luz de entorno del estudio
+ * (`RoomEnvironment` + `PMREMGenerator`) va en `high` y en `medium`, con la
+ * misma intensidad, porque es un costo único al montar y sin ella los metales
+ * (sonotrodo, varilla, placa) se ven casi negros; las sombras por mapa de
+ * sombras van sólo en `high`.
+ *
+ * `high`: materiales físicos, luz de entorno, sombra suave y resolución hasta
+ * 2×. `medium`: materiales físicos y luz de entorno iguales, sin mapa de
+ * sombras (una mancha de contacto dibujada la sustituye) y resolución hasta
+ * 1,5×. El nivel `low` no tiene escena: es la imagen fija de la página.
  */
 export type Tier = 'high' | 'medium';
 
@@ -52,6 +57,12 @@ export interface Showroom {
   setYaw(offset: number | null): void;
   /** Baja (o sube) el nivel de calidad sin rehacer la escena. */
   setTier(tier: Tier): void;
+  /**
+   * Activa o desactiva el giro con el puntero. Desactivado, arrastrar sobre el
+   * lienzo no mueve la cámara ni corta su viaje: en la página de producto el
+   * gesto desplaza la página.
+   */
+  setControls(enabled: boolean): void;
   /** Posición en píxeles del lienzo de cada ancla, o `null` si queda detrás. */
   onFrame(callback: (anchors: AnchorPositions) => void): void;
   /** Cambia el equipo en el mismo escenario (un solo lienzo, un solo WebGL). */
@@ -83,6 +94,10 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   controls.dampingFactor = 0.06;
   controls.enablePan = false;
   controls.enableZoom = false; // la rueda desplaza la página; el acercamiento lo dan las vistas
+  // OrbitControls fija `touch-action: none` en el lienzo y así un dedo sobre el
+  // equipo no desplaza la página; se devuelve el desplazamiento vertical al
+  // navegador y el giro queda con el arrastre horizontal.
+  canvas.style.touchAction = 'pan-y';
   controls.minPolarAngle = 0.25;
   controls.maxPolarAngle = 1.52;
 
@@ -193,6 +208,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   };
   const goTo = (name: string) => startTween(name, 1200, false);
   canvas.addEventListener('pointerdown', () => {
+    if (!controls.enabled) return;
     idle = false;
     tween = null;
   });
@@ -333,6 +349,9 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
       yawOffset = offset;
       if (offset === null) idle = true;
       start();
+    },
+    setControls(enabled) {
+      controls.enabled = enabled;
     },
     setTier(next) {
       if (next === tier) return;

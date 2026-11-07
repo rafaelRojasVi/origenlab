@@ -401,8 +401,9 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
    * medium lo mismo sin mapa de sombras, resolución ≤ 1,5×, menos burbujas
    * low    sin WebGL: la imagen fija y «Ver en 3D», que carga medium a pedido
    *
-   * Ahorro de datos, viewport < 700 px o movimiento reducido: low. Poca memoria
-   * (< 4 GB) o ≤ 4 núcleos: medium. Si no, high. `mountStory` mide después los
+   * Ahorro de datos o movimiento reducido: low. Pantalla estrecha (< 760 px,
+   * teléfonos: lienzo fijo de 55 vh y avance por toque), poca memoria (< 4 GB) o
+   * ≤ 4 núcleos: medium. Si no, high. Fuera de eso sólo el sondeo baja a low. `mountStory` mide después los
    * primeros ~2 s y baja un nivel si hace falta. `?tier=` lo fija (QA y
    * pósteres) y apaga esa medición. El nivel bajo nunca crea un contexto WebGL:
    * ni siquiera prueba si existe hasta que se pide «Ver en 3D».
@@ -424,10 +425,10 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const asked = new URLSearchParams(location.search).get('tier') as Tier | null;
     const forced = asked === 'high' || asked === 'medium' || asked === 'low';
-    const phone = innerWidth < 700;
+    const narrow = innerWidth < 760;
     const saveData = nav.connection?.saveData === true;
     const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
-    let tier: Tier = forced ? asked! : reduced || saveData || phone ? 'low' : modest ? 'medium' : 'high';
+    let tier: Tier = forced ? asked! : reduced || saveData ? 'low' : narrow || modest ? 'medium' : 'high';
     let onDemand = false;
     let near = false;
     let story: MountedStory | null = null;
@@ -443,14 +444,10 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       layout();
       button.hidden = !offer;
     };
-    const webgl = () => {
-      try {
-        const probe = document.createElement('canvas');
-        return Boolean(probe.getContext('webgl2') || probe.getContext('webgl'));
-      } catch {
-        return false;
-      }
-    };
+    // Sin lienzo de prueba (sería un segundo contexto WebGL): se mira si el
+    // navegador conoce WebGL 2 y, si el contexto real no se crea, `mountStory`
+    // falla y queda la imagen.
+    const webgl = () => 'WebGL2RenderingContext' in window;
     const id = root.dataset.story ?? '';
     const boot = () => {
       if (tier === 'low' || !near || story || loading) return;

@@ -56,7 +56,14 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
   let tier = options.tier;
   canvas.dataset.tier = tier;
   canvas.hidden = false;
-  const scene = createStoryScene(canvas, build({ lite: tier === 'medium' }), { tier });
+  let scene: ReturnType<typeof createStoryScene>;
+  try {
+    scene = createStoryScene(canvas, build({ lite: tier === 'medium' }), { tier });
+  } catch (error) {
+    // El único contexto WebGL es el del escenario: si no se crea, no hay 3D.
+    canvas.hidden = true;
+    throw error;
+  }
   scene.bindOverlays(root);
 
   const marked = [...root.querySelectorAll<HTMLElement>('[data-beats]')];
@@ -65,6 +72,9 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
     if (beat === shown) return;
     shown = beat;
     root.dataset.beat = beat;
+    // Sólo en el primer beat (la vista de entrada) se gira el equipo con el dedo o el ratón; en
+    // el resto de la historia el gesto desplaza la página y no corta la cámara.
+    scene.setControls(beat === story.beats[0]?.id);
     for (const el of marked) el.toggleAttribute('data-on', (el.dataset.beats ?? '').split(' ').includes(beat));
   };
 
@@ -118,6 +128,7 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
   });
 
   if (options.still) {
+    scene.setControls(true);
     scene.setYaw(0);
     return handle;
   }
