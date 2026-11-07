@@ -41,6 +41,9 @@ RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("apps/dashboard/*", ("dashboard",)),
     ("apps/dashboard-proxy/*", ("proxy",)),
     ("apps/web/*", ("web",)),
+    # The model-sheet schema is read by the api (publish validation, its image) and pinned by the
+    # dashboard's «Catálogo web» editor (drift test).
+    ("apps/web/src/content/modelos.schema.json", ("api", "dashboard")),
     ("scripts/*", ("repo",)),
     ("Makefile", ALL),
     (".github/workflows/*", ALL),

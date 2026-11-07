@@ -14,8 +14,10 @@ import {
   isAllowedQuotePreviewPostPath,
   isAllowedTenderCommandPostPath,
   isAllowedUpstreamPath,
+  isAllowedWebPublishPostPath,
   marketingCommandMaxBytes,
   stripApiPrefix,
+  webPublishBodyWithinLimit,
 } from "./allowlist";
 import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath } from "./auth";
 import { applyCorsHeaders, isAllowedOrigin, stripUpstreamCorsHeaders } from "./cors";
@@ -194,6 +196,24 @@ export function quotePreviewRefusal(request: Request): Refusal {
 }
 
 /**
+ * The guard for «Publicar web»: the same Origin, Sec-Fetch-Site and JSON-only rules as the quote
+ * preview, and no `Idempotency-Key` (the API does not read one). The size limit is
+ * WEB_PUBLISH_MAX_BYTES, checked against the declared length here and the buffered body in `handleRequest`.
+ */
+export function webPublishRefusal(request: Request): Refusal {
+  const origin = originRefusal(request);
+  if (origin) return origin;
+  if (!isJsonType((request.headers.get("Content-Type") || "").trim())) {
+    return { status: 415, code: "unsupported_media_type" };
+  }
+  const length = Number(request.headers.get("Content-Length") || "0");
+  if (!webPublishBodyWithinLimit(length)) {
+    return { status: 413, code: "payload_too_large" };
+  }
+  return null;
+}
+
+/**
  * The CSRF guard for the sign-in POSTs (logout, profile select, profile clear), checked before
  * anything is forwarded. A cross-site page can neither send an allowed `Origin` nor a cross-site
  * `Sec-Fetch-Site` past this, so it cannot sign someone out, switch their profile, or drive PIN
@@ -263,6 +283,12 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     }
     if (isAllowedQuotePreviewPostPath(upstreamPath)) {
       const refusal = quotePreviewRefusal(request);
+      if (refusal) {
+        return jsonError(request, refusal.status, refusal.code);
+      }
+    }
+    if (isAllowedWebPublishPostPath(upstreamPath)) {
+      const refusal = webPublishRefusal(request);
       if (refusal) {
         return jsonError(request, refusal.status, refusal.code);
       }
@@ -337,6 +363,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   }
   if (
     body !== undefined &&
+    isAllowedWebPublishPostPath(upstreamPath as string) &&
+    !webPublishBodyWithinLimit(body.byteLength)
+  ) {
+    return jsonError(request, 413, "payload_too_large");
+  }
+  if (
+    body !== undefined &&
     isAllowedAuthProfilePostPath(upstreamPath as string) &&
     body.byteLength > AUTH_PROFILE_MAX_BYTES
   ) {
@@ -396,6 +429,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   });
 }
 
+import { handleStatsRequest, type StatsEnv } from "./stats";
 import { handleWebFormRequest } from "./web_form";
 
 export default {
@@ -403,6 +437,10 @@ export default {
     const url = new URL(request.url);
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/web/")) {
       return handleWebFormRequest(request, env as any);
+    }
+    // Public first-party analytics: its own two-request allowlist, no dashboard session.
+    if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/stats/")) {
+      return handleStatsRequest(request, env as StatsEnv);
     }
     return handleRequest(request, env);
   },

@@ -13,6 +13,7 @@ on:
       - "apps/email-pipeline/**"
       - "supabase/migrations/**"
       - "supabase/roles.sql"
+      - "apps/web/src/content/modelos.schema.json"
       - "scripts/run_pytest.sh"
       - "scripts/test_db.sh"
       - "scripts/pytest_plugins/**"

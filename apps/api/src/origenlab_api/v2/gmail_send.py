@@ -152,8 +152,13 @@ def build_web_quote_message(
     need: str,
     extra: dict[str, str],
     submitted_at: str,
+    product: str | None = None,
+    consent_version: str | None = None,
 ) -> bytes:
     """One self-addressed form notification: From/To=contacto@, Reply-To=visitor.
+
+    A non-empty `product` (model of interest) is appended to the subject and gets its own
+    body line; a non-empty `consent_version` adds «Consentimiento: <version> <submitted_at>».
 
     Raises ValueError if reply_to is not a valid plain mailbox address or if
     any field contains CR/LF (header injection attempt).
@@ -161,21 +166,31 @@ def build_web_quote_message(
     if not _ADDRESS.fullmatch(reply_to) or len(reply_to) > MAX_ADDRESS_LENGTH:
         raise ValueError("reply_to is not a valid plain mailbox address")
     institution_safe = _safe_header(institution, 120)
+    product_safe = _safe_header(product, 120) if product else ""
+    consent_safe = _safe_header(consent_version, 80) if consent_version else ""
     msg = EmailMessage()
     msg["From"] = formataddr((SENDER_NAME, SENDER_ADDRESS))
     msg["To"] = SENDER_ADDRESS
     msg["Reply-To"] = reply_to
-    msg["Subject"] = f"Solicitud de cotización — sitio web — {institution_safe}"
+    subject = f"Solicitud de cotización — sitio web — {institution_safe}"
+    if product_safe:
+        subject += f" — {product_safe}"
+    msg["Subject"] = subject
     msg["X-OrigenLab-Origin"] = "web-quote-form/v1"
     lines = [
         f"Institución o empresa: {_safe_header(institution, 200)}",
         f"Correo: {reply_to}",
         f"Qué necesita: {_safe_body(need, 4000)}",
     ]
+    if product_safe:
+        lines.append(f"Producto: {product_safe}")
     for label, value in extra.items():
         if value:
             lines.append(f"{label}: {_safe_body(value, 200)}")
-    lines.append(f"Enviado: {_safe_header(submitted_at, 50)}")
+    submitted_safe = _safe_header(submitted_at, 50)
+    lines.append(f"Enviado: {submitted_safe}")
+    if consent_safe:
+        lines.append(f"Consentimiento: {consent_safe} {submitted_safe}")
     msg.set_content("\n".join(lines), charset="utf-8")
     return msg.as_bytes()
 

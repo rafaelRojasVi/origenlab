@@ -1097,3 +1097,22 @@ def test_no_reply_only_marks_the_email_r18_read() -> None:
     assert last_contacts([closing])["o1"]["inbound"]["no_reply"] is True
     later = _mail_row("m2", "2026-10-24T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=False)
     assert "no_reply" not in last_contacts([closing, later])["o1"]["inbound"]
+
+
+def test_card_carries_the_origin_of_the_case() -> None:
+    cards = compose_pipeline(
+        [_opp("o1", origin="web"), _opp("o2", origin=None), _opp("o3")], [], [], [], {}, [], load_drive_ledgers([])
+    )
+    assert [c["origin"] for c in cards] == ["web", None, None]
+
+
+def test_dashboard_names_the_same_origins_as_the_api() -> None:
+    """`caseOrigin.ts` repeats `case_origin.py`'s nine values (it cannot import them): same set, same order."""
+    import re
+
+    from origenlab_api.v2.case_origin import CASE_ORIGINS
+
+    ts = (Path(__file__).resolve().parents[2] / "dashboard/src/crm/caseOrigin.ts").read_text(encoding="utf-8")
+    block = re.search(r"export const CASE_ORIGINS = \[(.*?)\] as const;", ts, re.S)
+    assert block is not None
+    assert re.findall(r'"([a-z_]+)"', block.group(1)) == list(CASE_ORIGINS)

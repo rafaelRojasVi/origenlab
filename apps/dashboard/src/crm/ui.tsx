@@ -768,7 +768,7 @@ export function FormField({
         {required ? <span aria-hidden="true" className="ml-0.5 text-bad"> *</span> : null}
       </label>
       {children}
-      {error ? <p className="text-[11px] text-bad">{error}</p> : hint ? <p className="text-[11px] text-ink-faint">{hint}</p> : null}
+      {error ? <p id={htmlFor ? `${htmlFor}-error` : undefined} className="text-[11px] text-bad">{error}</p> : hint ? <p className="text-[11px] text-ink-faint">{hint}</p> : null}
     </div>
   );
 }
@@ -784,6 +784,8 @@ export function TextInput({
   placeholder,
   required,
   disabled,
+  invalid,
+  describedBy,
   maxLength,
 }: {
   id?: string;
@@ -793,6 +795,8 @@ export function TextInput({
   placeholder?: string;
   required?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   maxLength?: number;
 }) {
   return (
@@ -804,6 +808,8 @@ export function TextInput({
       placeholder={placeholder}
       required={required}
       disabled={disabled}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       maxLength={maxLength}
       className={INPUT_CLS}
     />
@@ -817,6 +823,8 @@ export function TextareaInput({
   placeholder,
   required,
   disabled,
+  invalid,
+  describedBy,
   maxLength,
   rows = 3,
 }: {
@@ -826,6 +834,8 @@ export function TextareaInput({
   placeholder?: string;
   required?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   maxLength?: number;
   rows?: number;
 }) {
@@ -837,6 +847,8 @@ export function TextareaInput({
       placeholder={placeholder}
       required={required}
       disabled={disabled}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       maxLength={maxLength}
       rows={rows}
       className={`${INPUT_CLS} resize-y`}
@@ -851,6 +863,8 @@ export function SelectInput({
   options,
   required,
   disabled,
+  invalid,
+  describedBy,
   placeholder,
 }: {
   id?: string;
@@ -859,6 +873,8 @@ export function SelectInput({
   options: { value: string; label: string }[];
   required?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   placeholder?: string;
 }) {
   return (
@@ -868,6 +884,8 @@ export function SelectInput({
       onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
       required={required}
       disabled={disabled}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       className={INPUT_CLS}
     >
       {placeholder ? <option value="">{placeholder}</option> : null}

@@ -74,10 +74,13 @@ from origenlab_api.v2.case_commands import (
     REQUESTING_INSTITUTION,
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
+    SET_CASE_ORIGIN,
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
     SUPPLIER_RELATIONSHIP_ROLES,
     TERMINAL_STAGES,
     stage_transition_allowed,
+    RecordCaseInterestBody,
+    validated_case,
 )
 from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_quotation import record_case_quotation
@@ -85,7 +88,7 @@ from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
-from origenlab_api.v2.commands import CommandRefused, normalize_email
+from origenlab_api.v2.commands import CommandRefused, as_uuid, normalize_email
 from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_register_organization
 from origenlab_api.v2.current_revision import resolve_current_revision
 from origenlab_api.v2.identity import OperatorIdentity
@@ -195,7 +198,7 @@ class V2CaseCommandRepository(CommandTransaction):
             select id::text as id, title, stage, version,
                    organization_id::text as organization_id,
                    owner_operator_id::text as owner_operator_id,
-                   closed_at, close_reason
+                   closed_at, close_reason, origin
               from crm.opportunity
              where id = %s
                for update
@@ -537,11 +540,11 @@ class V2CaseCommandRepository(CommandTransaction):
         cur.execute(
             """
             insert into crm.opportunity
-                (title, stage, owner_operator_id, origin_source_record_id)
-            values (%s, %s, %s, %s)
+                (title, stage, owner_operator_id, origin_source_record_id, origin)
+            values (%s, %s, %s, %s, %s)
             returning id::text as id, version
             """,
-            (fields["title"], OPENING_STAGE, operator.operator_id, record["id"]),
+            (fields["title"], OPENING_STAGE, operator.operator_id, record["id"], fields.get("origin")),
         )
         case = self._row(cur)
         assert case is not None  # noqa: S101 - `returning` on a successful insert
@@ -558,6 +561,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     "owner_operator_id": operator.operator_id,
                     "origin_source_record_id": record["id"],
                     "source_kind": record["kind"],
+                    **({"origin": fields["origin"]} if fields.get("origin") else {}),
                     "note": fields["note"],
                 },
                 operator=operator,
@@ -599,6 +603,7 @@ class V2CaseCommandRepository(CommandTransaction):
         note: str,
         kind: str = "sale",
         tender_status: str | None = None,
+        origin: str | None = None,
         extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """A case an operator opens to quote a client, with no document behind it (plan R1).
@@ -616,11 +621,11 @@ class V2CaseCommandRepository(CommandTransaction):
         """
         cur.execute(
             """
-            insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status)
-            values (%s, %s, %s, %s, %s)
+            insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status, origin)
+            values (%s, %s, %s, %s, %s, %s)
             returning id::text as id, version
             """,
-            (title, OPENING_STAGE, operator.operator_id, kind, tender_status),
+            (title, OPENING_STAGE, operator.operator_id, kind, tender_status, origin),
         )
         case = self._row(cur)
         assert case is not None  # noqa: S101 - `returning` on a successful insert
@@ -636,6 +641,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     "owner_operator_id": operator.operator_id,
                     "origin_source_record_id": None,
                     "source_kind": None,
+                    **({"origin": origin} if origin else {}),
                     "note": note,
                     **(extra_payload or {}),
                 },
@@ -1112,6 +1118,61 @@ class V2CaseCommandRepository(CommandTransaction):
             "event_ids": [event_id],
         }
 
+    def maybe_record_case_interest(
+        self, cur: Any, *, opportunity_id: str, model_text: str, operator: OperatorIdentity,
+        receipt_id: str, note: str,
+    ) -> dict[str, Any] | None:
+        """Record what a web-form message says the case is seeking, unless the case already has that
+        model as a current interest (compared without case or surrounding blanks). The model text is
+        kept as written: no catalogue lookup here. Same handler and event as the operator's
+        «record_case_interest»; None when it was already there."""
+        model = " ".join((model_text or "").split())
+        if not model:
+            return None
+        case_id = as_uuid(opportunity_id, "opportunity_id")
+        cur.execute(
+            "select 1 from crm.opportunity_interest where opportunity_id = %s and withdrawn_at is null "
+            "and lower(btrim(model_text)) = lower(%s)",
+            (case_id, model),
+        )
+        if cur.fetchone() is not None:
+            return None
+        cur.execute("select version from crm.opportunity where id = %s", (case_id,))
+        found = cur.fetchone()
+        if found is None:
+            raise CommandRefused(404, "case_not_found", "no such commercial case")
+        fields = validated_case(RECORD_CASE_INTEREST, RecordCaseInterestBody(
+            opportunity_id=case_id, opportunity_version=int(found[0]), model_text=model, note=note))
+        return self._record_case_interest(cur, operator, fields, receipt_id)
+
+    def write_web_form_consent(
+        self, cur: Any, *, email: str, text_version: str, accepted_at: datetime | None,
+        source_record_id: str,
+    ) -> bool:
+        """Insert the `crm.consent` row a web-form message proves (purpose `quote_request`, source
+        `web-quote-form/v1`). The address is lower-cased (the table's check); the person is the one
+        already holding that address, when there is one. The same message replayed inserts nothing
+        (`consent_idempotent_idx`). True when a row was written."""
+        address = normalize_email(email)
+        cur.execute(
+            "select person_id from crm.contact_point where kind = 'email' and value_norm = %s "
+            "and status = 'active' and confirmation = 'confirmed' and person_id is not null limit 1",
+            (address,),
+        )
+        person = cur.fetchone()
+        cur.execute(
+            """
+            insert into crm.consent
+                (email, person_id, purpose, text_version, accepted_at, source, source_record_id)
+            values (%s, %s, 'quote_request', %s, coalesce(%s, now()), 'web-quote-form/v1', %s)
+            on conflict (email, purpose, text_version, source_record_id)
+                where source_record_id is not null do nothing
+            """,
+            (address, person[0] if person else None, text_version.strip(), accepted_at,
+             as_uuid(source_record_id, "source_record_id")),
+        )
+        return cur.rowcount == 1
+
     def _advance_case_stage(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
     ) -> dict[str, Any]:
@@ -1242,6 +1303,61 @@ class V2CaseCommandRepository(CommandTransaction):
             "event_ids": events,
         }
 
+    # ------------------------------------------------------------------ origin (operator correction)
+
+    def _set_case_origin(
+        self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+    ) -> dict[str, Any]:
+        """Set, correct or clear `crm.opportunity.origin`, with one `opportunity.origin_set` event.
+
+        Compare-and-set on the case version like every case command; the event carries the old and
+        the new value (either may be null) and the operator's note. A closed case may be
+        corrected. Setting what the case already has is refused: there is no change to record.
+        """
+        case = self._live_case(
+            cur, fields["opportunity_id"], fields["opportunity_version"], allow_closed=True
+        )
+        previous = case["origin"]
+        target = fields["origin"]
+        if target == previous:
+            raise CommandRefused(
+                409,
+                "case_origin_unchanged",
+                "this case already has that origin" if target else "this case has no origin recorded",
+            )
+        cur.execute(
+            """
+            update crm.opportunity
+               set origin = %s, version = version + 1, updated_at = now()
+             where id = %s and version = %s
+            """,
+            (target, case["id"], int(case["version"])),
+        )
+        if cur.rowcount != 1:
+            raise CommandRefused(
+                409,
+                "case_version_conflict",
+                "this case changed while the command ran; re-read it and decide again",
+            )
+        event = self._append_event(
+            cur,
+            aggregate_kind="opportunity",
+            aggregate_id=case["id"],
+            event_type="opportunity.origin_set",
+            payload={"from_origin": previous, "to_origin": target, "note": fields["note"]},
+            operator=operator,
+            receipt_id=receipt_id,
+        )
+        return {
+            "command": SET_CASE_ORIGIN,
+            "opportunity_id": case["id"],
+            "opportunity_version": int(case["version"]) + 1,
+            "origin": target,
+            "previous_origin": previous,
+            "created": [],
+            "event_ids": [event],
+        }
+
     # ------------------------------------------------------------------ sender participant (owner, 2026-10-22)
 
     def _add_case_sender_participant(
@@ -1362,6 +1478,7 @@ class V2CaseCommandRepository(CommandTransaction):
         SET_CASE_ORGANIZATION_ROLE: _set_case_organization_role,
         RECORD_CASE_INTEREST: _record_case_interest,
         ADVANCE_CASE_STAGE: _advance_case_stage,
+        SET_CASE_ORIGIN: _set_case_origin,
         # The one writer of a win, shared with the email → cases rules (`case_won.py`).
         RECORD_CASE_WON: record_case_won,
         # The quote acts, each in the module that owns the quote SQL (`current_revision.py`,

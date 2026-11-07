@@ -17,6 +17,7 @@
 import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "react";
 import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
+import { originLabel } from "../caseOrigin";
 import { ageTone, contactLine, conversation, displayName, isDelivered, quoteProduct } from "../caseDisplay";
 import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
 import { fmtDate } from "../ui";
@@ -398,14 +399,27 @@ export function BoardCard({
           </span>
         ) : null}
       </p>
-      {product ? (
-        <span
-          className="mt-1.5 inline-block max-w-full truncate rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px align-top text-[10.5px] leading-4 text-accent"
-          title={`Cotización por: ${product}`}
-          data-testid="board-product"
-        >
-          {product}
-        </span>
+      {product || card.origin ? (
+        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1">
+          {product ? (
+            <span
+              className="inline-block max-w-full truncate rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px align-top text-[10.5px] leading-4 text-accent"
+              title={`Cotización por: ${product}`}
+              data-testid="board-product"
+            >
+              {product}
+            </span>
+          ) : null}
+          {card.origin ? (
+            <span
+              className="inline-block max-w-full truncate rounded-full border border-line bg-canvas-sunken px-1.5 py-px align-top text-[10.5px] leading-4 text-ink-muted"
+              title="Por dónde llegó el caso"
+              data-testid="board-origin"
+            >
+              {originLabel(card.origin)}
+            </span>
+          ) : null}
+        </div>
       ) : null}
       <p className={`mt-1.5 line-clamp-2 text-[11px] font-medium leading-4 ${LINE_TONE[line.tone] ?? LINE_TONE.neutral}`} data-testid="board-status-line">
         {line.text}
