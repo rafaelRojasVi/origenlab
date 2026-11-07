@@ -30,6 +30,7 @@ const ROUTES = [
   '/categorias/control-de-calidad/',
   '/categorias/laboratorio-clinico/',
   '/servicios/',
+  '/como-comprar/',
   '/nosotros/',
   '/contacto/',
   '/privacidad/',

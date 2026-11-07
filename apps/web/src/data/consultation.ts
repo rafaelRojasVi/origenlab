@@ -106,3 +106,31 @@ export const consultationProcess: readonly ProcessStep[] = [
     body: 'Cuando el equipo lo requiere, se confirma con el fabricante antes de comprometer una fecha. No prometemos stock ni plazos sin esa confirmación.',
   },
 ];
+
+/**
+ * Cómo se compra, en cuatro pasos: la portada los resume y `/como-comprar/` los
+ * desarrolla. Los títulos son los que aprobó el titular el 2026-11-07.
+ *
+ * Sin cifras. El plazo de la cotización y la proporción del abono no están
+ * aprobados en `claims.ts` y por eso no se escriben: el primer paso dice
+ * «rápida» y no un número de horas, y el segundo dice «abono» y no un
+ * porcentaje. Las condiciones exactas de cada compra quedan en la cotización.
+ */
+export const buyingSteps: readonly ProcessStep[] = [
+  {
+    title: 'Cotización rápida con asesoría técnica',
+    body: 'Nos cuenta su aplicación por el formulario, por correo o por WhatsApp. Revisamos qué exige el método y le enviamos una cotización formal por escrito, con configuración, accesorios y alternativas cuando las hay.',
+  },
+  {
+    title: 'Confirmación con abono al pedido',
+    body: 'Al aceptar la cotización, el pedido se confirma con un abono sobre su valor. La forma de pago y las condiciones quedan escritas en la misma cotización.',
+  },
+  {
+    title: 'Importación y puesta en marcha con fábrica',
+    body: 'Coordinamos la importación y el despacho a cualquier región de Chile. Cuando el equipo lo requiere, la puesta en marcha y la capacitación se hacen con el fabricante. No comprometemos una fecha de entrega antes de que fábrica la confirme.',
+  },
+  {
+    title: 'Saldo contra entrega',
+    body: 'El saldo se paga al recibir el equipo, según las condiciones de la cotización.',
+  },
+];

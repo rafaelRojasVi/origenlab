@@ -1,0 +1,137 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import SectionIndex from '../components/ui/SectionIndex.astro';
+import StepList from '../components/ui/StepList.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Icon from '../components/ui/Icon.astro';
+import { consultationProcess } from '../data/consultation';
+import { contact } from '../data/contact';
+import { publicClaim } from '../data/claims';
+import { site } from '../config/site';
+
+/**
+ * Cómo se compra: los cuatro pasos que aprobó el titular, lo que pasa dentro
+ * del primero y la vía de las compras públicas.
+ *
+ * Sin precios y sin cifras. El plazo de la cotización y la proporción del
+ * abono no están aprobados en `claims.ts`; la rapidez se dice con la redacción
+ * cualitativa aprobada (`respuesta-agil`), y si se retira, la frase desaparece.
+ *
+ * La nota de datos repite, en prosa, lo que la casilla de consentimiento del
+ * formulario de `/contacto/` pide aceptar, para que nadie llegue al formulario
+ * sin saberlo.
+ */
+const speedClaim = publicClaim('respuesta-agil');
+---
+
+<Layout
+  title="Cómo comprar"
+  description="Cómo comprar con OrigenLab: cotización con asesoría técnica, abono al pedido, puesta en marcha con fábrica y saldo contra entrega. También por Mercado Público."
+>
+  <div class="shell">
+    <PageIntro
+      title="Cómo comprar"
+      lead="De la primera consulta a la entrega del equipo, con las condiciones por escrito en cada paso. No publicamos precios: cada cotización se arma con la configuración, los accesorios y el flete que su caso pide."
+      crumbs={[{ label: 'Cómo comprar' }]}
+    />
+  </div>
+
+  <section id="pasos" class="shell section rule-top" aria-labelledby="pasos-title">
+    <SectionIndex index={1} label="Los pasos" />
+    <div class="guide">
+      <div>
+        <h2 id="pasos-title" class="t-h2">Cuatro pasos, de la cotización al saldo</h2>
+        {speedClaim && <p class="t-lead guide__speed">{speedClaim}.</p>}
+      </div>
+      <StepList />
+    </div>
+  </section>
+
+  <section class="shell section rule-top" aria-labelledby="asesoria-title">
+    <SectionIndex index={2} label="El primer paso" />
+    <div class="guide">
+      <div>
+        <h2 id="asesoria-title" class="t-h2">Qué pasa antes de la cotización</h2>
+        <p class="t-body guide__body">
+          No hace falta traer un modelo ni una especificación cerrada. Con la aplicación, la muestra
+          y el volumen de trabajo acotamos las alternativas antes de hablar de precio.
+        </p>
+        <p class="t-small guide__note" data-consent-note>
+          Si nos escribe por el formulario de contacto, le pediremos que acepte que OrigenLab use sus
+          datos sólo para responder su solicitud y contactarle sobre ella. Puede pedir su eliminación
+          en <a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a>. Más detalle
+          en la <a href="/privacidad/" class="link-plain">política de privacidad</a>.
+        </p>
+      </div>
+      <StepList steps={consultationProcess} />
+    </div>
+  </section>
+
+  <section id="compras-publicas" class="shell section rule-top" aria-labelledby="publicas-title">
+    <SectionIndex index={3} label="Compras públicas" />
+    <div class="guide">
+      <h2 id="publicas-title" class="t-h2">Mercado Público y Compra Ágil</h2>
+      <div>
+        <p class="t-body guide__body guide__body--flush">
+          Cotizamos también para licitaciones y para Compra Ágil en Mercado Público. Si su
+          institución compra por esa vía, indíquenos el número de la licitación o de la solicitud de
+          Compra Ágil y preparamos la oferta con lo que piden sus bases: equipo, configuración,
+          accesorios y puesta en marcha.
+        </p>
+        <p class="t-body guide__body">
+          En una compra pública, la forma de pago y los plazos son los que fijan las bases o la orden
+          de compra, no los pasos de esta página. La asesoría técnica previa es la misma.
+        </p>
+        <a href={site.quoteHref} class="link-arrow guide__link">
+          Escribirnos por una licitación
+          <Icon name="arrow-right" size={18} class="arrow" />
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <ClosingQuoteBand
+    index={4}
+    title="¿Tiene un requerimiento hoy?"
+    body="Cuéntenos la aplicación, la institución y la ciudad. Le respondemos con alternativas y, cuando corresponde, con una cotización formal por escrito."
+    primary="whatsapp"
+  />
+</Layout>
+
+<style>
+  .guide {
+    display: grid;
+    gap: 2.5rem;
+    margin-top: 1rem;
+  }
+  .guide__speed {
+    margin-top: 1.25rem;
+    color: var(--color-teal-800);
+  }
+  .guide__body {
+    margin-top: 1.25rem;
+    color: var(--color-ink-600);
+    max-width: 60ch;
+  }
+  .guide__body--flush {
+    margin-top: 0;
+  }
+  .guide__note {
+    margin-top: 1.5rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+    color: var(--color-ink-600);
+    max-width: 52ch;
+  }
+  .guide__link {
+    margin-top: 2rem;
+  }
+  @media (min-width: 1024px) {
+    .guide {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      column-gap: 4.5rem;
+      align-items: start;
+    }
+  }
+</style>
