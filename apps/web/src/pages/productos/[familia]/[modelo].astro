@@ -154,7 +154,7 @@ const description =
           <ul class="link-row mt-8">
             {entry.official_pdf_url && (
               <li>
-                <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF">
+                <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF" data-track="pdf_download" data-modelo={entry.slug}>
                   Ficha técnica del fabricante (PDF)
                 </ExternalLink>
               </li>

@@ -425,6 +425,7 @@ form.addEventListener('submit',function(ev){
   fetch('/api/web/solicitud',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
     .then(function(r){
       if(r.ok||r.redirected){
+        document.dispatchEvent(new CustomEvent('origenlab:form-submit',{detail:{modelo:prod||''}}));
         location.assign('/contacto/enviado/');
       }else{
         var ml=errPanel.querySelector('[data-error-mailto]');
@@ -445,6 +446,20 @@ form.addEventListener('submit',function(ev){
     });
 });
 })();
+</script>
+
+<script>
+  /**
+   * Medición propia (`lib/stats.ts`): el guion en línea de arriba avisa con un
+   * evento del documento cuando la API aceptó la solicitud; aquí se envía
+   * `form_submit` con el modelo de `?producto=` si lo hay. No se envía nada más
+   * del formulario.
+   */
+  import { trackEvent } from '../lib/stats';
+
+  document.addEventListener('origenlab:form-submit', (event) => {
+    trackEvent('form_submit', { modelo: (event as CustomEvent<{ modelo?: string }>).detail?.modelo });
+  });
 </script>
 
 <style>

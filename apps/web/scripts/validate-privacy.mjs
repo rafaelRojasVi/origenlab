@@ -152,6 +152,31 @@ for (const file of scripts) {
   assert(remote.length === 0, `${rel}: sin destino remoto${remote.length ? ` (${[...new Set(remote)].join(', ')})` : ''}`);
 }
 
+/* -- 6. La medición propia es de primera mano ------------------------------
+ *
+ * `src/lib/stats.ts` envía cinco eventos con `navigator.sendBeacon` a una ruta
+ * del propio dominio (`/api/stats/event`). La medición sólo es compatible con
+ * lo que dicen `/privacidad/` y `/cookies/` si ese archivo no guarda nada en el
+ * navegador y no habla con nadie más: aquí se busca el archivo construido que
+ * contiene la ruta y se exige que no toque almacenamiento ni cookies ni
+ * dominios ajenos. El «sin destino remoto» de la comprobación 5 ya cubre los
+ * dominios; esta comprobación lo repite sobre ese archivo en concreto para que
+ * un cambio en `stats.ts` falle aquí con nombre propio.
+ */
+const statsFiles = scripts.filter((file) => /api\/stats\/event/.test(readFileSync(file, 'utf8')));
+assert(statsFiles.length > 0, 'existe un JavaScript construido que envía a /api/stats/event');
+for (const file of statsFiles) {
+  const body = readFileSync(file, 'utf8');
+  const rel = relative(dist, file);
+  assert(!/^scene-/.test(rel.split(/[\\/]/).pop()), `${rel}: la medición no vive dentro de un trozo scene-*`);
+  for (const word of ['localStorage', 'sessionStorage', 'document.cookie', 'indexedDB']) {
+    assert(!body.includes(word), `${rel}: la medición no usa ${word}`);
+  }
+  const hosts = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)].map((m) => m[2]).filter((h) => !h.endsWith('origenlab.cl'));
+  assert(hosts.length === 0, `${rel}: la medición no nombra dominios ajenos`);
+  assert(/sendBeacon/.test(body) && !/\bfetch\s*\(/.test(body), `${rel}: la medición usa sendBeacon y no fetch`);
+}
+
 if (failed) {
   console.error('\nvalidate:privacy FALLÓ');
   process.exit(1);

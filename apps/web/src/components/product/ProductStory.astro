@@ -88,6 +88,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
 <div
   class="story shell"
   data-story={config.modelId}
+  data-modelo={entry.slug}
   data-readout-from={range?.[1]}
   data-readout-to={range?.[2]}
   data-sonotrode="S24d14"
@@ -208,7 +209,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       {
         entry.official_pdf_url && (
           <li>
-            <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF">Ficha técnica del fabricante (PDF)</ExternalLink>
+            <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF" data-track="pdf_download" data-modelo={entry.slug}>Ficha técnica del fabricante (PDF)</ExternalLink>
           </li>
         )
       }
@@ -421,8 +422,17 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   import { modelLoaders, storyLoaders } from '../../lib/showroom/loaders';
   import type { MountedStory } from '../../lib/showroom/mountStory';
   import { whenSettled } from '../../lib/showroom/whenSettled';
+  import { trackEvent } from '../../lib/stats';
 
   type Tier = 'high' | 'medium' | 'low';
+  // Medición propia: `3d_interact` una sola vez por página, cuando el visitante
+  // ve el primer cuadro WebGL o, en el nivel bajo, cuando pide «Ver en 3D».
+  let interactSent = false;
+  const interacted = (root: HTMLElement) => {
+    if (interactSent) return;
+    interactSent = true;
+    trackEvent('3d_interact', { modelo: root.dataset.modelo });
+  };
   type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-story]')) {
@@ -478,7 +488,14 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
 
     layout();
     button.hidden = tier !== 'low';
+    // El lienzo marca `data-ready="1"` en su primer cuadro dibujado (`mountStory`).
+    new MutationObserver((_records, observer) => {
+      if (canvas.dataset.ready !== '1') return;
+      observer.disconnect();
+      interacted(root);
+    }).observe(canvas, { attributes: true, attributeFilter: ['data-ready'] });
     button.addEventListener('click', () => {
+      interacted(root);
       tier = 'medium';
       onDemand = true;
       settled = true;

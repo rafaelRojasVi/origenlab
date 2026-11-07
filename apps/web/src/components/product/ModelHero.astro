@@ -58,8 +58,8 @@ const photo = imageForEntry(entry);
         <p class="t-lead mt-5">{entry.lead}</p>
         <KeyFacts facts={stats} class="mt-8" aria-label="Datos del fabricante" />
         <div class="model-hero__actions">
-          <a href={quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
-          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
+          <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</a>
+          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry.slug}>
             <Icon name="whatsapp" size={18} />
             {ctaLabels.whatsapp}
             <span class="sr-only">{entry.name} (abre WhatsApp en una pestaña nueva)</span>
@@ -89,8 +89,8 @@ const photo = imageForEntry(entry);
   <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${entry.name}`}>
     <div class="shell cta-bar__inner">
       <p class="cta-bar__name t-data" translate="no">{brandName} {entry.name}</p>
-      <a href={quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
-      <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+      <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</a>
+      <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry.slug}>
         <Icon name="whatsapp" size={18} />
         WhatsApp
         <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
@@ -98,6 +98,24 @@ const photo = imageForEntry(entry);
     </div>
   </aside>
 </div>
+
+<script>
+  /**
+   * Medición propia (`lib/stats.ts`): un solo escucha de clics para toda la
+   * página de modelo. Lo que se mide lleva `data-track="<evento>"` y, si
+   * corresponde, `data-modelo="<slug>"`: los dos botones del hero, los de la
+   * barra fija y los enlaces a la ficha del fabricante (en `ProductStory` y en
+   * la página de modelo). Sin cookies ni almacenamiento.
+   */
+  import { trackEvent, type StatsEventName } from '../../lib/stats';
+
+  const EVENTS: readonly string[] = ['cotizacion_click', 'whatsapp_click', 'pdf_download'];
+  document.addEventListener('click', (event) => {
+    const link = (event.target as Element | null)?.closest<HTMLElement>('[data-track]');
+    const name = link?.dataset.track;
+    if (link && name && EVENTS.includes(name)) trackEvent(name as StatsEventName, { modelo: link.dataset.modelo });
+  });
+</script>
 
 <style>
   .model-hero {
