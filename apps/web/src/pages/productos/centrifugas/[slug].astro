@@ -15,6 +15,7 @@ import ModelHero from '../../../components/product/ModelHero.astro';
 import ModelHeroCopy from '../../../components/product/ModelHeroCopy.astro';
 import ProductStory from '../../../components/product/ProductStory.astro';
 import AccessoryCards from '../../../components/product/AccessoryCards.astro';
+import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
 import ModelFaq from '../../../components/product/ModelFaq.astro';
 import TrustStrip from '../../../components/product/TrustStrip.astro';
 import { publicClaim } from '../../../data/claims';
@@ -165,7 +166,7 @@ const metaDescription = (
 
     <section class="msec" aria-labelledby="preguntas-title">
       <div class="shell rv">
-        <ModelFaq faqs={faqs} />
+        <ModelFaq faqs={faqs} whatsappHref={buildWhatsAppQuoteUrl({ productName: entry.name })} modelo={entry.slug} />
       </div>
     </section>
 

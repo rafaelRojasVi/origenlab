@@ -12,6 +12,7 @@ import ModelHeroCopy from '../../../components/product/ModelHeroCopy.astro';
 import ModelCard from '../../../components/product/ModelCard.astro';
 import SpecTable from '../../../components/product/SpecTable.astro';
 import AccessoryCards from '../../../components/product/AccessoryCards.astro';
+import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
 import ModelFaq from '../../../components/product/ModelFaq.astro';
 import TrustStrip from '../../../components/product/TrustStrip.astro';
 import { site } from '../../../config/site';
@@ -195,7 +196,7 @@ const description =
       faqs.length > 0 && (
         <section class="msec" aria-labelledby="preguntas-title">
           <div class="shell rv">
-            <ModelFaq faqs={faqs} />
+            <ModelFaq faqs={faqs} whatsappHref={buildWhatsAppQuoteUrl({ productName: entry.name })} modelo={entry.slug} />
           </div>
         </section>
       )

@@ -1,5 +1,6 @@
 ---
 import Icon from '../ui/Icon.astro';
+import Button from '../ui/Button.astro';
 
 /**
  * Preguntas frecuentes del modelo: a la izquierda el título y la invitación a
@@ -9,16 +10,21 @@ import Icon from '../ui/Icon.astro';
  */
 interface Props {
   faqs: { q: string; a: string }[];
+  /** wa.me con el modelo (buildWhatsAppQuoteUrl). */
+  whatsappHref: string;
+  modelo: string;
 }
 
-const { faqs } = Astro.props;
+const { faqs, whatsappHref, modelo } = Astro.props;
 ---
 
 <div class="mfaq">
   <div>
     <p class="t-label">Preguntas frecuentes</p>
     <h2 id="preguntas-title" class="mh2">Antes de cotizar</h2>
-    <p class="mfaq__lead">¿Otra duda? Escríbanos por WhatsApp y le respondemos.</p>
+    <p class="mfaq__lead">
+      ¿Otra duda? <Button href={whatsappHref} variant="tertiary" arrow={false} external track="whatsapp_click" modelo={modelo}>Escríbanos por WhatsApp</Button> y le respondemos.
+    </p>
   </div>
   <div class="mfaq__list">
     {
