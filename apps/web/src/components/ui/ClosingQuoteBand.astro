@@ -5,6 +5,7 @@ import { contact, telUrl } from '../../data/contact';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { ctaLabels } from '../../lib/ctaLabels';
 import SectionIndex from './SectionIndex.astro';
+import Button from './Button.astro';
 
 /**
  * El número aparece una sola vez y en un solo formato: junto al icono de
@@ -69,13 +70,12 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
       </div>
       <div class="band__actions">
         {primary === 'whatsapp' ? (
-          <a href={whatsappHref} class="btn btn-invert" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={modelo}>
+          <Button href={whatsappHref} tone="ink" external arrow={false} track="whatsapp_click" modelo={modelo}>
             <Icon name="whatsapp" size={18} />
             {ctaLabels.escribirWhatsapp}
-            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
-          </a>
+          </Button>
         ) : (
-          <a href={quoteHref} class="btn btn-invert" data-track="cotizacion_click" data-modelo={modelo}>{ctaLabels.solicitarCotizacion}</a>
+          <Button href={quoteHref} tone="ink" track="cotizacion_click" modelo={modelo}>{ctaLabels.solicitarCotizacion}</Button>
         )}
         <ul class="band__channels">
           <li>

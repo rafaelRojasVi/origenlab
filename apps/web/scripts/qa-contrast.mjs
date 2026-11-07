@@ -82,6 +82,7 @@ const CONTROL_EDGE_MIN = 3;
 const FOCUS_RING_MIN = 3;
 const FOCUS_RING_WIDTH_MIN = 2;
 const FOCUS_TABS = 15;
+const FOCUS_CONTROLS = '.btn, .btn-tertiary, .link-arrow';
 
 const failures = [];
 let checked = 0;
@@ -204,10 +205,15 @@ for (const route of ROUTES) {
     }
   }
 
-  // Anillo de foco: tabular y medir el contorno de cada elemento enfocado.
-  for (let i = 0; i < FOCUS_TABS; i += 1) {
-    await page.keyboard.press('Tab');
-    const ring = await page.evaluate(() => {
+  // Anillo de foco: tabular y medir el contorno de cada elemento enfocado; después
+  // enfocar con `.focus()` cada botón y enlace con flecha (barra fija, banda de
+  // cierre, enlaces en página) para medir también los anillos sobre tinta.
+  const controlCount = await page.evaluate((sel) => document.querySelectorAll(sel).length, FOCUS_CONTROLS);
+  for (let i = 0; i < FOCUS_TABS + controlCount; i += 1) {
+    const controlIndex = i - FOCUS_TABS;
+    if (controlIndex < 0) await page.keyboard.press('Tab');
+    const ring = await page.evaluate(([sel, idx]) => {
+      if (idx >= 0) document.querySelectorAll(sel)[idx]?.focus();
       const el = document.activeElement;
       if (!el || el === document.body) return null;
       const style = getComputedStyle(el);
@@ -241,7 +247,7 @@ for (const route of ROUTES) {
         width: parseFloat(style.outlineWidth),
         selector: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`,
       };
-    });
+    }, [FOCUS_CONTROLS, controlIndex]);
     if (!ring) continue;
     ringsChecked += 1;
     if (ring.ratio < minimumRing.ratio) minimumRing = { ratio: ring.ratio, where: `${route} ${ring.selector}` };

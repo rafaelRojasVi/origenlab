@@ -103,6 +103,13 @@
   --color-family-osmometria: #15697f;
   --color-family-electroforesis: #8f2f4f;
 
+  /* Page shell */
+  --spacing-gutter: 1.25rem;
+}
+
+/* Estáticos: Tailwind poda las variables de @theme que ningún utilitario usa, y
+   estos las usan los componentes de fases posteriores. */
+@theme static {
   /* Radios: 2 px para etiquetas y tablas, 10 botones, 16 tarjetas. */
   --radius-edge: 2px;
   --radius-btn: 0.625rem;
@@ -116,9 +123,6 @@
   --btn-px: 1.25rem;
   --btn-px-sm: 1rem;
   --ease-ui: 150ms ease-out;
-
-  /* Page shell */
-  --spacing-gutter: 1.25rem;
 }
 
 @layer base {
@@ -233,6 +237,7 @@
   .t-display {
     font-weight: 800;
     letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
   }
   .t-d1 {
     font-size: clamp(3rem, 1.686rem + 5.393vw, 6rem);
@@ -245,7 +250,7 @@
   .t-d3,
   .t-display {
     font-size: clamp(2.125rem, 1.523rem + 2.472vw, 3.5rem);
-    line-height: 1.05;
+    line-height: 1.0357;
   }
   .t-h2 {
     font-size: clamp(2rem, 1.78rem + 0.9vw, 2.5rem);
@@ -319,19 +324,12 @@
       border-color var(--ease-ui),
       color var(--ease-ui),
       transform var(--ease-ui);
-    &:active {
-      transform: scale(0.98);
-    }
     &:is(:disabled, [aria-disabled='true']) {
       cursor: not-allowed;
-      transform: none;
     }
     .arrow {
       flex: none;
       transition: transform var(--ease-ui);
-    }
-    &:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow {
-      transform: translateX(4px);
     }
     .on-ink &,
     &.on-ink {
@@ -438,9 +436,6 @@
       flex: none;
       transition: transform var(--ease-ui);
     }
-    &:hover .arrow {
-      transform: translateX(4px);
-    }
     .on-ink &,
     &.on-ink {
       color: var(--color-onink-100);
@@ -454,7 +449,7 @@
         no-repeat;
     transition: background-size var(--ease-ui);
   }
-  .btn-tertiary:hover .lbl {
+  .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .lbl {
     background-size: 100% 2px, 100% 1px;
   }
   .btn-tertiary:is(:disabled, [aria-disabled='true']) {
@@ -475,7 +470,7 @@
     text-decoration: underline 1px var(--color-hairline-strong);
     text-underline-offset: 0.3em;
     transition: color var(--ease-ui), text-decoration-color var(--ease-ui);
-    &:hover {
+    &:hover:not([aria-disabled='true']) {
       text-decoration-color: currentColor;
     }
   }
@@ -490,13 +485,16 @@
     .link-arrow .arrow {
       transition: none;
     }
-    .btn:active {
-      transform: none;
+  }
+  /* El desplazamiento de la flecha y el escalado al pulsar sólo con movimiento. */
+  @media (prefers-reduced-motion: no-preference) {
+    .btn:active:not(:is(:disabled, [aria-disabled='true'])) {
+      transform: scale(0.98);
     }
-    .btn:hover .arrow,
-    .btn-tertiary:hover .arrow,
-    .link-arrow:hover .arrow {
-      transform: none;
+    .btn:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow,
+    .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow,
+    .link-arrow:hover:not([aria-disabled='true']) .arrow {
+      transform: translateX(4px);
     }
   }
 

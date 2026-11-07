@@ -57,15 +57,18 @@ const ariaLabel = variant === 'icon' && label ? (external && href ? `${label} ${
 const glyph = variant === 'whatsapp';
 const showNote = external && href && variant !== 'icon';
 const Tag = href ? 'a' : 'button';
-const attrs = {
-  ...rest,
-  'aria-label': ariaLabel,
-  'data-track': track,
-  'data-modelo': modelo,
-  ...(href
-    ? { href, ...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {}) }
-    : { type }),
-};
+// Sólo se añade lo que está definido: un `aria-label` o un `data-*` del
+// llamador nunca se pisa con `undefined`.
+const attrs: Record<string, unknown> = { ...rest };
+if (ariaLabel !== undefined) attrs['aria-label'] = ariaLabel;
+if (track !== undefined) attrs['data-track'] = track;
+if (modelo !== undefined) attrs['data-modelo'] = modelo;
+if (href) {
+  attrs.href = href;
+  if (external) Object.assign(attrs, { target: '_blank', rel: 'noopener noreferrer' });
+} else {
+  attrs.type = type;
+}
 ---
 
 <Tag class:list={classes} {...attrs}>

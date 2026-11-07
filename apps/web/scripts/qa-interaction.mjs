@@ -948,7 +948,7 @@ console.log('\nPortada y cómo comprar');
     `Home: las notas destacadas se muestran sólo si hay notas (${notes.length} notas)`,
   );
   const band = home.match(/<section\b[^>]*\bclass="band on-ink[\s\S]*?<\/section>/)?.[0] ?? '';
-  check(/<a\b[^>]*href="https:\/\/wa\.me\/[^"]+"[^>]*class="btn btn-invert/.test(band), 'Home: la banda de cierre lleva el botón de WhatsApp');
+  check(/<a\b[^>]*href="https:\/\/wa\.me\/[^"]+"[^>]*class="btn btn-primary on-ink/.test(band), 'Home: la banda de cierre lleva el botón de WhatsApp');
   check(home.includes('href="/como-comprar/"'), 'Home: enlaza la guía de compra');
 
   const guide = read('/como-comprar/');
