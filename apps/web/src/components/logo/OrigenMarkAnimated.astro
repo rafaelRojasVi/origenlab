@@ -29,12 +29,14 @@ interface Props {
   size?: number;
   class?: string;
   title?: string;
+  /** Duración de una vuelta. 34 s por omisión: se lee como deriva y no como parpadeo. */
+  loopSeconds?: number;
+  /** Color del trazo; sobre fondo oscuro, el claro del sistema. */
+  stroke?: string;
 }
 
-const { size = 132, class: className = '', title } = Astro.props;
-
-/** 34 s: lo bastante lento para leerse como deriva y no como parpadeo. */
-const LOOP_SECONDS = 34;
+const { size = 132, class: className = '', title, loopSeconds = 34, stroke = 'var(--color-ink-950)' } = Astro.props;
+const LOOP_SECONDS = loopSeconds;
 ---
 
 <svg
@@ -53,7 +55,7 @@ const LOOP_SECONDS = 34;
   <path
     d={MARK_PATH}
     fill="none"
-    stroke="var(--color-ink-950)"
+    stroke={stroke}
     stroke-width={MARK_STROKE_WIDTH}
     stroke-linecap="round"
     stroke-linejoin="round"

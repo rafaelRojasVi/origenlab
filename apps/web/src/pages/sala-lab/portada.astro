@@ -1,0 +1,1122 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Showroom from '../../components/home/Showroom.astro';
+import BrandLogo from '../../components/ui/BrandLogo.astro';
+import Icon from '../../components/ui/Icon.astro';
+import OrigenMarkAnimated from '../../components/logo/OrigenMarkAnimated.astro';
+import { showroomEntry } from '../../lib/showroom/catalog';
+import { brandRailOrder, brandsWallHeading } from '../../data/brands';
+import { getBrandById, brandNamesForFamily } from '../../lib/catalog';
+import { equipmentScope } from '../../data/equipmentScope';
+import { consultationProcess } from '../../data/consultation';
+import { company } from '../../data/company';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { site } from '../../config/site';
+
+/**
+ * Prototipo de la portada nueva. Página interna (bajo /sala-lab/: noindex,
+ * Disallow y X-Robots-Tag), para decidir el diseño con el 3D funcionando de
+ * verdad antes de tocar la portada pública.
+ *
+ * Presentación de producto: el equipo al centro y grande, un selector de
+ * tareas de cristal con una píldora que se desliza, botones en píldora,
+ * tarjetas de esquina amplia. Seis momentos y ninguno repite al anterior:
+ *   1. Escenario 3D, que recorre los equipos solo hasta que el visitante toca.
+ *   2. Marcas en movimiento continuo.
+ *   3. Una declaración que se enciende línea a línea al desplazarse.
+ *   4. Familias: rejilla asimétrica; «Ver en 3D» sube al escenario.
+ *   5. Proceso con titular fijo.
+ *   6. Cierre.
+ */
+const tasks = [
+  { id: 'hielscher-up400st', task: 'Sonicar' },
+  { id: 'ika-t25-digital', task: 'Dispersar' },
+  { id: 'ortoalresa-digicen-22-r', task: 'Centrifugar' },
+  { id: 'ohaus-pioneer-px', task: 'Pesar' },
+  { id: 'adam-highland', task: 'Pesar en terreno' },
+  { id: 'loeser-i-osmometer', task: 'Osmolalidad' },
+  { id: 'serva-bluevertical-prime', task: 'Electroforesis' },
+];
+const rail = tasks.map((t) => ({ ...t, entry: showroomEntry(t.id)! }));
+
+const photo: Record<string, { src: string; model: string; show: string }> = {
+  sonicacion: { src: '/products/hielscher/up400st-960.webp', model: 'Hielscher UP400St', show: 'hielscher-up400st' },
+  'dispersion-homogeneizacion': { src: '/products/ika/t-25-digital-960.webp', model: 'IKA T 25 digital', show: 'ika-t25-digital' },
+  centrifugacion: { src: '/products/ortoalresa/digicen-22-r-960.webp', model: 'Ortoalresa Digicen 22 R', show: 'ortoalresa-digicen-22-r' },
+  'pesaje-humedad': { src: '/products/adam-equipment/highland-960.webp', model: 'Adam Highland', show: 'adam-highland' },
+  osmometria: { src: '/products/loeser/i-osmometer-960.webp', model: 'Löser i-Osmometer', show: 'loeser-i-osmometer' },
+  electroforesis: { src: '/products/serva/bluevertical-prime-960.webp', model: 'SERVA BlueVertical PRiME', show: 'serva-bluevertical-prime' },
+};
+const order = ['sonicacion', 'centrifugacion', 'dispersion-homogeneizacion', 'pesaje-humedad', 'osmometria', 'electroforesis'];
+const families = order
+  .map((id) => equipmentScope.find((f) => f.id === id)!)
+  .map((f) => ({ ...f, brands: brandNamesForFamily(f.id, { home: true }), ...photo[f.id] }));
+const brands = brandRailOrder.map((id) => getBrandById(id)).filter((b) => b !== undefined);
+
+const statement =
+  'Elegir bien un equipo depende de la muestra, el volumen y el método. Lo revisamos con usted antes de cotizar, y la propuesta llega por escrito.';
+const audience = company.audience.map((a) => a.charAt(0).toLowerCase() + a.slice(1));
+---
+
+<Layout title="Portada nueva (prototipo)" description="Prototipo interno de la portada con los equipos en 3D." noindex>
+  <div class="pl" data-theme="dark" data-pl-root>
+    <!-- 1 · Escenario -->
+    <section class="pl-hero" aria-labelledby="pl-title" data-hero>
+      <div class="pl-hero__light" aria-hidden="true"></div>
+      <div class="pl-hero__grid-bg" aria-hidden="true"></div>
+      <div class="pl-hero__head">
+        <p class="pl-kicker pl-in" style="--i:0"><OrigenMarkAnimated size={22} loopSeconds={9} stroke="currentColor" class="pl-kicker__mark" />{site.tagline}</p>
+        <h1 id="pl-title" class="pl-hero__title">
+          <span class="pl-line"><span class="pl-in" style="--i:1">Vea el equipo</span></span>
+          <span class="pl-line"><span class="pl-in" style="--i:2">antes de cotizarlo.</span></span>
+        </h1>
+        <p class="pl-hero__lead pl-in" style="--i:3">
+          Le ayudamos a elegir modelo y configuración para su aplicación, y cotizamos por escrito.
+        </p>
+        <div class="pl-actions pl-in" style="--i:4">
+          <a href={site.quoteHref} class="pl-pill pl-pill--solid">{ctaLabels.contarAplicacion}</a>
+          <a href="#pl-familias" class="pl-more">Ver equipos <Icon name="arrow-right" size={16} /></a>
+        </div>
+      </div>
+
+      <div class="pl-seg-wrap pl-in" style="--i:5">
+        <div class="pl-seg" role="group" aria-label="Elija una tarea">
+          <span class="pl-seg__thumb" aria-hidden="true"><span class="pl-seg__timer"></span></span>
+          {rail.map((item, i) => (
+            <button type="button" class="pl-seg__item" data-rail={item.id} aria-pressed={i === 0 ? 'true' : 'false'} title={`${item.entry.brand} ${item.entry.name}`}>
+              {item.task}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div class="pl-hero__stage pl-rise">
+        <Showroom items={tasks} />
+      </div>
+
+    </section>
+
+    <!-- 2 · Marcas -->
+    <section class="pl-brands" aria-label={brandsWallHeading}>
+      <p class="pl-brands__head">{brandsWallHeading}</p>
+      <div class="pl-marquee">
+        <ul class="pl-marquee__track">
+          {[0, 1].map((copy) =>
+            brands.map((brand) => (
+              <li aria-hidden={copy === 1 ? 'true' : undefined}>
+                <a href={`/marcas/${brand.id}/`} class="pl-logo" tabindex={copy === 1 ? -1 : undefined}>
+                  <BrandLogo brand={brand} />
+                </a>
+              </li>
+            )),
+          )}
+        </ul>
+      </div>
+    </section>
+
+    <!-- 3 · Declaración -->
+    <section class="pl-say" aria-label="Cómo asesoramos">
+      <p class="pl-say__text">
+        {statement.split(' ').map((word) => <span class="pl-w">{word} </span>)}
+      </p>
+    </section>
+
+    <!-- 4 · Familias -->
+    <section id="pl-familias" class="pl-fam" aria-labelledby="pl-fam-title" tabindex="-1">
+      <div class="pl-wrap">
+        <h2 id="pl-fam-title" class="pl-h2" data-up>
+          Seis familias de equipo.<br /><span class="pl-mute">Una sola conversación técnica.</span>
+        </h2>
+        <div class="pl-bento">
+          {families.map((f, i) => (
+            <article class={`pl-tile pl-tile--${i}`} data-up style={`--d:${(i % 3) * 90}ms`}>
+              <a href={f.href} class="pl-tile__link" aria-label={f.name}></a>
+              <div class="pl-tile__text">
+                <h3 class="pl-tile__name">{f.name}</h3>
+                <p class="pl-tile__brands">{f.brands}</p>
+              </div>
+              <div class="pl-tile__img"><img src={f.src} alt={f.model} loading="lazy" decoding="async" /></div>
+              <div class="pl-tile__foot">
+                <button type="button" class="pl-pill pl-pill--glass pl-tile__3d" data-show={f.show}>Ver en 3D</button>
+                <span class="pl-tile__go" aria-hidden="true"><Icon name="arrow-right" size={18} /></span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 · Proceso -->
+    <section class="pl-proc" aria-labelledby="pl-proc-title">
+      <div class="pl-wrap pl-proc__grid">
+        <div class="pl-proc__head">
+          <h2 id="pl-proc-title" class="pl-h2">De la consulta<br />a la cotización.</h2>
+          <p class="pl-proc__note">
+            Responder una consulta y emitir una cotización formal son dos tiempos distintos. No
+            comprometemos una fecha antes de confirmarla con el fabricante.
+          </p>
+        </div>
+        <ol class="pl-steps">
+          {consultationProcess.map((step, i) => (
+            <li class="pl-step" data-step>
+              <span class="pl-step__n" aria-hidden="true">{i + 1}</span>
+              <div>
+                <h3 class="pl-step__title">{step.title}</h3>
+                <p class="pl-step__body">{step.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+
+    <!-- 6 · Cierre -->
+    <section class="pl-close" aria-labelledby="pl-close-title">
+      <div class="pl-close__inner" data-up>
+        <OrigenMarkAnimated size={88} loopSeconds={12} stroke="currentColor" class="pl-close__mark" />
+        <h2 id="pl-close-title" class="pl-close__title">Cuéntenos qué necesita medir, separar o preparar.</h2>
+        <p class="pl-close__for">Atendemos a {audience.slice(0, -1).join(', ')} e {audience.at(-1)}.</p>
+        <a href={site.quoteHref} class="pl-pill pl-pill--solid pl-pill--lg">{ctaLabels.solicitarCotizacion}</a>
+      </div>
+    </section>
+
+    <div class="pl-theme" role="group" aria-label="Tema del prototipo">
+      <button type="button" data-set-theme="light">Claro</button>
+      <button type="button" data-set-theme="dark">Oscuro</button>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .pl {
+    --ink: #1d1d1f;
+    --ink-2: #6e6e73;
+    --mist: #f5f5f7;
+    --bg: #fff;
+    --card: #fff;
+    --line: rgb(0 0 0 / 0.08);
+    --glass: rgb(255 255 255 / 0.66);
+    --solid: #1d1d1f;
+    --on-solid: #fff;
+    --solid-hover: #000;
+    --word-off: #d2d2d7;
+    --accent: var(--color-teal-700);
+    --glow: rgb(20 184 166 / 0.1);
+    --spot: rgb(20 184 166 / 0.07);
+    --hero-bg: linear-gradient(#fff, var(--mist));
+    --tile-hero: radial-gradient(120% 80% at 50% 100%, #cde8e2, #f1f8f6 70%);
+    --logo-filter: grayscale(1);
+    --r-tile: 28px;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+    color: var(--ink);
+    background: var(--bg);
+    overflow-x: clip;
+  }
+  /* Los títulos del sitio fijan su tinta; aquí la decide el tema. */
+  .pl :is(h1, h2, h3) {
+    color: var(--ink);
+  }
+  :global(body:has(.pl[data-theme='dark'])) {
+    background: #050606;
+  }
+  /* Tema oscuro: estudio de fotografía. Fondo casi negro, luz cenital sobre el
+     equipo y un resplandor teal bajo él. */
+  .pl[data-theme='dark'] {
+    --ink: #f5f5f7;
+    --ink-2: #a1a1a6;
+    --mist: #0c0d0e;
+    --bg: #050606;
+    --card: #131516;
+    --line: rgb(255 255 255 / 0.1);
+    --glass: rgb(40 44 46 / 0.55);
+    --solid: #f5f5f7;
+    --on-solid: #050606;
+    --solid-hover: #fff;
+    --word-off: #3a3d40;
+    --accent: var(--color-teal-500);
+    --glow: rgb(20 184 166 / 0.22);
+    --spot: rgb(255 255 255 / 0.07);
+    --hero-bg: radial-gradient(70rem 40rem at 50% -12%, rgb(255 255 255 / 0.11), transparent 62%), #050606;
+    --tile-hero: radial-gradient(120% 90% at 50% 105%, rgb(20 184 166 / 0.35), #101213 65%);
+    --logo-filter: grayscale(1) invert(1);
+    color-scheme: dark;
+  }
+  .pl-wrap {
+    max-width: 80rem;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+  }
+  @media (min-width: 1024px) {
+    .pl-wrap {
+      padding-inline: 3rem;
+    }
+  }
+
+  /* La cabecera del sitio, en esta página, también en píldora. */
+  :global(body:has(.pl) .site-header__cta),
+  :global(body:has(.pl) .site-menu__cta) {
+    border-radius: 999px;
+    background: #1d1d1f;
+    padding-inline: 1.25rem;
+  }
+  :global(body:has(.pl) .site-header__cta:hover) {
+    background: #000;
+  }
+  :global(body:has(.pl[data-theme='dark']) .site-header) {
+    background: rgb(5 6 6 / 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border-color: rgb(255 255 255 / 0.08);
+    color: #f5f5f7;
+  }
+  :global(body:has(.pl[data-theme='dark']) .site-header a:not(.site-header__cta)),
+  :global(body:has(.pl[data-theme='dark']) .site-header button) {
+    color: #d2d2d7;
+  }
+  :global(body:has(.pl[data-theme='dark']) .site-header .site-logo__word) {
+    color: #f5f5f7;
+  }
+  :global(body:has(.pl[data-theme='dark']) .site-header .site-logo svg) {
+    filter: invert(1) hue-rotate(180deg);
+  }
+  :global(body:has(.pl[data-theme='dark']) .site-header__cta) {
+    background: #f5f5f7;
+    color: #050606;
+  }
+  :global(body:has(.pl[data-theme='dark']) .site-header__cta:hover) {
+    background: #fff;
+  }
+
+  /* ── Botones ────────────────────────────────────────────────────── */
+  .pl-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0 1.375rem;
+    border-radius: 999px;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform 300ms var(--spring), background-color 200ms, color 200ms, box-shadow 300ms;
+  }
+  .pl-pill:active {
+    transform: scale(0.96);
+  }
+  .pl-pill--solid {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .pl-pill--solid:hover {
+    background: var(--solid-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px -12px rgb(0 0 0 / 0.5);
+  }
+  .pl-pill--lg {
+    min-height: 3.25rem;
+    padding-inline: 1.75rem;
+    font-size: 1rem;
+  }
+  .pl-pill--glass {
+    min-height: 2.25rem;
+    padding-inline: 1rem;
+    font-size: 0.8125rem;
+    color: var(--ink);
+    background: var(--glass);
+    backdrop-filter: blur(12px) saturate(160%);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .pl-pill--glass:hover {
+    background: var(--card);
+  }
+  .pl-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--accent);
+  }
+  .pl-more :global(svg) {
+    transition: transform 300ms var(--spring);
+  }
+  .pl-more:hover :global(svg) {
+    transform: translateX(4px);
+  }
+
+  /* ── 1 · Escenario ─────────────────────────────────────────────── */
+  .pl-hero {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    padding: 2rem 1.25rem 2.5rem;
+    isolation: isolate;
+    overflow: hidden;
+    background: var(--hero-bg);
+    text-align: center;
+  }
+  /* Luz: resplandor bajo el equipo y un foco suave que sigue al puntero. */
+  .pl-hero__light {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(30rem 30rem at var(--mx, 50%) var(--my, 60%), var(--spot), transparent 65%),
+      radial-gradient(46rem 16rem at 50% 86%, var(--glow), transparent 70%);
+    transition: background-position 300ms;
+  }
+  /* Rejilla técnica muy tenue, que se desvanece hacia los bordes. */
+  .pl-hero__grid-bg {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(60% 55% at 50% 60%, #000, transparent 75%);
+    mask-image: radial-gradient(60% 55% at 50% 60%, #000, transparent 75%);
+    opacity: 0.55;
+  }
+  .pl-kicker {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .pl-kicker :global(.pl-kicker__mark) {
+    color: var(--ink);
+  }
+  .pl-hero__head {
+    max-width: 64rem;
+    display: grid;
+    justify-items: center;
+  }
+  .pl-kicker {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .pl-hero__title {
+    margin-top: 0.5rem;
+    font-size: clamp(2.5rem, 1.6rem + 2.6vw, 3.75rem);
+    line-height: 1.04;
+    letter-spacing: -0.04em;
+    font-weight: 700;
+  }
+  .pl-line {
+    display: block;
+    overflow: hidden;
+    padding-bottom: 0.06em;
+  }
+  .pl-line > span {
+    display: inline-block;
+  }
+  @media (min-width: 1024px) {
+    .pl-line {
+      display: inline-block;
+    }
+    .pl-line + .pl-line {
+      margin-left: 0.25em;
+    }
+  }
+  .pl-hero__lead {
+    margin-top: 1rem;
+    max-width: 40ch;
+    font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+  .pl-actions {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 1rem 1.75rem;
+  }
+
+  .pl-hero__stage {
+    position: relative;
+    width: 100%;
+    max-width: 72rem;
+    margin-top: 0.5rem;
+  }
+  .pl-hero__stage :global(.showroom__tasks) {
+    display: none;
+  }
+  .pl-hero__stage :global(.showroom__stage) {
+    aspect-ratio: 4 / 3;
+    max-height: min(50dvh, 38rem);
+    margin-inline: auto;
+  }
+  @media (min-width: 768px) {
+    .pl-hero__stage :global(.showroom__stage) {
+      aspect-ratio: 16 / 9;
+    }
+  }
+  .pl-hero__stage :global(.showroom__photo img) {
+    mix-blend-mode: multiply;
+  }
+  /* Controles del escenario: una fila de cristal, centrada. */
+  .pl-hero__stage :global(.showroom__bar) {
+    justify-content: center;
+    border: 0;
+    gap: 0.5rem;
+  }
+  .pl-hero__stage :global(.showroom__power),
+  .pl-hero__stage :global(.showroom__view) {
+    border: 0;
+    background: var(--glass);
+    box-shadow: inset 0 0 0 1px var(--line);
+    backdrop-filter: blur(10px);
+    color: var(--ink);
+  }
+  .pl-hero__stage :global(.showroom__power[aria-pressed='true']),
+  .pl-hero__stage :global(.showroom__view[aria-pressed='true']) {
+    background: var(--solid);
+    color: var(--on-solid);
+    box-shadow: none;
+  }
+  .pl-hero__stage :global(.showroom__caption) {
+    justify-content: center;
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    color: var(--ink-2);
+  }
+  .pl-hero__stage :global(.showroom__mode) {
+    display: none;
+  }
+  .pl-hero__stage :global(.showroom__model) {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .pl-hero__stage :global(.hotspot__dot) {
+    box-shadow: 0 4px 14px -4px rgb(0 0 0 / 0.35);
+  }
+  .pl-hero__stage :global(.hotspot__note) {
+    border-radius: 16px;
+    border: 0;
+    background: rgb(255 255 255 / 0.85);
+    backdrop-filter: blur(16px) saturate(170%);
+    box-shadow: 0 18px 40px -18px rgb(0 0 0 / 0.35), inset 0 0 0 1px var(--line);
+    text-align: left;
+  }
+
+  /* Selector de tareas: cristal con una píldora que se desliza al elegido. */
+  .pl-seg-wrap {
+    margin-top: 2rem;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 0.25rem;
+  }
+  .pl-seg {
+    position: relative;
+    display: inline-flex;
+    padding: 0.3125rem;
+    border-radius: 999px;
+    background: var(--glass);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    box-shadow: inset 0 0 0 1px var(--line), 0 12px 32px -18px rgb(0 0 0 / 0.3);
+  }
+  .pl-seg__thumb {
+    position: absolute;
+    top: 0.3125rem;
+    bottom: 0.3125rem;
+    left: 0;
+    width: var(--w, 0);
+    transform: translateX(var(--x, 0));
+    border-radius: 999px;
+    background: var(--solid);
+    overflow: hidden;
+  }
+  .pl-seg[data-live] .pl-seg__thumb {
+    transition: transform 550ms var(--spring), width 550ms var(--spring);
+  }
+  .pl-seg__timer {
+    position: absolute;
+    inset: auto 0.875rem 0.3rem;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--color-teal-500);
+    transform: scaleX(0);
+    transform-origin: left;
+  }
+  .pl-seg__item {
+    position: relative;
+    z-index: 1;
+    min-height: 2.5rem;
+    padding: 0 1.125rem;
+    border-radius: 999px;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--ink-2);
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color 300ms;
+  }
+  .pl-seg__item:hover {
+    color: var(--ink);
+  }
+  .pl-seg__item[aria-pressed='true'] {
+    color: var(--on-solid);
+  }
+
+  /* ── 2 · Marcas ────────────────────────────────────────────────── */
+  .pl-brands {
+    padding-block: 3rem 3.5rem;
+    background: var(--mist);
+    text-align: center;
+  }
+  .pl-brands__head {
+    font-size: 0.9375rem;
+    color: var(--ink-2);
+    margin-bottom: 1.75rem;
+  }
+  .pl-marquee {
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  }
+  .pl-marquee__track {
+    display: flex;
+    align-items: center;
+    width: max-content;
+  }
+  .pl-marquee__track > li {
+    padding-inline: 2.5rem;
+  }
+  .pl-logo {
+    display: block;
+    opacity: 0.55;
+    filter: var(--logo-filter);
+    transition: opacity 300ms, transform 400ms var(--spring);
+  }
+  .pl-logo:hover {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+
+  /* ── 3 · Declaración ───────────────────────────────────────────── */
+  .pl-say {
+    padding: 7rem 1.25rem;
+    background: var(--bg);
+  }
+  .pl-say__text {
+    max-width: 24ch;
+    margin-inline: auto;
+    font-size: clamp(2rem, 1.2rem + 3.2vw, 4rem);
+    line-height: 1.1;
+    letter-spacing: -0.035em;
+    font-weight: 700;
+    text-align: center;
+  }
+  @media (min-width: 1024px) {
+    .pl-say {
+      padding-block: 10rem;
+    }
+  }
+
+  /* ── 4 · Familias ──────────────────────────────────────────────── */
+  .pl-fam {
+    padding-block: 5rem 6rem;
+    background: var(--mist);
+  }
+  .pl-h2 {
+    font-size: clamp(2rem, 1.3rem + 2.4vw, 3.5rem);
+    line-height: 1.05;
+    letter-spacing: -0.035em;
+    font-weight: 700;
+  }
+  .pl-mute {
+    color: #86868b;
+  }
+  .pl-bento {
+    margin-top: 3rem;
+    display: grid;
+    gap: 1rem;
+  }
+  .pl-tile {
+    position: relative;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    min-height: 26rem;
+    padding: 1.75rem;
+    border-radius: var(--r-tile);
+    background: var(--card);
+    box-shadow: inset 0 0 0 1px var(--line);
+    overflow: hidden;
+    isolation: isolate;
+    transition: transform 600ms var(--ease), box-shadow 600ms var(--ease);
+  }
+  .pl-tile:hover {
+    transform: translateY(-4px);
+    box-shadow: inset 0 0 0 1px var(--line), 0 30px 60px -30px rgb(0 0 0 / 0.35);
+  }
+  /* Borde que se ilumina bajo el puntero. */
+  .pl-tile::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    padding: 1px;
+    background: radial-gradient(22rem circle at var(--px, 50%) var(--py, 0%), var(--accent), transparent 60%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 400ms;
+  }
+  .pl-tile:hover::before {
+    opacity: 1;
+  }
+  .pl-tile__link {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
+  }
+  .pl-tile__name {
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+  .pl-tile__brands {
+    margin-top: 0.375rem;
+    font-size: 0.875rem;
+    color: var(--ink-2);
+  }
+  .pl-tile__img {
+    display: grid;
+    place-items: center;
+    padding-block: 1.25rem;
+  }
+  .pl-tile__img img {
+    max-height: 14rem;
+    width: auto;
+    max-width: 82%;
+    object-fit: contain;
+    mix-blend-mode: multiply;
+    transition: transform 900ms var(--ease);
+  }
+  .pl-tile:hover .pl-tile__img img {
+    transform: scale(1.06);
+  }
+  .pl-tile__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pl-tile__3d {
+    position: relative;
+    z-index: 2;
+  }
+  .pl-tile__go {
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 999px;
+    background: var(--mist);
+    color: var(--ink);
+    transition: transform 400ms var(--spring), background-color 300ms, color 300ms;
+  }
+  .pl-tile:hover .pl-tile__go {
+    transform: translateX(3px);
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .pl-tile--0 {
+    background: var(--tile-hero);
+  }
+  .pl-tile--5 .pl-tile__img img {
+    max-width: 100%;
+    mix-blend-mode: normal;
+    border-radius: 16px;
+  }
+  /* En oscuro, las fotografías de catálogo (fondo blanco) se apoyan en una
+     placa clara iluminada, como un equipo en su caja de luz. */
+  .pl[data-theme='dark'] .pl-tile__img {
+    margin-block: 1.25rem;
+    border-radius: 20px;
+    background: radial-gradient(90% 90% at 50% 30%, #ffffff, #e6e7ea);
+    box-shadow: 0 30px 60px -30px rgb(20 184 166 / 0.35);
+  }
+  .pl[data-theme='dark'] .pl-tile--5 .pl-tile__img {
+    background: none;
+    box-shadow: none;
+  }
+  @media (min-width: 768px) {
+    .pl-bento {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .pl-tile--0 {
+      grid-column: span 2;
+    }
+  }
+  @media (min-width: 1024px) {
+    .pl-bento {
+      grid-template-columns: repeat(4, 1fr);
+    }
+    .pl-tile--0 {
+      grid-column: span 2;
+      grid-row: span 2;
+      padding: 2.5rem;
+    }
+    .pl-tile--0 .pl-tile__name {
+      font-size: 2rem;
+    }
+    .pl-tile--0 .pl-tile__img img {
+      max-height: 32rem;
+    }
+    .pl-tile--1,
+    .pl-tile--4,
+    .pl-tile--5 {
+      grid-column: span 2;
+    }
+  }
+
+  /* ── 5 · Proceso ───────────────────────────────────────────────── */
+  .pl-proc {
+    background: var(--bg);
+  }
+  .pl-proc__grid {
+    display: grid;
+    gap: 3rem;
+    padding-block: 6rem;
+  }
+  .pl-proc__note {
+    margin-top: 1.5rem;
+    max-width: 40ch;
+    color: var(--ink-2);
+    font-size: 1.0625rem;
+    line-height: 1.55;
+  }
+  .pl-steps {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .pl-step {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 1.25rem;
+    padding: 1.5rem 1.75rem;
+    border-radius: 24px;
+    background: var(--mist);
+    opacity: 0.45;
+    transform: scale(0.98);
+    transition: opacity 600ms var(--ease), transform 600ms var(--ease);
+  }
+  .pl-step.is-on {
+    opacity: 1;
+    transform: none;
+  }
+  .pl-step__n {
+    display: grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    background: var(--card);
+    font-weight: 700;
+    font-size: 0.9375rem;
+    transition: background-color 400ms, color 400ms;
+  }
+  .pl-step.is-on .pl-step__n {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .pl-step__title {
+    font-size: clamp(1.1875rem, 1.1rem + 0.4vw, 1.4375rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    padding-top: 0.25rem;
+  }
+  .pl-step__body {
+    margin-top: 0.375rem;
+    color: var(--ink-2);
+    line-height: 1.55;
+    max-width: 54ch;
+  }
+  @media (min-width: 1024px) {
+    .pl-proc__grid {
+      grid-template-columns: 5fr 7fr;
+      gap: 5rem;
+      padding-block: 8rem;
+    }
+    .pl-proc__head {
+      position: sticky;
+      top: 8rem;
+      align-self: start;
+    }
+  }
+
+  /* ── 6 · Cierre ────────────────────────────────────────────────── */
+  .pl-close {
+    padding: 7rem 1.25rem 8rem;
+    background:
+      radial-gradient(40rem 20rem at 50% 100%, var(--glow), transparent 70%),
+      var(--mist);
+    text-align: center;
+  }
+  .pl-close :global(.pl-close__mark) {
+    color: var(--ink);
+    margin-bottom: 2rem;
+  }
+
+  /* Selector de tema del prototipo (no va en la portada real). */
+  .pl-theme {
+    position: fixed;
+    left: 1rem;
+    bottom: 1rem;
+    z-index: 50;
+    display: flex;
+    padding: 0.25rem;
+    border-radius: 999px;
+    background: var(--glass);
+    backdrop-filter: blur(16px);
+    box-shadow: inset 0 0 0 1px var(--line), 0 10px 30px -12px rgb(0 0 0 / 0.4);
+  }
+  .pl-theme button {
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--ink-2);
+  }
+  .pl-theme button[aria-pressed='true'] {
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  .pl-close__inner {
+    display: grid;
+    justify-items: center;
+  }
+  .pl-close__title {
+    max-width: 18ch;
+    font-size: clamp(2.25rem, 1.4rem + 3.2vw, 4.5rem);
+    line-height: 1.03;
+    letter-spacing: -0.04em;
+    font-weight: 700;
+  }
+  .pl-close__for {
+    margin-block: 1.5rem 2.25rem;
+    max-width: 46ch;
+    color: var(--ink-2);
+    font-size: 1.0625rem;
+    line-height: 1.55;
+  }
+
+  /* ── Movimiento ────────────────────────────────────────────────── */
+  @media (prefers-reduced-motion: no-preference) {
+    .pl-in {
+      animation: pl-in 1000ms var(--ease) both;
+      animation-delay: calc(var(--i, 0) * 90ms + 80ms);
+    }
+    .pl-line > .pl-in {
+      animation-name: pl-line;
+    }
+    .pl-rise {
+      animation: pl-rise 1600ms var(--ease) 200ms both;
+    }
+    .pl-marquee__track {
+      animation: pl-marquee 38s linear infinite;
+    }
+    .pl-marquee:hover .pl-marquee__track {
+      animation-play-state: paused;
+    }
+    :global(html[data-pl-motion]) [data-up] {
+      opacity: 0;
+      transform: translateY(40px) scale(0.97);
+      transition: opacity 1000ms var(--ease), transform 1000ms var(--ease);
+      transition-delay: var(--d, 0ms);
+    }
+    :global(html[data-pl-motion]) [data-up].is-up {
+      opacity: 1;
+      transform: none;
+    }
+    .pl-hero[data-cycling] .pl-seg__timer {
+      animation: pl-timer var(--cycle, 7s) linear both;
+    }
+    .pl-hero[data-paused] .pl-seg__timer {
+      animation-play-state: paused;
+    }
+    /* La declaración se enciende línea a línea al cruzar la pantalla. */
+    @supports (animation-timeline: view()) {
+      .pl-w {
+        animation: pl-word linear both;
+        animation-timeline: view();
+        animation-range: entry 40% cover 45%;
+      }
+    }
+  }
+  @keyframes pl-in {
+    from { opacity: 0; transform: translateY(16px); }
+  }
+  @keyframes pl-line {
+    from { transform: translateY(105%); }
+  }
+  @keyframes pl-rise {
+    from { opacity: 0; transform: translateY(60px) scale(0.94); filter: blur(8px); }
+  }
+  @keyframes pl-marquee {
+    to { transform: translateX(-50%); }
+  }
+  @keyframes pl-timer {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  @keyframes pl-word {
+    from { color: var(--word-off); }
+    to { color: var(--ink); }
+  }
+</style>
+
+<script>
+  /* Tema del prototipo: ?tema=claro|oscuro, oscuro por omisión. */
+  const root = document.querySelector<HTMLElement>('[data-pl-root]')!;
+  const setTheme = (theme: string) => {
+    root.dataset.theme = theme;
+    for (const b of document.querySelectorAll<HTMLButtonElement>('[data-set-theme]')) {
+      b.setAttribute('aria-pressed', String(b.dataset.setTheme === theme));
+    }
+    const url = new URL(location.href);
+    url.searchParams.set('tema', theme === 'dark' ? 'oscuro' : 'claro');
+    history.replaceState(null, '', url);
+  };
+  setTheme(new URLSearchParams(location.search).get('tema') === 'claro' ? 'light' : 'dark');
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-set-theme]')) {
+    b.addEventListener('click', () => setTheme(b.dataset.setTheme!));
+  }
+
+  const hero = document.querySelector<HTMLElement>('[data-hero]')!;
+  const figure = hero.querySelector<HTMLElement>('[data-showroom]')!;
+  const seg = hero.querySelector<HTMLElement>('.pl-seg')!;
+  const thumb = seg.querySelector<HTMLElement>('.pl-seg__thumb')!;
+  const timer = thumb.querySelector<HTMLElement>('.pl-seg__timer')!;
+  const items = Array.from(seg.querySelectorAll<HTMLButtonElement>('[data-rail]'));
+  const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
+
+  /* La píldora oscura se desliza al botón elegido. */
+  const place = () => {
+    const on = items.find((b) => b.getAttribute('aria-pressed') === 'true') ?? items[0];
+    thumb.style.setProperty('--x', `${on.offsetLeft}px`);
+    thumb.style.setProperty('--w', `${on.offsetWidth}px`);
+  };
+  place();
+  // La primera colocación no se anima; después, la píldora se desliza.
+  document.fonts?.ready.then(() => {
+    place();
+    requestAnimationFrame(() => seg.setAttribute('data-live', ''));
+  });
+  new ResizeObserver(place).observe(seg);
+
+  /* El selector elige el equipo pulsando el botón (oculto) del propio componente. */
+  const choose = (id: string) => {
+    figure.querySelector<HTMLButtonElement>(`[data-pick="${id}"]`)?.click();
+    for (const b of items) b.setAttribute('aria-pressed', String(b.dataset.rail === id));
+    place();
+    // Reinicia el temporizador de la píldora.
+    timer.style.animation = 'none';
+    void timer.offsetWidth;
+    timer.style.animation = '';
+  };
+
+  /* Recorrido automático hasta que el visitante toca algo del escenario. */
+  let auto = motionOk;
+  const stopAuto = () => {
+    auto = false;
+    hero.removeAttribute('data-cycling');
+  };
+  if (auto) hero.setAttribute('data-cycling', '');
+  timer.addEventListener('animationend', () => {
+    if (!auto) return;
+    const i = items.findIndex((b) => b.getAttribute('aria-pressed') === 'true');
+    choose(items[(i + 1) % items.length].dataset.rail!);
+  });
+  for (const b of items) {
+    b.addEventListener('click', () => {
+      stopAuto();
+      choose(b.dataset.rail!);
+    });
+  }
+  figure.addEventListener('pointerdown', stopAuto);
+  figure.addEventListener('click', stopAuto);
+  const pause = (on: boolean) => hero.toggleAttribute('data-paused', on);
+  figure.addEventListener('pointerenter', () => pause(true));
+  figure.addEventListener('pointerleave', () => pause(false));
+  new IntersectionObserver(([e]) => pause(!e.isIntersecting), { threshold: 0.3 }).observe(hero);
+
+  /* «Ver en 3D» desde una familia: sube al escenario y cambia el equipo. */
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-show]')) {
+    btn.addEventListener('click', () => {
+      stopAuto();
+      choose(btn.dataset.show!);
+      hero.scrollIntoView({ behavior: motionOk ? 'smooth' : 'auto', block: 'start' });
+    });
+  }
+
+  /* Luz que sigue al puntero en el escenario y borde iluminado en las tarjetas.
+     Un cuadro por movimiento como máximo. */
+  if (motionOk && matchMedia('(pointer: fine)').matches) {
+    const light = hero.querySelector<HTMLElement>('.pl-hero__light')!;
+    let frame = 0;
+    hero.addEventListener('pointermove', (event) => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const box = hero.getBoundingClientRect();
+        light.style.setProperty('--mx', `${event.clientX - box.left}px`);
+        light.style.setProperty('--my', `${event.clientY - box.top}px`);
+      });
+    });
+    for (const tile of document.querySelectorAll<HTMLElement>('.pl-tile')) {
+      tile.addEventListener('pointermove', (event) => {
+        const box = tile.getBoundingClientRect();
+        tile.style.setProperty('--px', `${event.clientX - box.left}px`);
+        tile.style.setProperty('--py', `${event.clientY - box.top}px`);
+      });
+    }
+  }
+
+  /* Revelado al desplazarse; pasos que se encienden al cruzar el centro. */
+  const steps = document.querySelectorAll<HTMLElement>('[data-step]');
+  if (motionOk && 'IntersectionObserver' in window) {
+    document.documentElement.setAttribute('data-pl-motion', '');
+    const up = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          e.target.classList.add('is-up');
+          up.unobserve(e.target);
+        }
+      },
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.12 },
+    );
+    for (const el of document.querySelectorAll('[data-up]')) up.observe(el);
+
+    const mid = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) e.target.classList.toggle('is-on', e.isIntersecting || e.boundingClientRect.top < 0);
+      },
+      { rootMargin: '-40% 0px -40% 0px' },
+    );
+    for (const s of steps) mid.observe(s);
+    // Los últimos pasos pueden no llegar nunca al centro: con el último entero
+    // en pantalla se encienden todos.
+    new IntersectionObserver(([e]) => {
+      if (e.isIntersecting) for (const s of steps) s.classList.add('is-on');
+    }, { threshold: 1 }).observe(steps[steps.length - 1]);
+  } else {
+    for (const s of steps) s.classList.add('is-on');
+  }
+</script>
