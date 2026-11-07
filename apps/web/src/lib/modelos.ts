@@ -224,15 +224,23 @@ export const SCALE_SPEC: Partial<Record<FamilySlug, string>> = {
   centrifugacion: 'Velocidad máxima',
 };
 
+const NUM = String.raw`\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+\.\d{1,2}(?!\d)|\d+(?:,\d+)?`;
+const SPEC_NUMBER = new RegExp(
+  String.raw`(${NUM})(?:(?:\s+a\s+|\s*[–—-]\s*)(?:${NUM}))?(?:\s*([A-Za-zµ°%×][^\s,;/]*))?`,
+);
+
 /**
  * Primera cifra de un valor de la ficha: `n` es el número (puntos de millar
- * fuera, coma decimal como punto) y `display` el número con su unidad tal como
- * está escrito. `'125 W de entrada, 75 W de salida'` da `125 W`.
+ * fuera, coma decimal como punto) y `display` lo que se muestra: el número con
+ * su unidad, o el rango entero con su unidad («0,1 a 500 ml»). La unidad es la
+ * palabra que empieza con letra, µ, °, % o ×. `'125 W de entrada, 75 W de
+ * salida'` da `125 W`; `'1.5 kW'`, `1,5 kW`.
  */
 export function parseSpecNumber(value: string): { n: number; display: string } | null {
-  const match = value.match(/(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?\s*([^\s,;/]+)?/);
+  const match = value.match(SPEC_NUMBER);
   if (!match) return null;
-  const n = Number(`${match[1].replace(/\./g, '')}${match[2] ? `.${match[2]}` : ''}`);
+  const raw = match[1];
+  const n = /^\d{1,3}(\.\d{3})+/.test(raw) ? Number(raw.replace(/\./g, '').replace(',', '.')) : Number(raw.replace(',', '.'));
   return { n, display: match[0].trim() };
 }
 
@@ -278,4 +286,11 @@ export function familyScale(
       x: max === min ? 0.5 : at(n),
     })),
   };
+}
+
+/** Modelos de una familia en el orden de su escala (de menor a mayor); sin escala, por marca y nombre. */
+export function familyOrder(models: readonly Modelo[], slug: FamilySlug): Modelo[] {
+  const scale = familyScale(models, slug);
+  const rank = new Map(scale?.points.map((point, i) => [point.slug, i]));
+  return [...models].sort((a, b) => (rank.get(a.slug) ?? 99) - (rank.get(b.slug) ?? 99) || byBrandAndName(a, b));
 }

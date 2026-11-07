@@ -10,7 +10,7 @@ import FamilyConsult from '../../../components/product/FamilyConsult.astro';
 import { publicClaim } from '../../../data/claims';
 import { site } from '../../../config/site';
 import { getBrandsByFamilyId } from '../../../lib/catalog';
-import { byBrandAndName, familyInfo, hasCollectionPages, modelHref, type FamilySlug } from '../../../lib/modelos';
+import { byBrandAndName, familyInfo, familyOrder, hasCollectionPages, modelHref, type FamilySlug } from '../../../lib/modelos';
 import type { Modelo } from '../../../content.config';
 
 /**
@@ -25,7 +25,7 @@ export async function getStaticPaths() {
   const families = [...new Set(all.map((entry) => entry.family))].filter(hasCollectionPages);
   return families.map((slug) => ({
     params: { familia: slug },
-    props: { slug, models: all.filter((entry) => entry.family === slug).sort(byBrandAndName) },
+    props: { slug, models: familyOrder(all.filter((entry) => entry.family === slug).sort(byBrandAndName), slug) },
   }));
 }
 

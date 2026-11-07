@@ -77,7 +77,9 @@ function catalogIds() {
   const { parseSpecNumber, familyScale } = await import(pathToFileURL(join(root, 'src/lib/modelos.ts')).href);
   const cases = [
     ['2.000 W', 2000, '2.000 W'],
-    ['0,1 a 500 ml', 0.1, '0,1 a'],
+    ['0,1 a 500 ml', 0.1, '0,1 a 500 ml'],
+    ['0,1–2 l', 0.1, '0,1–2 l'],
+    ['1.5 kW', 1.5, '1.5 kW'],
     ['125 W de entrada, 75 W de salida', 125, '125 W'],
     ['18.100 RPM / 31.865 ×g', 18100, '18.100 RPM'],
     ['Formato de gel', null, null],

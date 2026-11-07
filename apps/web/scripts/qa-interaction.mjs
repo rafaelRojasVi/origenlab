@@ -1022,6 +1022,10 @@ console.log('\nEscala y tarjetas de la página de familia');
     `escala de la familia: textos en orden (${marks.map((mark) => mark.text).join(', ')})`,
   );
   check(marks.every((mark, i) => i === 0 || mark.left > marks[i - 1].left), 'escala de la familia: desplazamientos crecientes');
+  const order = await page.locator('.mc__name').allTextContents();
+  check(order.map((t) => t.trim()).join('|') === 'UP100H|UP200St|UP400St|UIP2000hdT', `familia: tarjetas en el orden de la escala (${order.join(', ')})`);
+  const small = await page.locator('.mc__acts a').evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().height < 44).length);
+  check(small === 0, `familia: acciones de tarjeta de al menos 44 px (${small} menores)`);
   const consult = await page.locator('#consulta-title').count();
   check(consult === 1, 'familia: bloque «¿No sabe cuál?»');
   await page.goto(`${base}/productos/electroforesis/`, { waitUntil: 'load' });

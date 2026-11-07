@@ -12,7 +12,7 @@ import ExternalLink from '../../../components/ui/ExternalLink.astro';
 import Notice from '../../../components/ui/Notice.astro';
 import Icon from '../../../components/ui/Icon.astro';
 import { getCollection } from 'astro:content';
-import { byBrandAndName } from '../../../lib/modelos';
+import { byBrandAndName, familyOrder } from '../../../lib/modelos';
 import type { Modelo } from '../../../content.config';
 import { getProductFamilyBySlug } from '../../../data/productFamilies';
 import { categories } from '../../../data/categories';
@@ -22,10 +22,13 @@ import { itemListJsonLd } from '../../../lib/jsonld';
 const family = getProductFamilyBySlug('centrifugas');
 const products = getOrtoalresaCentrifuges();
 const brand = getBrandById('ortoalresa');
-const models = (await getCollection('modelos'))
-  .map((item) => item.data as Modelo)
-  .filter((entry) => entry.family === 'centrifugacion')
-  .sort(byBrandAndName);
+const models = familyOrder(
+  (await getCollection('modelos'))
+    .map((item) => item.data as Modelo)
+    .filter((entry) => entry.family === 'centrifugacion')
+    .sort(byBrandAndName),
+  'centrifugacion',
+);
 
 /** Filas de la comparativa: sólo etiquetas presentes en todos los modelos o
  *  claramente diferenciadoras. El resto vive en cada ficha. */
