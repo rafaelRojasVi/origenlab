@@ -467,6 +467,47 @@ def test_put_conflict_maps_to_commit_conflict(calls, monkeypatch, status) -> Non
     assert calls["dispatch"] == []
 
 
+_PUT_CASES = [
+    # (status, body, prior sha, expected code)
+    (409, b'{"message":"Repository rule violations found\\n\\nChanges must be made through a pull request."}', "abc", "branch_protected"),
+    (409, b'{"message":"Repository rule violations found"}', None, "branch_protected"),
+    (403, b'{"message":"Protected branch update failed"}', "abc", "branch_protected"),
+    (422, b'{"message":"Changes must be made through a ruleset"}', "abc", "branch_protected"),
+    (409, b'{"message":"is at deadbeef but expected ... does not match"}', "abc", "commit_conflict"),
+    (409, b'{"message":"is at 1 but expected 2"}', "abc", "commit_conflict"),
+    (422, b'{"message":"Invalid request. \\"sha\\" wasn\'t supplied."}', None, "commit_conflict"),
+    (409, b"not json", "abc", "commit_conflict"),   # ambiguous update: reload and retry
+    (409, b"not json", None, "branch_protected"),   # ambiguous create: cannot be a stale sha
+    (422, b"", "abc", "commit_conflict"),
+    (403, b'{"message":"Resource not accessible by personal access token"}', "abc", None),
+]
+
+
+@pytest.mark.parametrize(("status", "body", "sha", "code"), _PUT_CASES)
+def test_put_refusals_are_told_apart(status, body, sha, code) -> None:
+    t = _FakeTransport((status, body))
+    with pytest.raises(_github.GithubError) as caught:
+        _github.github_put_file(_config(), "a/b.json", b"{}", "m", sha, transport=t)
+    expected = code or "commit_failed"
+    assert caught.value.code == expected
+    if code == "branch_protected":
+        assert str(caught.value) == "La rama está protegida; publicar directo no está permitido."
+    assert "rule violations" not in str(caught.value).lower()
+
+
+def test_ruleset_refusal_reaches_the_operator_as_branch_protected(calls, monkeypatch) -> None:
+    t = _FakeTransport((409, b'{"message":"Repository rule violations found"}'))
+    monkeypatch.setattr(
+        web_publish, "github_put_file",
+        lambda config, path, content, message, sha: _github.github_put_file(
+            config, path, content, message, sha, transport=t),
+    )
+    resp = _post(_client(), _valid_sheet())
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "branch_protected"
+    assert calls["dispatch"] == []
+
+
 def test_stale_limiter_entries_are_pruned(calls, monkeypatch) -> None:
     now = [1000.0]
     monkeypatch.setattr(web_publish, "_clock", lambda: now[0])

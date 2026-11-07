@@ -6,7 +6,8 @@ compatibility_date = "2025-04-01"
 ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
 # Empty = built-in counter mode; set to the analytics origin (https://host) to proxy. See the stats block below.
 STATS_ORIGIN = ""
-# Counter mode only: comma-separated modelo slugs that may appear in counter keys (e.g. "UP100H,UP200St,UP400St").
+# Counter mode only: comma-separated modelo slugs that may appear in counter keys, e.g.
+# "hielscher-up400st,hielscher-up200st,hielscher-up100h". Matching is case-sensitive.
 # Any other modelo counts as "other"; empty = every modelo counts as "other".
 STATS_MODELOS = ""
 
@@ -29,7 +30,9 @@ simple = { limit = 5, period = 60 }
 # (src/stats.ts). Two modes, chosen by STATS_ORIGIN:
 #   unset/empty -> the Worker counts the five events itself in STATS_KV (daily counters);
 #   set         -> events and script.js are proxied to that self-hosted analytics origin
-#                  (https://host only: no path, no credentials).
+#                  (https://host only: no path, no credentials). Proxy mode needs a payload adapter
+#                  (Plausible `domain`/`url`, Umami `type`/`payload.website`) that does not exist yet:
+#                  use counter mode only for now.
 # Optional vars when proxying (defaults are Plausible CE; Umami is /api/send and /script.js):
 #   STATS_EVENT_PATH  = "/api/event"
 #   STATS_SCRIPT_PATH = "/js/script.js"

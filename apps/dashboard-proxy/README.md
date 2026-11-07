@@ -200,10 +200,11 @@ everything else under the prefix is 404:
 - `GET /api/stats/script.js` — only when `STATS_ORIGIN` is set; 404 otherwise.
 
 `STATS_ORIGIN` (a `[vars]` entry) picks the mode. Set to `https://host`, the validated event and the script
-are proxied to that self-hosted analytics origin (Umami or Plausible CE; `STATS_EVENT_PATH` and
-`STATS_SCRIPT_PATH` adapt the upstream paths) with a fresh header set: never the browser's cookies or
+are proxied to that self-hosted analytics origin (`STATS_EVENT_PATH` and `STATS_SCRIPT_PATH` adapt the
+upstream paths; proxy mode needs a payload adapter — Plausible `domain`/`url`, Umami `type`/`payload.website` —
+that does not exist yet, so counter mode only for now) with a fresh header set: never the browser's cookies or
 `Authorization`, never the API key or Access credentials. Empty, the Worker counts events in the `STATS_KV`
-namespace (`daily:{YYYY-MM-DD}:{name}:{modelo}`, 90-day TTL; `modelo` is kept only if listed in `STATS_MODELOS`, else `other`), answers 204 and exposes nothing readable.
+namespace (`daily:{YYYY-MM-DD}:{name}:{modelo}`, 90-day TTL; `modelo` is kept only if listed in `STATS_MODELOS` — real slugs such as `hielscher-up400st,hielscher-up200st,hielscher-up100h`, matched case-sensitively — else `other`), answers 204 and exposes nothing readable.
 A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
 60 s. Nothing logs an IP, User-Agent or body.
 

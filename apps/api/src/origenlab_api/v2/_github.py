@@ -116,6 +116,36 @@ def github_file_sha(config: GithubPublishConfig, path: str, *, transport: Transp
     return sha
 
 
+BRANCH_PROTECTED_MESSAGE = "La rama está protegida; publicar directo no está permitido."
+CONFLICT_MESSAGE = "La ficha cambió en GitHub; vuelve a cargar y publica de nuevo."
+
+
+def _put_refusal(status: int, raw: bytes, sha: str | None) -> GithubError | None:
+    """Tell a ruleset / branch-protection refusal from a stale-sha conflict on the Contents PUT.
+
+    GitHub answers both with 409 (a ruleset-blocked write: «Repository rule violations found»; a sha
+    mismatch: «... does not match ...»), so the body decides. Only fixed texts are returned, never
+    GitHub's own. When the body says nothing useful: a 409 on a create (no prior sha) cannot be a
+    stale sha, so it is read as protection; a 409 on an update stays `commit_conflict` (the
+    pre-existing behaviour, and retrying after a reload is the safe advice); 422 is a conflict; a bare
+    403 stays `commit_failed` (token scope).
+    """
+    try:
+        message = str(json.loads(raw).get("message", "")).lower()
+    except (ValueError, AttributeError, RecursionError):
+        message = ""
+    protected = "rule violation" in message or "ruleset" in message or "protected branch" in message
+    if protected:
+        return GithubError("branch_protected", BRANCH_PROTECTED_MESSAGE, status)
+    if status == 403:
+        return None
+    if "does not match" in message or "sha" in message:
+        return GithubError("commit_conflict", CONFLICT_MESSAGE, status)
+    if status == 409 and sha is None:
+        return GithubError("branch_protected", BRANCH_PROTECTED_MESSAGE, status)
+    return GithubError("commit_conflict", CONFLICT_MESSAGE, status)
+
+
 def github_put_file(
     config: GithubPublishConfig, path: str, content: bytes, message: str, sha: str | None,
     *, transport: Transport = urllib_transport,
@@ -130,10 +160,10 @@ def github_put_file(
     if sha:
         body["sha"] = sha
     status, raw = _call(config, "PUT", _contents_url(config, path), body, transport, "commit_failed")
-    if status in (409, 422):  # the file changed under the editor (stale sha) or already exists
-        raise GithubError(
-            "commit_conflict", "La ficha cambió en GitHub; vuelve a cargar y publica de nuevo.", status,
-        )
+    if status in (403, 409, 422):
+        refusal = _put_refusal(status, raw, sha)
+        if refusal:
+            raise refusal
     if status not in (200, 201):
         raise GithubError("commit_failed", f"GitHub answered HTTP {status} writing the file", status)
     try:

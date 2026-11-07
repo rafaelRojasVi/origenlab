@@ -52,7 +52,7 @@ def _plain_request(db, world, sender=None):
 
 
 def test_r7_a_free_mail_request_is_correo_too(db, world) -> None:
-    applied = _apply_only(db, world, _plain_request(db, world, sender="Irina Example <irina@gmail.com>"))
+    applied = _apply_only(db, world, _plain_request(db, world, sender="Persona Ficticia <persona-ficticia-7f3a@gmail.com>"))
     assert (applied["rule_id"], _origin(db, applied["case_id"])) == ("R7", "correo")
 
 
