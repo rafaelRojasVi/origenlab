@@ -32,3 +32,22 @@ export function trackEvent(name: StatsEventName, props: { modelo?: string | null
     // Medir nunca debe romper la página.
   }
 }
+
+const CLICK_EVENTS: readonly string[] = ['cotizacion_click', 'whatsapp_click', 'pdf_download'];
+let clicksInstalled = false;
+
+/**
+ * Un solo escucha de clics en `document` para toda página de producto. Lo que se
+ * mide lleva `data-track="<evento>"` y, si corresponde, `data-modelo="<slug>"`.
+ * Lo llaman la página de modelo (`ModelHero`) y la ficha heredada de
+ * centrifugación; instalarlo dos veces no duplica los envíos.
+ */
+export function installTrackClicks(): void {
+  if (clicksInstalled || typeof document === 'undefined') return;
+  clicksInstalled = true;
+  document.addEventListener('click', (event) => {
+    const link = (event.target as Element | null)?.closest<HTMLElement>('[data-track]');
+    const name = link?.dataset.track;
+    if (link && name && CLICK_EVENTS.includes(name)) trackEvent(name as StatsEventName, { modelo: link.dataset.modelo });
+  });
+}

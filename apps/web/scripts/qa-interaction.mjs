@@ -981,6 +981,108 @@ if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
   }
 }
 
+/* -- 8. Cierre de QA: navegación, barra fija, WhatsApp, consentimiento ---- */
+{
+  console.log(`\nNavegación y barra fija de la ficha ${MODEL_PATH}`);
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  await page.goto(`${base}${MODEL_PATH}`, { waitUntil: 'load' });
+
+  // Model nav: la ruta de navegación vuelve al índice de la familia.
+  const crumb = page.locator('nav[aria-label="Ruta de navegación"] a[href="' + FAMILY_PATH + '"]');
+  check((await crumb.count()) === 1, 'Model nav: la ruta de navegación enlaza el índice de la familia');
+  await crumb.click();
+  await page.waitForLoadState('load');
+  check(new URL(page.url()).pathname === FAMILY_PATH, `Model nav: el enlace lleva al índice de la familia (${new URL(page.url()).pathname})`);
+
+  // Sticky CTA: visible tras 200 px de desplazamiento, con el botón «Solicitar cotización».
+  await page.goto(`${base}${MODEL_PATH}`, { waitUntil: 'load' });
+  await page.evaluate(() => window.scrollTo(0, 200));
+  await page.waitForTimeout(250);
+  const bar = page.locator('[data-sticky-cta]');
+  const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
+  const inView = await bar.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    return box.height > 0 && box.top < innerHeight && box.bottom > 0;
+  });
+  check((await quote.isVisible()) && inView, 'Sticky CTA: «Solicitar cotización» visible tras 200 px de scroll');
+
+  // WhatsApp: el parámetro `text` nombra el modelo y la marca (no sólo el enlace).
+  const wa = await bar.locator('a[href^="https://wa.me/"]').getAttribute('href');
+  const text = new URL(wa ?? 'https://wa.me/').searchParams.get('text') ?? '';
+  check(/\bUP400St\b/.test(text) && /Hielscher/.test(text), `WhatsApp URL: el parámetro text nombra el modelo y la marca (${text.slice(0, 60)}…)`);
+  await context.close();
+}
+
+console.log('\nConsentimiento (/contacto/)');
+{
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const posts = [];
+  await page.route('**/api/web/solicitud', (route) => {
+    posts.push(route.request().url());
+    return route.fulfill({ status: 500, body: 'no debe enviarse' });
+  });
+  await page.goto(`${base}/contacto/`, { waitUntil: 'load' });
+  const consent = page.locator('#solicitud-consent');
+  check((await consent.getAttribute('value')) === 'consent-v1-2026-11', 'Consent: la casilla lleva la versión consent-v1-2026-11');
+  check(await consent.evaluate((el) => el.required && !el.checked), 'Consent: la casilla es obligatoria y empieza sin marcar');
+  await page.fill('#solicitud-need', 'Sonicador de 400 W para extracción');
+  await page.fill('#solicitud-email', 'ana@example.cl');
+  await page.fill('#solicitud-org', 'Laboratorio de prueba');
+  await page.click('button[type="submit"]');
+  await page.waitForTimeout(400);
+  check(posts.length === 0, `Consent: sin consentimiento el formulario no envía nada (${posts.length} solicitudes)`);
+  check((await consent.getAttribute('aria-invalid')) === 'true', 'Consent: la casilla queda marcada como inválida');
+  check(await page.locator('#solicitud-consent-error').isVisible(), 'Consent: se explica el error junto a la casilla');
+  check(
+    /Consentimiento/.test((await page.locator('[data-error-summary]').textContent()) ?? ''),
+    'Consent: el resumen de errores nombra el consentimiento',
+  );
+  await consent.check();
+  await page.click('button[type="submit"]');
+  await page.waitForTimeout(600);
+  check(posts.length === 1, `Consent: con la casilla marcada sí se envía (${posts.length} solicitud)`);
+  await context.close();
+}
+
+/* La ficha heredada del Digicen 22 R: barra fija medida y modo estático. */
+{
+  const path = '/productos/centrifugas/digicen-22-r/';
+  console.log(`\nFicha heredada ${path}: barra fija y modo estático`);
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.__beacons = [];
+    navigator.sendBeacon = (url, body) => {
+      window.__beacons.push({ url: String(url), body });
+      return true;
+    };
+    // Sin navegar: el clic llega al escucha del documento y aquí se cancela.
+    window.addEventListener('click', (event) => event.target.closest?.('a') && event.preventDefault(), true);
+  });
+  await page.goto(`${base}${path}`, { waitUntil: 'load' });
+  const bar = page.locator('[data-sticky-cta]');
+  const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
+  check((await quote.getAttribute('data-track')) === 'cotizacion_click', 'Ficha heredada: «Solicitar cotización» de la barra lleva data-track');
+  check((await quote.getAttribute('data-modelo')) === 'ortoalresa-digicen-22-r', 'Ficha heredada: la barra lleva data-modelo del equipo');
+  const waLink = bar.locator('a[href^="https://wa.me/"]');
+  check((await waLink.getAttribute('data-track')) === 'whatsapp_click', 'Ficha heredada: WhatsApp de la barra lleva data-track');
+  await quote.click();
+  const sent = await page.evaluate(async () =>
+    Promise.all(window.__beacons.map(async (b) => ({ url: b.url, body: await b.body.text() }))),
+  );
+  check(
+    sent.some((b) => b.url === '/api/stats/event' && b.body.includes('cotizacion_click') && b.body.includes('"modelo":"ortoalresa-digicen-22-r"')),
+    `Ficha heredada: el clic en la barra se mide (${sent.length} envío)`,
+  );
+  // Modo estático (movimiento reducido): lienzo oculto, ficha técnica de la historia visible.
+  check(await page.locator('canvas[data-story-canvas]').evaluate((el) => el.hidden), 'Ficha heredada: con movimiento reducido el lienzo 3D queda oculto');
+  await page.locator('.story-specs').scrollIntoViewIfNeeded();
+  check(await page.locator('.story-specs').isVisible(), 'Ficha heredada: con movimiento reducido la ficha técnica se ve');
+  await context.close();
+}
+
 await browser.close();
 server.close();
 

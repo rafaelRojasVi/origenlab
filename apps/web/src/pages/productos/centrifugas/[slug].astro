@@ -220,8 +220,8 @@ const metaDescription = (
       <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${product.name}`}>
         <div class="shell cta-bar__inner">
           <p class="cta-bar__name t-data" translate="no">{brand?.name} {product.name}</p>
-          <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
-          <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+          <a href={site.quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry?.slug}>{ctaLabels.solicitarCotizacion}</a>
+          <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry?.slug}>
             <Icon name="whatsapp" size={18} />
             WhatsApp
             <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
@@ -238,8 +238,16 @@ const metaDescription = (
     body="Comparta la aplicación, la configuración de rotor que necesita y su institución. Respondemos con alternativas y condiciones por escrito."
     productName={product.name}
     brandName={brand?.name}
+    modelo={story ? entry?.slug : undefined}
   />
 </Layout>
+
+<script>
+  /** Con historia por scroll la ficha mide los mismos clics que la página de modelo (`lib/stats.ts`). */
+  import { installTrackClicks } from '../../../lib/stats';
+
+  if (document.querySelector('[data-story]')) installTrackClicks();
+</script>
 
 <style>
   /* Barra fija de cotización de la historia: la misma de `ModelHero` (página de modelo). */

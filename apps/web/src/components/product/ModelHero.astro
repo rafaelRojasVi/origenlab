@@ -102,20 +102,12 @@ const photo = imageForEntry(entry);
 <script>
   /**
    * Medición propia (`lib/stats.ts`): un solo escucha de clics para toda la
-   * página de modelo. Lo que se mide lleva `data-track="<evento>"` y, si
-   * corresponde, `data-modelo="<slug>"`: los dos botones del hero, los de la
-   * barra fija, los de la banda de cierre (`ClosingQuoteBand`) y los enlaces a la
-   * ficha del fabricante (en `ProductStory` y en la página de modelo). El escucha
-   * está en `document`, así que alcanza a todos. Sin cookies ni almacenamiento.
+   * página de modelo: los botones del hero, los de la barra fija, los de la
+   * banda de cierre (`ClosingQuoteBand`) y los enlaces a la ficha del fabricante.
    */
-  import { trackEvent, type StatsEventName } from '../../lib/stats';
+  import { installTrackClicks } from '../../lib/stats';
 
-  const EVENTS: readonly string[] = ['cotizacion_click', 'whatsapp_click', 'pdf_download'];
-  document.addEventListener('click', (event) => {
-    const link = (event.target as Element | null)?.closest<HTMLElement>('[data-track]');
-    const name = link?.dataset.track;
-    if (link && name && EVENTS.includes(name)) trackEvent(name as StatsEventName, { modelo: link.dataset.modelo });
-  });
+  installTrackClicks();
 </script>
 
 <style>
