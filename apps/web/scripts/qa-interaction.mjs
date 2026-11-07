@@ -127,7 +127,7 @@ console.log('\nCabecera (1440 px)');
 {
   const headerHeight = (page) =>
     page.evaluate(() => Math.round(document.querySelector('.site-header').getBoundingClientRect().height));
-  const shrinkChecks = async (label, init, reducedMotion = 'no-preference') => {
+  const shrinkChecks = async (label, init, expectAttr, reducedMotion = 'no-preference') => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion });
     if (init) await context.addInitScript(init);
     const page = await context.newPage();
@@ -146,6 +146,9 @@ console.log('\nCabecera (1440 px)');
     await page.evaluate(() => window.scrollTo({ top: 300, behavior: 'instant' }));
     await page.waitForTimeout(400);
     check(await settles(56), `Cabecera${label}: 72 → 56 px con scroll (${await headerHeight(page)})`);
+    // `data-scrolled` sólo lo pone el observador: ausente con animación de scroll, presente en el fallback.
+    const attr = await page.evaluate(() => document.querySelector('.site-header').hasAttribute('data-scrolled'));
+    check(attr === expectAttr, `Cabecera${label}: data-scrolled ${expectAttr ? 'presente' : 'ausente'} (${attr})`);
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     await page.waitForTimeout(400);
     check(
@@ -154,13 +157,13 @@ console.log('\nCabecera (1440 px)');
     );
     await context.close();
   };
-  await shrinkChecks('', null);
+  await shrinkChecks('', null, false);
   // Con movimiento reducido la animación de scroll no se declara y es el observador quien encoge.
-  await shrinkChecks(' (observador, movimiento reducido)', null, 'reduce');
+  await shrinkChecks(' (observador, movimiento reducido)', null, true, 'reduce');
   await shrinkChecks(' (fallback JS)', () => {
     const supports = CSS.supports.bind(CSS);
     CSS.supports = (q, v) => (String(q).includes('animation-timeline') ? false : supports(q, v));
-  });
+  }, true);
 
   {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -176,7 +179,7 @@ console.log('\nCabecera (1440 px)');
       () => document.querySelectorAll('.site-logo .origen-mark__body')[0]?.getAnimations().length ?? 0,
     );
     check(first >= 1, `la marca de la cabecera anima al cargar (${first} animaciones en el primer cuerpo)`);
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1800);
     const done = await motion();
     check(
       done.count >= 1 && done.states.every((state) => state === 'finished'),
@@ -245,7 +248,7 @@ console.log('\nTeclado (1440 px)');
     await page.keyboard.press('Tab');
     steps += 1;
     reached = await page.evaluate(
-      () => document.activeElement?.getAttribute('aria-label') === 'Solicitar cotización',
+      () => document.activeElement?.classList.contains('site-header__cta') === true,
     );
   }
   check(reached, `el CTA primario se alcanza en ${steps} tabuladores`);

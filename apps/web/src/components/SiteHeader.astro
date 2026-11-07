@@ -27,7 +27,8 @@ function isActive(href: string, matches?: readonly string[]): boolean {
 ---
 
 <header class:list={['site-header', tone === 'ink' && 'on-ink']}>
-  <div class="site-header__bar">
+  <noscript><style>.site-menu__btn{display:none}</style></noscript>
+  <div class="site-header__bar shell">
     <a href="/" class="site-header__home" aria-label="OrigenLab, ir al inicio">
       <SiteLogo motion tone={tone === 'ink' ? 'paper' : 'ink'} />
     </a>
@@ -54,7 +55,6 @@ function isActive(href: string, matches?: readonly string[]): boolean {
         href={site.quoteHref}
         size="sm"
         class="site-header__cta"
-        aria-label={ctaLabels.solicitarCotizacion}
       >
         <span class="site-header__cta-long">{ctaLabels.solicitarCotizacion}</span>
         <span class="site-header__cta-short">{ctaLabels.cotizar}</span>
@@ -161,10 +161,15 @@ function isActive(href: string, matches?: readonly string[]): boolean {
   }
 
   .site-header {
-    --hd-h: 56px;
-    --m: 24px; /* marca: 24 px, trazo ×1,25 y cuerpos ×1,12 (bajo 1024 px y con scroll) */
-    --sw: 4.5;
-    --k: 1.12;
+    /* Estado compacto (bajo 1024 px y con scroll): barra 56, marca 24, trazo ×1,25, cuerpos ×1,12. */
+    --hd-s: 56px;
+    --m-s: 24px;
+    --sw-s: 4.5;
+    --k-s: 1.12;
+    --hd-h: var(--hd-s);
+    --m: var(--m-s);
+    --sw: var(--sw-s);
+    --k: var(--k-s);
     --nav: var(--color-ink-600);
     --nav-on: var(--color-ink-950);
     --hd-line: var(--color-hairline);
@@ -190,7 +195,6 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     align-items: center;
     column-gap: 0.75rem;
     height: 100%;
-    padding-inline: 1rem;
   }
   .site-header__home {
     display: inline-flex;
@@ -295,10 +299,11 @@ function isActive(href: string, matches?: readonly string[]): boolean {
 
   /* --- Estado con scroll: 56 px, sin borde, sombra hairline --- */
   .site-header[data-scrolled] {
-    --m: 24px;
-    --sw: 4.5;
-    --k: 1.12;
-    height: 56px;
+    --hd-h: var(--hd-s);
+    --m: var(--m-s);
+    --sw: var(--sw-s);
+    --k: var(--k-s);
+    height: var(--hd-s);
     border-bottom-color: transparent;
     box-shadow: var(--hd-shadow);
   }
@@ -307,7 +312,8 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     @supports not (animation-timeline: scroll()) {
       .site-header,
       .site-header .origen-mark {
-        transition: all 200ms ease-out;
+        transition: 200ms ease-out;
+        transition-property: height, box-shadow, border-color, width, stroke-width, --mk-k;
       }
     }
     @supports (animation-timeline: scroll()) {
@@ -327,26 +333,21 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     }
     @keyframes hd-shrink {
       to {
-        height: 56px;
+        height: var(--hd-s);
         border-bottom-color: transparent;
         box-shadow: var(--hd-shadow);
       }
     }
     @keyframes mark-shrink {
       to {
-        width: 24px;
-        height: 24px;
-        stroke-width: 4.5;
-        --mk-k: 1.12;
+        width: var(--m-s);
+        height: var(--m-s);
+        stroke-width: var(--sw-s);
+        --mk-k: var(--k-s);
       }
     }
   }
 
-  @media (min-width: 640px) {
-    .site-header__bar {
-      padding-inline: 1.25rem;
-    }
-  }
   @media (min-width: 1024px) {
     .site-header {
       --hd-h: 72px;
@@ -366,8 +367,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
       display: inline;
     }
     .site-header__cta-short,
-    .site-menu__btn,
-    .site-menu__panel {
+    .site-menu__btn {
       display: none;
     }
     .site-header .site-header__wa {
