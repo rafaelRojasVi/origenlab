@@ -1,4 +1,7 @@
 ---
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { getCollection } from 'astro:content';
 import Layout from '../../../layouts/Layout.astro';
 import PageIntro from '../../../components/ui/PageIntro.astro';
 import SectionIndex from '../../../components/ui/SectionIndex.astro';
@@ -11,6 +14,7 @@ import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
 import Icon from '../../../components/ui/Icon.astro';
 import FamilyMotif from '../../../components/home/FamilyMotif.astro';
+import ProductStory from '../../../components/product/ProductStory.astro';
 import { site } from '../../../config/site';
 import { ctaLabels } from '../../../lib/ctaLabels';
 import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
@@ -22,6 +26,8 @@ import {
   keyFactsFor,
 } from '../../../lib/catalog';
 import { productJsonLd } from '../../../lib/jsonld';
+import type { ProductStoryConfig } from '../../../lib/showroom/productStory';
+import type { Modelo } from '../../../content.config';
 
 export function getStaticPaths() {
   return getOrtoalresaCentrifuges().map((product) => ({ params: { slug: product.slug } }));
@@ -37,6 +43,22 @@ const facts = keyFactsFor(product);
 const related = getOrtoalresaCentrifuges().filter((item) => item.slug !== product.slug);
 const whatsappHref = buildWhatsAppQuoteUrl({ productName: product.name, brandName: brand?.name });
 
+/*
+ * Centrifugación conserva estas fichas (`lib/modelos.ts`), pero si la ficha de
+ * la colección `modelos` del mismo equipo (`entry.slug === product.id`) tiene
+ * historia por scroll (`stories/<showroom_id>.ts`), esta página la monta en
+ * lugar de la fotografía del hero. Sin historia, la página no cambia.
+ */
+const entry = (await getCollection('modelos')).map((item) => item.data as Modelo).find((item) => item.slug === product.id);
+const stories = import.meta.glob<{ story: ProductStoryConfig }>('../../../lib/showroom/stories/*.ts', { eager: true });
+const story = entry?.showroom_id
+  ? Object.entries(stories).find(([path]) => path.endsWith(`/${entry.showroom_id}.ts`))?.[1].story
+  : undefined;
+const poster =
+  story && entry && existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`))
+    ? `/products/${entry.slug}-poster.jpg`
+    : undefined;
+
 const metaTitle = product.metaTitle
   ? product.metaTitle.replace(/\s*\|\s*OrigenLab\s*$/, '')
   : `${product.name}, ${product.equipmentType ?? 'centrífuga'}`;
@@ -50,6 +72,7 @@ const metaDescription = (
   title={metaTitle}
   description={metaDescription}
   jsonLd={[productJsonLd(product, brand)]}
+  ogImagePath={poster}
 >
   <div class="shell">
     <PageIntro
@@ -62,15 +85,19 @@ const metaDescription = (
     />
   </div>
 
-  <section class="shell product-hero" aria-label={`${product.name}, resumen`}>
-    <div class="product-hero__media">
-      <ProductFigure
-        product={product}
-        priority
-        sizes="(min-width: 1024px) 460px, (min-width: 768px) 45vw, 82vw"
-        caption={brand ? `${product.name}, ${brand.name}` : product.name}
-      />
-    </div>
+  <section class:list={['shell product-hero', story && 'product-hero--story']} aria-label={`${product.name}, resumen`}>
+    {
+      !story && (
+        <div class="product-hero__media">
+          <ProductFigure
+            product={product}
+            priority
+            sizes="(min-width: 1024px) 460px, (min-width: 768px) 45vw, 82vw"
+            caption={brand ? `${product.name}, ${brand.name}` : product.name}
+          />
+        </div>
+      )
+    }
 
     <div class="product-hero__body">
       <p class="t-label product-hero__type">{product.equipmentType}</p>
@@ -98,6 +125,9 @@ const metaDescription = (
       </div>
     </div>
   </section>
+
+  {/* La historia por scroll es el hero visual: el lienzo 3D sustituye a la fotografía. */}
+  {story && entry && <ProductStory config={story} entry={entry} />}
 
   {
     product.applications && product.applications.length > 0 && (
@@ -185,6 +215,9 @@ const metaDescription = (
     gap: 2.5rem;
     padding-bottom: 4rem;
   }
+  .product-hero--story .product-hero__body {
+    max-width: 48rem;
+  }
   .product-hero__media {
     max-width: 22rem;
   }
@@ -245,7 +278,7 @@ const metaDescription = (
   }
 
   @media (min-width: 768px) {
-    .product-hero {
+    .product-hero:not(.product-hero--story) {
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
       gap: 4rem;
       align-items: start;

@@ -751,6 +751,30 @@ for (const story of STORY_PAGES) {
   }
 }
 
+/*
+ * Centrifugación conserva sus fichas en `/productos/centrifugas/`: la del
+ * Digicen 22 R monta la historia por scroll (`ProductStory`) en lugar de la
+ * fotografía del hero, sin cambiar de URL.
+ */
+{
+  const path = '/productos/centrifugas/digicen-22-r/';
+  console.log(`\nFicha heredada con historia ${path}`);
+  if (!existsSync(join(dist, path, 'index.html'))) {
+    check(false, `Ficha heredada: falta ${path}`);
+  } else {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${base}${path}`, { waitUntil: 'load' });
+    check((await page.locator('[data-story]').count()) === 1, 'Ficha heredada del Digicen 22 R: monta la historia ([data-story])');
+    await page.locator('[data-story]').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(800);
+    check(errors.length === 0, `Ficha heredada del Digicen 22 R: sin errores de JavaScript (${errors.join('; ') || 'ninguno'})`);
+    await context.close();
+  }
+}
+
 /* -- 7. Páginas de modelo y de familia ------------------------------------ */
 
 /**

@@ -121,11 +121,13 @@ for (const file of pages) {
   assert(/<meta name="theme-color"/.test(html), at('falta theme-color'));
   // Sólo una página de modelo (`productos/<familia>/<slug>/`) puede llevar su póster 3D
   // (scripts/generate-posters.mjs), y exactamente `/products/<slug>-poster.jpg`; el resto, el PNG del sitio.
+  // Las fichas heredadas de centrifugación (`productos/centrifugas/<slug>/`) usan el id de la colección: `ortoalresa-<slug>`.
   const sitePng = 'https://origenlab.cl/og/origenlab-og.png';
   const ogImage = html.match(/property="og:image" content="([^"]+)"/)?.[1];
   const modelSlug = rel.match(/^productos\/[^/]+\/([^/]+)\/index\.html$/)?.[1];
-  const ogOk = ogImage === sitePng || (modelSlug !== undefined && ogImage === `https://origenlab.cl/products/${modelSlug}-poster.jpg` && existsSync(join(dist, 'products', `${modelSlug}-poster.jpg`)));
-  assert(ogOk, at(`og:image debe ser el PNG del sitio${modelSlug ? ` o /products/${modelSlug}-poster.jpg` : ''} (${ogImage})`));
+  const posterSlug = modelSlug && rel.startsWith('productos/centrifugas/') ? `ortoalresa-${modelSlug}` : modelSlug;
+  const ogOk = ogImage === sitePng || (posterSlug !== undefined && ogImage === `https://origenlab.cl/products/${posterSlug}-poster.jpg` && existsSync(join(dist, 'products', `${posterSlug}-poster.jpg`)));
+  assert(ogOk, at(`og:image debe ser el PNG del sitio${posterSlug ? ` o /products/${posterSlug}-poster.jpg` : ''} (${ogImage})`));
   const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? '';
   assert(description.length > 50, at('descripción demasiado corta'));
   assert(description.length <= 165, at(`descripción de ${description.length} caracteres (máx. 165)`));

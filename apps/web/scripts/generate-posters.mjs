@@ -5,7 +5,8 @@
  * la imagen social (`og:image`).
  *
  * Sirve `dist/` en un puerto libre, abre
- * `/productos/<familia>/<slug>/?poster=1` en Chromium (WebGL por software) a
+ * `/productos/<familia>/<slug>/?poster=1` (centrifugación: su ficha en
+ * `/productos/centrifugas/<slug>/`, ver `pagePath`) en Chromium (WebGL por software) a
  * 1200x900 y guarda `public/products/<slug>-poster.jpg`. `?poster=1` lo
  * entiende `ProductStory.astro`: nivel alto, sin movimiento ni historia, monta
  * de inmediato y deja sólo el equipo sobre el fondo de la página.
@@ -44,6 +45,19 @@ if (models.length === 0) {
   console.log('Ningún modelo declara showroom_id: nada que generar.');
   process.exit(0);
 }
+
+/*
+ * Dónde vive la página de cada modelo (`lib/modelos.ts` → `modelHref`):
+ * `/productos/<familia>/<slug>/`, salvo centrifugación, que conserva sus fichas
+ * en `/productos/centrifugas/<slug>/` con el slug de `src/data/products.ts`
+ * (la ficha de la colección y la ficha existente comparten `id`).
+ */
+const legacyProducts = readFileSync(join(root, 'src', 'data', 'products.ts'), 'utf8');
+const legacySlug = (id) => legacyProducts.match(new RegExp(`id:\\s*'${id}',[\\s\\S]*?slug:\\s*'([^']+)'`))?.[1];
+const pagePath = (entry) =>
+  entry.family === 'centrifugacion'
+    ? `/productos/centrifugas/${legacySlug(entry.slug) ?? entry.slug}/`
+    : `/productos/${entry.family}/${entry.slug}/`;
 
 /*
  * Servidor estático de `dist/` en el propio proceso, como `qa-interaction.mjs`.
@@ -101,7 +115,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
     const page = await context.newPage();
     try {
-      const url = `${base}/productos/${entry.family}/${entry.slug}/?poster=1`;
+      const url = `${base}${pagePath(entry)}?poster=1`;
       const response = await page.goto(url, { waitUntil: 'load' });
       if (!response?.ok()) {
         console.warn(`  salta ${label}: la página responde ${response?.status()} (${url})`);
