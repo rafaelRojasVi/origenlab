@@ -121,6 +121,7 @@ union all select 'crm.todo', count(*)::text from crm.todo
 union all select 'crm.person_name', count(*)::text from crm.person_name
 union all select 'crm.invoice', count(*)::text from crm.invoice
 union all select 'crm.invoice_payment', count(*)::text from crm.invoice_payment
+union all select 'crm.consent', count(*)::text from crm.consent
 ;
 
 commit;

@@ -1398,15 +1398,20 @@ guessed again on every later import.
 |---|---|---|---|
 | 70 | `crm.invoice` | one SII sales document (factura 33, exenta 34, nota de débito 56, nota de crédito 61) | (`doc_type`, `folio`) unique — a re-uploaded month adds nothing; CLP amounts ≥ 0; a nota names the document it adjusts (`reference_doc_type`, `reference_folio`); `opportunity_id` set ⇔ `case_link` ∈ {`machine`,`operator`}; `paid_on` only on a 33/34; `version` ≥ 1; **never physically deleted** (`platform.reject_mutation`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
 | 71 | `crm.invoice_payment` | one payment (abono) recorded against a factura: `paid_on`, `amount` | `amount` > 0 (CLP); the factura's `paid_on` is set by the payment that leaves nothing owed, cleared when a removal takes the payments below it; a wrong payment is removed once (`removed_at` ⇔ `removed_by_operator_id`), **never physically deleted**; `origenlab_api` select/insert + UPDATE of the two removal columns, `origenlab_worker` no access |
+| 72 | `crm.consent` | one explicit consent a person gave, per purpose (Ley 21.719): the address, the purpose, the version of the text shown, when it was accepted and where it came from | `purpose` ∈ {`quote_request`, `newsletter`}; `email` lower-cased, `text_version` and `source` not blank; `(email, purpose, text_version, source_record_id)` unique while `source_record_id` is set, so a replayed message records one row; `person_id` → `crm.person` is optional, `source_record_id` is a logical id with no foreign key; append-only — never updated, never deleted, a withdrawal is a new row (triggers `consent_never_updated`, `consent_never_deleted`); the API holds select and insert only, the worker nothing |
 
 A payment is recorded by `invoice.paid` (payload: `amount`, `payment_id`, `fully_paid`) and removed
 by `invoice.unpaid` (payload: `payment_id`) — no new event type.
 
+A consent row (#72) is written by the mail rules when a web quote form arrives with its consent
+checkbox (`purpose = quote_request`, `source = web_quote_form`, `text_version` the version of the
+text shown), and later by the newsletter sign-up. It writes no domain event of its own.
+
 Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.case_set`,
 `invoice.paid`, `invoice.unpaid`.
 
-Counts by schema: `crm` 31, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **67**.
+Counts by schema: `crm` 32, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **68**.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
@@ -1416,7 +1421,7 @@ revision suffices); an address history, provenance or geocoding table
 association or association-label table; a parse-failure table (the archive
 holds them); per-aggregate event tables; any mart, mirror or projection table;
 a party supertype over organization and person; a combined person / company /
-address record; a lead table; a prospect table; a consent table. **A
+address record; a lead table; a prospect table. **A
 `commercial_case` table or any second case lifecycle** (the case is
 `crm.opportunity`, §3.6); **a case-level audience, subscription or marketing
 permission** (§3.6.4); **an inactivity, dormancy or auto-close state** (§3.4 —
