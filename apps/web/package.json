@@ -10,6 +10,7 @@
     "lint": "astro check",
     "validate:content": "node scripts/validate-content.mjs && node scripts/validate-content.mjs --self-test",
     "validate:catalog": "node scripts/validate-catalog.mjs",
+    "posters": "node scripts/generate-posters.mjs",
     "test:scroll-story": "node --experimental-strip-types scripts/test-scroll-story.mjs",
     "validate:images": "node --experimental-strip-types scripts/validate-images.mjs",
     "export:email-signature": "node scripts/export-email-signature-assets.mjs",

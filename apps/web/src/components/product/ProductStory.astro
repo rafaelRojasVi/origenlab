@@ -269,6 +269,21 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   .story__stage:has([data-ready]) .story__photo {
     opacity: 0;
   }
+  /*
+   * `?poster=1` (scripts/generate-posters.mjs): sólo el equipo sobre el fondo
+   * de la página, a pantalla completa. Todo lo demás se oculta; el lienzo, no.
+   */
+  html[data-poster] body * {
+    visibility: hidden;
+  }
+  html[data-poster] .story canvas {
+    visibility: visible;
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 2147483647;
+  }
   .story__stage > .btn,
   .story__nav {
     position: absolute;
@@ -440,21 +455,29 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     const button = root.querySelector<HTMLButtonElement>('[data-story-3d]')!;
     const nav = navigator as Nav;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const asked = new URLSearchParams(location.search).get('tier') as Tier | null;
+    const params = new URLSearchParams(location.search);
+    // `?poster=1`: el cuadro de entrada, quieto y a nivel alto, para el póster
+    // (scripts/generate-posters.mjs). Monta de inmediato, sin historia ni medición.
+    const posterMode = params.get('poster') === '1';
+    if (posterMode) {
+      document.documentElement.dataset.poster = '';
+      interactSent = true;
+    }
+    const asked = (posterMode ? 'high' : params.get('tier')) as Tier | null;
     const forced = asked === 'high' || asked === 'medium' || asked === 'low';
     const narrow = innerWidth < 760;
     const saveData = nav.connection?.saveData === true;
     const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
     let tier: Tier = forced ? asked! : reduced || saveData ? 'low' : narrow || modest ? 'medium' : 'high';
     let onDemand = false;
-    let near = false;
-    let settled = !narrow && tier === 'high';
+    let near = posterMode;
+    let settled = posterMode || (!narrow && tier === 'high');
     let story: MountedStory | null = null;
     let loading = false;
 
     const layout = () => {
       canvas.dataset.tier = tier;
-      root.dataset.mode = tier === 'low' || reduced ? 'static' : innerWidth < 760 ? 'tap' : 'scroll';
+      root.dataset.mode = tier === 'low' || reduced || posterMode ? 'static' : innerWidth < 760 ? 'tap' : 'scroll';
     };
     const fallBack = (offer: boolean) => {
       story = null;
@@ -476,7 +499,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
           return Promise.all([import('../../lib/showroom/mountStory'), modelLoaders[id](), storyLoaders[id](), document.fonts.ready]);
         })
         .then(([{ mountStory }, model, { story: config }]) =>
-          mountStory(root, model, config, { tier: tier as 'high' | 'medium', still: reduced, probe: !forced && !onDemand, onLow: () => fallBack(true) }),
+          mountStory(root, model, config, { tier: tier as 'high' | 'medium', still: reduced || posterMode, probe: !forced && !onDemand, onLow: () => fallBack(true) }),
         )
         .then((mounted) => (story = mounted))
         .catch((error) => {

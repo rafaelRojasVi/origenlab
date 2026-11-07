@@ -109,7 +109,7 @@ const description =
   fullDescription.length <= 158 ? fullDescription : `${fullDescription.slice(0, 157).replace(/\s+\S*$/, '')}…`;
 ---
 
-<Layout title={title} description={description} jsonLd={jsonLd}>
+<Layout title={title} description={description} jsonLd={jsonLd} ogImagePath={poster}>
   <ModelHero entry={entry} brand={brand} family={family} media={media} quoteHref={quoteHref}>
     {story && <ProductStory config={story} entry={entry} />}
 

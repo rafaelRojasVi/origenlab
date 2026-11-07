@@ -119,7 +119,10 @@ for (const file of pages) {
   const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
   assert(canonical?.endsWith('/'), at(`la canónica debe llevar barra final: ${canonical}`));
   assert(/<meta name="theme-color"/.test(html), at('falta theme-color'));
-  assert(/property="og:image" content="https:\/\/origenlab\.cl\/og\/origenlab-og\.png"/.test(html), at('og:image debe ser el PNG absoluto'));
+  // Páginas de modelo con póster 3D (scripts/generate-posters.mjs): su og:image es el póster, 1200x900.
+  const ogImage = html.match(/property="og:image" content="([^"]+)"/)?.[1];
+  const ogOk = ogImage === 'https://origenlab.cl/og/origenlab-og.png' || (/^https:\/\/origenlab\.cl\/products\/[a-z0-9-]+-poster\.jpg$/.test(ogImage ?? '') && existsSync(join(dist, ogImage.slice('https://origenlab.cl'.length))));
+  assert(ogOk, at(`og:image debe ser el PNG absoluto o el póster del modelo (${ogImage})`));
   const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? '';
   assert(description.length > 50, at('descripción demasiado corta'));
   assert(description.length <= 165, at(`descripción de ${description.length} caracteres (máx. 165)`));

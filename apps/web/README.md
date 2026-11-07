@@ -38,6 +38,9 @@ se versiona.
 | `npm run build:brand-logos` | `public/brands/*.png` a tinta única desde `public/email/brands/*-source.*` |
 | `npm run build:product-images` | Derivados 480/960 px en AVIF y WebP, con el fondo blanco recortado |
 | `npm run build:social` | `public/og/origenlab-og.png` y `public/apple-touch-icon.png` |
+| `npm run posters` | `public/products/<slug>-poster.jpg` por cada modelo con historia 3D (paso manual: necesita `npm run build` antes y Chromium con WebGL; no forma parte de `validate`) |
+
+Tras añadir un modelo con escena, ejecute `npm run build && npm run posters` y vuelva a construir para que la página y su `og:image` usen el póster nuevo.
 
 ## Despliegue (HostGator)
 

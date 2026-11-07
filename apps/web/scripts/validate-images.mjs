@@ -148,11 +148,24 @@ for (const key of ['productId', 'modelId']) {
 const productsDir = join(root, 'public', 'products');
 const derivedSuffix = new RegExp(`-(${widths.join('|')})\\.(avif|webp)$`);
 const masters = new Set(rows.filter((row) => row.masterPath).map((row) => row.masterPath));
+// Generados, no fotografías: `npm run posters` (scripts/generate-posters.mjs) captura la
+// escena 3D propia. No llevan fila de procedencia, pero sí el tamaño y el peso del script.
+const GENERATED = /-poster\.jpg$/;
+const POSTER_MAX_BYTES = 150_000;
 
 if (existsSync(productsDir)) {
   for (const brandDir of readdirSync(productsDir)) {
     const dir = join(productsDir, brandDir);
-    if (!statSync(dir).isDirectory()) continue;
+    if (!statSync(dir).isDirectory()) {
+      if (GENERATED.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        assert(meta.width === 1200 && meta.height === 900, `/products/${brandDir}: el póster mide ${meta.width}x${meta.height}, no 1200x900`);
+        assert(statSync(dir).size <= POSTER_MAX_BYTES, `/products/${brandDir}: el póster pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 150 kB)`);
+      } else {
+        assert(false, `/products/${brandDir}: archivo suelto que no es un póster generado`);
+      }
+      continue;
+    }
     assert(approved.includes(brandDir), `public/products/${brandDir}: carpeta de una marca fuera de la lista cerrada`);
     for (const file of readdirSync(dir)) {
       const rel = `/products/${brandDir}/${file}`;
@@ -234,6 +247,11 @@ if (!existsSync(dist)) {
       assert(!/^(https?:)?\/\//.test(src) || src.startsWith('https://origenlab.cl/'), at(`imagen remota: ${src}`));
       if (!src.startsWith('/products/')) continue;
       const tag = match[0];
+      if (GENERATED.test(src)) {
+        assert(/\bwidth="\d+"/.test(tag) && /\bheight="\d+"/.test(tag), at(`póster sin dimensiones: ${src}`));
+        assert(existsSync(join(root, 'public', src)), at(`póster inexistente: ${src}`));
+        continue;
+      }
       assert(/\bwidth="\d+"/.test(tag) && /\bheight="\d+"/.test(tag), at(`imagen de producto sin dimensiones: ${src}`));
       const alt = tag.match(/\balt="([^"]*)"/)?.[1];
       const row = rows.find((candidate) => candidate.masterPath === src);
