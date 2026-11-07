@@ -13,17 +13,16 @@
  * (base 86, tapa 94), la pendiente frontal, el anillo de la lámpara y los
  * colores (OHAUS no publica RAL).
  *
- * La tapa gira sobre una bisagra trasera. Para abrirla desde una historia:
+ * La tapa gira sobre una bisagra trasera y la gobierna la marcha: con el equipo
+ * encendido (`setPower(true)`) se abre y se queda abierta; al apagarlo se cierra.
+ * La lámpara sólo brilla con la tapa abierta y el equipo encendido. Una historia
+ * puede tomar el mando:
  *
- *   model.root.userData.lidOpen = 1;   // 0 cerrada … 1 abierta (se suaviza sola)
+ *   model.setLidAngle(1.2);  // radianes, 0 … LID_MAX; `null` vuelve al modo automático
+ *   model.root.userData.lidOpen = 1;   // lo mismo en fracción 0 … 1; `undefined` = automático
  *   model.root.userData.lidAngle;      // ángulo actual en radianes (sólo lectura)
  *
- * Sin tocar `lidOpen` la tapa queda cerrada. La vista `tapa` mira al interior
- * con la tapa abierta; con la tapa cerrada sólo encuadra el frente de la tapa.
- *
- * Lo que sigue a `export function build` es el modelo; las demás exportaciones
- * (`bodyMaterial`, `baseMetalMaterial`, `panMaterial`, `createPan`) las reutiliza
- * el MB32, que comparte carcasa blanca y plato.
+ * La vista `tapa` mira al interior con la tapa abierta.
  */
 import * as THREE from 'three';
 import type { BuiltModel } from '../types';
@@ -49,39 +48,7 @@ function box(w: number, h: number, d: number, r: number) {
   return roundedBox(w - 2 * r, h - 2 * r, d, r);
 }
 
-/** Carcasa blanca de ABS, con laca brillante. */
-export function bodyMaterial() {
-  return new THREE.MeshPhysicalMaterial({ color: 0xe4e6e8, roughness: 0.42, metalness: 0.05, clearcoat: 0.5, clearcoatRoughness: 0.3 });
-}
-
-/** Zócalo y herrajes de metal gris. */
-export function baseMetalMaterial() {
-  return new THREE.MeshPhysicalMaterial({ color: 0x7c8187, roughness: 0.4, metalness: 0.85 });
-}
-
-/** Acero inoxidable del plato. De doble cara: el plato es una lámina torneada. */
-export function panMaterial() {
-  return new THREE.MeshPhysicalMaterial({ color: 0xcfd3d6, metalness: 1, roughness: 0.24, envMapIntensity: 1.2, side: THREE.DoubleSide });
-}
-
-/**
- * Plato Ø 90 mm de borde bajo, con su base en y = 0 y centrado en el origen.
- * `material` por defecto es `panMaterial()`; quien llama libera lo que se
- * registra en `keep`.
- */
-export function createPan(keep: Keep, material: THREE.Material = keep(panMaterial())) {
-  const pan = new THREE.Group();
-  const shell = new THREE.Mesh(
-    keep(lathe([[0, 0], [40, 0], [43.2, 1.6], [45, 8.4], [46, 9.8], [45, 10.2], [43.9, 9], [42.2, 2.4], [0, 2.4]], 96)),
-    material,
-  );
-  shell.castShadow = true;
-  shell.receiveShadow = true;
-  pan.add(shell);
-  return pan;
-}
-
-export function build(): BuiltModel {
+export function build(): BuiltModel & { setLidAngle(angle: number | null): void } {
   const root = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
   const keep: Keep = (item) => {
@@ -90,9 +57,15 @@ export function build(): BuiltModel {
   };
 
   /* ── materiales ── */
-  const bodyMat = keep(bodyMaterial());
-  const metal = keep(baseMetalMaterial());
-  const panMat = keep(panMaterial());
+  // Carcasa de ABS gris azulado, más oscura que el blanco de la página para que
+  // el equipo se despegue del fondo; laca mate para que la luz no la lave.
+  const bodyMat = keep(
+    new THREE.MeshPhysicalMaterial({ color: 0xaeb6bf, roughness: 0.5, metalness: 0.05, clearcoat: 0.3, clearcoatRoughness: 0.4 }),
+  );
+  const metal = keep(new THREE.MeshPhysicalMaterial({ color: 0x484e55, roughness: 0.4, metalness: 0.85 }));
+  const panMat = keep(
+    new THREE.MeshPhysicalMaterial({ color: 0xcfd3d6, metalness: 1, roughness: 0.24, envMapIntensity: 1.2, side: THREE.DoubleSide }),
+  );
   const dark = keep(new THREE.MeshStandardMaterial({ color: 0x1a1c1f, roughness: 0.55 }));
   const alu = keep(new THREE.MeshPhysicalMaterial({ color: 0xdfe2e4, metalness: 0.9, roughness: 0.32, side: THREE.DoubleSide }));
   const reflectorMat = keep(
@@ -154,7 +127,7 @@ export function build(): BuiltModel {
   let finished = false;
   let history: number[] = [];
   const drawPlate: Draw = (g, w, h) => {
-    g.fillStyle = '#d6d9dc';
+    g.fillStyle = '#b4bcc5';
     g.fillRect(0, 0, w, h);
     g.textBaseline = 'middle';
     g.fillStyle = '#00539f';
@@ -249,9 +222,10 @@ export function build(): BuiltModel {
       emissive: 0xffffff,
       emissiveMap: screen.texture,
       emissiveIntensity: 0,
-      roughness: 0.28,
-      clearcoat: 1,
-      clearcoatRoughness: 0.1,
+      roughness: 0.55,
+      clearcoat: 0.15,
+      clearcoatRoughness: 0.5,
+      envMapIntensity: 0.4,
     }),
   );
   const plate = new THREE.Mesh(keep(new THREE.PlaneGeometry(plateW, plateH)), plateMat);
@@ -281,7 +255,12 @@ export function build(): BuiltModel {
   support.position.set(0, BASE_TOP + 6.8, PAN_Z);
   root.add(support);
   const PAN_Y = BASE_TOP + 7.6;
-  const pan = createPan(keep, panMat);
+  const pan = new THREE.Mesh(
+    keep(lathe([[0, 0], [40, 0], [43.2, 1.6], [45, 8.4], [46, 9.8], [45, 10.2], [43.9, 9], [42.2, 2.4], [0, 2.4]], 96)),
+    panMat,
+  );
+  pan.castShadow = true;
+  pan.receiveShadow = true;
   pan.position.set(0, PAN_Y, PAN_Z);
   root.add(pan);
   // Muestra: polvo que se aclara al secar.
@@ -387,13 +366,14 @@ export function build(): BuiltModel {
   chamber.position.set(0, 150, -140);
   root.add(chamber);
 
-  root.userData.lidOpen = 0;
   root.userData.lidAngle = 0;
+  let lidOverride: number | null = null;
 
   let powered = false;
   let readout: number | null = null;
   let lastScreen = 0;
   let angle = 0;
+  let lampK = 0;
   let hold = 0;
   let historyClock = 0;
   let wasOn = false;
@@ -412,9 +392,20 @@ export function build(): BuiltModel {
     setReadout(percent) {
       readout = percent;
     },
+    setLidAngle(value) {
+      lidOverride = value === null ? null : Math.min(LID_MAX, Math.max(0, value));
+    },
     update(dt, t, level) {
-      // Tapa: sigue `root.userData.lidOpen` con suavizado.
-      const want = Math.min(1, Math.max(0, Number(root.userData.lidOpen) || 0)) * LID_MAX;
+      // Tapa: abierta mientras hay marcha, salvo que una historia la fije.
+      const userOpen = root.userData.lidOpen;
+      const want =
+        lidOverride !== null
+          ? lidOverride
+          : typeof userOpen === 'number'
+            ? Math.min(1, Math.max(0, userOpen)) * LID_MAX
+            : powered && level > 0.08
+              ? LID_MAX
+              : 0;
       angle += (want - angle) * Math.min(1, dt * 4);
       lid.rotation.x = -angle;
       root.userData.lidAngle = angle;
@@ -467,14 +458,16 @@ export function build(): BuiltModel {
         wasOn = true;
         screen.redraw();
       }
-      plateMat.emissiveIntensity = screenOn ? 0.3 : 0;
+      plateMat.emissiveIntensity = screenOn ? 0.5 : 0;
 
       // Lámpara: brillo cálido con un parpadeo mínimo de filamento.
       const flick = 0.96 + 0.04 * Math.sin(t * 47) * Math.sin(t * 13);
-      lampMat.emissiveIntensity = 3 * level * flick;
-      reflectorMat.emissiveIntensity = 0.22 * level;
-      glowMat.opacity = 0.8 * level * flick;
-      panMat.emissive.setRGB(0.36 * level, 0.1 * level, 0.02 * level);
+      // Sólo con la tapa abierta y el equipo encendido.
+      lampK += ((powered && angle > LID_MAX * 0.8 ? level : 0) - lampK) * Math.min(1, dt * 5);
+      lampMat.emissiveIntensity = 3 * lampK * flick;
+      reflectorMat.emissiveIntensity = 0.22 * lampK;
+      glowMat.opacity = 0.8 * lampK * flick;
+      panMat.emissive.setRGB(0.36 * lampK, 0.1 * lampK, 0.02 * lampK);
       panMat.emissiveIntensity = 0.25;
     },
     dispose() {
