@@ -1104,7 +1104,7 @@ and `assertion.supplier_candidate_confirmed / rejected`.
 |---|---|---|---|
 | 42 | `outbound.campaign_content` | immutable archive of one campaign's frozen HTML and plain-text bodies, keyed by the campaign's `content_sha256` | owned by `origenlab_owner`; INSERT-only (trigger `campaign_content_immutable`); `(campaign_id, content_sha256)` unique; no address or personal data columns; api and worker may SELECT |
 | 43 | `outbound.campaign_content_message` | per-send-attempt content snapshot linking a send attempt to the archived content | belongs to exactly one `campaign_content`; one row per `send_attempt_id`; INSERT-only through the same owner guard; api and worker may SELECT |
-| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point, product | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`) |
+| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point, product | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`); a note may be a typed «Llamada» record (`note_kind`, `call_outcome`, `call_next_step` — §7.17, frozen after insert) |
 | 45 | `crm.organization_product_line` | links one organization to one product-line label — the brands and equipment families it handles | closed product-line vocabulary; at most one active link per `(organization_id, product_line)` (partial unique index excludes soft-removed rows); unlinked by setting `valid_to` (never deleted; trigger refuses DELETE); api may INSERT and unlink (column-level UPDATE: `valid_to`, `unlinked_by_operator_id`, `note`, `updated_at`) |
 
 ### 7.5 Catalog 1a — products, images, supplier terms, exchange rates, cost parameters, document lines
@@ -1451,3 +1451,22 @@ address record; a lead table; a prospect table. **A
 permission** (§3.6.4); **an inactivity, dormancy or auto-close state** (§3.4 —
 inactivity is computed at read time, never stored). Adding any of these
 reopens this decision.
+
+### 7.17 A note as a call record — `crm.note.note_kind`, built 2026-11-10
+
+No table and no `crm.activity` write path: logging a call reuses notes. `crm.note` gains three
+nullable columns, written at insert and frozen afterwards (`crm.note_guard` refuses any change, for
+every role, including the merge-people identity-repoint):
+
+| column | values | rule |
+|---|---|---|
+| `note_kind` | `llamada` or null | null is an ordinary note; no default, no backfill — every earlier note stays ordinary |
+| `call_outcome` | `contesto`, `no_contesto`, `buzon`, `numero_malo`, `reunion` | required on a call record, forbidden otherwise; a column so calls can be counted by outcome |
+| `call_next_step` | text, at most 500 characters | optional, only on a call record |
+
+`note_call_shape` ties them: a call record is `note_kind = 'llamada'` with an outcome; anything else
+has all three null. The API's existing table-level select/insert covers the columns; its column-level
+UPDATE list is unchanged, so it cannot alter them afterwards, and no policy, foreign key or domain
+event changes. Counts are unchanged. Migration `20261110100000_slice8_note_kind.sql`; pgTAP
+`112_note_kind.sql`.
+
