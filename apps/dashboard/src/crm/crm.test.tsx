@@ -434,7 +434,7 @@ describe("no write path in the CRM workspace", () => {
   const TODO_API_CLIENT = "./todos/todoApi.ts";
   //  - the «Pagos» client (pagos/invoiceApi.ts) POSTs the SII CSV upload and three invoice commands.
   const PAGOS_API_CLIENT = "./pagos/invoiceApi.ts";
-  //  - the «Catálogo web» client (web/webPublishApi.ts) POSTs one model sheet to the site's repository (admin only).
+  //  - the «Catálogo web» client (web/webPublishApi.ts) POSTs one model sheet to the site's repository (the page is shown to admins only).
   const WEB_PUBLISH_CLIENT = "./web/webPublishApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {

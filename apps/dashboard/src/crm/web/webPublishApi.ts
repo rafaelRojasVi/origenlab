@@ -3,7 +3,7 @@
  *
  * This module owns every `/v2/web/...` path string and the one POST (`publish-model-sheet`) — pinned
  * by `src/test/noWritePolicy.test.ts`. The POST commits the sheet to the site's repository and starts
- * its deployment (the API checks the schema and the admin role); it writes no commercial record.
+ * its deployment (the API checks the schema and that the operator may write; the dashboard shows the page to admins only); it writes no commercial record.
  */
 
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";

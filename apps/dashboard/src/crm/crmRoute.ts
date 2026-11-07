@@ -63,8 +63,8 @@ export function sectionTitle(section: CrmSection): string {
 }
 
 const SECTIONS = new Set<string>(CRM_NAV.map((n) => n.id));
-/** A model sheet of the public site is named by its slug (the schema's `^[a-z0-9-]+$`). */
-const WEB_MODEL_ID = /^[a-z0-9-]+$/;
+/** A model sheet of the public site is named by its slug (the schema's `^[a-z0-9-]+$`, at most 60 characters as the proxy allows). */
+const WEB_MODEL_ID = /^[a-z0-9-]{1,60}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** «Licitaciones» also opens a Mercado Público notice's page: `#/crm/licitaciones/mp-<notice id>`. */
 const NOTICE_ROUTE_ID = /^mp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -10,7 +10,7 @@ import { fetchModelSheet } from "../web/webPublishApi";
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
 /**
- * «Catálogo web» (admin only): the sheet of one equipment model of origenlab.cl. The page reads the
+ * «Catálogo web» (the page is shown to admins only; the API itself accepts any writing role): the sheet of one equipment model of origenlab.cl. The page reads the
  * stored sheet first (so an edit never starts from a guess), lets an admin change it and publishes it
  * to the site's repository, then follows the deployment. The product catalog search has no web model
  * ids, so the model is named by its id.

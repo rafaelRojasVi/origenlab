@@ -227,6 +227,56 @@ describe("«Catálogo web»", () => {
     expect(await screen.findByText(/GitHub no guardó la ficha/)).toBeInTheDocument();
   });
 
+  it("sends one request when the form is submitted twice before the first answer", async () => {
+    let resolve: (v: api.PublishReceipt) => void = () => undefined;
+    publishModelSheet.mockReturnValue(new Promise((r) => { resolve = r; }));
+    renderPage();
+    await findF("Titular");
+    const form = screen.getByRole("form", { name: /Ficha del modelo/ });
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(publishModelSheet).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve({ outcome: "dispatched", run_url: "https://github.com/x/runs/1", commit_sha: "def456" }); });
+    await screen.findByText("Publicado — despliegue en curso");
+  });
+
+  it("links each field's error to it and moves focus to the explanation after a failed publish", async () => {
+    publishModelSheet.mockRejectedValue(refusal(422, { detail: { code: "sheet_invalid", message: "m", errors: [{ path: "lead", message: "'x' is too long" }, { path: "specs/0/source", message: "'x' does not match '^https?://'" }] } }));
+    renderPage();
+    await findF("Titular");
+    expect(f("Texto de apertura")).not.toHaveAttribute("aria-invalid");
+    fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
+    const alert = await screen.findByText(/No se publicó: la ficha no cumple el esquema/);
+    await waitFor(() => expect(alert.closest("[role=alert]")).toHaveFocus());
+    const lead = f("Texto de apertura");
+    expect(lead).toHaveAttribute("aria-invalid", "true");
+    expect(document.getElementById(lead.getAttribute("aria-describedby") ?? "")).toHaveTextContent(/Demasiado largo/);
+    const source = screen.getByLabelText("Especificación 1: fuente");
+    expect(source).toHaveAttribute("aria-invalid", "true");
+    expect(document.getElementById(source.getAttribute("aria-describedby") ?? "")).toHaveTextContent(/http/);
+  });
+
+  it("counts the published sheet as the new baseline", async () => {
+    renderPage();
+    const name = await findF("Nombre del fabricante");
+    fireEvent.change(name, { target: { value: "Modelo Ficticio 300" } });
+    expect(screen.getByText("Cambios sin publicar")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
+    await screen.findByText("Publicado — despliegue en curso");
+    expect(screen.queryByText("Cambios sin publicar")).not.toBeInTheDocument();
+    fireEvent.change(name, { target: { value: "Otro" } });
+    fireEvent.click(screen.getByRole("button", { name: "Descartar cambios" }));
+    expect(f("Nombre del fabricante")).toHaveValue("Modelo Ficticio 300");
+  });
+
+  it("stops adding rows at 50", async () => {
+    fetchModelSheet.mockResolvedValue({ ...READ, sheet: { ...SHEET, specs: Array.from({ length: 50 }, (_, i) => ({ label: `L${i}`, value: "v", source: "https://fabricante.example/x" })) } });
+    renderPage();
+    await findF("Titular");
+    expect(screen.getByRole("button", { name: "Añadir especificación" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Añadir pregunta" })).toBeEnabled();
+  });
+
   it("discards edits back to the loaded sheet", async () => {
     renderPage();
     const name = await findF("Nombre del fabricante");
@@ -261,13 +311,38 @@ describe("«Catálogo web»", () => {
     });
 
     it("does not take the previous deployment's success for this one", async () => {
-      fetchPublishStatus.mockResolvedValue({ ...status("success"), updated_at: "2026-01-01T00:00:00Z" });
+      fetchPublishStatus.mockResolvedValue({ ...status("success"), updated_at: "2026-01-01T00:00:00Z", head_sha: "old000" });
       await publish();
       await waitFor(() => expect(fetchPublishStatus).toHaveBeenCalledTimes(1));
       expect(screen.queryByText(/El sitio ya está actualizado/)).not.toBeInTheDocument();
       expect(screen.getByText(/Buscando el despliegue/)).toBeInTheDocument();
       await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
       await waitFor(() => expect(fetchPublishStatus).toHaveBeenCalledTimes(2));
+    });
+
+    it("trusts a run whose commit is the published one, whatever its clock says", async () => {
+      fetchPublishStatus.mockResolvedValue({ ...status("success"), updated_at: "2026-01-01T00:00:00Z", head_sha: "def456" });
+      await publish();
+      expect(await screen.findByText(/El sitio ya está actualizado/)).toBeInTheDocument();
+    });
+
+    it("stops asking when the status route is refused or missing", async () => {
+      fetchPublishStatus.mockRejectedValue(refusal(404, { detail: "Not Found" }));
+      await publish();
+      await waitFor(() => expect(fetchPublishStatus).toHaveBeenCalledTimes(1));
+      expect(await screen.findByText(/No se pudo consultar el estado/)).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(fetchPublishStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives up after an hour without news and says so", async () => {
+      fetchPublishStatus.mockResolvedValue(status("waiting"));
+      await publish();
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_000 * 250); });
+      expect(await screen.findByText("Sin novedades del despliegue; revise el enlace")).toBeInTheDocument();
+      const calls = fetchPublishStatus.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(fetchPublishStatus).toHaveBeenCalledTimes(calls);
     });
 
     it("says when the run waits for the production approval in GitHub", async () => {

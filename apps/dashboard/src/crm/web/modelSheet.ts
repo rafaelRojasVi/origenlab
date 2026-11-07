@@ -61,7 +61,12 @@ export const REQUIRED_FIELDS = [
 export const LIMITS = { name: 80, headline: 120, lead: 300, application: 80, accessory: 120 } as const;
 /** The schema sets no maximum; the editor keeps the list short as the page does. */
 export const MAX_APPLICATIONS = 6;
-export const SLUG_PATTERN = /^[a-z0-9-]+$/;
+/** The proxy accepts a model id of 1 to 60 slug characters. */
+export const SLUG_PATTERN = /^[a-z0-9-]{1,60}$/;
+/** The API refuses a list of more than 50 items. */
+export const MAX_ROWS = 50;
+export const SPEC_KEYS = ["label", "value", "source"] as const;
+export const FAQ_KEYS = ["q", "a"] as const;
 
 export function emptySheet(modelId: string, today: string): ModelSheet {
   return {
@@ -73,7 +78,7 @@ export function emptySheet(modelId: string, today: string): ModelSheet {
 const text = (v: unknown): string => (typeof v === "string" ? v : "");
 const textList = (v: unknown): string[] => (Array.isArray(v) ? v.map(text) : []);
 
-const KNOWN_KEYS = new Set<string>([
+export const KNOWN_KEYS = new Set<string>([
   ...REQUIRED_FIELDS, "official_pdf_url", "image_id", "showroom_id",
 ]);
 
@@ -169,6 +174,7 @@ export function errorsAt(errors: readonly SchemaError[], path: string): string[]
 /** The validator speaks English; the page does not. The original stays in a tooltip. */
 export function translateMessage(message: string): string {
   if (/is a required property/.test(message)) return "Falta este campo.";
+  if (/at most \d+ items/.test(message)) return `Demasiados elementos (máximo ${MAX_ROWS}).`;
   if (/is too long/.test(message)) return "Demasiado largo.";
   if (/is too short|should be non-empty/.test(message)) return "Demasiado corto.";
   if (/does not match '\^https\?:\/\/'/.test(message)) return "Debe empezar por http:// o https://.";

@@ -146,7 +146,7 @@ describe("dashboard read-only policy", () => {
   const PAGOS_API_FILE = "../crm/pagos/invoiceApi.ts";
   const PAGOS_API_PATHS = ["/v2/commands/import-invoices", "/v2/commands/mark-invoice-paid",
     "/v2/commands/mark-invoice-unpaid", "/v2/commands/set-invoice-case"];
-  // «Catálogo web» (admin only): webPublishApi.ts's one POST commits a model sheet to the site's repository
+  // «Catálogo web» (shown to admins only; the API lets any writing role through): webPublishApi.ts's one POST commits a model sheet to the site's repository
   // and starts its deployment; the API checks the schema and the role. Two GETs read a sheet and the
   // deployment's status. It writes no commercial record and sends nothing to anyone.
   const WEB_PUBLISH_FILE = "../crm/web/webPublishApi.ts";

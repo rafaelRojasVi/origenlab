@@ -5,12 +5,14 @@
  */
 import { useEffect, useState } from "react";
 import { Badge, Button, ExternalLink, fmtDateTime, type Tone } from "../ui";
+import { OperatorApiError } from "../../api/operatorClient";
 import { fetchPublishStatus, type PublishState, type PublishStatus as Status } from "../web/webPublishApi";
 
 export const STATUS_POLL_MS = 15_000;
 /** One hour at 15 s: an approval nobody gives is not polled forever. */
 const MAX_POLLS = 240;
-/** A run last touched before the publish is the previous deployment's, not this one's. */
+/** When the run's commit is not the one we published (a later commit may have moved `main`), a run last
+ *  touched before the publish is the previous deployment's, not this one's. */
 const STALE_MS = 30_000;
 
 const COPY: Record<PublishState, { tone: Tone; line: string }> = {
@@ -25,28 +27,34 @@ const COPY: Record<PublishState, { tone: Tone; line: string }> = {
 export function PublishStatus({ modelId, commitSha, runUrl, since }: { modelId: string; commitSha: string; runUrl: string; since: number }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [readFailed, setReadFailed] = useState(false);
+  const [gaveUp, setGaveUp] = useState(false);
   const [check, setCheck] = useState(0);
 
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let polls = 0;
+    setGaveUp(false);
     const tick = async () => {
       try {
         const s = await fetchPublishStatus(modelId);
         if (!alive) return;
         const updated = s.updated_at ? Date.parse(s.updated_at) : NaN;
-        const previousRun = Number.isFinite(updated) && updated < since - STALE_MS;
+        const ours = !!s.head_sha && s.head_sha === commitSha;
+        const previousRun = !ours && Number.isFinite(updated) && updated < since - STALE_MS;
         const shown: Status = previousRun ? { ...s, status: "unknown" } : s;
         setStatus(shown);
         setReadFailed(false);
         if (shown.status === "success" || shown.status === "failure") return;
-      } catch {
+      } catch (err) {
         if (!alive) return;
         setReadFailed(true);
+        // Not allowed or not mounted: asking again changes nothing.
+        if (err instanceof OperatorApiError && (err.status === 403 || err.status === 404)) return;
       }
       polls += 1;
       if (polls < MAX_POLLS) timer = setTimeout(() => void tick(), STATUS_POLL_MS);
+      else if (alive) setGaveUp(true);
     };
     void tick();
     return () => {
@@ -77,7 +85,8 @@ export function PublishStatus({ modelId, commitSha, runUrl, since }: { modelId: 
           El despliegue a producción necesita que alguien lo apruebe en GitHub; el sitio cambia cuando se apruebe.
         </p>
       ) : null}
-      {readFailed ? <p className="mt-1 text-[11px] text-warn">No se pudo consultar el estado; se vuelve a intentar.</p> : null}
+      {readFailed ? <p className="mt-1 text-[11px] text-warn">No se pudo consultar el estado.</p> : null}
+      {gaveUp && !done ? <p className="mt-1 text-[11px] text-warn">Sin novedades del despliegue; revise el enlace</p> : null}
       {status?.updated_at && !done ? <p className="mt-1 text-[11px] text-ink-faint">Última novedad: {fmtDateTime(status.updated_at)}</p> : null}
     </div>
   );
