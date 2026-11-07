@@ -43,6 +43,10 @@ already has its requesting institution; otherwise it stays a proposal until a pe
 the receipts by the repository) or that a person already linked to a case plans nothing. The
 executor keys each action's receipt by `(evidence id, rule id)`.
 
+**Web form.** R7 and R12, on a web-quote-form message whose triage left `web_form:v1` (product,
+consent version, time), add two steps: `record_web_form_consent` (one `crm.consent` row per message)
+and `record_web_form_interest` (the product as the case's interest, once). A proposal records neither.
+
 **What the rules read.** The capture stores no message body (`apps/worker/.../capture.py`), so
 R5 and R6 read the subject and the attachment file names only. Their phrase lists are below,
 by name, and nothing else triggers them.
@@ -176,6 +180,11 @@ class MailEvidence:
     extra_headers: Mapping[str, str] = field(default_factory=dict)
     #: Reply-To address (lower-cased bare address), set only on web-form self-sent messages.
     reply_to: str | None = None
+    #: What a web-form message carries, as the worker read it (`web_form:v1`): the product the
+    #: visitor chose, the version of the consent text they accepted and when. Each may be absent.
+    web_form_product: str | None = None
+    web_form_consent_version: str | None = None
+    web_form_accepted_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -842,6 +851,29 @@ CREATE_REQUEST_FROM_FORWARD_STEP = "create_request_from_forward"
 ADD_CASE_SENDER_PARTICIPANT = "add_case_sender_participant"
 
 
+#: Steps R7/R12 add to a web-form message that carries a consent or a product: the consent row
+#: (`crm.consent`, once per message) and the case interest (the product the visitor named).
+RECORD_WEB_FORM_CONSENT = "record_web_form_consent"
+RECORD_WEB_FORM_INTEREST = "record_web_form_interest"
+
+
+def _with_web_form_records(action: PlannedAction, e: MailEvidence) -> PlannedAction:
+    """The same action plus the records the web form's own facts call for. Only an automatic action
+    that acts on a case: a proposal waits for a person and records nothing yet."""
+    if action.mode != AUTO or not action.commands:
+        return action
+    extra: list[Mapping[str, Any]] = []
+    if e.web_form_consent_version and e.reply_to:
+        extra.append({"command": RECORD_WEB_FORM_CONSENT, "inputs": {
+            "email": e.reply_to, "text_version": e.web_form_consent_version,
+            "accepted_at": e.web_form_accepted_at or e.sent_at, "source_record_id": e.id}})
+    if e.web_form_product:
+        extra.append({"command": RECORD_WEB_FORM_INTEREST, "inputs": {
+            "opportunity_id": "@case", "model_text": e.web_form_product,
+            "note": _note(action.rule_id, ["producto indicado en el formulario del sitio web"])}})
+    return replace(action, commands=(*action.commands, *extra)) if extra else action
+
+
 def _client_open_case(email: str, ix: _Index) -> tuple[CaseState, str] | None:
     """The one open case already speaking with this client — by the address, or else by the
     institution of its domain (never free mail, never a supplier) — and why; None when there are
@@ -1012,8 +1044,9 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         joined = _client_open_case(e.reply_to, ix)
         if joined is not None:
             c, why = joined
-            return _link_rule(e_as_inbound, "R12", [c], f"formulario del sitio web: {why}", None)
-        return _inbound_rules(e_as_inbound, ix, [rt_domain] if rt_domain else [])
+            return _with_web_form_records(
+                _link_rule(e_as_inbound, "R12", [c], f"formulario del sitio web: {why}", None), e)
+        return _with_web_form_records(_inbound_rules(e_as_inbound, ix, [rt_domain] if rt_domain else []), e)
 
     if e.direction == "outbound":
         return _creation_rules(e, ix, domains)
@@ -2069,7 +2102,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
+    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "RECORD_WEB_FORM_CONSENT", "RECORD_WEB_FORM_INTEREST", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
     "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
     "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",

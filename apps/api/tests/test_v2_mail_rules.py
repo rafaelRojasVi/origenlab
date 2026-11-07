@@ -1364,3 +1364,25 @@ def test_an_ordinary_request_keeps_its_title_even_when_the_subject_says_so() -> 
     ))
     assert action.rule_id == "R7"
     assert action.case_title == "Solicitud de cotización — Solicitud de cotización balanza"
+
+
+def test_a_web_form_with_a_product_and_a_consent_adds_the_two_records_after_the_case_steps() -> None:
+    facts = dict(web_form_product="UP400St", web_form_consent_version="consent-v1-2026-11",
+                 web_form_accepted_at="2026-11-08T10:15:00-03:00")
+    for cases in ((), (case(id="c-3", people=("ana@lab-ficticio.example.test",)),)):
+        action = only(Snapshot(evidence=(web_form(**facts),), cases=cases, organizations=()))
+        steps = [c["command"] for c in action.commands]
+        assert steps[-2:] == ["record_web_form_consent", "record_web_form_interest"], steps
+        consent, interest = action.commands[-2]["inputs"], action.commands[-1]["inputs"]
+        assert consent == {"email": "ana@lab-ficticio.example.test", "text_version": "consent-v1-2026-11",
+                           "accepted_at": "2026-11-08T10:15:00-03:00", "source_record_id": "e-web"}
+        assert (interest["opportunity_id"], interest["model_text"]) == ("@case", "UP400St")
+
+
+def test_a_web_form_without_those_facts_plans_exactly_what_it_did_before() -> None:
+    action = only(Snapshot(evidence=(web_form(),), cases=(), organizations=()))
+    assert not {"record_web_form_consent", "record_web_form_interest"} & {c["command"] for c in action.commands}
+    only_consent = only(Snapshot(evidence=(web_form(web_form_consent_version="v1", sent_at="2026-11-08T13:00:00+00:00"),),
+                                 cases=(), organizations=()))
+    assert [c["command"] for c in only_consent.commands][-1] == "record_web_form_consent"
+    assert only_consent.commands[-1]["inputs"]["accepted_at"] == "2026-11-08T13:00:00+00:00"

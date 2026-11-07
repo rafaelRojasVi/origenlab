@@ -78,6 +78,8 @@ from origenlab_api.v2.case_commands import (
     SUPPLIER_RELATIONSHIP_ROLES,
     TERMINAL_STAGES,
     stage_transition_allowed,
+    RecordCaseInterestBody,
+    validated_case,
 )
 from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_quotation import record_case_quotation
@@ -85,7 +87,7 @@ from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
-from origenlab_api.v2.commands import CommandRefused, normalize_email
+from origenlab_api.v2.commands import CommandRefused, as_uuid, normalize_email
 from origenlab_api.v2.crm_authoring import _create_contact_point, _handle_register_organization
 from origenlab_api.v2.current_revision import resolve_current_revision
 from origenlab_api.v2.identity import OperatorIdentity
@@ -1111,6 +1113,61 @@ class V2CaseCommandRepository(CommandTransaction):
             "created": ["opportunity_interest"],
             "event_ids": [event_id],
         }
+
+    def maybe_record_case_interest(
+        self, cur: Any, *, opportunity_id: str, model_text: str, operator: OperatorIdentity,
+        receipt_id: str, note: str,
+    ) -> dict[str, Any] | None:
+        """Record what a web-form message says the case is seeking, unless the case already has that
+        model as a current interest (compared without case or surrounding blanks). The model text is
+        kept as written: no catalogue lookup here. Same handler and event as the operator's
+        «record_case_interest»; None when it was already there."""
+        model = " ".join((model_text or "").split())
+        if not model:
+            return None
+        case_id = as_uuid(opportunity_id, "opportunity_id")
+        cur.execute(
+            "select 1 from crm.opportunity_interest where opportunity_id = %s and withdrawn_at is null "
+            "and lower(btrim(model_text)) = lower(%s)",
+            (case_id, model),
+        )
+        if cur.fetchone() is not None:
+            return None
+        cur.execute("select version from crm.opportunity where id = %s", (case_id,))
+        found = cur.fetchone()
+        if found is None:
+            raise CommandRefused(404, "case_not_found", "no such commercial case")
+        fields = validated_case(RECORD_CASE_INTEREST, RecordCaseInterestBody(
+            opportunity_id=case_id, opportunity_version=int(found[0]), model_text=model, note=note))
+        return self._record_case_interest(cur, operator, fields, receipt_id)
+
+    def write_web_form_consent(
+        self, cur: Any, *, email: str, text_version: str, accepted_at: datetime | None,
+        source_record_id: str,
+    ) -> bool:
+        """Insert the `crm.consent` row a web-form message proves (purpose `quote_request`, source
+        `web-quote-form/v1`). The address is lower-cased (the table's check); the person is the one
+        already holding that address, when there is one. The same message replayed inserts nothing
+        (`consent_idempotent_idx`). True when a row was written."""
+        address = normalize_email(email)
+        cur.execute(
+            "select person_id from crm.contact_point where kind = 'email' and value_norm = %s "
+            "and status = 'active' and confirmation = 'confirmed' and person_id is not null limit 1",
+            (address,),
+        )
+        person = cur.fetchone()
+        cur.execute(
+            """
+            insert into crm.consent
+                (email, person_id, purpose, text_version, accepted_at, source, source_record_id)
+            values (%s, %s, 'quote_request', %s, coalesce(%s, now()), 'web-quote-form/v1', %s)
+            on conflict (email, purpose, text_version, source_record_id)
+                where source_record_id is not null do nothing
+            """,
+            (address, person[0] if person else None, text_version.strip(), accepted_at,
+             as_uuid(source_record_id, "source_record_id")),
+        )
+        return cur.rowcount == 1
 
     def _advance_case_stage(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str

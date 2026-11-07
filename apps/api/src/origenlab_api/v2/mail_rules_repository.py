@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -68,6 +69,8 @@ from origenlab_api.v2.mail_rules import (
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     RECORD_AUTHORED_QUOTE_SENT,
+    RECORD_WEB_FORM_CONSENT,
+    RECORD_WEB_FORM_INTEREST,
     REPLY_WINDOW_DAYS,
     SETTLE_DAYS,
     SYSTEM_LABEL,
@@ -122,6 +125,14 @@ def _json(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
+def _web_form_fact(row: dict[str, Any], key: str) -> str | None:
+    """One fact of the worker's `web_form:v1` reading, only for a message the rules take as a web form."""
+    if not row.get("is_web_form"):
+        return None
+    value = (_json(row.get("web_form_facts")) or {}).get(key)
+    return str(value).strip() or None if value is not None else None
+
+
 # ─────────────────────────────────────────────────────────────── the snapshot ──
 
 #: Live Phase 4a captures only — the records the worker writes: a `comms.message` in the same
@@ -135,7 +146,7 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
        requester.value as requester_match, quote_refs.value as quote_refs, po_refs.value as po_refs, ai.intent as model_intent,
        ai.stage as model_stage, ai.needs_reply as model_needs_reply, ai.summary as model_summary,
        ai.triage_class,
-       case_match.value as case_match, web_form.is_web_form, web_form.reply_to
+       case_match.value as case_match, web_form.is_web_form, web_form.reply_to, web_form_facts.value as web_form_facts
   from evidence.source_record sr
   join lateral (select cm.id, cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
@@ -191,6 +202,12 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
                 where p.message_id = m.id and p.role = 'reply_to'
                 order by p.address_norm limit 1) as reply_to
   ) web_form on true
+  left join lateral (
+       -- What the web form carries — product, consent version and time — read by the worker's triage.
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'web_form:v1'
+        limit 1
+  ) web_form_facts on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -393,6 +410,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             case_match=_json(r.get("case_match")) or None,
             extra_headers=({"x-origenlab-origin": WEB_QUOTE_ORIGIN} if r.get("is_web_form") else {}),
             reply_to=(r.get("reply_to") if r.get("is_web_form") else None),
+            web_form_product=_web_form_fact(r, "product"),
+            web_form_consent_version=_web_form_fact(r, "consent_version"),
+            web_form_accepted_at=_web_form_fact(r, "accepted_at"),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -985,6 +1005,8 @@ class MailRulesRepository(V2CaseCommandRepository):
             CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
             RECORD_AUTHORED_QUOTE_SENT: record_authored_quote_sent,
             ADD_CASE_SENDER_PARTICIPANT: MailRulesRepository._add_case_sender_participant_step,
+            RECORD_WEB_FORM_CONSENT: MailRulesRepository._record_web_form_consent_step,
+            RECORD_WEB_FORM_INTEREST: MailRulesRepository._record_web_form_interest_step,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
@@ -1002,6 +1024,27 @@ class MailRulesRepository(V2CaseCommandRepository):
             case_id=str(fields["opportunity_id"]),
             note=str(fields.get("note") or ""),
         )
+
+    def _record_web_form_consent_step(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                                      receipt_id: str) -> dict[str, Any]:
+        """R7/R12 step: the consent the web form's message proves, once per message (`crm.consent`)."""
+        raw = fields.get("accepted_at")
+        try:
+            accepted_at = datetime.fromisoformat(str(raw)) if raw else None
+        except ValueError:
+            accepted_at = None
+        written = self.write_web_form_consent(
+            cur, email=str(fields["email"]), text_version=str(fields["text_version"]),
+            accepted_at=accepted_at, source_record_id=str(fields["source_record_id"]))
+        return {"command": RECORD_WEB_FORM_CONSENT, "consent_written": written}
+
+    def _record_web_form_interest_step(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                                       receipt_id: str) -> dict[str, Any]:
+        """R7/R12 step: the product the visitor named becomes the case's interest, unless it is there."""
+        result = self.maybe_record_case_interest(
+            cur, opportunity_id=str(fields["opportunity_id"]), model_text=str(fields["model_text"]),
+            operator=operator, receipt_id=receipt_id, note=str(fields["note"]))
+        return result or {"command": RECORD_WEB_FORM_INTEREST, "interest_recorded": False}
 
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:
