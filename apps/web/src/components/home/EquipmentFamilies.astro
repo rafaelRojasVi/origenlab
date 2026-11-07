@@ -8,6 +8,7 @@ import BrandLogo from '../ui/BrandLogo.astro';
 import FamilyMotif from './FamilyMotif.astro';
 import Notice from '../ui/Notice.astro';
 import Icon from '../ui/Icon.astro';
+import { familyForScope, familyHref, familyInfo } from '../../lib/modelos';
 
 /**
  * Las seis familias de equipo.
@@ -48,6 +49,17 @@ const servaCount = analisis?.countClaimId ? publicClaim(analisis.countClaimId) :
 
 /** Una familia puede tener más de un fabricante (pesaje: Adam Equipment y OHAUS). */
 const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isShownOnHome(brand.id));
+
+/**
+ * Las seis familias tienen página propia (`/productos/{familia}/`, y
+ * centrifugación su `/productos/centrifugas/`): cada composición termina en
+ * ella. El texto del enlace nombra la familia, para que la lista de enlaces de
+ * un lector de pantalla no repita seis veces «Ver la familia».
+ */
+const pageFor = (id: string) => {
+  const slug = familyForScope(id)!;
+  return { href: familyHref(slug), label: `Ver equipos de ${familyInfo(slug).short.toLowerCase()}` };
+};
 ---
 
 <section id="familias" class="families" aria-labelledby="familias-title" tabindex="-1">
@@ -61,9 +73,9 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
       </div>
       <div>
         <p class="t-body families__body">
-          Dos familias tienen ficha publicada en este sitio, con especificaciones y documentación
-          del fabricante. Las otras cuatro se cotizan a partir de su aplicación: nos cuenta qué
-          necesita hacer y acotamos las alternativas antes de que exista un precio.
+          Cada familia tiene su página, con los modelos que documentamos y la fuente del fabricante
+          de cada especificación. Si no sabe qué modelo le corresponde, nos cuenta qué necesita hacer
+          con la muestra y acotamos las alternativas antes de hablar de precio.
         </p>
         <p class="t-small families__note">
           No es una secuencia. Son capacidades independientes: un laboratorio puede necesitar sólo
@@ -95,6 +107,10 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
                 <h4 class="family-name family-name--md">{entry.name}</h4>
                 <p class="t-small family-purpose">{entry.purpose}</p>
                 <p class="family-question">{entry.question}</p>
+                <a href={pageFor(entry.id).href} class="link-arrow family-link">
+                  {pageFor(entry.id).label}
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
               </div>
             </article>
           ))
@@ -127,6 +143,10 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
                 </h4>
                 <p class="t-small family-purpose">{entry.purpose}</p>
                 <p class="family-question">{entry.question}</p>
+                <a href={pageFor(entry.id).href} class="link-arrow family-link">
+                  {pageFor(entry.id).label}
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
               </div>
             </article>
           ))
@@ -177,12 +197,10 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
             <p class="family-question">{separacion.question}</p>
             <div class="feature__foot">
               {centrifugeCount && <span class="t-data family-count">{centrifugeCount}</span>}
-              {separacion.href && (
-                <a href={separacion.href} class="link-arrow">
-                  Ver la familia
-                  <Icon name="arrow-right" size={18} class="arrow" />
-                </a>
-              )}
+              <a href={pageFor(separacion.id).href} class="link-arrow">
+                {pageFor(separacion.id).label}
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
             </div>
           </div>
         </article>
@@ -201,12 +219,10 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
             <p class="t-body family-purpose">{analisis.purpose}</p>
             <p class="family-question">{analisis.question}</p>
             <div class="feature__foot">
-              {analisis.href && (
-                <a href={analisis.href} class="link-arrow">
-                  Ver la línea
-                  <Icon name="arrow-right" size={18} class="arrow" />
-                </a>
-              )}
+              <a href={pageFor(analisis.id).href} class="link-arrow">
+                {pageFor(analisis.id).label}
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
             </div>
           </div>
           <div class="feature__mark">
@@ -223,10 +239,8 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
 
   <div class="shell">
     <Notice class="families__notice">
-      De las familias sin ficha propia no publicamos modelos ni especificaciones hasta tenerla con
-      documentación del fabricante. Los diagramas ilustran qué hace cada equipo con la muestra; no
-      son fotografías de producto. Cotización, configuración y disponibilidad se confirman por
-      escrito al cotizar.
+      Los diagramas ilustran qué hace cada equipo con la muestra; no son fotografías de producto.
+      Cotización, configuración y disponibilidad se confirman por escrito al cotizar.
     </Notice>
   </div>
 </section>
@@ -285,6 +299,9 @@ const brandsFor = (id: string) => getBrandsByFamilyId(id).filter((brand) => isSh
   }
   .family-name--xl {
     font-size: clamp(1.75rem, 1.3rem + 1.9vw, 2.75rem);
+  }
+  .family-link {
+    margin-top: 1.5rem;
   }
   .family-purpose {
     margin-top: 0.875rem;

@@ -4,6 +4,8 @@ import { equipmentScope } from '../../data/equipmentScope';
 import { brandNamesForFamily } from '../../lib/catalog';
 import { publicClaim } from '../../data/claims';
 import { site } from '../../config/site';
+import { company } from '../../data/company';
+import { familyForScope, familyHref } from '../../lib/modelos';
 import Icon from '../ui/Icon.astro';
 import Showroom from './Showroom.astro';
 
@@ -32,12 +34,17 @@ import Showroom from './Showroom.astro';
  *
  * El recuento sale del registro de afirmaciones: si alguien retira la
  * aprobación, la línea desaparece sola.
+ *
+ * Bajo las acciones va la línea de valor que el titular aprobó el 2026-11-07
+ * (`company.valueLine`), la misma de las páginas de modelo. Las filas llevan a
+ * la página de cada familia (`familyHref`), no a la de su marca.
  */
 const familiesClaim = publicClaim('familias-de-equipo');
 
 const families = equipmentScope.map((entry, index) => ({
   ...entry,
   brandNames: brandNamesForFamily(entry.id, { home: true }),
+  page: familyHref(familyForScope(entry.id)!),
   numeral: String(index + 1).padStart(2, '0'),
 }));
 ---
@@ -61,6 +68,7 @@ const families = equipmentScope.map((entry, index) => ({
           <Icon name="arrow-right" size={18} class="arrow" />
         </a>
       </div>
+      <p class="t-small hero__value">{company.valueLine}</p>
     </div>
 
     <div class="hero__figure">
@@ -93,7 +101,7 @@ const families = equipmentScope.map((entry, index) => ({
         {
           families.map((entry) => (
             <li class="scope-index__row">
-              <a href={entry.href} class="scope-index__link" data-family-row={entry.id}>
+              <a href={entry.page} class="scope-index__link" data-family-row={entry.id}>
                 <span class="scope-index__num t-data" aria-hidden="true">{entry.numeral}</span>
                 <span class="scope-index__name">{entry.name}</span>
                 <span class="scope-index__brand t-data">{entry.brandNames}</span>
@@ -143,6 +151,13 @@ const families = equipmentScope.map((entry, index) => ({
     align-items: center;
     gap: 1rem 2rem;
     margin-top: 2.5rem;
+  }
+  .hero__value {
+    margin-top: 1.75rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-hairline);
+    color: var(--color-ink-600);
+    max-width: 52ch;
   }
 
   /*

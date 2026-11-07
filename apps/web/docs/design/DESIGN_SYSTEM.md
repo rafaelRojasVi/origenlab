@@ -225,7 +225,7 @@ estas resuelve el problema.
 | `ui/CompareTable` | Comparativa: tabla con región desplazable en escritorio, listas apiladas bajo 768 px |
 | `ui/BrandLogo` | Logotipo a tinta única con altura óptica por marca. `loading="eager"` sólo en el riel |
 | `ui/ModelSheet` | Ficha de un modelo que el sitio describe y enlaza pero no aloja: qué hace, usos, criterios y fuente |
-| `ui/ClosingQuoteBand` | Banda de cierre invertida, única por página |
+| `ui/ClosingQuoteBand` | Banda de cierre invertida, única por página; `primary="whatsapp"` pone WhatsApp en el botón y el formulario entre los canales |
 | `ui/Notice` | Aviso comercial, uno por página |
 | `ui/ExternalLink` | Enlace externo, anunciado y marcado |
 | `ui/Icon` | Trazos de Tabler Icons (MIT), 24x24, stroke 1,5 |
@@ -237,8 +237,9 @@ estas resuelve el problema.
 | `home/EquipmentFamilies` | Las seis familias, en cuatro composiciones distintas |
 | `home/FamilyMotif` | Diagrama de qué le hace el equipo a la muestra, para las familias sin fotografía |
 | `home/ConsultationSection` | Asesoría técnica y la especialista |
-| `home/ProcessSection` | De la consulta a la cotización, en cinco pasos |
-| `home/AudienceSection` | Sectores atendidos y las tres líneas comerciales |
+| `home/ProcessSection` | Franja de hechos y cómo comprar, en el resumen de cuatro pasos |
+| `home/AudienceSection` | Seis entradas por sector hacia sus páginas de familia, y las tres líneas comerciales |
+| `ui/StepList` | Procedimiento vertical con filete continuo; por defecto los cuatro pasos de compra |
 
 Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
 `.section` (ritmo vertical), `.rule-top` (filete de separación), `.link-row`

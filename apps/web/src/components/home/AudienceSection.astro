@@ -1,16 +1,66 @@
 ---
 import { company } from '../../data/company';
+import { familyHref, familyInfo, type FamilySlug } from '../../lib/modelos';
 import ApplicationList from '../ui/ApplicationList.astro';
 import Icon from '../ui/Icon.astro';
 
 /**
- * A quién atendemos.
+ * A quién atendemos: seis entradas por sector.
  *
- * Categorías de cliente en lenguaje cualitativo, tomadas de `company.audience`.
- * Sin logotipos de cliente, sin nombres, sin testimonios y sin conteos: nada de
- * eso existe verificado en el repositorio, y el registro de afirmaciones deja
- * constancia de que se evaluó y se descartó.
+ * Cada sector dice qué trabajo de laboratorio suele traer y lleva a las
+ * páginas de familia que lo resuelven; el sector público lleva a cómo se
+ * cotiza por Mercado Público. Es una tabla de entradas con filetes, no una
+ * rejilla de fichas.
+ *
+ * El texto describe el trabajo, no a quién se le ha vendido: sin logotipos de
+ * cliente, sin nombres, sin testimonios y sin conteos. Nada de eso existe
+ * verificado en el repositorio, y el registro de afirmaciones deja constancia
+ * de que se evaluó y se descartó. Los contactos del CRM no son clientes.
+ *
+ * Las entradas viven aquí y no en un archivo de datos: son enlaces de la
+ * portada, no un hecho del negocio que otra página tenga que leer.
  */
+interface Industry {
+  name: string;
+  work: string;
+  links: { label: string; href: string }[];
+}
+
+const toFamilies = (...slugs: FamilySlug[]) =>
+  slugs.map((slug) => ({ label: familyInfo(slug).short, href: familyHref(slug) }));
+
+const industries: Industry[] = [
+  {
+    name: 'Salmón y acuicultura',
+    work: 'Extracción y homogeneización de tejido, y humedad en alimento y producto terminado.',
+    links: toFamilies('sonicacion', 'dispersion', 'pesaje-humedad'),
+  },
+  {
+    name: 'Alimentos y agro',
+    work: 'Humedad en granos, harinas y alimentos, pesaje de rutina y homogeneización de muestras.',
+    links: toFamilies('pesaje-humedad', 'dispersion'),
+  },
+  {
+    name: 'Farmacéutica y cosmética',
+    work: 'Emulsiones y dispersiones, extracción por ultrasonido y osmolalidad de soluciones.',
+    links: toFamilies('dispersion', 'sonicacion', 'osmometria'),
+  },
+  {
+    name: 'Universidades e investigación',
+    work: 'Lisis y extracción, separación de muestras y electroforesis de proteínas y ácidos nucleicos.',
+    links: toFamilies('sonicacion', 'centrifugacion', 'electroforesis'),
+  },
+  {
+    name: 'Hospitales y clínicas',
+    work: 'Centrifugación de muestras y determinación de osmolalidad en el laboratorio clínico.',
+    links: toFamilies('centrifugacion', 'osmometria'),
+  },
+  {
+    name: 'Sector público',
+    work: 'Licitaciones y Compra Ágil en Mercado Público, con la misma asesoría técnica previa.',
+    links: [{ label: 'Cómo cotizamos para compras públicas', href: '/como-comprar/#compras-publicas' }],
+  },
+];
 ---
 
 <section class="shell section audience" aria-labelledby="audiencia-title">
@@ -26,8 +76,22 @@ import Icon from '../ui/Icon.astro';
     </p>
   </div>
 
-  <ul class="sectors" data-reveal>
-    {company.audience.map((item) => <li class="sectors__item">{item}</li>)}
+  <ul class="industries" data-reveal>
+    {
+      industries.map((industry) => (
+        <li class="industry" data-industry>
+          <h3 class="industry__name">{industry.name}</h3>
+          <p class="t-small industry__work">{industry.work}</p>
+          <ul class="industry__links" aria-label={`Equipos para ${industry.name.toLowerCase()}`}>
+            {industry.links.map((link) => (
+              <li>
+                <a href={link.href} class="industry__link">{link.label}</a>
+              </li>
+            ))}
+          </ul>
+        </li>
+      ))
+    }
   </ul>
 
   <div class="lines">
@@ -53,26 +117,49 @@ import Icon from '../ui/Icon.astro';
     color: var(--color-ink-600);
   }
 
-  /* Lista corrida separada por filetes, no píldoras ni rejilla de fichas: son
-     etiquetas de sector y su peso visual tiene que quedar por debajo de las
-     tres líneas comerciales. */
-  .sectors {
+  /* Tabla de entradas: sector, trabajo y destino en una fila con filete. */
+  .industries {
+    list-style: none;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .industry {
+    display: grid;
+    gap: 0.5rem;
+    padding-block: 1.25rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .industry__name {
+    font-size: 1.125rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-950);
+  }
+  .industry__work {
+    color: var(--color-ink-600);
+    max-width: 52ch;
+  }
+  .industry__links {
     list-style: none;
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem 0;
-    margin: 2.5rem 0 0;
+    gap: 0 1.5rem;
+    margin: 0;
     padding: 0;
   }
-  .sectors__item {
-    padding-inline: 1.125rem;
-    border-left: 1px solid var(--color-hairline);
-    font-size: 1.0625rem;
-    color: var(--color-ink-800);
+  .industry__link {
+    display: inline-block;
+    padding-block: 0.375rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-teal-800);
+    text-decoration: underline;
+    text-decoration-color: var(--color-hairline);
+    text-underline-offset: 0.25em;
   }
-  .sectors__item:first-child {
-    padding-left: 0;
-    border-left: none;
+  .industry__link:hover {
+    text-decoration-color: currentColor;
   }
 
   .lines {
@@ -86,8 +173,14 @@ import Icon from '../ui/Icon.astro';
   }
 
   @media (min-width: 768px) {
-    .sectors {
+    .industries {
       margin-top: 3rem;
+    }
+    .industry {
+      grid-template-columns: minmax(0, 3fr) minmax(0, 5fr) minmax(0, 4fr);
+      gap: 2rem;
+      align-items: baseline;
+      padding-block: 1.5rem;
     }
     .lines {
       margin-top: 5rem;
@@ -102,5 +195,4 @@ import Icon from '../ui/Icon.astro';
       align-items: end;
     }
   }
-
 </style>

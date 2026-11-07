@@ -1,54 +1,70 @@
 ---
-import { consultationProcess } from '../../data/consultation';
 import { publicClaim } from '../../data/claims';
+import { contact } from '../../data/contact';
+import StepList from '../ui/StepList.astro';
 import Icon from '../ui/Icon.astro';
 
 /**
- * De la consulta a la cotización.
+ * Cómo comprar, en la portada: una franja de hechos y los cuatro pasos.
  *
- * Secuencia vertical con filete continuo, no cuatro columnas iguales: es un
- * procedimiento, y se lee como tal.
+ * La franja es la prueba que el sitio puede sostener, nada más. El número de
+ * marcas sale del registro de afirmaciones; cobertura, puesta en marcha y
+ * compras públicas son hechos del negocio sin cifra. Años en el mercado,
+ * clientes y plazos de respuesta medidos están en `claims.ts` como
+ * `unavailable` y no se escriben.
  *
- * La rapidez se declara sólo con la redacción aprobada del registro de
- * afirmaciones. La promesa numérica existe en `claims.ts` como propuesta sin
- * aprobar y por tanto no se renderiza; `validate:dist` comprueba que su texto
- * literal no aparezca en el HTML construido. El párrafo que sigue separa a
- * propósito el tiempo de respuesta del plazo de la cotización formal.
+ * Los pasos son el resumen de `/como-comprar/` (`buyingSteps`), con sólo el
+ * título. La rapidez se declara con la redacción aprobada; la promesa numérica
+ * existe en `claims.ts` como propuesta sin aprobar y `validate:dist` comprueba
+ * que su texto literal no aparezca en el HTML construido.
+ *
+ * Sustituye a los cinco pasos de «De la consulta a la cotización»: la consulta
+ * ya la cuenta la sección de asesoría, y dos procedimientos seguidos en la
+ * misma portada se leían como uno repetido.
  */
 const speedClaim = publicClaim('respuesta-agil');
+const brandsClaim = publicClaim('marcas-con-las-que-trabajamos');
+
+const facts = [
+  brandsClaim && { label: 'Fabricantes', value: brandsClaim },
+  { label: 'Cobertura', value: `Despacho a todo Chile desde ${contact.city}` },
+  { label: 'Puesta en marcha', value: 'Con capacitación de fábrica' },
+  { label: 'Compras públicas', value: 'Licitaciones y Compra Ágil' },
+].filter((fact): fact is { label: string; value: string } => Boolean(fact));
 ---
 
 <section class="process" aria-labelledby="proceso-title">
   <div class="shell process__inner">
-    <div class="process__head">
-      <p class="t-label">Cómo trabajamos</p>
-      <h2 id="proceso-title" class="t-h2 process__title">De la consulta a la cotización</h2>
-      {speedClaim && <p class="process__speed">{speedClaim}.</p>}
-      <p class="t-small process__caveat">
-        Responder una consulta técnica y emitir una cotización formal son dos tiempos distintos. La
-        propuesta puede depender de precio de fábrica, configuración, flete y confirmación de
-        entrega, y no comprometemos una fecha antes de tenerla confirmada.
-      </p>
-    </div>
-
-    <ol class="steps" data-reveal>
+    <dl class="facts" data-reveal>
       {
-        consultationProcess.map((step, i) => (
-          <li class="step">
-            <span class="step__num t-data" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
-            <div class="step__body">
-              <h3 class="step__title">{step.title}</h3>
-              <p class="t-small step__text">{step.body}</p>
-            </div>
-          </li>
+        facts.map((fact) => (
+          <div class="facts__item">
+            <dt class="t-label">{fact.label}</dt>
+            <dd class="facts__value">{fact.value}</dd>
+          </div>
         ))
       }
-    </ol>
+    </dl>
 
-    <a href="/servicios/" class="link-arrow process__link">
-      Soporte, garantía e instalación
-      <Icon name="arrow-right" size={18} class="arrow" />
-    </a>
+    <div class="process__grid">
+      <div class="process__head">
+        <p class="t-label">Cómo comprar</p>
+        <h2 id="proceso-title" class="t-h2 process__title">De la cotización a la puesta en marcha</h2>
+        {speedClaim && <p class="process__speed">{speedClaim}.</p>}
+        <p class="t-small process__caveat">
+          Sin precios publicados: cada cotización se arma con la configuración, los accesorios y el
+          flete que su caso pide, y no comprometemos una fecha de entrega antes de tenerla confirmada.
+        </p>
+      </div>
+
+      <div>
+        <StepList summary />
+        <a href="/como-comprar/" class="link-arrow process__link">
+          Cómo comprar, paso a paso
+          <Icon name="arrow-right" size={18} class="arrow" />
+        </a>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -59,6 +75,33 @@ const speedClaim = publicClaim('respuesta-agil');
   }
   .process__inner {
     padding-block: 4rem;
+  }
+
+  /* Franja de hechos: filetes y mono, sin fichas. Dos columnas en el teléfono,
+     cuatro en una sola línea desde 1024 px. */
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem 1.25rem;
+    margin: 0 0 3.5rem;
+    padding-bottom: 2.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .facts__item {
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+  }
+  .facts__value {
+    margin: 0.5rem 0 0;
+    font-size: 1.0625rem;
+    line-height: 1.35;
+    font-weight: 500;
+    color: var(--color-ink-950);
+  }
+
+  .process__grid {
+    display: grid;
+    gap: 2.5rem;
   }
   .process__title {
     margin-top: 1rem;
@@ -79,52 +122,17 @@ const speedClaim = publicClaim('respuesta-agil');
     color: var(--color-ink-600);
     max-width: 52ch;
   }
-
-  /* Un solo filete recorre los cinco pasos: el proceso es uno, no cinco
-     bloques sueltos. Los numerales cuelgan a la izquierda de la regla. */
-  .steps {
-    list-style: none;
-    margin: 3rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .step {
-    display: grid;
-    grid-template-columns: 2.5rem minmax(0, 1fr);
-    gap: 1rem;
-    padding-block: 1.25rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .step__num {
-    font-size: 0.8125rem;
-    color: var(--color-teal-800);
-    line-height: 1.7;
-  }
-  .step__title {
-    font-size: 1.0625rem;
-    font-weight: 600;
-    color: var(--color-ink-950);
-  }
-  .step__text {
-    margin-top: 0.375rem;
-    color: var(--color-ink-600);
-    max-width: 62ch;
-  }
-  /* Cierra la sección tras los cinco pasos, en la misma columna que ellos: es
-     la continuación del procedimiento, no del encuadre de la izquierda. */
   .process__link {
-    justify-self: start;
-    margin-top: 2.5rem;
+    margin-top: 2rem;
   }
 
   @media (min-width: 768px) {
     .process__inner {
       padding-block: 6rem;
     }
-    .step {
-      grid-template-columns: 3rem minmax(0, 1fr);
-      gap: 1.5rem;
-      padding-block: 1.5rem;
+    .facts {
+      margin-bottom: 4.5rem;
+      padding-bottom: 3rem;
     }
   }
 
@@ -132,26 +140,14 @@ const speedClaim = publicClaim('respuesta-agil');
      768 px el encuadre quedaba en 250 px y la frase de rapidez se partía en
      cinco líneas. */
   @media (min-width: 1024px) {
-    .process__inner {
-      display: grid;
+    .facts {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 2.5rem;
+    }
+    .process__grid {
       grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
       column-gap: 4.5rem;
-      row-gap: 0;
       align-items: start;
-    }
-    .process__head {
-      grid-column: 1;
-      grid-row: 1 / span 2;
-    }
-    .steps {
-      grid-column: 2;
-      grid-row: 1;
-      margin-top: 0;
-    }
-    .process__link {
-      grid-column: 2;
-      grid-row: 2;
-      margin-top: 2rem;
     }
   }
 </style>

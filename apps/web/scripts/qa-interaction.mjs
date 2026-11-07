@@ -865,6 +865,59 @@ console.log('\nEnlaces hacia las páginas de familia y de modelo');
   await context.close();
 }
 
+/**
+ * Portada y `/como-comprar/`: la portada lleva a las seis páginas de familia,
+ * tiene seis entradas por sector que llevan a alguna parte, oculta las notas
+ * destacadas mientras la colección `aplicaciones` esté vacía y cierra con
+ * WhatsApp; la guía de compra tiene cuatro pasos, la sección de compras
+ * públicas y la nota de consentimiento con enlace a la política de privacidad.
+ */
+console.log('\nPortada y cómo comprar');
+{
+  const read = (path) => {
+    const file = join(dist, path, 'index.html');
+    return existsSync(file) ? readFileSync(file, 'utf8') : '';
+  };
+  const home = read('/');
+  const familias = home.match(/<section\b[^>]*\bid="familias"[\s\S]*?<\/section>/)?.[0] ?? '';
+  const familyPages = ['sonicacion', 'dispersion', 'pesaje-humedad', 'osmometria', 'electroforesis', 'centrifugas']
+    .map((slug) => `/productos/${slug}/`);
+  const missingFamilies = familyPages.filter((href) => !familias.includes(`href="${href}"`));
+  check(missingFamilies.length === 0, `Home: families grid links to six family pages (faltan: ${missingFamilies.join(', ') || 'ninguna'})`);
+
+  const industries = [...home.matchAll(/<li\b[^>]*\bdata-industry\b[\s\S]*?<\/ul>/g)].map(([block]) => block);
+  check(
+    industries.length === 6 && industries.every((block) => /href="\/[^"]*"/.test(block)),
+    `Home: seis entradas por sector, cada una con un enlace interno (${industries.length})`,
+  );
+  const notes = readdirSync(join(root, 'src/content/aplicaciones')).filter((name) => name.endsWith('.md'));
+  check(
+    home.includes('data-home-notes') === notes.length > 0,
+    `Home: las notas destacadas se muestran sólo si hay notas (${notes.length} notas)`,
+  );
+  const band = home.match(/<section\b[^>]*\bclass="band on-ink[\s\S]*?<\/section>/)?.[0] ?? '';
+  check(/<a\b[^>]*href="https:\/\/wa\.me\/[^"]+"[^>]*class="btn btn-invert/.test(band), 'Home: la banda de cierre lleva el botón de WhatsApp');
+  check(home.includes('href="/como-comprar/"'), 'Home: enlaza la guía de compra');
+
+  const guide = read('/como-comprar/');
+  const pasos = guide.match(/<section\b[^>]*\bid="pasos"[\s\S]*?<\/section>/)?.[0] ?? '';
+  const steps = (pasos.match(/\bdata-step\b/g) ?? []).length;
+  const consent = guide.match(/<p\b[^>]*\bdata-consent-note\b[\s\S]*?<\/p>/)?.[0] ?? '';
+  check(
+    steps === 4 && consent.includes('href="/privacidad/"') && guide.includes('id="compras-publicas"'),
+    `Cómo comprar: four steps and consent note present (${steps} pasos, nota ${consent ? 'sí' : 'no'})`,
+  );
+
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  for (const path of ['/', '/como-comprar/']) {
+    await page.goto(`${base}${path}`, { waitUntil: 'load' });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check(overflow <= 0, `${path}: sin desplazamiento horizontal a 375 px (${overflow} px de más)`);
+  }
+  await context.close();
+}
+
 if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
   console.log(`\nBarra fija de cotización ${MODEL_PATH} (375 px)`);
   {
