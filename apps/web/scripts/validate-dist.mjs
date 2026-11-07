@@ -49,6 +49,7 @@ assert(pages.length >= 20, `dist: se esperaban al menos 20 páginas, hay ${pages
 const INTERNAL = [
   'logo-lab/index.html',
   'sala-lab/index.html',
+  'sala-lab/historia/index.html',
   '404.html',
   'privacidad/index.html',
   'cookies/index.html',

@@ -525,6 +525,158 @@ console.log('\nFormulario de cotización (/contacto/, 375 px)');
   await context.close();
 }
 
+/* -- 6. Historia de producto (ProductStory) -------------------------------- */
+
+/**
+ * La página de producto cuenta el equipo en diez tramos de scroll sobre un
+ * lienzo 3D fijo. Mejora progresiva: el HTML trae todo el texto de los tramos y
+ * la ficha; el 3D se pide al acercarse, en el nivel de calidad que el equipo
+ * aguante (`canvas[data-tier]`), y con movimiento reducido no se pide.
+ *
+ * Se prueba en la sala interna `/sala-lab/historia/` (existe desde 3B) y en la
+ * ruta pública del modelo, que crea la tarea 4A: mientras falte, esa ruta queda
+ * como pendiente y no falla; cuando exista, corre igual que la interna.
+ */
+const STORY_PAGES = [
+  { path: '/sala-lab/historia/', pending: null },
+  { path: '/productos/sonicacion/hielscher-up400st/', pending: '4A' },
+];
+const webglCounter = () => {
+  window.__webgl = 0;
+  const original = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+    if (String(kind).startsWith('webgl')) window.__webgl += 1;
+    return original.call(this, kind, ...rest);
+  };
+};
+const waitReady = (page) => page.locator('[data-story] canvas').evaluate((el) => new Promise((resolve) => {
+  if (el.dataset.ready === '1') return resolve(true);
+  const watch = new MutationObserver(() => el.dataset.ready === '1' && resolve(true));
+  watch.observe(el, { attributes: true });
+  setTimeout(() => resolve(false), 20000);
+}));
+for (const story of STORY_PAGES) {
+  const built = join(dist, story.path, 'index.html');
+  if (!existsSync(built)) {
+    console.log(`\nHistoria de producto ${story.path}`);
+    if (story.pending) {
+      console.log(`   - pendiente (${story.pending}): la ruta todavía no existe; vuelve a correr al terminar ${story.pending}`);
+    } else {
+      check(false, `ProductStory: falta ${story.path}`);
+    }
+    continue;
+  }
+
+  console.log(`\nHistoria de producto ${story.path} (movimiento reducido)`);
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    await page.addInitScript(webglCounter);
+    await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
+    await page.locator('[data-story]').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(800);
+    check(await page.locator('.story-specs').isVisible(), 'ProductStory: static DOM present under reduced-motion (.story-specs visible)');
+    check(await page.locator('[data-story] canvas').evaluate((el) => el.hidden), 'ProductStory: el lienzo queda con hidden');
+    const beats = await page.locator('[data-story] [data-beat]').evaluateAll((els) => els.map((el) => ({
+      id: el.dataset.beat,
+      heading: el.querySelector('h2')?.textContent?.trim() ?? '',
+      shown: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none',
+    })));
+    check(beats.length === 10, `ProductStory: diez tramos en el HTML (${beats.length})`);
+    check(
+      beats.length > 0 && beats.every((beat) => beat.heading && beat.shown),
+      `ProductStory: cada tramo se lee sin 3D (faltan: ${beats.filter((b) => !b.heading || !b.shown).map((b) => b.id).join(', ') || 'ninguno'})`,
+    );
+    const spacer = await page.locator('[data-story-spacer]').evaluate((el) => el.getBoundingClientRect().height);
+    check(spacer < 6 * 1000, `ProductStory: el espaciador se colapsa (${Math.round(spacer)} px)`);
+    check(await page.evaluate(() => window.__webgl) === 0, 'ProductStory: ningún contexto WebGL con movimiento reducido');
+    check(
+      !(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /\/scene-[\w-]+\.[\w-]+\.js/.test(entry.name)))),
+      'ProductStory: ningún fragmento scene-* se descarga',
+    );
+    await context.close();
+  }
+
+  console.log(`\nHistoria de producto ${story.path} (1440 px)`);
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage();
+    const foreign = [];
+    const errors = [];
+    page.on('request', (request) => {
+      if (!request.url().startsWith(base)) foreign.push(request.url());
+    });
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
+    const top = await page.locator('[data-story-spacer]').evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+    await page.evaluate((y) => window.scrollTo(0, y + 1500), top);
+    const ready = await waitReady(page);
+    check(ready, 'ProductStory: canvas initialises on scroll (canvas[data-ready="1"])');
+    const tier = await page.locator('[data-story] canvas').getAttribute('data-tier');
+    check(['high', 'medium', 'low'].includes(tier ?? ''), `ProductStory: canvas[data-tier] es high, medium o low (${tier})`);
+    if (ready) {
+      // 1500 px dentro de un recorrido de 5000 px: progreso 0,3, el marcador de la pantalla.
+      await page.evaluate((y) => window.scrollTo(0, y + 1520), top);
+      await page.waitForTimeout(400);
+      const beat = await page.locator('[data-story]').getAttribute('data-beat');
+      check(beat === 'screen-hs', `ProductStory: el scroll marca el tramo activo (${beat})`);
+      check(
+        await page.locator('[data-story] .story-spot[data-anchor="screen"]').evaluate((el) => el.hasAttribute('data-on')),
+        'ProductStory: el marcador de la pantalla se abre en su tramo',
+      );
+      await page.evaluate((y) => window.scrollTo(0, y + 2900), top);
+      await page.waitForTimeout(400);
+      const level = await page.locator('[data-story]').evaluate((el) => el.style.getPropertyValue('--story-level'));
+      check(Number(level) > 0.2, `ProductStory: el tramo de amplitud publica el nivel (${level})`);
+    }
+    check(errors.length === 0, `ProductStory: sin errores de JavaScript (${errors.join('; ') || 'ninguno'})`);
+    check(foreign.length === 0, `ProductStory: nada fuera del dominio (${foreign.join(', ') || 'nada'})`);
+    await context.close();
+  }
+
+  console.log(`\nHistoria de producto ${story.path} (?tier=low, 1440 px)`);
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage();
+    await page.addInitScript(webglCounter);
+    await page.goto(`${base}${story.path}?tier=low`, { waitUntil: 'load' });
+    await page.locator('[data-story]').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(800);
+    check(await page.locator('[data-story] canvas').getAttribute('data-tier') === 'low', 'ProductStory: el nivel bajo se anuncia en data-tier');
+    check(await page.evaluate(() => window.__webgl) === 0, 'ProductStory: el nivel bajo no crea ningún contexto WebGL');
+    check(await page.locator('[data-story] [data-story-photo] img').isVisible(), 'ProductStory: el nivel bajo muestra la imagen fija');
+    const button = page.locator('[data-story-3d]');
+    check(await button.isVisible(), 'ProductStory: «Ver en 3D» se ofrece en el nivel bajo');
+    if (await button.isVisible()) {
+      await button.click();
+      check(await waitReady(page), 'ProductStory: «Ver en 3D» carga la escena a pedido');
+      check(await page.locator('[data-story] canvas').getAttribute('data-tier') === 'medium', 'ProductStory: a pedido carga el nivel medio');
+    }
+    await context.close();
+  }
+
+  console.log(`\nHistoria de producto ${story.path} (375 px, avance por toque)`);
+  {
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    const page = await context.newPage();
+    await page.goto(`${base}${story.path}?tier=medium`, { waitUntil: 'load' });
+    await page.locator('[data-story]').scrollIntoViewIfNeeded();
+    check(await waitReady(page), 'ProductStory: la escena arranca en móvil');
+    const next = page.locator('[data-story-next]');
+    check(await next.isVisible(), 'ProductStory: hay un botón «Siguiente»');
+    if (await next.isVisible()) {
+      const before = await page.locator('[data-story]').getAttribute('data-beat');
+      await next.click();
+      await page.waitForTimeout(300);
+      const after = await page.locator('[data-story]').getAttribute('data-beat');
+      check(before !== after && Boolean(after), `ProductStory: el toque avanza de tramo (${before} a ${after})`);
+      const shown = await page.locator('[data-story] [data-beat]').evaluateAll((els) => els.filter((el) => getComputedStyle(el).display !== 'none').length);
+      check(shown === 1, `ProductStory: en móvil se lee un tramo a la vez (${shown})`);
+    }
+    await context.close();
+  }
+}
+
 await browser.close();
 server.close();
 

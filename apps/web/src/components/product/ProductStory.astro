@@ -1,0 +1,497 @@
+---
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import ModelPhoto from '../ui/ModelPhoto.astro';
+import ExternalLink from '../ui/ExternalLink.astro';
+import { imageForModel } from '../../data/productImages';
+import { getBrandById } from '../../lib/catalog';
+import { showroomEntry } from '../../lib/showroom/catalog';
+import type { BeatSpec, ProductStoryConfig } from '../../lib/showroom/productStory';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Historia de producto por scroll: el equipo en 3D sobre un lienzo fijo y diez
+ * tramos de texto que avanzan con la página; después, la ficha técnica.
+ *
+ * Mejora progresiva estricta. El HTML trae todo lo que se lee: el texto de
+ * cada tramo, sus cifras, la ficha, los accesorios y las descargas, más la
+ * imagen fija del equipo (el póster `public/products/<slug>-poster.jpg` si
+ * existe; si no, la fotografía VERIFIED). El script de abajo decide el nivel
+ * de calidad (`canvas[data-tier]`: high, medium o low) y sólo con high o
+ * medium, y con la historia cerca de la pantalla, pide los fragmentos
+ * `scene-*` (three, escenario, modelo, historia). Con movimiento reducido no
+ * hay scroll animado: la página queda estática y «Ver en 3D» ofrece el equipo
+ * quieto, a pedido.
+ *
+ * Las cifras no se escriben aquí ni en la historia: `{Etiqueta}` en un texto
+ * de la historia es el valor de la ficha con fuente (`entry.specs`). Una
+ * etiqueta que la ficha no tenga detiene el build.
+ *
+ * Props: `config` (la historia, `src/lib/showroom/stories/<id>.ts`) y `entry`
+ * (los datos de la ficha de la colección `modelos`: `entry.data` de
+ * `getEntry`). Los modelos relacionados y la banda de cierre los pone la
+ * página, en el slot, después de la ficha.
+ */
+interface Props {
+  config: ProductStoryConfig;
+  entry: Modelo;
+}
+const { config, entry } = Astro.props;
+
+const brand = getBrandById(entry.brand);
+const name = `${brand?.name ?? entry.brand} ${entry.name}`;
+const spec = (label: string) => {
+  const found = entry.specs.find((item) => item.label === label);
+  if (!found) throw new Error(`ProductStory (${entry.slug}): la ficha no tiene «${label}»`);
+  return found;
+};
+// A mitad de frase el valor va en minúscula («Amplitud regulable…»), salvo siglas.
+const fill = (text = '') =>
+  text.replace(/\{([^}]+)\}/g, (_match, label: string, at: number) => {
+    const value = spec(label).value;
+    return at > 0 && /^\p{Lu}\p{Ll}/u.test(value) ? value[0].toLowerCase() + value.slice(1) : value;
+  });
+
+const hotspots = showroomEntry(config.modelId)?.hotspots ?? [];
+const meterBeat = config.beats.find((beat) => beat.overlayComponent === 'meter');
+const range = meterBeat ? spec(meterBeat.overlayData?.[0] ?? '').value.match(/(\d+)\D+?(\d+)\s*%/) : null;
+if (meterBeat && !range) throw new Error(`ProductStory (${entry.slug}): el medidor necesita un rango «del N al M %»`);
+
+// Overlays sobre el lienzo (decorativos: lo mismo se lee en el tramo).
+const spots = config.beats.flatMap((beat: BeatSpec) => {
+  const [anchor, label] = beat.overlayData ?? [];
+  if (beat.overlayComponent === 'hotspot') {
+    const spot = hotspots.find((item) => item.anchor === anchor);
+    return spot && spot.body.length ? [{ beat: beat.id, anchor, title: spot.title, body: spot.body }] : [];
+  }
+  if (beat.overlayComponent === 'callout') return [{ beat: beat.id, anchor, title: label, body: [spec(label).value] }];
+  return [];
+});
+
+const RUN = 500; // vh de scroll por unidad de progreso; la última pantalla suma 100 vh (0,2)
+const beats = config.beats.map((beat, index) => ({
+  ...beat,
+  span: beat.progressEnd - beat.progressStart + (index === config.beats.length - 1 ? 100 / RUN : 0),
+  headline: fill(beat.textHeadline),
+  body: fill(beat.textBody),
+}));
+const applications = config.applications.length ? config.applications : entry.applications;
+const groups = config.specs.map((group) => ({ title: group.title, rows: group.labels.map(spec) }));
+const sources = [...new Set(entry.specs.map((item) => item.source))];
+const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`)) ? `/products/${entry.slug}-poster.jpg` : null;
+const photo = imageForModel(entry.image_id ?? entry.slug);
+const dom = (part: string) => `historia-${entry.slug}-${part}`;
+---
+
+<div
+  class="story shell"
+  data-story={config.modelId}
+  data-readout-from={range?.[1]}
+  data-readout-to={range?.[2]}
+  data-sonotrode="S24d14"
+>
+  <div class="story__spacer" data-story-spacer>
+    <div class="story__stage">
+      <div class="story__photo" data-story-photo>
+        {
+          poster ? (
+            <img src={poster} width="1200" height="900" alt={`${name}, modelo 3D`} style="width:100%;height:100%;object-fit:contain" />
+          ) : (
+            <ModelPhoto image={photo} size="hero" priority ratio="4 / 5" />
+          )
+        }
+      </div>
+      <canvas data-story-canvas aria-hidden="true" hidden></canvas>
+      <div class="story__spots" aria-hidden="true">
+        {
+          spots.map((spot) => (
+            <div class="story-spot" data-anchor={spot.anchor} data-beats={spot.beat}>
+              <b class="block">{spot.title}</b>
+              {spot.body.map((line) => <span class="block">{line}</span>)}
+            </div>
+          ))
+        }
+      </div>
+      <button type="button" class="btn btn-secondary" data-story-3d hidden>Ver en 3D</button>
+      <div class="story__nav" data-story-nav hidden>
+        <button type="button" class="btn btn-secondary" data-story-prev>Anterior</button>
+        <span class="t-data" data-story-count aria-live="polite"></span>
+        <button type="button" class="btn btn-primary" data-story-next>Siguiente</button>
+      </div>
+    </div>
+
+    <div class="story__beats">
+      {
+        beats.map((beat) => (
+          <section class="story__beat rule-top" data-beat={beat.id} data-beats={beat.id} style={`--span:${beat.span.toFixed(3)}`} aria-labelledby={dom(beat.id)}>
+            <div class="story__text">
+              <h2 class="t-h2" id={dom(beat.id)}>{beat.headline}</h2>
+              {beat.body && <p class="t-lead">{beat.body}</p>}
+              {beat.overlayComponent === 'facts' && (
+                <dl class="story__row">
+                  {(beat.overlayData ?? []).map(spec).map((item) => (
+                    <div>
+                      <dt class="t-label">{item.label}</dt>
+                      <dd class="t-data">{item.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {beat.overlayComponent === 'meter' && range && (
+                <div class="story__row">
+                  <p class="t-data">
+                    {beat.overlayData?.[0]}: <output data-readout>{range[1]} %</output>
+                  </p>
+                  <span class="story__meter block" aria-hidden="true" />
+                </div>
+              )}
+              {beat.overlayComponent === 'sonotrodes' && (
+                <ul class="story__row story__chips" aria-label="Sonotrodos">
+                  {(beat.overlayData ?? []).map((tip) => <li data-tip={tip}>{tip}</li>)}
+                </ul>
+              )}
+              {beat.overlayComponent === 'pills' && (
+                <ul class="story__row story__chips">
+                  {applications.map((item, index) => <li style={`--i:${index}`}>{item}</li>)}
+                </ul>
+              )}
+            </div>
+          </section>
+        ))
+      }
+    </div>
+  </div>
+
+  <section class="story-specs section" aria-labelledby={dom('ficha')}>
+    <h2 class="t-h2" id={dom('ficha')}>Especificaciones técnicas</h2>
+    <div class="story-specs__groups">
+      {
+        groups.map((group) => (
+          <div>
+            <h3 class="t-label">{group.title}</h3>
+            <dl>
+              {group.rows.map((row) => (
+                <div class="rule-top">
+                  <dt>{row.label}</dt>
+                  <dd class="t-data">{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ))
+      }
+      {
+        config.accessories.length > 0 && (
+          <div>
+            <h3 class="t-label">Accesorios</h3>
+            <ul class="story__row story__chips">{config.accessories.map((item) => <li>{item.name}{item.note && ` · ${item.note}`}</li>)}</ul>
+          </div>
+        )
+      }
+    </div>
+    {
+      [...entry.faqs, ...config.faqs].length > 0 && (
+        <div class="mt-8">
+          <h3 class="t-h3">Preguntas frecuentes</h3>
+          {[...entry.faqs, ...config.faqs].map((faq) => (
+            <details>
+              <summary>{faq.q}</summary>
+              <p class="t-body">{faq.a}</p>
+            </details>
+          ))}
+        </div>
+      )
+    }
+    <ul class="link-row mt-8">
+      {
+        entry.official_pdf_url && (
+          <li>
+            <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF">Ficha técnica del fabricante (PDF)</ExternalLink>
+          </li>
+        )
+      }
+      {
+        sources.map((href) => (
+          <li>
+            <ExternalLink href={href} context="sitio del fabricante">Fuente de las cifras</ExternalLink>
+          </li>
+        ))
+      }
+    </ul>
+    <p class="t-small mt-8">Datos del fabricante, verificados el {verified}.</p>
+  </section>
+  <slot />
+</div>
+
+<style is:global>
+  /*
+   * Global con prefijo `story` en lugar de estilo con ámbito: el atributo de
+   * ámbito de Astro duplicaba el peso de cada selector y el CSS del sitio
+   * tiene un presupuesto de 64 kB (validate:dist).
+   */
+  .story__spacer {
+    display: grid;
+    column-gap: 3rem;
+  }
+  .story__stage {
+    position: relative;
+    aspect-ratio: 4 / 5;
+    max-height: 40rem;
+  }
+  .story__photo,
+  .story canvas,
+  .story__spots {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .story__photo .model-photo__frame {
+    height: 100%;
+    aspect-ratio: auto !important;
+  }
+  .story__photo,
+  .story canvas {
+    transition: opacity 0.6s;
+  }
+  .story canvas {
+    opacity: 0;
+    touch-action: pan-y;
+  }
+  .story canvas[data-ready],
+  .story-spot[data-on]:not([data-occluded='true']) {
+    opacity: 1;
+  }
+  .story__stage:has([data-ready]) .story__photo {
+    opacity: 0;
+  }
+  .story__stage > .btn,
+  .story__nav {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    translate: -50%;
+  }
+  .story__nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: max-content;
+  }
+  .story__beat {
+    padding-block: 2rem;
+  }
+  .story__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+    margin-top: 1.5rem;
+  }
+  .story__chips {
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+  .story__chips li {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--color-hairline);
+    transition: opacity 0.4s calc(var(--i, 0) * 90ms);
+  }
+  [data-sonotrode='S24d7'] [data-tip='S24d7'],
+  [data-sonotrode='S24d14'] [data-tip='S24d14'],
+  [data-sonotrode='S24d22'] [data-tip='S24d22'] {
+    border-color: var(--color-ink-950);
+  }
+  .story[data-live] .story__beat:not([data-on]) [style*='--i'],
+  .story-spot {
+    opacity: 0;
+  }
+  /* Medidor: la parte llena es la fracción de la cifra de pantalla. */
+  .story__meter {
+    width: 16rem;
+    height: 2px;
+    background: linear-gradient(var(--color-teal-700), var(--color-teal-700)) 0 / calc(var(--story-readout, 0) * 100%) 100% no-repeat var(--color-hairline);
+  }
+  .story-spot {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: min(14rem, 45vw);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-hairline);
+    border-left: 2px solid var(--color-family-sonicacion);
+    background: var(--color-paper);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    transition: opacity 0.3s;
+  }
+  .story-specs__groups {
+    display: grid;
+    gap: 2.5rem 4rem;
+    margin-top: 2rem;
+  }
+  .story-specs dl > div {
+    display: grid;
+    column-gap: 1.5rem;
+    padding-block: 0.75rem;
+  }
+  .story-specs dt {
+    color: var(--color-ink-600);
+  }
+  @media (width < 760px) {
+    .story[data-mode='tap'] .story__stage {
+      position: sticky;
+      top: 4rem;
+      z-index: 1;
+      height: 55svh;
+      aspect-ratio: auto;
+      background: var(--color-paper);
+    }
+    .story[data-live][data-mode='tap'] .story__beat:not([data-on]) {
+      display: none;
+    }
+  }
+  @media (width >= 760px) {
+    .story__spacer {
+      grid-template-columns: 5fr 7fr;
+    }
+    .story__stage {
+      grid-area: 1 / 2;
+      position: sticky;
+      top: 4rem;
+      height: calc(100vh - 4rem);
+      max-height: none;
+      aspect-ratio: auto;
+    }
+    .story__beats {
+      grid-area: 1 / 1;
+    }
+    /* Cada tramo mide su parte del recorrido; su texto queda fijo mientras dura. */
+    .story[data-mode='scroll'] .story__beat {
+      height: calc(var(--span) * 500vh);
+      padding: 0;
+      border: 0;
+    }
+    .story[data-mode='scroll'] .story__text {
+      position: sticky;
+      top: 30vh;
+      transition: opacity 0.4s;
+    }
+    /* Mientras la historia corre se lee un tramo a la vez. */
+    .story[data-live][data-mode='scroll'] .story__beat:not([data-on]) .story__text {
+      opacity: 0;
+    }
+    .story[data-live][data-mode='scroll'] .story__stage {
+      opacity: clamp(0, (1 - var(--story-progress, 0)) * 10, 1);
+    }
+    .story-specs__groups {
+      grid-template-columns: 1fr 1fr;
+    }
+    .story-specs dl > div {
+      grid-template-columns: 12rem 1fr;
+    }
+  }
+</style>
+
+<script>
+  /**
+   * Decide el nivel de calidad y carga la escena sólo si hace falta.
+   *
+   * high   materiales físicos, luz de entorno, sombra suave, resolución ≤ 2×
+   * medium lo mismo sin mapa de sombras, resolución ≤ 1,5×, menos burbujas
+   * low    sin WebGL: la imagen fija y «Ver en 3D», que carga medium a pedido
+   *
+   * Ahorro de datos, viewport < 700 px o movimiento reducido: low. Poca memoria
+   * (< 4 GB) o ≤ 4 núcleos: medium. Si no, high. `mountStory` mide después los
+   * primeros ~2 s y baja un nivel si hace falta. `?tier=` lo fija (QA y
+   * pósteres) y apaga esa medición. El nivel bajo nunca crea un contexto WebGL:
+   * ni siquiera prueba si existe hasta que se pide «Ver en 3D».
+   *
+   * El modelo y la historia se piden aquí (`loaders.ts`) y no dentro de
+   * `mountStory`: si ese módulo los importara, el empaquetador metería el mapa
+   * de cargadores en `scene-story` y la portada lo cargaría de entrada.
+   */
+  import { modelLoaders, storyLoaders } from '../../lib/showroom/loaders';
+  import type { MountedStory } from '../../lib/showroom/mountStory';
+
+  type Tier = 'high' | 'medium' | 'low';
+  type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-story]')) {
+    const canvas = root.querySelector<HTMLCanvasElement>('[data-story-canvas]')!;
+    const button = root.querySelector<HTMLButtonElement>('[data-story-3d]')!;
+    const nav = navigator as Nav;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const asked = new URLSearchParams(location.search).get('tier') as Tier | null;
+    const forced = asked === 'high' || asked === 'medium' || asked === 'low';
+    const phone = innerWidth < 700;
+    const saveData = nav.connection?.saveData === true;
+    const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
+    let tier: Tier = forced ? asked! : reduced || saveData || phone ? 'low' : modest ? 'medium' : 'high';
+    let onDemand = false;
+    let near = false;
+    let story: MountedStory | null = null;
+    let loading = false;
+
+    const layout = () => {
+      canvas.dataset.tier = tier;
+      root.dataset.mode = tier === 'low' || reduced ? 'static' : innerWidth < 760 ? 'tap' : 'scroll';
+    };
+    const fallBack = (offer: boolean) => {
+      story = null;
+      tier = 'low';
+      layout();
+      button.hidden = !offer;
+    };
+    const webgl = () => {
+      try {
+        const probe = document.createElement('canvas');
+        return Boolean(probe.getContext('webgl2') || probe.getContext('webgl'));
+      } catch {
+        return false;
+      }
+    };
+    const id = root.dataset.story ?? '';
+    const boot = () => {
+      if (tier === 'low' || !near || story || loading) return;
+      loading = true;
+      Promise.resolve()
+        .then(() => {
+          if (!modelLoaders[id] || !storyLoaders[id] || !webgl()) throw new Error(`sin WebGL o sin historia para «${id}»`);
+          return Promise.all([import('../../lib/showroom/mountStory'), modelLoaders[id](), storyLoaders[id](), document.fonts.ready]);
+        })
+        .then(([{ mountStory }, model, { story: config }]) =>
+          mountStory(root, model, config, { tier: tier as 'high' | 'medium', still: reduced, probe: !forced && !onDemand, onLow: () => fallBack(true) }),
+        )
+        .then((mounted) => (story = mounted))
+        .catch((error) => {
+          console.warn('Historia 3D no disponible; queda la imagen.', error);
+          fallBack(false);
+        })
+        .finally(() => (loading = false));
+    };
+
+    layout();
+    button.hidden = tier !== 'low';
+    button.addEventListener('click', () => {
+      tier = 'medium';
+      onDemand = true;
+      button.hidden = true;
+      layout();
+      boot();
+    });
+    new IntersectionObserver(
+      (entries) => {
+        near = entries.some((entry) => entry.isIntersecting);
+        boot();
+      },
+      { rootMargin: '300px' },
+    ).observe(root);
+    // Al salir de la página se libera el WebGL; si vuelve desde la caché, se rehace.
+    addEventListener('pagehide', () => {
+      story?.dispose();
+      story = null;
+    });
+    addEventListener('pageshow', (event) => event.persisted && boot());
+  }
+</script>
