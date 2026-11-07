@@ -528,6 +528,30 @@ console.log('\nEnlaces');
   ]);
   const unexpected = [...external].filter((host) => !allowed.has(host));
   check(unexpected.length === 0, `sin destinos externos inesperados (${unexpected.join(', ') || 'ninguno'})`);
+
+  /*
+   * Texto prellenado de WhatsApp (tablero «Mensaje»): en la portada, todo enlace
+   * de WhatsApp (cabecera incluida, cuando la tenga) dice el mensaje genérico; en
+   * la ficha de un modelo, el de la barra fija nombra el modelo tal como lo da el
+   * JSON de contenido.
+   */
+  const waText = (href) => new URL(href.replaceAll('&amp;', '&')).searchParams.get('text');
+  const waLinks = (html) => [...html.matchAll(/href="(https:\/\/wa\.me\/[^"]+)"/g)].map((match) => match[1]);
+  const homeHtml = readFileSync(join(dist, 'index.html'), 'utf8');
+  const homeTexts = waLinks(homeHtml).map(waText);
+  check(
+    homeTexts.length > 0 && homeTexts.every((text) => text === 'Hola OrigenLab, quiero cotizar un equipo.'),
+    `WhatsApp en la portada: mensaje genérico en cada enlace (${[...new Set(homeTexts)].join(' | ') || 'sin enlaces'})`,
+  );
+  const osmo = JSON.parse(readFileSync(join(root, 'src/content/modelos/loeser-i-osmometer-basic.json'), 'utf8'));
+  const osmoFile = join(dist, 'productos/osmometria/loeser-i-osmometer-basic/index.html');
+  const osmoHtml = existsSync(osmoFile) ? readFileSync(osmoFile, 'utf8') : '';
+  const osmoBar = osmoHtml.match(/<aside\b[^>]*data-sticky-cta[\s\S]*?<\/aside>/)?.[0] ?? '';
+  const osmoText = waText(waLinks(osmoBar)[0] ?? 'https://wa.me/?text=');
+  check(
+    osmoText === `Hola OrigenLab, quiero cotizar el ${osmo.name}.`,
+    `WhatsApp en la barra fija del ${osmo.name}: nombra el modelo (${osmoText})`,
+  );
 }
 
 /* -- 5. Formulario de cotización ------------------------------------------- */
@@ -1007,10 +1031,10 @@ if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
   });
   check((await quote.isVisible()) && inView, 'Sticky CTA: «Solicitar cotización» visible tras 200 px de scroll');
 
-  // WhatsApp: el parámetro `text` nombra el modelo y la marca (no sólo el enlace).
+  // WhatsApp: el parámetro `text` nombra el modelo (no sólo el enlace); la marca ya no se exige.
   const wa = await bar.locator('a[href^="https://wa.me/"]').getAttribute('href');
   const text = new URL(wa ?? 'https://wa.me/').searchParams.get('text') ?? '';
-  check(/\bUP400St\b/.test(text) && /Hielscher/.test(text), `WhatsApp URL: el parámetro text nombra el modelo y la marca (${text.slice(0, 60)}…)`);
+  check(text === 'Hola OrigenLab, quiero cotizar el UP400St.', `WhatsApp URL: el parámetro text nombra el modelo (${text.slice(0, 60)})`);
   await context.close();
 }
 

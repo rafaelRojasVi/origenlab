@@ -4,7 +4,7 @@ import { buyingSteps, type ProcessStep } from '../../data/consultation';
 /**
  * Un procedimiento como secuencia vertical con un filete continuo: se lee como
  * pasos, no como columnas iguales. Por defecto, los cuatro pasos de compra
- * (`buyingSteps`): la portada los muestra en `summary` (sólo el título) y
+ * (`buyingSteps()`): la portada los muestra en `summary` (sólo el título) y
  * `/como-comprar/` completos, junto con los pasos de la asesoría.
  */
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
   class?: string;
 }
 
-const { steps = buyingSteps, summary = false, class: className } = Astro.props;
+const { steps = buyingSteps(), summary = false, class: className } = Astro.props;
 ---
 
 <ol class:list={['steps', summary && 'steps--summary', className]}>

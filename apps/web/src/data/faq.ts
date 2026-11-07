@@ -1,6 +1,7 @@
 /**
  * Preguntas frecuentes — respuestas genéricas y veraces; sin plazos ni marcas inventadas.
  */
+import { publicClaim } from './claims';
 import { company } from './company';
 import { contact } from './contact';
 
@@ -50,3 +51,53 @@ export const faqItems: FaqItem[] = [
       ' (confirmar por el canal que use).',
   },
 ];
+
+export interface BuyingFaq {
+  q: string;
+  a: string;
+}
+
+/**
+ * Preguntas de compra para la ficha del modelo (tablero «Modelo»). Cada
+ * respuesta que cita una afirmación la toma de `publicClaim`, y una pregunta
+ * se descarta cuando su afirmación no está aprobada.
+ *
+ * Excepción deliberada: «¿Cómo se paga?». El abono 50/50 no está aprobado para
+ * el sitio público, así que la pregunta no se descarta sino que responde
+ * «Condiciones de pago en la cotización.» y sólo cita la proporción si el
+ * registro la aprueba. No hay pregunta de garantía: el sitio no la declara.
+ *
+ * `resolve` es la puerta de las afirmaciones; las pruebas pasan otra.
+ */
+export function buyingFaqs(resolve: (id: string) => string | undefined = publicClaim): BuyingFaq[] {
+  const faqs: BuyingFaq[] = [];
+
+  if (resolve('cotizacion-mismo-dia-habil')) {
+    faqs.push({
+      q: '¿Cuánto demora la cotización?',
+      a: 'Cotizamos el mismo día hábil. Cuéntenos su aplicación para ajustar la cotización al equipo.',
+    });
+  }
+  if (resolve('despacho-todo-chile')) {
+    faqs.push({ q: '¿Despachan fuera de Santiago?', a: 'Despachamos a todo Chile.' });
+  }
+  if (resolve('puesta-en-marcha-con-fabrica')) {
+    faqs.push({
+      q: '¿Incluye puesta en marcha y capacitación?',
+      a: 'Ofrecemos puesta en marcha y capacitación con fábrica. Las condiciones quedan indicadas en su cotización.',
+    });
+  }
+  const payment = resolve('pago-50-50');
+  faqs.push({
+    q: '¿Cómo se paga?',
+    a: payment ? `${payment}.` : 'Condiciones de pago en la cotización.',
+  });
+  if (resolve('vende-mercado-publico')) {
+    faqs.push({
+      q: '¿Pueden vender por Mercado Público?',
+      a: 'Sí, vendemos por Mercado Público y participamos en licitaciones. Indíquenos el número de la licitación al cotizar.',
+    });
+  }
+
+  return faqs;
+}

@@ -44,6 +44,12 @@ export interface Claim {
   visibility: 'public' | 'internal';
   /** Por qué no se publica, cuando corresponda. */
   note?: string;
+  /**
+   * Otras redacciones públicas de la misma afirmación. Cuando la afirmación no
+   * está aprobada, `validate:dist` vigila cada variante igual que `text`, para
+   * que una paráfrasis no la publique por la puerta de atrás.
+   */
+  variants?: readonly string[];
 }
 
 export const claims: readonly Claim[] = [
@@ -119,6 +125,87 @@ export const claims: readonly Claim[] = [
     approvedOn: '2026-09-06',
     status: 'approved',
     visibility: 'public',
+  },
+  {
+    id: 'cotizacion-mismo-dia-habil',
+    text: 'Cotización el mismo día hábil',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; canvas «Sitio OrigenLab 2027»',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    variants: ['Cotización el mismo día', 'mismo día hábil'],
+    note:
+      'Promesa de servicio aprobada por el titular. Distinta de la entrega: no declara plazo de despacho ni de puesta en marcha.',
+  },
+  {
+    id: 'pago-50-50',
+    text: 'Pago 50 % al pedido, 50 % contra entrega',
+    value: 50,
+    source: null,
+    measuredOn: null,
+    approvedBy: null,
+    approvedOn: null,
+    status: 'proposed',
+    visibility: 'internal',
+    variants: ['50 % al pedido', '50 % contra entrega'],
+    note:
+      'Propuesta del brief, NO aprobada para el sitio público (titular, 2026-11-07). Mientras tanto el sitio dice «Condiciones de pago en la cotización». Además falta confirmar que la proporción rija también en las órdenes de compra de Mercado Público.',
+  },
+  {
+    id: 'directo-con-el-fabricante',
+    text: 'Trabajamos directo con el fabricante',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; company.valueLine ya publicada con esa redacción desde 2026-11-07',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Nunca «distribuidor oficial» ni «exclusivo»: sólo lo dice TrustStrip, y sólo para una marca con commercialScopeConfirmed.',
+  },
+  {
+    id: 'despacho-todo-chile',
+    text: 'Despacho a todo Chile',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; ya publicada en ProcessSection',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Cobertura, no plazo ni stock.',
+  },
+  {
+    id: 'puesta-en-marcha-con-fabrica',
+    text: 'Puesta en marcha y capacitación con fábrica',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; company.valueLine ya publicada con esa redacción',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'No es una garantía ni un plazo; las condiciones quedan en la cotización.',
+  },
+  {
+    id: 'vende-mercado-publico',
+    text: 'Vendemos por Mercado Público y participamos en licitaciones',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; redacción fijada por el titular el 2026-11-07',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, decisión escrita del 2026-11-07 sobre el canvas «Sitio OrigenLab 2027»',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Sin calificar: no declara orden de compra ni condiciones de pago propias de Mercado Público.',
   },
   {
     id: 'respuesta-inicial-un-dia-habil',

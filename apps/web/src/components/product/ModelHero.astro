@@ -61,7 +61,7 @@ const photo = imageForEntry(entry);
           <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</a>
           <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry.slug}>
             <Icon name="whatsapp" size={18} />
-            {ctaLabels.whatsapp}
+            {ctaLabels.escribirWhatsapp}
             <span class="sr-only">{entry.name} (abre WhatsApp en una pestaña nueva)</span>
           </a>
         </div>
@@ -92,7 +92,7 @@ const photo = imageForEntry(entry);
       <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</a>
       <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry.slug}>
         <Icon name="whatsapp" size={18} />
-        WhatsApp
+        {ctaLabels.whatsappCorto}
         <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
       </a>
     </div>

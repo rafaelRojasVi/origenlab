@@ -1,3 +1,5 @@
+import { publicClaim } from './claims';
+
 /**
  * Asesoría técnica antes de cotizar.
  *
@@ -109,28 +111,47 @@ export const consultationProcess: readonly ProcessStep[] = [
 
 /**
  * Cómo se compra, en cuatro pasos: la portada los resume y `/como-comprar/` los
- * desarrolla. Los títulos son los que aprobó el titular el 2026-11-07.
+ * desarrolla (tablero HomeA, 2026-11-07).
  *
- * Sin cifras. El plazo de la cotización y la proporción del abono no están
- * aprobados en `claims.ts` y por eso no se escriben: el primer paso dice
- * «rápida» y no un número de horas, y el segundo dice «abono» y no un
- * porcentaje. Las condiciones exactas de cada compra quedan en la cotización.
+ * Cada frase que es una afirmación sale de `publicClaim` y, si el registro no
+ * la aprueba, cae a una redacción que no la contiene. Hoy el abono al pedido
+ * no está aprobado para el sitio público: el tercer paso remite a las
+ * condiciones de la cotización y no nombra proporción alguna. El segundo no
+ * usa «plazos», una palabra de tiempo de entrega que nadie ha aprobado.
+ *
+ * `resolve` es la puerta de las afirmaciones; las pruebas pasan otra.
  */
-export const buyingSteps: readonly ProcessStep[] = [
-  {
-    title: 'Cotización rápida con asesoría técnica',
-    body: 'Nos cuenta su aplicación por el formulario, por correo o por WhatsApp. Revisamos qué exige el método y le enviamos una cotización formal por escrito, con configuración, accesorios y alternativas cuando las hay.',
-  },
-  {
-    title: 'Confirmación con abono al pedido',
-    body: 'Al aceptar la cotización, el pedido se confirma con un abono sobre su valor. La forma de pago y las condiciones quedan escritas en la misma cotización.',
-  },
-  {
-    title: 'Importación y puesta en marcha con fábrica',
-    body: 'Coordinamos la importación y el despacho a cualquier región de Chile. Cuando el equipo lo requiere, la puesta en marcha y la capacitación se hacen con el fabricante. No comprometemos una fecha de entrega antes de que fábrica la confirme.',
-  },
-  {
-    title: 'Saldo contra entrega',
-    body: 'El saldo se paga al recibir el equipo, según las condiciones de la cotización.',
-  },
-];
+export function buyingSteps(resolve: (id: string) => string | undefined = publicClaim): ProcessStep[] {
+  const sameDay = resolve('cotizacion-mismo-dia-habil');
+  const payment = resolve('pago-50-50');
+  const dispatch = resolve('despacho-todo-chile');
+  const startup = resolve('puesta-en-marcha-con-fabrica');
+  const publicSales = resolve('vende-mercado-publico');
+
+  const delivery =
+    dispatch && startup
+      ? `${dispatch}, con ${startup.charAt(0).toLowerCase()}${startup.slice(1)}.`
+      : dispatch
+        ? `${dispatch}.`
+        : startup
+          ? `${startup}.`
+          : 'Coordinamos la entrega con usted.';
+
+  return [
+    {
+      title: 'Cuéntenos la aplicación',
+      body: 'Qué muestra procesa y qué necesita lograr. Respondemos por formulario o WhatsApp.',
+    },
+    {
+      title: sameDay ?? 'Cotización con asesoría técnica',
+      body: `Con ficha técnica del fabricante y condiciones por escrito.${publicSales ? ' También por Mercado Público.' : ''}`,
+    },
+    payment
+      ? { title: 'Abono al pedido', body: `${payment}.` }
+      : { title: 'Confirmación del pedido', body: 'Condiciones de pago en la cotización.' },
+    {
+      title: 'Entrega y puesta en marcha',
+      body: delivery,
+    },
+  ];
+}

@@ -84,10 +84,14 @@ const withheldTexts = claimsSrc
   .split(/\n  \{\n/)
   .slice(1)
   .filter((block) => !/status: 'approved'/.test(block))
-  .map((block) => ({
-    id: block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)',
-    text: block.match(/text: '([^']*)'/)?.[1] ?? '',
-  }))
+  .flatMap((block) => {
+    const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
+    // `variants: [...]` lista otras redacciones públicas de la misma afirmación:
+    // se vigilan igual que `text`, porque una paráfrasis también la publica.
+    const variantList = block.match(/variants: \[([^\]]*)\]/)?.[1] ?? '';
+    const variants = [...variantList.matchAll(/'([^']*)'/g)].map((match) => match[1]);
+    return [block.match(/text: '([^']*)'/)?.[1] ?? '', ...variants].map((text) => ({ id, text }));
+  })
   .filter((claim) => claim.text.length > 0);
 assert(withheldTexts.length > 0, 'claims.ts: se esperaba al menos una afirmación redactada sin aprobar');
 
