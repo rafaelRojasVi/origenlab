@@ -363,24 +363,25 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
    *
    * Con selector, el equipo elegido cambia en el mismo lienzo: un solo WebGL.
    * Sin 3D, el selector cambia la fotografía.
+   *
+   * En pantalla estrecha (< 760 px) o en un equipo de ≤ 4 núcleos (donde la
+   * historia de producto usaría el nivel medio) la escena no se monta durante
+   * la carga: espera al primer gesto o a unos 4 s después de `load`
+   * (`whenSettled`). No se crea un lienzo de prueba (sería otro contexto
+   * WebGL): si el navegador no puede, el renderizador falla y queda la foto.
    */
   import { modelLoaders } from '../../lib/showroom/loaders';
   import type { Showroom } from '../../lib/showroom/scene';
+  import { whenSettled } from '../../lib/showroom/whenSettled';
 
   type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
   const nav = navigator as Nav;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const lowEnd = (nav.deviceMemory !== undefined && nav.deviceMemory < 4) || nav.connection?.saveData === true;
 
-  function webglAvailable() {
-    try {
-      const probe = document.createElement('canvas');
-      return Boolean(probe.getContext('webgl2') || probe.getContext('webgl'));
-    } catch {
-      return false;
-    }
-  }
-  const use3d = !reduced && !lowEnd && webglAvailable();
+  const use3d = !reduced && !lowEnd && 'WebGLRenderingContext' in window;
+  const lazy = innerWidth < 760 || (nav.hardwareConcurrency ?? 8) <= 4;
+  const settled = use3d && lazy ? new Promise<void>((resolve) => whenSettled(resolve)) : Promise.resolve();
 
   function setup(figure: HTMLElement) {
     const canvas = figure.querySelector<HTMLCanvasElement>('[data-showroom-canvas]')!;
@@ -512,7 +513,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
         (entries) => {
           if (entries.some((entry) => entry.isIntersecting)) {
             near.disconnect();
-            void boot();
+            void settled.then(boot);
           }
         },
         { rootMargin: '200px' },

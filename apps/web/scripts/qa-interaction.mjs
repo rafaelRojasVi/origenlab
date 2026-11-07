@@ -257,6 +257,40 @@ console.log('\nSala 3D del hero (1440 px)');
   await context.close();
 }
 
+/**
+ * En un teléfono la sala de la portada tampoco se monta durante la carga: la
+ * fotografía queda sola y la escena llega con el primer gesto o, sin gesto,
+ * unos 4 s después de `load`, cuando el navegador está ocioso.
+ */
+console.log('\nSala 3D del hero (375 px, montaje diferido)');
+{
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    window.__webgl = 0;
+    const original = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+      if (String(kind).startsWith('webgl')) window.__webgl += 1;
+      return original.call(this, kind, ...rest);
+    };
+  });
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  const figure = page.locator('[data-showroom]');
+  check(await page.evaluate(() => window.__webgl) === 0, 'justo después de load no hay contexto WebGL');
+  check(await figure.locator('[data-showroom-photo]:not([hidden]) img').isVisible(), 'la fotografía del equipo se ve desde el principio');
+  await page.waitForTimeout(1500);
+  check(!(await figure.evaluate((el) => el.hasAttribute('data-ready'))), 'sin gesto, 1,5 s después la escena sigue sin montarse');
+  const ready = await figure.evaluate((el) => new Promise((resolve) => {
+    if (el.hasAttribute('data-ready')) return resolve(true);
+    const watch = new MutationObserver(() => el.hasAttribute('data-ready') && resolve(true));
+    watch.observe(el, { attributes: true });
+    setTimeout(() => resolve(false), 20000);
+  }));
+  check(ready, 'sin gesto, la escena se monta sola cuando la página ya está quieta');
+  check(await page.evaluate(() => window.__webgl) === 1, `un solo contexto WebGL (${await page.evaluate(() => window.__webgl)})`);
+  await context.close();
+}
+
 /* -- 2b. Riel de marcas: bucle con control, y sin enlace duplicado -------- */
 
 /**
@@ -669,6 +703,29 @@ for (const story of STORY_PAGES) {
     const touch = await page.locator('[data-story] canvas').evaluate((el) => getComputedStyle(el).touchAction);
     check(touch === 'pan-y', `ProductStory: el lienzo deja desplazar la página con el dedo (touch-action: ${touch})`);
     check(await page.locator('[data-story]').getAttribute('data-mode') === 'tap', 'ProductStory: en un teléfono se avanza por toque');
+    await context.close();
+  }
+
+  console.log(`\nHistoria de producto ${story.path} (375 px, montaje diferido)`);
+  {
+    // En un teléfono la escena no se monta durante la carga: la imagen fija
+    // queda sola hasta el primer gesto (o unos 4 s después de `load`).
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    await page.addInitScript(webglCounter);
+    await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
+    check(await page.evaluate(() => window.__webgl) === 0, 'ProductStory: justo después de load no hay contexto WebGL');
+    await page.waitForTimeout(1500);
+    check(await page.evaluate(() => window.__webgl) === 0, 'ProductStory: sin gesto, 1,5 s después tampoco');
+    check(
+      !(await page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /\/scene-[\w-]+\.[\w-]+\.js/.test(entry.name)))),
+      'ProductStory: ningún fragmento scene-* se descarga antes del gesto',
+    );
+    check(await page.locator('[data-story] [data-story-photo] img').isVisible(), 'ProductStory: la imagen fija se ve desde el principio');
+    await page.locator('[data-story]').scrollIntoViewIfNeeded();
+    check(await waitReady(page), 'ProductStory: el desplazamiento monta la escena');
+    const tier = await page.locator('[data-story] canvas').getAttribute('data-tier');
+    check(tier === 'medium', `ProductStory: y lo hace en el nivel medio (canvas[data-tier="${tier}"])`);
     await context.close();
   }
 

@@ -409,12 +409,18 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
    * pósteres) y apaga esa medición. El nivel bajo nunca crea un contexto WebGL:
    * ni siquiera prueba si existe hasta que se pide «Ver en 3D».
    *
+   * En pantalla estrecha o en el nivel medio la escena tampoco se monta durante
+   * la carga: queda la imagen fija hasta el primer gesto o unos 4 s después de
+   * `load` (`whenSettled`). Sólo el nivel alto en pantalla ancha la monta al
+   * acercarse, como antes; «Ver en 3D» la monta en el acto.
+   *
    * El modelo y la historia se piden aquí (`loaders.ts`) y no dentro de
    * `mountStory`: si ese módulo los importara, el empaquetador metería el mapa
    * de cargadores en `scene-story` y la portada lo cargaría de entrada.
    */
   import { modelLoaders, storyLoaders } from '../../lib/showroom/loaders';
   import type { MountedStory } from '../../lib/showroom/mountStory';
+  import { whenSettled } from '../../lib/showroom/whenSettled';
 
   type Tier = 'high' | 'medium' | 'low';
   type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
@@ -432,6 +438,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     let tier: Tier = forced ? asked! : reduced || saveData ? 'low' : narrow || modest ? 'medium' : 'high';
     let onDemand = false;
     let near = false;
+    let settled = !narrow && tier === 'high';
     let story: MountedStory | null = null;
     let loading = false;
 
@@ -451,7 +458,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     const webgl = () => 'WebGL2RenderingContext' in window;
     const id = root.dataset.story ?? '';
     const boot = () => {
-      if (tier === 'low' || !near || story || loading) return;
+      if (tier === 'low' || !near || !settled || story || loading) return;
       loading = true;
       Promise.resolve()
         .then(() => {
@@ -474,10 +481,17 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     button.addEventListener('click', () => {
       tier = 'medium';
       onDemand = true;
+      settled = true;
       button.hidden = true;
       layout();
       boot();
     });
+    if (!settled && tier !== 'low') {
+      whenSettled(() => {
+        settled = true;
+        boot();
+      });
+    }
     new IntersectionObserver(
       (entries) => {
         near = entries.some((entry) => entry.isIntersecting);
