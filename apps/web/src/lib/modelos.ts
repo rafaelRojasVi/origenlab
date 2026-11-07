@@ -11,6 +11,7 @@
  * se generan para las otras cinco familias.
  */
 import type { Modelo } from '../content.config';
+import { isShownOnHome } from '../data/brands';
 import { equipmentScope } from '../data/equipmentScope';
 import { products } from '../data/products';
 import { imageForModel, imageForProduct, type ProductImageRecord } from '../data/productImages';
@@ -30,13 +31,47 @@ export interface FamilyInfo {
   question: string;
 }
 
-const SHORT: Record<FamilySlug, { scopeId: string; short: string }> = {
-  sonicacion: { scopeId: 'sonicacion', short: 'Sonicación' },
-  dispersion: { scopeId: 'dispersion-homogeneizacion', short: 'Dispersión' },
-  'pesaje-humedad': { scopeId: 'pesaje-humedad', short: 'Pesaje y humedad' },
-  osmometria: { scopeId: 'osmometria', short: 'Osmometría' },
-  electroforesis: { scopeId: 'electroforesis', short: 'Electroforesis' },
-  centrifugacion: { scopeId: 'centrifugacion', short: 'Centrifugación' },
+/**
+ * `verb` y `cardLine` son el texto de las tarjetas de la portada (tablero HomeA):
+ * lo que el laboratorio hace con la muestra, no lo que el equipo es.
+ */
+const SHORT: Record<FamilySlug, { scopeId: string; short: string; verb: string; cardLine: string }> = {
+  sonicacion: {
+    scopeId: 'sonicacion',
+    short: 'Sonicación',
+    verb: 'Sonicar',
+    cardLine: 'Rompe células y extrae compuestos con ultrasonido de potencia controlada.',
+  },
+  dispersion: {
+    scopeId: 'dispersion-homogeneizacion',
+    short: 'Dispersión',
+    verb: 'Dispersar',
+    cardLine: 'Homogeneiza y emulsiona la muestra antes del análisis.',
+  },
+  'pesaje-humedad': {
+    scopeId: 'pesaje-humedad',
+    short: 'Pesaje y humedad',
+    verb: 'Pesar',
+    cardLine: 'Masa y humedad de la muestra, de la balanza a la termobalanza.',
+  },
+  osmometria: {
+    scopeId: 'osmometria',
+    short: 'Osmometría',
+    verb: 'Medir osmolalidad',
+    cardLine: 'Cuantifica la concentración de solutos de una muestra líquida.',
+  },
+  electroforesis: {
+    scopeId: 'electroforesis',
+    short: 'Electroforesis',
+    verb: 'Separar',
+    cardLine: 'Separa proteínas y ácidos nucleicos por tamaño y carga.',
+  },
+  centrifugacion: {
+    scopeId: 'centrifugacion',
+    short: 'Centrifugación',
+    verb: 'Centrifugar',
+    cardLine: 'Separa fases y sedimenta sólidos con rotor y velocidad a medida.',
+  },
 };
 
 export function familyInfo(slug: FamilySlug): FamilyInfo {
@@ -119,4 +154,46 @@ export function keyStats(entry: Modelo, count = 3): Modelo['specs'] {
 /** Orden estable de una lista de modelos: marca y nombre. */
 export function byBrandAndName(a: Modelo, b: Modelo): number {
   return a.brand.localeCompare(b.brand) || a.name.localeCompare(b.name, 'es', { numeric: true });
+}
+
+export interface HomeFamilyCard {
+  slug: FamilySlug;
+  short: string;
+  verb: string;
+  cardLine: string;
+  /** Nombre de la propiedad CSS con la tinta de la familia (`--color-family-*`). */
+  colorVar: string;
+  /** Índice de dos cifras, en el orden de `equipmentScope`. */
+  numeral: string;
+  href: string;
+  /** Hasta dos nombres de modelo, tal como están en la colección. */
+  models: string[];
+}
+
+/**
+ * Tarjetas de familia de la portada, en el orden de `equipmentScope`. Los
+ * modelos que nombra cada una salen de la colección: los de marcas ocultas en
+ * la portada no cuentan, y los que tienen sala 3D (`showroom_id`) van primero.
+ */
+export function homeFamilyCards(all: readonly Modelo[]): HomeFamilyCard[] {
+  return equipmentScope.map((scope, index) => {
+    const slug = familyForScope(scope.id);
+    if (!slug) throw new Error(`modelos: el alcance «${scope.id}» no tiene familia en la colección`);
+    const { short, verb, cardLine } = SHORT[slug];
+    const models = all
+      .filter((entry) => entry.family === slug && isShownOnHome(entry.brand))
+      .sort((a, b) => Number(Boolean(b.showroom_id)) - Number(Boolean(a.showroom_id)) || byBrandAndName(a, b))
+      .slice(0, 2)
+      .map((entry) => entry.name);
+    return {
+      slug,
+      short,
+      verb,
+      cardLine,
+      colorVar: `--color-family-${slug === 'pesaje-humedad' ? 'pesaje' : slug}`,
+      numeral: String(index + 1).padStart(2, '0'),
+      href: familyHref(slug),
+      models,
+    };
+  });
 }

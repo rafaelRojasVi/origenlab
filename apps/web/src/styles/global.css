@@ -83,25 +83,20 @@
   --color-teal-50: #f0fdfa;
 
   /*
-   * Familias de equipo. Seis tintas, y sólo para la constelación del hero y la
-   * fila del índice que le corresponde.
+   * Familias de equipo (`--color-family-*`, declaradas más abajo en
+   * `@theme static`). Seis tintas, y sólo para el punto de color de la tarjeta
+   * de cada familia en la portada.
    *
    * El sistema tiene un acento, el teal, y sigue teniéndolo: estas seis no son
    * un segundo acento suelto sino una escala de identificación, y no aparecen
-   * en ningún otro sitio del sitio. Existen porque el hero tiene que decir de
-   * un vistazo que hay seis capacidades distintas, y seis puntos del mismo
+   * en ningún otro sitio del sitio. Existen porque la portada tiene que decir
+   * de un vistazo que hay seis capacidades distintas, y seis puntos del mismo
    * color dicen lo contrario.
    *
    * Las seis están medidas: todas superan 5,6:1 sobre papel y sobre superficie,
    * de modo que pueden teñir texto y no sólo un punto. Centrifugación reutiliza
    * el teal del sistema en vez de inventar un séptimo verde.
    */
-  --color-family-sonicacion: #1d4f7c;
-  --color-family-dispersion: #6b3f96;
-  --color-family-centrifugacion: #115e59;
-  --color-family-pesaje: #7d5310;
-  --color-family-osmometria: #15697f;
-  --color-family-electroforesis: #8f2f4f;
 
   /* Page shell */
   --spacing-gutter: 1.25rem;
@@ -110,6 +105,15 @@
 /* Estáticos: Tailwind poda las variables de @theme que ningún utilitario usa, y
    estos las usan los componentes de fases posteriores. */
 @theme static {
+  /* Tintas de familia (ver el comentario de arriba): la portada las pide por
+     nombre de propiedad desde datos, así que Tailwind no puede verlas usadas. */
+  --color-family-sonicacion: #1d4f7c;
+  --color-family-dispersion: #6b3f96;
+  --color-family-centrifugacion: #115e59;
+  --color-family-pesaje: #7d5310;
+  --color-family-osmometria: #15697f;
+  --color-family-electroforesis: #8f2f4f;
+
   /* Radios: 2 px para etiquetas y tablas, 10 botones, 16 tarjetas. */
   --radius-edge: 2px;
   --radius-btn: 0.625rem;
@@ -547,49 +551,53 @@
     margin-top: 1rem;
   }
 
-  /* --- Revelado al desplazarse --------------------------------------------
-   * Mejora progresiva estricta. El estado inicial oculto sólo existe cuando el
-   * script ha marcado el documento con `data-reveal-ready`, de modo que sin
-   * JavaScript no se oculta nada nunca y la portada se lee entera. Todo el
-   * bloque vive bajo `prefers-reduced-motion: no-preference`, así que con
-   * movimiento reducido tampoco llega a aplicarse.
-   *
-   * Es una transición, no una animación en bucle: no hay parallax, no hay
-   * secuestro del desplazamiento y ningún contenido depende del movimiento
-   * para entenderse. Ningún elemento de la primera pantalla lleva la marca,
-   * porque ahí el script llegaría después del primer pintado y se vería el
-   * parpadeo.
-   */
+  /* --- Portada: ritmo de secciones y revelado -----------------------------
+   * `.home-sec` pone el aire superior de cada sección; `.home-head` es el par
+   * etiqueta mono + titular que abre cada una. `.rv` revela al entrar en
+   * cuadro con una animación ligada al desplazamiento (CSS puro, sin script):
+   * sin soporte de `animation-timeline` o con movimiento reducido no hace nada y
+   * el contenido está siempre pintado. `backwards` y no `both`: al terminar el
+   * rango la animación deja de aplicarse y el hover de la tarjeta sigue
+   * pudiendo moverla. Nada de la primera pantalla lleva `.rv`.
+   * ------------------------------------------------------------------------- */
+  .home-sec {
+    padding-top: clamp(5rem, 10vw, 9rem);
+  }
+  .home-head {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: clamp(2.5rem, 5vw, 4rem);
+    .t-label {
+      color: var(--color-teal-700);
+    }
+  }
+  .home-h2 {
+    font-size: clamp(2.125rem, 4.6vw, 3.75rem);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+  }
   @media (prefers-reduced-motion: no-preference) {
-    [data-reveal-ready] [data-reveal] {
-      opacity: 0;
-      transform: translateY(0.75rem);
-      transition:
-        opacity 500ms cubic-bezier(0.22, 0.61, 0.36, 1),
-        transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
-    }
-    [data-reveal-ready] [data-reveal].is-revealed {
-      opacity: 1;
-      transform: none;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='1'] {
-      transition-delay: 70ms;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='2'] {
-      transition-delay: 140ms;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='3'] {
-      transition-delay: 210ms;
-    }
-
-    /* Al imprimir no hay desplazamiento que dispare nada: sin esto, una sección
-       aún sin revelar saldría en blanco sobre el papel. */
-    @media print {
-      [data-reveal-ready] [data-reveal] {
-        opacity: 1;
-        transform: none;
-        transition: none;
+    @supports (animation-timeline: view()) {
+      .rv {
+        animation-name: rv;
+        animation-timing-function: linear;
+        animation-fill-mode: backwards;
+        animation-timeline: view();
+        animation-range: entry 0% entry 35%;
       }
     }
+  }
+}
+
+@keyframes rv {
+  from {
+    opacity: 0.15;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

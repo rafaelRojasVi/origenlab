@@ -1,0 +1,155 @@
+---
+import Button from '../ui/Button.astro';
+import Showroom from './Showroom.astro';
+import { company } from '../../data/company';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { site } from '../../config/site';
+
+/**
+ * Portada, primera pantalla (tablero HomeA): sala oscura bajo la cabecera de
+ * tinta. Titular, línea de valor, las dos acciones de «Mensaje B» y, debajo, la
+ * sala 3D en un marco de papel con las tareas debajo.
+ *
+ * El titular B sólo sale si la promesa «cotización el mismo día hábil» está
+ * aprobada en el registro de afirmaciones (`headlineB`, que decide
+ * `pages/index.astro`); si no, el titular es el de siempre. Cada grupo de
+ * palabras es un `<span>` que sube 12 px con un escalón de 60 ms.
+ *
+ * Todo el movimiento vive bajo `prefers-reduced-motion: no-preference`: con
+ * movimiento reducido la primera pantalla se pinta entera y quieta. Nada de
+ * aquí lleva `.rv`: el revelado al desplazarse empieza en la sección siguiente.
+ */
+interface Props {
+  headlineB: boolean;
+}
+const { headlineB } = Astro.props;
+
+const title = headlineB
+  ? ['Cotización', 'el mismo día.', 'Directo con', 'el fabricante.']
+  : ['Equipos', 'para', 'cada etapa', 'de su muestra.'];
+---
+
+<section class="hero on-ink" aria-labelledby="hero-title">
+  <div class="shell hero__copy">
+    <p class="t-label hero__eyebrow"><i aria-hidden="true"></i>Equipos para laboratorio · todo Chile</p>
+    <h1 id="hero-title" class="hero__title">
+      {title.map((group, index) => <><span>{group}</span>{index < title.length - 1 && ' '}</>)}
+    </h1>
+    <p class="hero__sub">{company.homeHeroLine}</p>
+    <div class="hero__cta">
+      <Button href={site.quoteHref} tone="ink" track="cotizacion_click">{ctaLabels.solicitarCotizacion}</Button>
+      <Button href={buildWhatsAppQuoteUrl()} variant="whatsapp" tone="ink" external track="whatsapp_click">
+        {ctaLabels.porWhatsapp}
+      </Button>
+    </div>
+  </div>
+
+  <div class="shell hero__scene">
+    <Showroom
+      tone="ink"
+      frame="wide"
+      items={[
+        { id: 'hielscher-up400st', task: 'Sonicar' },
+        { id: 'ika-t25-digital', task: 'Dispersar' },
+        { id: 'ortoalresa-digicen-22-r', task: 'Centrifugar' },
+        { id: 'ohaus-pioneer-px', task: 'Pesar' },
+        { id: 'adam-highland', task: 'Pesar en terreno' },
+        { id: 'loeser-i-osmometer', task: 'Osmolalidad' },
+        { id: 'serva-bluevertical-prime', task: 'Electroforesis' },
+      ]}
+    />
+  </div>
+</section>
+
+<style>
+  .hero {
+    background-color: var(--color-ink-950);
+    color: var(--color-onink-100);
+    padding: clamp(3.5rem, 9vw, 7rem) 0 clamp(4rem, 9vw, 7.5rem);
+    text-align: center;
+  }
+  .hero__eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    color: var(--color-onink-300);
+  }
+  .hero__eyebrow i {
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--color-teal-500);
+  }
+  .hero__title {
+    max-width: 13.5ch;
+    margin: 1.75rem auto 0;
+    color: var(--color-paper);
+    font-size: clamp(42px, 7.2vw, 100px);
+    font-weight: 800;
+    line-height: 0.98;
+    letter-spacing: -0.03em;
+  }
+  .hero__title span {
+    display: inline-block;
+  }
+  .hero__sub {
+    max-width: 34em;
+    margin: 1.75rem auto 0;
+    color: var(--color-onink-300);
+    font-size: clamp(17px, 1.6vw, 21px);
+    line-height: 1.55;
+  }
+  .hero__cta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 2.5rem;
+  }
+  .hero__scene {
+    margin-top: clamp(3.5rem, 7vw, 5.5rem);
+  }
+  @media (max-width: 639.98px) {
+    .hero__cta :global(.btn) {
+      width: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .hero__title span {
+      animation: rise 400ms ease-out backwards;
+    }
+    .hero__title span:nth-child(2) {
+      animation-delay: 60ms;
+    }
+    .hero__title span:nth-child(3) {
+      animation-delay: 120ms;
+    }
+    .hero__title span:nth-child(4) {
+      animation-delay: 180ms;
+    }
+    .hero__sub {
+      animation: rise 400ms ease-out 240ms backwards;
+    }
+    .hero__cta {
+      animation: rise 400ms ease-out 300ms backwards;
+    }
+    .hero__scene {
+      animation: fadeup 800ms cubic-bezier(0.2, 0.7, 0.2, 1) 380ms backwards;
+    }
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+    }
+    @keyframes fadeup {
+      from {
+        opacity: 0;
+        transform: translateY(28px);
+      }
+    }
+  }
+</style>

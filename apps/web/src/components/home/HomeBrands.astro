@@ -1,0 +1,76 @@
+---
+import BrandLogo from '../ui/BrandLogo.astro';
+import { brandRailOrder } from '../../data/brands';
+import { publicClaim } from '../../data/claims';
+import { getBrandById } from '../../lib/catalog';
+
+/**
+ * Marcas (tablero HomeA): una fila fija de logotipos entre dos filetes, en el
+ * orden de la lista cerrada (`brandRailOrder`, sin las marcas ocultas en la
+ * portada). Sin marquesina ni control de pausa: no se mueve, y en teléfono se
+ * desplaza con el dedo. El logotipo va con alt vacío porque el enlace ya lleva
+ * el nombre de la marca. El riel no lleva animación propia: sólo el contenedor
+ * se revela una vez al entrar en cuadro.
+ */
+const heading = publicClaim('directo-con-el-fabricante');
+const rail = brandRailOrder
+  .map((id) => getBrandById(id))
+  .filter((brand): brand is NonNullable<typeof brand> => brand !== undefined);
+---
+
+<section class="shell home-sec" id="marcas" aria-labelledby={heading ? 'marcas-title' : undefined} aria-label={heading ? undefined : 'Marcas'} data-home-brands>
+  <div class="home-head rv">
+    <p class="t-label">Marcas</p>
+    {heading && <h2 id="marcas-title" class="home-h2">{heading}</h2>}
+  </div>
+  <div class="rv">
+    <ul class="home-rail">
+      {
+        rail.map((brand) => (
+          <li>
+            <a href={`/marcas/${brand.slug}/`}>
+              <BrandLogo brand={brand} scale={1.25} alt="" class="home-rail__logo" />
+              <span class="home-rail__name sr-only">{brand.name}</span>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<style>
+  .home-rail {
+    /* Contiene los nombres `sr-only` (absolutos): sin esto escapan del desplazamiento. */
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2rem;
+    margin: 0;
+    padding: 2.25rem 0;
+    list-style: none;
+    border-block: 1px solid var(--color-hairline);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .home-rail::-webkit-scrollbar {
+    display: none;
+  }
+  .home-rail li {
+    flex: none;
+  }
+  .home-rail a {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+  }
+  .home-rail :global(.home-rail__logo) {
+    opacity: 0.55;
+    transition: opacity 150ms ease-out;
+  }
+  .home-rail a:hover :global(.home-rail__logo),
+  .home-rail a:focus-visible :global(.home-rail__logo) {
+    opacity: 1;
+  }
+</style>

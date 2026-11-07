@@ -1,0 +1,98 @@
+---
+import { industries } from '../../data/industries';
+
+/**
+ * Industrias (tablero HomeA): una fila bajo un filete de tinta, con una marca
+ * de 1 × 12 px sobre cada enlace y un subrayado que crece al pasar el cursor.
+ * Sólo nombres cortos y destino: no dice a quién se le ha vendido.
+ */
+---
+
+<section class="shell home-sec home-ind" id="industrias" aria-labelledby="industrias-title">
+  <div class="home-head rv">
+    <h2 id="industrias-title" class="t-label">Industrias</h2>
+  </div>
+  <nav aria-labelledby="industrias-title" class="rv">
+    <ul class="ind">
+      {
+        industries.map((industry) => (
+          <li data-industry>
+            <a href={industry.href}><span>{industry.name}</span></a>
+          </li>
+        ))
+      }
+    </ul>
+  </nav>
+</section>
+
+<style>
+  .home-ind {
+    padding-bottom: clamp(5rem, 10vw, 9rem);
+  }
+  /* Es una etiqueta, no un titular de sección: sin el aire de `.home-head`. */
+  .home-ind .home-head {
+    margin-bottom: 2rem;
+  }
+  .ind {
+    display: flex;
+    justify-content: space-between;
+    gap: 1.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .ind a {
+    position: relative;
+    display: block;
+    padding-top: 1.25rem;
+    font-size: clamp(17px, 1.7vw, 22px);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .ind a::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: -1px;
+    width: 1px;
+    height: 12px;
+    background-color: var(--color-ink-950);
+  }
+  .ind span {
+    padding-bottom: 3px;
+    background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat;
+    transition: background-size 200ms ease-out;
+  }
+  .ind a:hover span {
+    background-size: 100% 1px;
+  }
+  @media (max-width: 1023.98px) {
+    .ind {
+      flex-wrap: wrap;
+      gap: 0 1.5rem;
+    }
+  }
+  @media (max-width: 639.98px) {
+    .ind {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0 1rem;
+      border-top: 0;
+    }
+    .ind a {
+      min-height: 3.5rem;
+      padding: 1.125rem 0;
+      border-top: 1px solid var(--color-ink-950);
+    }
+    .ind a::before {
+      height: 8px;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ind span {
+      transition: none;
+    }
+  }
+</style>

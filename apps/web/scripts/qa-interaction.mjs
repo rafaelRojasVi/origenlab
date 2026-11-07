@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * QA de interacción sobre `dist/`: teclado, menú móvil, sala 3D del hero,
- * riel de marcas, movimiento reducido y enlaces internos. Complementa
+ * fila de marcas, movimiento reducido y enlaces internos. Complementa
  * `qa-screenshots.mjs`, que cubre la parte visual.
  *
  * Ejecutar: node scripts/qa-interaction.mjs
@@ -20,6 +20,16 @@ function check(condition, message) {
   console.log(`${condition ? '  ok' : '   x'} ${message}`);
   if (!condition) failed = true;
 }
+
+/* Lecturas de la fuente para los chequeos de la portada: independientes de dist/. */
+const brandsSource = readFileSync(join(root, 'src/data/brands.ts'), 'utf8');
+const idList = (name) =>
+  [...(brandsSource.match(new RegExp(`export const ${name}[^=]*=\\s*\\[([^\\]]*)\\]`))?.[1] ?? '').matchAll(/'([\w-]+)'/g)].map((m) => m[1]);
+const HIDDEN_ON_HOME = idList('HOME_HIDDEN_BRAND_IDS');
+const claimApproved = (id) => {
+  const block = readFileSync(join(root, 'src/data/claims.ts'), 'utf8').match(new RegExp(`id: '${id}',[\\s\\S]*?\\n  \\},`))?.[0] ?? '';
+  return /status: 'approved'/.test(block) && /visibility: 'public'/.test(block);
+};
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -367,14 +377,16 @@ console.log('\nSala 3D del hero (1440 px)');
   }
   check(foreign.length === 0, `la sala no pide nada fuera del dominio (${foreign.join(', ') || 'nada'})`);
 
-  const rows = page.locator('[data-family-row]');
-  check(await rows.count() === 6, `seis filas de índice (${await rows.count()})`);
-  const hrefs = await rows.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
-  check(
-    hrefs.every((href) => typeof href === 'string' && href.startsWith('/') && href.endsWith('/')),
-    `las seis filas llevan a una ruta interna (${hrefs.join(', ')})`,
-  );
-  check(new Set(hrefs).size === 6, 'las seis filas llevan a destinos distintos');
+  // Marco ancho: el escenario es 16/9 y las tareas van debajo, no encima.
+  const geo = await page.evaluate(() => {
+    const box = (el) => el.getBoundingClientRect();
+    const stage = box(document.querySelector('[data-showroom] .showroom__stage'));
+    const chips = box(document.querySelector('[data-showroom] .showroom__tasks'));
+    return { ratio: stage.width / stage.height, stageBottom: stage.bottom, chipsTop: chips.top, width: stage.width };
+  });
+  check(Math.abs(geo.ratio - 16 / 9) <= 0.02, `escenario 16/9 a 1440 px (${geo.ratio.toFixed(3)})`);
+  check(geo.chipsTop > geo.stageBottom, `las tareas van debajo del escenario (${Math.round(geo.chipsTop)} > ${Math.round(geo.stageBottom)})`);
+  check(geo.width <= 1120.5, `el marco mide como mucho 1120 px (${Math.round(geo.width)})`);
 
   await context.close();
 }
@@ -399,6 +411,16 @@ console.log('\nSala 3D del hero (375 px, montaje diferido)');
   await page.goto(`${base}/`, { waitUntil: 'load' });
   const figure = page.locator('[data-showroom]');
   check(await page.evaluate(() => window.__webgl) === 0, 'justo después de load no hay contexto WebGL');
+  const phone = await page.evaluate(() => {
+    const stage = document.querySelector('[data-showroom] .showroom__stage').getBoundingClientRect();
+    const chips = [...document.querySelectorAll('[data-showroom] .showroom__task')].map((el) => el.getBoundingClientRect().height);
+    const control = document.querySelector('[data-showroom] .showroom__tasks');
+    return { ratio: stage.width / stage.height, minChip: Math.min(...chips), scrolls: control.scrollWidth > control.clientWidth };
+  });
+  check(Math.abs(phone.ratio - 4 / 3) <= 0.02, `escenario 4/3 en teléfono (${phone.ratio.toFixed(3)})`);
+  check(phone.minChip >= 44, `las tareas miden al menos 44 px en teléfono (${phone.minChip})`);
+  check(phone.scrolls, 'las tareas se desplazan en horizontal en teléfono');
+
   check(await figure.locator('[data-showroom-photo]:not([hidden]) img').isVisible(), 'la fotografía del equipo se ve desde el principio');
   await page.waitForTimeout(1500);
   check(!(await figure.evaluate((el) => el.hasAttribute('data-ready'))), 'sin gesto, 1,5 s después la escena sigue sin montarse');
@@ -413,13 +435,13 @@ console.log('\nSala 3D del hero (375 px, montaje diferido)');
   await context.close();
 }
 
-/* -- 2b. Riel de marcas: bucle con control, y sin enlace duplicado -------- */
+/* -- 2b. Riel de marcas: fila fija, sin movimiento ------------------------- */
 
 /**
- * Un bucle permanente sólo es admisible si se puede parar (WCAG 2.2.2), y una
- * marquesina sólo es admisible si su copia no duplica el contenido para quien
- * navega con lector de pantalla o con el tabulador. Las dos cosas se comprueban
- * aquí porque las dos se rompen en silencio: el riel seguiría moviéndose igual.
+ * La fila de marcas de la portada es estática: ni marquesina ni control de
+ * pausa (no hay movimiento que parar, WCAG 2.2.2). Las seis marcas visibles en
+ * la portada, en el orden de la lista cerrada; OHAUS queda fuera por decisión
+ * del titular (`HOME_HIDDEN_BRAND_IDS`).
  */
 console.log('\nRiel de marcas (1440 px)');
 {
@@ -427,23 +449,8 @@ console.log('\nRiel de marcas (1440 px)');
   const page = await context.newPage();
   await page.goto(`${base}/`, { waitUntil: 'load' });
 
-  const rail = page.locator('[data-rail]');
-  check(await rail.count() === 1, 'hay exactamente un riel en la portada');
-  check(
-    await rail.evaluate((el) => el.hasAttribute('data-rail-ready')),
-    'el script habilita el movimiento (data-rail-ready)',
-  );
-
-  const track = page.locator('[data-rail-track]');
-  const playing = await track.evaluate((el) => {
-    const style = getComputedStyle(el);
-    return { name: style.animationName, state: style.animationPlayState };
-  });
-  check(playing.name !== 'none', `la pista tiene animación (${playing.name})`);
-  check(playing.state === 'running', 'la pista se mueve al cargar');
-
-  // Las seis de la portada (OHAUS no va en la portada: HOME_HIDDEN_BRAND_IDS), en el orden de
-  // la lista cerrada y sin repetir enlaces.
+  const brands = page.locator('[data-home-brands]');
+  check(await brands.count() === 1, 'hay exactamente un riel de marcas en la portada');
   const ORDER = [
     'Hielscher Ultrasonics',
     'Ortoalresa',
@@ -452,67 +459,28 @@ console.log('\nRiel de marcas (1440 px)');
     'Löser Messtechnik',
     'SERVA Electrophoresis',
   ];
-  const names = await page.locator('[data-rail] .rail__set:not([aria-hidden]) .rail__name').allTextContents();
+  const expected = idList('APPROVED_BRAND_IDS').filter((id) => !HIDDEN_ON_HOME.includes(id)).length;
+  const links = await brands.locator('.home-rail a').count();
+  check(links === expected && links === ORDER.length, `un enlace por marca visible en la portada (${links} de ${expected})`);
+  const names = await brands.locator('.home-rail__name').allTextContents();
   check(
     JSON.stringify(names.map((name) => name.trim())) === JSON.stringify(ORDER),
     `el orden del riel es el de la lista cerrada (${names.join(', ')})`,
   );
-
-  // Sólo la pista: el enlace de la entradilla («Ver las marcas en detalle») no
-  // es una marca y contarlo escondería un duplicado real.
-  const links = await page.locator('[data-rail-track] a').count();
-  check(links === 6, `seis enlaces de marca en la pista, no doce (${links})`);
-  const clone = page.locator('[data-rail] .rail__set--clone');
   check(
-    await clone.evaluate((el) => el.getAttribute('aria-hidden') === 'true'),
-    'la copia del bucle está oculta a tecnologías de asistencia',
+    await brands.locator('.home-rail').evaluate((el) => el.getAnimations({ subtree: true }).length === 0),
+    'el riel no tiene ninguna animación',
   );
   check(
-    await clone.locator('a, button, [tabindex]').count() === 0,
-    'la copia del bucle no contiene nada enfocable',
+    (await page.locator('[data-rail], [data-rail-toggle]').count()) === 0,
+    'sin control de pausa ni pista de bucle',
   );
-
-  // Igualdad óptica: los siete logotipos comparten opacidad de reposo.
-  const opacities = await page
-    .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
-    .evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
   check(
-    opacities.length === 1,
-    `los siete logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`,
+    await brands.locator('.home-rail__logo').evaluateAll((els) => els.every((el) => el.getBoundingClientRect().width > 0)),
+    'las seis marcas se leen a la vez',
   );
-
-  // Pausa: el cursor, el foco y el control explícito.
-  await page.locator('[data-rail] .rail__viewport').hover();
-  check(
-    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'paused',
-    'el cursor sobre el riel lo detiene',
-  );
-  await page.mouse.move(0, 0);
-
-  await page.locator('[data-rail-track] a').first().focus();
-  check(
-    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'paused',
-    'el foco de teclado en un enlace del riel lo detiene',
-  );
-  await page.locator('h1').first().evaluate((el) => el.focus());
-
-  const toggle = page.locator('[data-rail-toggle]');
-  check(await toggle.isVisible(), 'el control de pausa es visible');
-  await toggle.click();
-  check(
-    await toggle.evaluate((el) => el.getAttribute('aria-pressed') === 'true'),
-    'el control anuncia el estado de pausa',
-  );
-  await page.mouse.move(0, 0);
-  check(
-    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'paused',
-    'con el control pulsado el riel sigue detenido fuera del cursor',
-  );
-  await toggle.click();
-  check(
-    (await track.evaluate((el) => getComputedStyle(el).animationPlayState)) === 'running',
-    'el mismo control lo reanuda',
-  );
+  const opacities = await brands.locator('.home-rail__logo').evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
+  check(opacities.length === 1, `los logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`);
 
   await context.close();
 }
@@ -551,26 +519,14 @@ console.log('\nMovimiento reducido');
     'el fragmento de three.js no se descarga',
   );
 
-  // El riel tiene que ser una fila estática legible, no una marquesina parada:
-  // sin copia del bucle, sin control que no controla nada, y con las siete
-  // marcas visibles a la vez.
-  const rail = page.locator('[data-rail]');
-  check(
-    !(await rail.evaluate((el) => el.hasAttribute('data-rail-ready'))),
-    'el riel no se marca como animado con movimiento reducido',
-  );
-  check(
-    !(await page.locator('[data-rail] .rail__set--clone').isVisible()),
-    'la copia del bucle no se muestra',
-  );
-  check(
-    !(await page.locator('[data-rail-toggle]').isVisible()),
-    'el control de pausa se retira: no hay movimiento que parar',
-  );
+  // El riel es una fila estática y las seis marcas se leen a la vez.
   const visibleLogos = await page
-    .locator('[data-rail] .rail__set:not([aria-hidden]) .rail__logo')
+    .locator('[data-home-brands] .home-rail__logo')
     .evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().width > 0).length);
   check(visibleLogos === 6, `las seis marcas se leen a la vez (${visibleLogos})`);
+  // Sin movimiento, ningún bloque de la portada queda a medio revelar.
+  const faded = await page.evaluate(() => [...document.querySelectorAll('.rv')].filter((el) => getComputedStyle(el).opacity !== '1').length);
+  check(faded === 0, `con movimiento reducido ningún .rv queda atenuado (${faded})`);
 
   await context.close();
 }
@@ -1040,11 +996,13 @@ console.log('\nEnlaces hacia las páginas de familia y de modelo');
 }
 
 /**
- * Portada y `/como-comprar/`: la portada lleva a las seis páginas de familia,
- * tiene seis entradas por sector que llevan a alguna parte, oculta las notas
- * destacadas mientras la colección `aplicaciones` esté vacía y cierra con
- * WhatsApp; la guía de compra tiene cuatro pasos, la sección de compras
- * públicas y la nota de consentimiento con enlace a la política de privacidad.
+ * Portada y `/como-comprar/`: la portada lleva a las seis páginas de familia
+ * con sus modelos tal como salen de la colección, tiene seis industrias que
+ * llevan a alguna parte, titular según el estado de las afirmaciones, oculta
+ * las notas destacadas mientras la colección `aplicaciones` esté vacía, revela
+ * cada `.rv` al desplazarse y cierra con el formulario de cotización y WhatsApp;
+ * la guía de compra tiene cuatro pasos, la sección de compras públicas y la
+ * nota de consentimiento con enlace a la política de privacidad.
  */
 console.log('\nPortada y cómo comprar');
 {
@@ -1059,19 +1017,85 @@ console.log('\nPortada y cómo comprar');
   const missingFamilies = familyPages.filter((href) => !familias.includes(`href="${href}"`));
   check(missingFamilies.length === 0, `Home: families grid links to six family pages (faltan: ${missingFamilies.join(', ') || 'ninguna'})`);
 
-  const industries = [...home.matchAll(/<li\b[^>]*\bdata-industry\b[\s\S]*?<\/ul>/g)].map(([block]) => block);
+  const industries = [...home.matchAll(/<li\b[^>]*\bdata-industry\b[^>]*>[\s\S]*?<\/li>/g)].map(([block]) => block);
   check(
     industries.length === 6 && industries.every((block) => /href="\/[^"]*"/.test(block)),
-    `Home: seis entradas por sector, cada una con un enlace interno (${industries.length})`,
+    `Home: seis industrias, cada una con un enlace interno (${industries.length})`,
   );
   const notes = readdirSync(join(root, 'src/content/aplicaciones')).filter((name) => name.endsWith('.md'));
   check(
     home.includes('data-home-notes') === notes.length > 0,
     `Home: las notas destacadas se muestran sólo si hay notas (${notes.length} notas)`,
   );
-  const band = home.match(/<section\b[^>]*\bclass="band on-ink[\s\S]*?<\/section>/)?.[0] ?? '';
-  check(/<a\b[^>]*href="https:\/\/wa\.me\/[^"]+"[^>]*class="btn btn-primary on-ink/.test(band), 'Home: la banda de cierre lleva el botón de WhatsApp');
+  const band = home.match(/<section\b[^>]*\bclass="[^"]*\bband-wrap\b[\s\S]*?<\/section>/)?.[0] ?? '';
+  check(/<a\b[^>]*href="\/contacto\/"[^>]*class="btn btn-primary on-ink/.test(band) || /<a\b[^>]*class="btn btn-primary on-ink[^"]*"[^>]*href="\/contacto\/"/.test(band), 'Home: la banda de cierre lleva el botón primario al formulario (/contacto/)');
+  check(/<a\b[^>]*href="https:\/\/wa\.me\/[^"]+"[^>]*btn-whatsapp/.test(band) || /btn-whatsapp[^>]*href="https:\/\/wa\.me\//.test(band), 'Home: la banda de cierre lleva el botón de WhatsApp');
+  check(
+    ![...home.matchAll(/<a\b[^>]*>/g)].some(([tag]) => tag.includes('wa.me') && tag.includes('btn-invert')),
+    'Home: ningún enlace de WhatsApp usa la clase retirada btn-invert',
+  );
   check(home.includes('href="/como-comprar/"'), 'Home: enlaza la guía de compra');
+
+  // Tarjetas de familia: seis, con destinos distintos y los modelos de la colección (sin los de marcas ocultas).
+  const models = readdirSync(join(root, 'src/content/modelos'))
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => JSON.parse(readFileSync(join(root, 'src/content/modelos', name), 'utf8')));
+  const expectedFoot = (family) =>
+    models
+      .filter((entry) => entry.family === family && !HIDDEN_ON_HOME.includes(entry.brand))
+      .sort(
+        (a, b) =>
+          Number(Boolean(b.showroom_id)) - Number(Boolean(a.showroom_id)) ||
+          a.brand.localeCompare(b.brand) ||
+          a.name.localeCompare(b.name, 'es', { numeric: true }),
+      )
+      .slice(0, 2)
+      .map((entry) => entry.name)
+      .join(' · ');
+  const headlineB = claimApproved('cotizacion-mismo-dia-habil');
+  const h1Expected = headlineB ? 'Cotización el mismo día. Directo con el fabricante.' : 'Equipos para cada etapa de su muestra.';
+  const bandExpected = headlineB
+    ? 'Le respondemos con una cotización el mismo día hábil, con la ficha técnica del fabricante.'
+    : 'Le respondemos con una cotización por escrito, con la ficha técnica del fabricante.';
+
+  const desktop = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const wide = await desktop.newPage();
+  await wide.goto(`${base}/`, { waitUntil: 'load' });
+  const cards = wide.locator('.home-family-card');
+  check(await cards.count() === 6, `Home: seis tarjetas de familia (${await cards.count()})`);
+  const hrefs = await cards.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
+  check(new Set(hrefs).size === 6 && hrefs.every((href) => href?.startsWith('/') && href.endsWith('/')), `Home: seis destinos internos distintos (${hrefs.join(', ')})`);
+  const foots = await cards.evaluateAll((els) => els.map((el) => el.querySelector('.fam__models')?.textContent?.trim() ?? ''));
+  const wanted = hrefs.map((href) => expectedFoot(href === '/productos/centrifugas/' ? 'centrifugacion' : href.split('/')[2]));
+  check(
+    JSON.stringify(foots) === JSON.stringify(wanted) && wanted.every(Boolean),
+    `Home: cada tarjeta nombra los dos primeros modelos de la colección (${foots.join(' | ')})`,
+  );
+  const hiddenNames = models.filter((entry) => HIDDEN_ON_HOME.includes(entry.brand)).map((entry) => entry.name);
+  check(
+    hiddenNames.length > 0 && !hiddenNames.some((name) => foots.some((foot) => foot.split(' · ').includes(name))),
+    'Home: las tarjetas no nombran modelos de la marca oculta',
+  );
+  const h1 = (await wide.locator('h1').first().textContent())?.replace(/\s+/g, ' ').trim();
+  check(h1 === h1Expected, `Home: el titular sigue el estado de las afirmaciones (${h1})`);
+  const bandBody = (await wide.locator('.band__body').textContent())?.trim();
+  check(bandBody === bandExpected, 'Home: el texto de la banda sigue el estado de las afirmaciones');
+  check(await wide.locator('[data-home-notes]').count() === (notes.length > 0 ? 1 : 0), 'Home: sin notas no hay sección de notas en el DOM');
+
+  // Revelado: cada `.rv` llega a opacidad 1 una vez entero en cuadro; ninguno está en la primera pantalla.
+  const rvCount = await wide.locator('.rv').count();
+  const inFirstScreen = await wide.evaluate(() => [...document.querySelectorAll('.rv')].filter((el) => el.getBoundingClientRect().top < innerHeight - 1 && el.getBoundingClientRect().bottom > 0).length);
+  check(rvCount > 0 && inFirstScreen === 0, `Home: ningún .rv está en la primera pantalla (${inFirstScreen} de ${rvCount})`);
+  const stuck = [];
+  for (let n = 0; n < rvCount; n += 1) {
+    const rv = wide.locator('.rv').nth(n);
+    await rv.evaluate((el) => el.scrollIntoView({ block: 'center', behavior: 'instant' }));
+    await wide.waitForTimeout(300);
+    const opacity = await rv.evaluate((el) => getComputedStyle(el).opacity);
+    if (opacity !== '1') stuck.push(`${n}:${opacity}`);
+  }
+  check(stuck.length === 0, `Home: cada .rv llega a opacidad 1 al verse entero (${stuck.join(', ') || 'todos'})`);
+  await desktop.close();
 
   const guide = read('/como-comprar/');
   const pasos = guide.match(/<section\b[^>]*\bid="pasos"[\s\S]*?<\/section>/)?.[0] ?? '';

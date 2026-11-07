@@ -1,0 +1,138 @@
+---
+import { getCollection } from 'astro:content';
+import Button from '../ui/Button.astro';
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Notas de aplicación destacadas (tablero HomeA). Lee la colección
+ * `aplicaciones` y no dibuja nada, ni siquiera el título, mientras no haya
+ * ninguna nota. Todavía no hay una ruta por nota: cada tarjeta lleva al índice
+ * de aplicaciones. El glob evita pedir la colección vacía, que avisa en cada
+ * build.
+ *
+ * Las notas no declaran familia ni imagen, así que el marco lleva la línea
+ * superior en el teal del sistema y no en la tinta de una familia.
+ */
+const hasNotes = Object.keys(import.meta.glob('../../content/aplicaciones/*.md')).length > 0;
+const notes = hasNotes
+  ? (await getCollection('aplicaciones'))
+      .sort((a, b) => a.data.title.localeCompare(b.data.title, 'es'))
+      .slice(0, 3)
+  : [];
+---
+
+{
+  notes.length > 0 && (
+    <section class="shell home-sec" id="notas" aria-labelledby="notas-title" data-home-notes>
+      <div class="home-head home-notes__head rv">
+        <div class="home-notes__title">
+          <p class="t-label">Notas</p>
+          <h2 id="notas-title" class="home-h2">Aplicaciones, explicadas</h2>
+        </div>
+        <Button href="/aplicaciones/" variant="tertiary">Todas las notas</Button>
+      </div>
+      <ul class="notes">
+        {notes.map((note) => (
+          <li>
+            <a class="note rv" href="/aplicaciones/">
+              <span class="note__ph" aria-hidden="true" />
+              <h3>{note.data.title}</h3>
+              <Icon name="arrow-right" size={18} class="arrow" />
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+<style>
+  .home-notes__head {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+  .home-notes__title {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .notes {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr 1fr;
+    gap: 1.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .note {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    height: 100%;
+    transition: transform 200ms ease-out;
+  }
+  .note:hover {
+    transform: translateY(-2px);
+  }
+  .note__ph {
+    position: relative;
+    flex: none;
+    aspect-ratio: 4 / 3;
+    border-radius: 1rem;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-hairline);
+    border-top: 3px solid var(--color-teal-700);
+  }
+  .note h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.18;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  .note :global(.arrow) {
+    margin-top: auto;
+    color: var(--color-ink-950);
+    transition: transform 150ms ease-out;
+  }
+  .notes li:first-child .note__ph {
+    aspect-ratio: auto;
+    flex: 1;
+    min-height: 21.25rem;
+  }
+  .notes li:first-child h3 {
+    font-size: 1.875rem;
+  }
+  @media (max-width: 1023.98px) {
+    .notes {
+      grid-template-columns: 1fr 1fr;
+    }
+    .notes li:first-child {
+      grid-column: 1 / -1;
+    }
+  }
+  @media (max-width: 639.98px) {
+    .notes {
+      grid-template-columns: 1fr;
+    }
+    .notes li:first-child .note__ph {
+      aspect-ratio: 4 / 3;
+      flex: none;
+      min-height: 0;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .note:hover :global(.arrow) {
+      transform: translateX(4px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .note {
+      transition: none;
+    }
+    .note:hover {
+      transform: none;
+    }
+  }
+</style>
