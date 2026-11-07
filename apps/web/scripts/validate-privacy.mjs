@@ -121,6 +121,23 @@ for (const file of pages) {
   }
 }
 
+/* -- 4b. La casilla de consentimiento es real, no decorativa --------------
+ *
+ * El formulario de contacto exige consentimiento (Ley 21.719). Una casilla de
+ * consentimiento que no sea `required` o no lleve la versión del texto sería
+ * justo el adorno que la comprobación 3 busca evitar.
+ */
+for (const file of pages) {
+  const html = readFileSync(file, 'utf8');
+  const rel = relative(dist, file);
+  for (const tag of html.matchAll(/<input\b[^>]*name="consent_version"[^>]*>/g)) {
+    const consentCheckboxPresent = /type="checkbox"/.test(tag[0]);
+    const checkboxHasRequired = /\brequired\b/.test(tag[0]);
+    assert(!consentCheckboxPresent || checkboxHasRequired, `${rel}: consent checkbox must have required attribute`);
+    assert(/value="consent-v[^"]+"/.test(tag[0]), `${rel}: la casilla de consentimiento lleva la versión del texto`);
+  }
+}
+
 /* -- 5. Ninguna petición a otro dominio desde el JavaScript --------------- */
 for (const file of scripts) {
   const body = readFileSync(file, 'utf8');

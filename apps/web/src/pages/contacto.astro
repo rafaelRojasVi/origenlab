@@ -68,17 +68,6 @@ const steps = [
           Si prefiere escribirnos directamente, use los datos del panel derecho.
         </p>
 
-        {/* Success panel (hidden until JS shows it) */}
-        <div id="solicitud-success" hidden tabindex="-1" class="solicitud-panel solicitud-panel--ok" role="status">
-          <p class="t-body">
-            <strong>Recibimos su solicitud.</strong>
-            Le responderemos a <span data-success-email>su correo</span> a la brevedad.
-          </p>
-          <p class="mt-5">
-            <a href="/" class="btn btn-secondary">Volver al inicio</a>
-          </p>
-        </div>
-
         {/* Network error panel (hidden until JS shows it) */}
         <div id="solicitud-network-error" hidden tabindex="-1" class="solicitud-panel solicitud-panel--err" role="alert">
           <p class="t-body">
@@ -87,7 +76,7 @@ const steps = [
           </p>
         </div>
 
-        <form id="solicitud-form" method="post" action="/api/web/solicitud" novalidate class="sol-form">
+        <form id="solicitud-form" method="post" action="/api/web/solicitud" class="sol-form">
           <input type="hidden" name="render_at" id="solicitud-render-at" />
           <input type="hidden" name="submission_id" id="solicitud-submission-id" />
           <div class="sol-trap-wrap">
@@ -110,6 +99,18 @@ const steps = [
             hidden
             class="sol-error-summary"
           ></div>
+
+          <div class="sol-field">
+            <label for="solicitud-product" class="sol-label">Producto de interés</label>
+            <input
+              type="text"
+              id="solicitud-product"
+              name="product"
+              maxlength="120"
+              autocomplete="off"
+              class="sol-input"
+            />
+          </div>
 
           <div class="sol-field">
             <label for="solicitud-need" class="sol-label">Qué necesita cotizar <span aria-hidden="true">*</span></label>
@@ -181,16 +182,31 @@ const steps = [
             </div>
           </details>
 
+          <div class="sol-field sol-consent">
+            <input
+              type="checkbox"
+              name="consent_version"
+              id="solicitud-consent"
+              value="consent-v1-2026-11"
+              required
+              data-label="Consentimiento"
+              aria-describedby="solicitud-consent-error"
+              aria-invalid="false"
+            />
+            <label for="solicitud-consent" class="t-small">
+              Acepto que OrigenLab use estos datos para responder mi solicitud y contactarme sobre ella.
+              Puedo pedir su eliminación en contacto@origenlab.cl.
+              Ver <a href="/privacidad/" class="link-plain">política de privacidad</a>.
+            </label>
+            <p id="solicitud-consent-error" role="alert" hidden class="sol-field-error"></p>
+          </div>
+
           <button type="submit" id="solicitud-btn" class="btn btn-primary" style="margin-top:0.5rem">
             Enviar solicitud
           </button>
 
           <p class="t-small" style="margin-top:1rem">
             Respondemos en horario hábil, de lunes a viernes entre las {contact.hours}.
-          </p>
-          <p class="t-small" style="margin-top:0.5rem">
-            Usamos estos datos sólo para responder su solicitud.{' '}
-            <a href="/privacidad/" class="link-plain">Privacidad</a>.
           </p>
         </form>
       </div>
@@ -336,21 +352,29 @@ const steps = [
 var form=document.getElementById('solicitud-form');
 if(!form)return;
 var btn=document.getElementById('solicitud-btn');
-var okPanel=document.getElementById('solicitud-success');
+form.noValidate=true;
 var errPanel=document.getElementById('solicitud-network-error');
 var summary=form.querySelector('[data-error-summary]');
 var rat=document.getElementById('solicitud-render-at');
 if(rat)rat.value=String(Date.now()/1000);
 var sid=document.getElementById('solicitud-submission-id');
 if(sid)sid.value=crypto.randomUUID();
+var prod=new URLSearchParams(location.search).get('producto');
+if(prod){
+  prod=prod.trim().slice(0,120);
+  var pf=document.getElementById('solicitud-product');
+  var nf=document.getElementById('solicitud-need');
+  if(pf&&prod)pf.value=prod;
+  if(nf&&prod&&!nf.value)nf.value='Cotización '+prod;
+}
 
 function vf(f){
   var e=document.getElementById(f.id+'-error');
   if(!e)return true;
-  var bad=f.required&&!f.value.trim();
+  var bad=f.required&&(f.type==='checkbox'?!f.checked:!f.value.trim());
   if(bad){
     f.setAttribute('aria-invalid','true');
-    e.textContent='Campo obligatorio';
+    e.textContent=f.type==='checkbox'?'Debe aceptar para enviar la solicitud':'Campo obligatorio';
     e.removeAttribute('hidden');
   }else{
     f.removeAttribute('aria-invalid');
@@ -370,9 +394,10 @@ function buildMailto(){
   var n=(form.querySelector('[name="need"]')||{}).value||'';
   var em=(form.querySelector('[name="email"]')||{}).value||'';
   var o=(form.querySelector('[name="org"]')||{}).value||'';
+  var pr=(form.querySelector('[name="product"]')||{}).value||'';
   return 'mailto:'+encodeURIComponent('contacto@origenlab.cl')+
     '?subject='+encodeURIComponent('Solicitud de cotización')+
-    '&body='+encodeURIComponent((n?'Necesito: '+n.trim()+'\n':'')+(o?'Institución: '+o.trim()+'\n':'')+(em?'Correo: '+em.trim():''));
+    '&body='+encodeURIComponent((n?'Necesito: '+n.trim()+'\n':'')+(pr?'Producto: '+pr.trim()+'\n':'')+(o?'Institución: '+o.trim()+'\n':'')+(em?'Correo: '+em.trim():''));
 }
 
 form.addEventListener('submit',function(ev){
@@ -382,7 +407,7 @@ form.addEventListener('submit',function(ev){
     if(!vf(f)){
       allOk=false;
       var lbl=form.querySelector('label[for="'+f.id+'"]');
-      msgs.push(lbl?lbl.textContent.replace(/\s*\*\s*/g,'').trim():f.name);
+      msgs.push(f.getAttribute('data-label')||(lbl?lbl.textContent.replace(/\s*\*\s*/g,'').trim():f.name));
     }
   });
   if(!allOk){
@@ -396,14 +421,11 @@ form.addEventListener('submit',function(ev){
   var orig=btn.textContent;
   btn.textContent='Enviando…';
   var data=Object.fromEntries(new FormData(form));
+  if(!data.product||!data.product.trim())delete data.product;
   fetch('/api/web/solicitud',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
     .then(function(r){
       if(r.ok||r.redirected){
-        var es=okPanel.querySelector('[data-success-email]');
-        if(es)es.textContent=(form.querySelector('[name="email"]')||{}).value||'su correo';
-        form.setAttribute('hidden','');
-        okPanel.removeAttribute('hidden');
-        okPanel.focus();
+        location.assign('/contacto/enviado/');
       }else{
         var ml=errPanel.querySelector('[data-error-mailto]');
         if(ml)ml.href=buildMailto();
@@ -429,7 +451,6 @@ form.addEventListener('submit',function(ev){
   /* ---- Section 01: Solicitud grid ---------------------------------------- */
   .solicitud-grid { display: grid; gap: 3rem; }
   .solicitud-panel { border-radius: var(--radius-edge); padding: 1.5rem; margin-bottom: 2rem; }
-  .solicitud-panel--ok { background-color: #f0faf9; border: 1px solid #9dd4cc; }
   .solicitud-panel--err,
   .sol-error-summary { background-color: #fef2f2; border: 1px solid #fca5a5; border-radius: var(--radius-edge); }
   .sol-error-summary {
@@ -438,7 +459,7 @@ form.addEventListener('submit',function(ev){
     font-size: 0.9375rem;
     color: var(--color-ink-800);
   }
-  .sol-error-summary:focus, .solicitud-panel--ok:focus { outline: 2px solid var(--color-teal-700); outline-offset: 2px; }
+  .sol-error-summary:focus { outline: 2px solid var(--color-teal-700); outline-offset: 2px; }
   .solicitud-panel--err:focus { outline: 2px solid #dc2626; outline-offset: 2px; }
   .sol-form { margin-top: 2rem; position: relative; }
   .sol-trap-wrap { position: absolute; opacity: 0; pointer-events: none; left: -9999px; top: 0; height: 0; overflow: hidden; }
@@ -457,6 +478,9 @@ form.addEventListener('submit',function(ev){
   .sol-input:focus, .sol-textarea:focus { outline: 2px solid var(--color-teal-700); outline-offset: 1px; border-color: var(--color-teal-700); }
   .sol-input[aria-invalid='true'], .sol-textarea[aria-invalid='true'] { border-color: #dc2626; }
   .sol-textarea { resize: vertical; min-height: 7rem; }
+  .sol-consent { grid-template-columns: auto minmax(0, 1fr); column-gap: 0.75rem; align-items: start; }
+  .sol-consent input { width: 1.25rem; height: 1.25rem; margin: 0.125rem 0 0; accent-color: var(--color-teal-700); }
+  .sol-consent .sol-field-error { grid-column: 2; }
   .sol-field-error { font-size: 0.875rem; color: #dc2626; margin: 0; }
   .sol-optional { margin-bottom: 1.5rem; border: 1px solid var(--color-hairline); border-radius: var(--radius-edge); }
   .sol-optional__summary { padding: 0.75rem 1rem; cursor: pointer; list-style: none; color: var(--color-ink-600); }

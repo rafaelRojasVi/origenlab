@@ -217,6 +217,40 @@ assert(
   formPages.length > 0 || claimsNoForms,
   `coherencia: el sitio no tiene formularios y la política ya no lo afirma. Redacción esperada: "${NO_FORMS_CLAIM}"`,
 );
+/* -- Formulario de contacto: consentimiento (Ley 21.719) y producto -------
+ *
+ * El formulario y el consentimiento viajan juntos: una página con formulario
+ * sin casilla `consent_version` recogería datos sin base, y la casilla sin
+ * formulario sería una afirmación vacía. La versión del texto que se acepta
+ * es la que se envía al API, así que el valor es parte del contrato.
+ */
+const CONSENT_VERSION = 'consent-v1-2026-11';
+const contactoIdx = pages.findIndex((file) => relative(dist, file) === 'contacto/index.html');
+assert(contactoIdx >= 0, 'contacto: existe /contacto/');
+if (contactoIdx >= 0) {
+  const html = allHtml[contactoIdx];
+  const formPresent = /<form\b[^>]*id="solicitud-form"/.test(html);
+  const consentTag = html.match(/<input\b[^>]*name="consent_version"[^>]*>/)?.[0] ?? '';
+  const consentVersionInputPresent = consentTag !== '';
+  assert(formPresent === consentVersionInputPresent, 'contacto: consent_version input sync mismatch');
+  assert(/type="checkbox"/.test(consentTag) && /\brequired\b/.test(consentTag), 'contacto: la casilla de consentimiento es checkbox y required');
+  assert(consentTag.includes(`value="${CONSENT_VERSION}"`), `contacto: la casilla envía la versión ${CONSENT_VERSION}`);
+  assert(/<input\b[^>]*name="product"[^>]*maxlength="120"/.test(html), 'contacto: campo product visible con maxlength 120');
+  assert(!/<input\b[^>]*type="hidden"[^>]*name="product"/.test(html), 'contacto: product no es un campo oculto');
+  assert(html.includes('política de privacidad'), 'contacto: la casilla enlaza la política de privacidad');
+}
+const enviadoIdx = pages.findIndex((file) => relative(dist, file) === 'contacto/enviado/index.html');
+assert(enviadoIdx >= 0, 'contacto: existe /contacto/enviado/ (destino del envío sin JavaScript)');
+if (enviadoIdx >= 0) {
+  assert(/<meta name="robots" content="noindex/.test(allHtml[enviadoIdx]), 'contacto/enviado: noindex');
+}
+const privacidadIdx = pages.findIndex((file) => relative(dist, file) === 'privacidad/index.html');
+if (privacidadIdx >= 0) {
+  const text = allHtml[privacidadIdx].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  assert(text.includes('Ley 21.719'), 'privacidad: menciona la Ley 21.719');
+  assert(!/analítica, formularios comerciales activos/.test(text), 'privacidad: sin la frase rota de formularios');
+}
+
 assert(
   allHtml.some((html) => html.includes(NO_APP_STORAGE_CLAIM)),
   `coherencia: falta la afirmación acotada sobre almacenamiento: "${NO_APP_STORAGE_CLAIM}"`,
