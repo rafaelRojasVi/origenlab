@@ -13,7 +13,7 @@
  *
  * Sin acceso al DOM al importarlo.
  */
-import { createShowroom, type AnchorPositions, type Showroom } from './scene';
+import { createShowroom, type AnchorPositions, type Showroom, type ShowroomOptions } from './scene';
 import type { Beat } from './scrollStory';
 import type { BuiltModel } from './types';
 
@@ -26,14 +26,24 @@ export interface StoryScene extends Showroom {
   tweenTo(view: string, durationMs?: number): void;
   /**
    * Nivel de marcha 0–1 sin transición (burbujas, brillo, ondas). Es el nivel
-   * del modelo, no el estado de la pantalla: ésa la enciende `setPower`.
+   * del modelo, no el estado de la pantalla: ésa la enciende `setPower`. Se
+   * publica también como `--story-level` en la raíz de los overlays.
    */
   setPowerLevel(level: number): void;
   /**
-   * Muestra la pieza ancla con el nombre del sonotrodo y oculta las otras.
-   * Si el modelo no trae ancla para `id`, no cambia nada.
+   * Muestra la pieza ancla con el nombre del sonotrodo y oculta las otras, y
+   * lo anota como `data-sonotrode` en la raíz de los overlays. Si el modelo no
+   * trae ancla para `id`, no cambia nada.
    */
   swapSonotrode(id: SonotrodeId): void;
+  /**
+   * Cifra de la pantalla como fracción 0–1 del rango que la raíz de los
+   * overlays declara en `data-readout-from` / `data-readout-to` (sale de la
+   * ficha con fuente, no del código); se escribe en la pantalla 3D y en cada
+   * `[data-readout]`, y la fracción como `--story-readout` en la raíz. `null`
+   * devuelve la pantalla a su animación propia.
+   */
+  setReadout(fraction: number | null): void;
   /** Recoge los elementos `[data-anchor="nombre"]` de `root` para posicionarlos sobre las anclas. */
   bindOverlays(root: HTMLElement): void;
   /**
@@ -45,10 +55,13 @@ export interface StoryScene extends Showroom {
   renderOverlays(progress: number): void;
 }
 
-export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel): StoryScene {
-  const showroom = createShowroom(canvas, model);
+export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, options: ShowroomOptions = {}): StoryScene {
+  const showroom = createShowroom(canvas, model, options);
 
   let root: HTMLElement | null = null;
+  let readouts: HTMLElement[] = [];
+  let shownReadout = '';
+  let shownSonotrode = '';
   let overlays: { el: HTMLElement; anchor: string; at: string }[] = [];
   let positions: AnchorPositions = {};
   let userFrame: ((anchors: AnchorPositions) => void) | null = null;
@@ -75,16 +88,38 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel): 
     onFrame(callback) {
       userFrame = callback;
     },
-    setPowerLevel: (level) => showroom.setLevel(level),
+    setPowerLevel(level) {
+      showroom.setLevel(level);
+      root?.style.setProperty('--story-level', Math.min(1, Math.max(0, level)).toFixed(3));
+    },
     swapSonotrode(id) {
-      if (!model.anchors[id]) return;
+      if (!model.anchors[id] || id === shownSonotrode) return;
+      shownSonotrode = id;
       for (const name of SONOTRODES) {
         const piece = model.anchors[name];
         if (piece) piece.visible = name === id;
       }
+      if (root) root.dataset.sonotrode = id;
+    },
+    setReadout(fraction) {
+      if (fraction === null) {
+        model.setReadout?.(null);
+        return;
+      }
+      const f = Math.min(1, Math.max(0, fraction));
+      const from = Number(root?.dataset.readoutFrom ?? 0);
+      const to = Number(root?.dataset.readoutTo ?? 100);
+      const value = Math.round(from + (to - from) * f);
+      model.setReadout?.(value);
+      root?.style.setProperty('--story-readout', f.toFixed(3));
+      const text = `${value} %`;
+      if (text === shownReadout) return;
+      shownReadout = text;
+      for (const el of readouts) el.textContent = text;
     },
     bindOverlays(next) {
       root = next;
+      readouts = [...next.querySelectorAll<HTMLElement>('[data-readout]')];
       overlays = [...next.querySelectorAll<HTMLElement>('[data-anchor]')].map((el) => ({ el, anchor: el.dataset.anchor ?? '', at: '' }));
       apply();
     },
@@ -105,17 +140,38 @@ export interface BeatSpec {
   progressEnd: number;
   /** `general` o una vista del modelo; sin valor, el beat no mueve la cámara. */
   cameraView?: string;
+  /**
+   * Titular y línea del beat. `{Etiqueta}` se sustituye, al construir la
+   * página, por el valor de la ficha del modelo con esa etiqueta (la de la
+   * colección `modelos`, con fuente): las cifras no se escriben aquí. Una
+   * etiqueta que la ficha no tenga detiene el build.
+   */
   textHeadline?: string;
   textBody?: string;
-  /** Se llama en cada cuadro del beat con su avance local 0–1; puede mutar la escena. */
+  /**
+   * Se llama en cada cuadro del beat con su avance local 0–1; puede mutar la
+   * escena. Debe fijar todo el estado que el beat necesita (marcha, nivel,
+   * giro, sonotrodo), no sólo lo que cambia: un salto de scroll puede saltarse
+   * los beats intermedios sin llamar a su `tick`.
+   */
   animationHook?: (scene: StoryScene, localT: number) => void;
-  /** Nombre del componente Astro que pinta el overlay HTML de este beat. */
-  overlayComponent?: string;
+  /**
+   * Pieza HTML que acompaña al beat; `ProductStory.astro` la pinta:
+   * `facts` cifras de la ficha (`overlayData`: etiquetas); `hotspot` nota sobre
+   * un ancla (`overlayData`: [ancla]; el texto sale del marcador de la sala);
+   * `meter` medidor de la cifra de pantalla (`overlayData`: [etiqueta con el
+   * rango «del N al M %»]); `callout` nota sobre un ancla con un valor de la
+   * ficha (`overlayData`: [ancla, etiqueta]); `sonotrodes` las puntas
+   * (`overlayData`: ids); `pills` las aplicaciones de la ficha.
+   */
+  overlayComponent?: 'facts' | 'hotspot' | 'meter' | 'callout' | 'sonotrodes' | 'pills';
+  overlayData?: string[];
 }
 
+/** Un grupo de la ficha técnica: título y etiquetas de la ficha del modelo, en orden. */
 export interface SpecGroup {
   title: string;
-  rows: { label: string; value: string }[];
+  labels: string[];
 }
 
 export interface AccessorySpec {
@@ -125,6 +181,7 @@ export interface AccessorySpec {
 }
 
 export interface ProductStoryConfig {
+  /** Igual al nombre del archivo en `models/` y en `stories/`. */
   modelId: string;
   beats: BeatSpec[];
   specs: SpecGroup[];

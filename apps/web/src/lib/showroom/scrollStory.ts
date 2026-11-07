@@ -82,6 +82,21 @@ export function activeBeat(progress: number, beats: Beat[]): ActiveBeat | null {
   return null;
 }
 
+/**
+ * Pasa del beat `from` al `to` (índices; -1 es «ninguno»). Si el salto cruza
+ * beats intermedios, se recorren uno a uno (entrada y salida) para que el
+ * estado acumulado de la escena (la pantalla encendida, la vista) quede como si
+ * se hubiera pasado por ellos, hacia delante o atrás.
+ */
+function walk(beats: Beat[], scene: StoryScene, from: number, to: number) {
+  const dir = to > from ? 1 : -1;
+  for (let i = from; i !== to; i += dir) {
+    if (i >= 0) beats[i].leave?.(scene);
+    const next = i + dir;
+    if (next >= 0) beats[next].enter?.(scene, dir > 0 ? 0 : 1);
+  }
+}
+
 export function createScrollStory(
   spacer: HTMLElement,
   scene: StoryScene,
@@ -93,17 +108,7 @@ export function createScrollStory(
   let current = -1; // índice del beat activo en `beats`
   let raf = 0;
 
-  const step = (from: number, to: number) => {
-    // Si el salto cruza beats intermedios, se recorren uno a uno (entrada y
-    // salida) para que el estado acumulado de la escena —la pantalla encendida,
-    // la vista— quede como si se hubiera pasado por ellos, hacia delante o atrás.
-    const dir = to > from ? 1 : -1;
-    for (let i = from; i !== to; i += dir) {
-      if (i >= 0) beats[i].leave?.(scene);
-      const next = i + dir;
-      if (next >= 0) beats[next].enter?.(scene, dir > 0 ? 0 : 1);
-    }
-  };
+  const step = (from: number, to: number) => walk(beats, scene, from, to);
 
   const frame = () => {
     raf = 0;
@@ -137,6 +142,67 @@ export function createScrollStory(
       window.removeEventListener('scroll', request);
       window.removeEventListener('resize', request);
       reducedQuery?.removeEventListener?.('change', request);
+      if (raf) window.cancelAnimationFrame(raf);
+      raf = 0;
+    },
+  };
+}
+
+export interface TapStoryOptions {
+  /** Lo que tarda cada beat en recorrer su avance local de 0 a 1 (1200 ms por defecto). */
+  durationMs?: number;
+  /** Se llama al llegar a un beat, con su índice. */
+  onBeat?(index: number): void;
+}
+
+export interface TapStory {
+  /** Va al beat `index` (acotado), recorriendo los intermedios. */
+  go(index: number): void;
+  index(): number;
+  dispose(): void;
+}
+
+/**
+ * Los mismos beats sin scroll: avance por toque, para pantallas estrechas. Cada
+ * `go` entra al beat elegido y corre su `tick` de 0 a 1 en el tiempo, como si
+ * se desplazara la página a lo largo de su tramo. Con movimiento reducido el
+ * beat llega directo a su final. Empieza en el primero.
+ */
+export function createTapStory(scene: StoryScene, beats: Beat[], options: TapStoryOptions = {}): TapStory {
+  const ms = options.durationMs ?? 1200;
+  const reduced = () => Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+  let current = -1;
+  let raf = 0;
+  let started = 0;
+
+  const run = (now: number) => {
+    raf = 0;
+    const t = Math.min(1, Math.max(0, (now - started) / ms));
+    beats[current]?.tick?.(scene, t);
+    if (t < 1) raf = window.requestAnimationFrame(run);
+  };
+  const go = (index: number) => {
+    const next = Math.max(0, Math.min(beats.length - 1, Math.round(index)));
+    if (next === current || beats.length === 0) return;
+    if (raf) window.cancelAnimationFrame(raf);
+    raf = 0;
+    walk(beats, scene, current, next);
+    current = next;
+    options.onBeat?.(current);
+    if (reduced()) {
+      beats[current].tick?.(scene, 1);
+      return;
+    }
+    beats[current].tick?.(scene, 0);
+    started = performance.now();
+    raf = window.requestAnimationFrame(run);
+  };
+  go(0);
+
+  return {
+    go,
+    index: () => current,
+    dispose() {
       if (raf) window.cancelAnimationFrame(raf);
       raf = 0;
     },

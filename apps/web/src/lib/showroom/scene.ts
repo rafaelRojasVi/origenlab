@@ -17,6 +17,20 @@ import type { BuiltModel } from './types';
 
 export type AnchorPositions = Record<string, { x: number; y: number } | null>;
 
+/**
+ * Nivel de calidad del dibujo. `high`: sombra suave por mapa de sombras y
+ * resolución hasta 2×. `medium`: sin mapa de sombras (una mancha de contacto
+ * dibujada la sustituye) y resolución hasta 1,5×. Los dos usan los mismos
+ * materiales físicos y la luz de entorno del estudio. El nivel `low` no tiene
+ * escena: es la imagen fija de la página.
+ */
+export type Tier = 'high' | 'medium';
+
+export interface ShowroomOptions {
+  /** Por defecto `high` (la portada). */
+  tier?: Tier;
+}
+
 export interface Showroom {
   setPower(on: boolean): void;
   /** `general` o el nombre de una vista del modelo. */
@@ -31,6 +45,13 @@ export interface Showroom {
    * devuelve el nivel al que sigue a `setPower`. No toca la pantalla del modelo.
    */
   setLevel(level: number | null): void;
+  /**
+   * Giro del equipo sobre su eje vertical, en radianes sobre su giro de
+   * presentación, con un seguimiento suave; `null` vuelve al vaivén de reposo.
+   */
+  setYaw(offset: number | null): void;
+  /** Baja (o sube) el nivel de calidad sin rehacer la escena. */
+  setTier(tier: Tier): void;
   /** Posición en píxeles del lienzo de cada ancla, o `null` si queda detrás. */
   onFrame(callback: (anchors: AnchorPositions) => void): void;
   /** Cambia el equipo en el mismo escenario (un solo lienzo, un solo WebGL). */
@@ -40,11 +61,13 @@ export interface Showroom {
 
 const MM = 0.01;
 
-export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): Showroom {
+export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, options: ShowroomOptions = {}): Showroom {
   // En pantallas pequeñas (teléfonos) se dibuja con menos resolución y sombra.
   const small = Math.min(window.innerWidth, window.innerHeight) < 700;
+  let tier: Tier = options.tier ?? 'high';
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: !small, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, small ? 1.5 : 2));
+  const pixelRatio = () => Math.min(window.devicePixelRatio, small || tier === 'medium' ? 1.5 : 2);
+  renderer.setPixelRatio(pixelRatio());
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -83,6 +106,32 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
   ground.receiveShadow = true;
   scene.add(ground);
 
+  // Sin mapa de sombras, una mancha de contacto dibujada asienta el equipo.
+  const blobCanvas = document.createElement('canvas');
+  blobCanvas.width = blobCanvas.height = 128;
+  const g = blobCanvas.getContext('2d')!;
+  const fade = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  fade.addColorStop(0, 'rgba(0,0,0,.32)');
+  fade.addColorStop(0.55, 'rgba(0,0,0,.14)');
+  fade.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = fade;
+  g.fillRect(0, 0, 128, 128);
+  const blobTexture = new THREE.CanvasTexture(blobCanvas);
+  const blob = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: blobTexture, transparent: true, depthWrite: false }),
+  );
+  blob.rotation.x = -Math.PI / 2;
+  blob.position.y = 0.002;
+  scene.add(blob);
+  const applyTier = () => {
+    key.castShadow = tier === 'high';
+    ground.visible = tier === 'high';
+    blob.visible = tier !== 'high';
+    renderer.setPixelRatio(pixelRatio());
+  };
+  applyTier();
+
   const stage = new THREE.Group();
   stage.scale.setScalar(MM);
   scene.add(stage);
@@ -114,6 +163,8 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
     if (next.frameTop !== undefined) framed.max.y = Math.min(framed.max.y, next.frameTop * MM);
     framed.getSize(framedSize);
     anchorNames = Object.keys(next.anchors);
+    const foot = new THREE.Box3().setFromObject(next.root).getSize(new THREE.Vector3());
+    blob.scale.set(foot.x * 1.25, foot.z * 1.25, 1);
   };
   mount(initial);
 
@@ -131,12 +182,14 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
     return { at, pos: at.clone().addScaledVector(worldDir(view.direction).normalize(), view.distance * MM) };
   };
 
-  let tween: { fromP: THREE.Vector3; fromT: THREE.Vector3; toP: THREE.Vector3; toT: THREE.Vector3; t: number; ms: number; smooth: boolean } | null = null;
+  // El destino se recalcula en cada cuadro: si el equipo gira durante el viaje
+  // (`setYaw`), la cámara llega igual a la pieza que buscaba.
+  let tween: { fromP: THREE.Vector3; fromT: THREE.Vector3; view: string; t: number; ms: number; smooth: boolean } | null = null;
   let idle = true;
+  let yawOffset: number | null = null;
   const startTween = (name: string, ms: number, smooth: boolean) => {
     idle = name === 'general' && idle;
-    const v = viewFor(name);
-    tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0, ms, smooth };
+    tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), view: name, t: 0, ms, smooth };
   };
   const goTo = (name: string) => startTween(name, 1200, false);
   canvas.addEventListener('pointerdown', () => {
@@ -190,11 +243,17 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
     if (tween) {
       tween.t = Math.min(1, tween.t + Math.max(dt, 1 / 60) / (tween.ms / 1000));
       const e = tween.smooth ? tween.t * tween.t * (3 - 2 * tween.t) : 1 - Math.pow(1 - tween.t, 3);
-      camera.position.lerpVectors(tween.fromP, tween.toP, e);
-      controls.target.lerpVectors(tween.fromT, tween.toT, e);
+      const v = viewFor(tween.view);
+      camera.position.lerpVectors(tween.fromP, v.pos, e);
+      controls.target.lerpVectors(tween.fromT, v.at, e);
       if (tween.t >= 1) tween = null;
-    } else if (idle) {
-      stage.rotation.y = yaw + Math.sin(t * 0.25) * 0.18;
+    }
+    // Giro fijado por la página, o vaivén de reposo; los dos con seguimiento
+    // suave y por el camino corto, para que pasar de uno a otro no salte.
+    const aim = yawOffset !== null ? yaw + yawOffset : idle && !tween ? yaw + Math.sin(t * 0.25) * 0.18 : null;
+    if (aim !== null) {
+      const d = aim - stage.rotation.y;
+      stage.rotation.y += Math.atan2(Math.sin(d), Math.cos(d)) * Math.min(1, dt * 6);
     }
     controls.update();
     model.update(dt, t, level);
@@ -258,10 +317,10 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
       powered = false;
       level = 0;
       levelOverride = null;
+      yawOffset = null;
       mount(next);
       idle = true;
-      const v = general();
-      tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0, ms: 1200, smooth: false };
+      tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), view: 'general', t: 0, ms: 1200, smooth: false };
       start();
     },
     goTo,
@@ -269,6 +328,17 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
     setLevel(next) {
       levelOverride = next === null ? null : Math.min(1, Math.max(0, next));
       if (levelOverride !== null) level = levelOverride;
+    },
+    setYaw(offset) {
+      yawOffset = offset;
+      if (offset === null) idle = true;
+      start();
+    },
+    setTier(next) {
+      if (next === tier) return;
+      tier = next;
+      applyTier();
+      resize();
     },
     onFrame(callback) {
       frameCallback = callback;
@@ -282,6 +352,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
       model.dispose();
       environment.dispose();
       pmrem.dispose();
+      blobTexture.dispose();
       renderer.dispose();
     },
   };

@@ -11,7 +11,7 @@
  */
 import assert from 'node:assert/strict';
 
-const { mapProgress, smoothstep, activeBeat, createScrollStory, beatsFromSpecs } = await import('../src/lib/showroom/scrollStory.ts');
+const { mapProgress, smoothstep, activeBeat, createScrollStory, createTapStory, beatsFromSpecs } = await import('../src/lib/showroom/scrollStory.ts');
 
 let failed = 0;
 const cases = [];
@@ -197,6 +197,49 @@ test('createScrollStory: con movimiento reducido informa el progreso pero no ani
     assert.deepEqual(log, [], 'ningún beat se ejecuta');
     assert.equal(story.progress(), 0.5);
     assert.equal(seen.at(-1), 0.5);
+    story.dispose();
+  });
+});
+
+/* ── createTapStory: el mismo recorrido por toque ── */
+test('createTapStory: empieza en el primero y corre su tick de 0 a 1 en el tiempo', () => {
+  const env = fakeWindow();
+  const log = [];
+  const seen = [];
+  withWindow(env, () => {
+    const story = createTapStory(fakeScene(), recorder(log), { durationMs: 1000, onBeat: (i) => seen.push(i) });
+    assert.deepEqual(log, ['enter:a', 'tick:a:0.00']);
+    assert.equal(story.index(), 0);
+    assert.deepEqual(seen, [0]);
+    assert.equal(env.pending(), 1, 'pide un cuadro para avanzar');
+    // Desde aquí los cuadros se guardan aparte para darles la hora que se quiera.
+    const later = performance.now() + 5000;
+    const queued = [];
+    env.win.requestAnimationFrame = (fn) => queued.push(fn);
+    env.flush();
+    assert.ok(log.at(-1).startsWith('tick:a:'), 'el cuadro corre el tick del beat');
+    log.length = 0;
+    story.go(2);
+    assert.deepEqual(log.slice(0, 4), ['leave:a', 'enter:b', 'leave:b', 'enter:c'], 'recorre los intermedios');
+    assert.equal(log[4], 'tick:c:0.00');
+    queued.splice(0).forEach((fn) => fn(later));
+    assert.equal(log.at(-1), 'tick:c:1.00');
+    assert.equal(queued.length, 0, 'al llegar a 1 deja de pedir cuadros');
+    story.go(9);
+    assert.equal(story.index(), 2, 'se acota al último');
+    story.go(-3);
+    assert.equal(story.index(), 0, 'y al primero');
+    assert.deepEqual(seen, [0, 2, 0]);
+    story.dispose();
+  });
+});
+test('createTapStory: con movimiento reducido el beat llega directo a su final', () => {
+  const env = fakeWindow({ reduced: true });
+  const log = [];
+  withWindow(env, () => {
+    const story = createTapStory(fakeScene(), recorder(log));
+    assert.deepEqual(log, ['enter:a', 'tick:a:1.00']);
+    assert.equal(env.pending(), 0, 'sin cuadros de animación');
     story.dispose();
   });
 });

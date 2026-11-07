@@ -8,7 +8,13 @@
  *                98 mm y luego cae en pendiente hasta 72 mm atrás, donde va
  *                la pantalla táctil.
  *   sonotrodo    cuelga 242 mm, a 40 mm del frente: Ø 40 → Ø 18 → punta de
- *                Ø 14 y 51,5 mm.
+ *                Ø 14 y 51,5 mm (el S24d14 del plano).
+ *
+ * Las otras dos puntas, S24d7 y S24d22, comparten la base del sonotrodo y el
+ * largo total; sólo cambia el diámetro de la punta (el número del nombre). Son
+ * tres grupos con el nombre de su referencia en `anchors`: la página de
+ * producto muestra uno y oculta los otros (`StoryScene.swapSonotrode`). Por
+ * defecto se ve el del plano.
  *
  * El soporte, el matraz y la muestra no salen del plano: son la puesta en
  * escena de la fotografía oficial (soporte de varilla y matraz Erlenmeyer con
@@ -18,14 +24,14 @@
  * objeto y expone las piezas que la escena necesita animar o señalar.
  */
 import * as THREE from 'three';
-import type { BuiltModel } from '../types';
+import type { BuildOptions, BuiltModel } from '../types';
 import { SANS, canvasTexture, lathe, roundedBox, type Draw } from './kit';
 
 const W = 144;
 const D = 184;
 const H = 183;
 const BEVEL = 5;
-export function build(): BuiltModel {
+export function build(options: BuildOptions = {}): BuiltModel {
   const root = new THREE.Group();
   const disposables: { dispose(): void }[] = [];
   const keep = <T extends { dispose(): void }>(item: T) => {
@@ -35,11 +41,12 @@ export function build(): BuiltModel {
 
   /* ── materiales ── */
   const housingMat = keep(
-    new THREE.MeshPhysicalMaterial({ color: 0x3b4352, roughness: 0.55, metalness: 0.05, clearcoat: 0.25, clearcoatRoughness: 0.6 }),
+    // Pintura sobre metal con laca: base mate, capa brillante que refleja el estudio.
+    new THREE.MeshPhysicalMaterial({ color: 0x3b4352, roughness: 0.48, metalness: 0.15, clearcoat: 0.8, clearcoatRoughness: 0.2 }),
   );
   const steel = keep(new THREE.MeshPhysicalMaterial({ color: 0xd4d8dc, metalness: 1, roughness: 0.22 }));
-  const brushed = keep(new THREE.MeshPhysicalMaterial({ color: 0xc3c8cc, metalness: 1, roughness: 0.38 }));
-  const titanium = keep(new THREE.MeshPhysicalMaterial({ color: 0xb9bdc0, metalness: 1, roughness: 0.3 }));
+  const brushed = keep(new THREE.MeshPhysicalMaterial({ color: 0xc3c8cc, metalness: 1, roughness: 0.3, envMapIntensity: 1.25 }));
+  const titanium = keep(new THREE.MeshPhysicalMaterial({ color: 0xb9bdc0, metalness: 1, roughness: 0.34, envMapIntensity: 1.2 }));
   const black = keep(new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.6 }));
   const rubber = keep(new THREE.MeshStandardMaterial({ color: 0x101113, roughness: 0.9 }));
   const alu = keep(new THREE.MeshPhysicalMaterial({ color: 0xdfe2e4, metalness: 0.9, roughness: 0.34 }));
@@ -369,11 +376,30 @@ export function build(): BuiltModel {
   oring.rotation.x = Math.PI / 2;
   oring.position.y = -190.5;
   horn.add(oring);
-  const tip = new THREE.Mesh(keep(new THREE.CylinderGeometry(7, 7, 51.5, 48)), titanium);
-  tip.position.y = -186 - 51.5 / 2 - 4.5;
-  tip.castShadow = true;
-  horn.add(tip);
-  const TIP_Y = -186 - 51.5 - 4.5;
+  const TIP_TOP = -186 - 4.5;
+  const TIP_Y = TIP_TOP - 51.5;
+  // Las puntas vibran juntas: el temblor se aplica al grupo, no a cada una.
+  const tips = new THREE.Group();
+  horn.add(tips);
+  const plan = new THREE.Mesh(keep(new THREE.CylinderGeometry(7, 7, 51.5, 48)), titanium);
+  plan.position.y = TIP_TOP - 51.5 / 2;
+  // Ø 7 se afina desde la base del sonotrodo (Ø 18); Ø 22 se ensancha.
+  const variant = (r: number) =>
+    new THREE.Mesh(keep(lathe([[0, TIP_TOP], [9, TIP_TOP], [9, TIP_TOP - 2.5], [r, TIP_TOP - 9], [r, TIP_Y], [0, TIP_Y]], 48)), titanium);
+  const sonotrodes = [
+    { id: 'S24d7', r: 3.5, mesh: variant(3.5) },
+    { id: 'S24d14', r: 7, mesh: plan },
+    { id: 'S24d22', r: 11, mesh: variant(11) },
+  ];
+  for (const s of sonotrodes) {
+    s.mesh.castShadow = true;
+    s.mesh.visible = s.id === 'S24d14';
+    tips.add(s.mesh);
+  }
+  // La vista y el marcador del sonotrodo miran al centro de la punta, sea cual sea.
+  const tip = new THREE.Object3D();
+  tip.position.y = TIP_TOP - 51.5 / 2;
+  tips.add(tip);
 
   /* ── soporte, matraz y muestra ── */
   const plate = new THREE.Mesh(keep(roundedBox(360, 10, 210, 4)), alu);
@@ -424,6 +450,9 @@ export function build(): BuiltModel {
   flask.position.set(40, FLASK_Y, 0);
   flask.renderOrder = 3;
   root.add(flask);
+  const flaskAnchor = new THREE.Object3D();
+  flaskAnchor.position.set(40, FLASK_Y + 30, 38);
+  root.add(flaskAnchor);
 
   const liquid = new THREE.Mesh(
     keep(lathe([[0, 3.6], [38.8, 3.6], [40.3, 9], [39.4, 25], [30.8, LIQUID], [0, LIQUID]])),
@@ -495,7 +524,7 @@ export function build(): BuiltModel {
   glow.position.set(40, tipWorld - 6, 0);
   root.add(glow);
 
-  const COUNT = 420;
+  const COUNT = options.lite ? 150 : 420;
   const bubbles = new THREE.InstancedMesh(
     keep(new THREE.SphereGeometry(1, 10, 8)),
     keep(
@@ -520,9 +549,10 @@ export function build(): BuiltModel {
   dummy.updateMatrix();
   for (let i = 0; i < COUNT; i++) bubbles.setMatrixAt(i, dummy.matrix);
 
+  let tipR = 7;
   const spawn = (b: (typeof state)[number]) => {
     const a = Math.random() * Math.PI * 2;
-    const r = Math.random() * 6.5;
+    const r = Math.random() * tipR * 0.93;
     b.x = Math.cos(a) * r;
     b.z = Math.sin(a) * r;
     b.y = tipWorld - 1 - Math.random() * 3;
@@ -546,10 +576,18 @@ export function build(): BuiltModel {
   let powered = false;
   let lastScreen = 0;
   let shownLed = false;
+  let readout: number | null = null;
 
   return {
     root,
-    anchors: { screen: screenAnchor, tip, transducer, mount: star },
+    anchors: {
+      screen: screenAnchor,
+      tip,
+      transducer,
+      mount: star,
+      flask: flaskAnchor,
+      ...Object.fromEntries(sonotrodes.map((s) => [s.id, s.mesh])),
+    },
     views: {
       pantalla: { target: screenAnchor, direction: outward.clone().add(new THREE.Vector3(0, 0.25, 0)), distance: 240 },
       sonotrodo: { target: tip, direction: new THREE.Vector3(0.45, 0.2, 1), distance: 300 },
@@ -560,15 +598,20 @@ export function build(): BuiltModel {
       powered = on;
       if (on) screenOn = true;
     },
+    setReadout(percent) {
+      readout = percent;
+    },
     update(dt, t, level) {
       if (screenOn && t - lastScreen > 1 / 20) {
         lastScreen = t;
         bars = t;
-        amplitude += ((powered ? 70 + 6 * Math.sin(t * 0.8) : 0) - amplitude) * 0.08;
+        if (readout !== null && powered) amplitude = readout;
+        else amplitude += ((powered ? 70 + 6 * Math.sin(t * 0.8) : 0) - amplitude) * 0.08;
         if (!powered && level < 0.02) screenOn = false;
         screen.redraw();
       }
-      bezelMat.emissiveIntensity = 0.55 * level;
+      // La pantalla encendida tiene luz propia aunque el sonotrodo esté quieto.
+      bezelMat.emissiveIntensity = screenOn ? 0.3 + 0.25 * level : 0;
       if (shownLed !== powered) {
         shownLed = powered;
         ledOn = powered;
@@ -576,8 +619,10 @@ export function build(): BuiltModel {
       }
       (sideA.material as THREE.MeshPhysicalMaterial).emissiveIntensity = 0.04 * level;
 
-      tip.position.x = (Math.random() - 0.5) * 0.25 * level;
+      tipR = (sonotrodes.find((s) => s.mesh.visible) ?? sonotrodes[1]).r;
+      tips.position.x = (Math.random() - 0.5) * 0.25 * level;
       glowMat.opacity = 0.75 * level * (0.8 + Math.random() * 0.2);
+      glow.scale.set(70, 50, 1).multiplyScalar(Math.sqrt(tipR / 7));
 
       for (let i = 0; i < COUNT; i++) {
         const b = state[i];

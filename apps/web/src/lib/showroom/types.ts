@@ -33,7 +33,19 @@ export interface BuiltModel {
   /** Avanza la animación; `level` va de 0 (en reposo) a 1 (en marcha). */
   update(dt: number, t: number, level: number): void;
   setPower(on: boolean): void;
+  /**
+   * Fija la cifra de la pantalla del equipo (p. ej. la amplitud que marca el
+   * scroll); `null` la devuelve a su animación propia. Opcional: sólo los
+   * equipos con pantalla dibujada la implementan.
+   */
+  setReadout?(percent: number | null): void;
   dispose(): void;
 }
 
-export type ModelModule = { build: () => BuiltModel };
+/** Opciones de construcción; un modelo puede ignorarlas. */
+export interface BuildOptions {
+  /** Nivel de calidad medio: menos partículas (burbujas, chispas). */
+  lite?: boolean;
+}
+
+export type ModelModule = { build: (options?: BuildOptions) => BuiltModel };
