@@ -460,12 +460,11 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     /* Pista de desplazamiento: una raya de 40 px con un segmento de 14 px que baja tres veces. */
     .story__cue {
       position: absolute;
-      /* Centrada en la página, no en la columna del texto: 5fr de 12 y el hueco de 3rem. */
-      left: calc(120% + 1.5rem);
+      /* Al pie de la columna del texto: centrada en la página pisaba la base del equipo. */
+      left: 0;
       bottom: 30px;
-      translate: -50%;
       flex-direction: column;
-      align-items: center;
+      align-items: flex-start;
       gap: 0.5rem;
       white-space: nowrap;
     }

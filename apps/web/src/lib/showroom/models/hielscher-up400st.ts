@@ -594,6 +594,7 @@ export function build(options: BuildOptions = {}): BuiltModel {
       lateral: { target: bodyAnchor, direction: new THREE.Vector3(0.15, 0.1, 1), distance: 650 },
     },
     frameTop: bodyY + H + 40,
+    frameMargin: 1.5, // el hero ancho (7fr) no deja la base ni el soporte pegados al borde
     setPower(on) {
       powered = on;
       if (on) screenOn = true;

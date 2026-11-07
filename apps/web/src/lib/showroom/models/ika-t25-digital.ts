@@ -613,6 +613,7 @@ export function build(): BuiltModel {
       lateral:     { target: lateralTarget,      direction: new THREE.Vector3(1, 0.18, 0.12),   distance: 300 },
     },
     frameTop: housingBottom + HH + 50,
+    frameMargin: 1.5, // el hero ancho (7fr) no deja la base ni el soporte pegados al borde
     yaw: 0.52,
     setPower(on: boolean) {
       powered = on;
