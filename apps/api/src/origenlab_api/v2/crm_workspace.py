@@ -2239,7 +2239,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2425,7 +2425,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2527,7 +2527,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
