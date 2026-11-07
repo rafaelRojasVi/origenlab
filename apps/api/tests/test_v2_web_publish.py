@@ -377,3 +377,106 @@ def test_schema_is_the_sites_file_and_is_loaded_once() -> None:
 def test_missing_schema_fails_loudly(tmp_path) -> None:
     with pytest.raises(RuntimeError, match="modelos.schema.json"):
         web_publish.find_schema(start=tmp_path)
+
+
+# ------------------------------------------------------------------ fix round 1: bounds and mapping
+
+def test_oversized_body_is_413_before_parsing(calls) -> None:
+    big = _valid_sheet()
+    big["lead"] = "x" * (web_publish.MAX_BODY_BYTES + 10)
+    resp = _post(_client(), big)
+    _assert_refused(resp, calls, status=413)
+    assert resp.json()["detail"]["code"] == "sheet_too_large"
+
+
+def test_oversized_chunked_body_without_content_length_is_413(calls) -> None:
+    def chunks():
+        for _ in range(web_publish.MAX_BODY_BYTES // 1024 + 2):
+            yield b" " * 1024
+
+    resp = _client().post(PATH, content=chunks(), headers={**HEADERS, "Content-Type": "application/json"})
+    _assert_refused(resp, calls, status=413)
+
+
+def test_viewer_is_refused_before_the_body_is_read(calls) -> None:
+    big = _valid_sheet()
+    big["lead"] = "x" * (web_publish.MAX_BODY_BYTES + 10)
+    _assert_refused(_post(_client("viewer"), big), calls, status=403)
+
+
+def test_body_that_is_not_json_is_422(calls) -> None:
+    resp = _client().post(PATH, content=b"{nope", headers={**HEADERS, "Content-Type": "application/json"})
+    _assert_refused(resp, calls)
+    assert resp.json()["detail"]["code"] == "body_invalid"
+
+
+def test_deeply_nested_body_is_422_not_500(calls) -> None:
+    resp = _client().post(PATH, content=b"[" * 100_000, headers={**HEADERS, "Content-Type": "application/json"})
+    _assert_refused(resp, calls)
+
+
+@pytest.mark.parametrize("field", ["specs", "accessories", "related", "faqs"])
+def test_array_over_50_items_is_422_with_its_path(calls, field) -> None:
+    sheet = _valid_sheet()
+    item = {"specs": sheet["specs"][0], "accessories": "a", "related": "otro-modelo", "faqs": sheet["faqs"][0]}[field]
+    sheet[field] = [item] * 51
+    resp = _post(_client(), sheet)
+    _assert_refused(resp, calls)
+    errors = resp.json()["detail"]["errors"]
+    assert {"path": field, "message": "at most 50 items are allowed (51 given)"} in errors
+
+
+def test_array_of_exactly_50_items_passes(calls) -> None:
+    sheet = _valid_sheet()
+    sheet["accessories"] = ["a"] * 50
+    assert _post(_client(), sheet).status_code == 200
+
+
+def test_http_client_exception_from_github_is_502(calls, monkeypatch) -> None:
+    import http.client
+
+    def raising(method, url, headers, body, timeout):
+        raise http.client.IncompleteRead(b"par")
+
+    monkeypatch.setattr(
+        web_publish, "github_file_sha",
+        lambda config, path: _github.github_file_sha(config, path, transport=raising),
+    )
+    resp = _post(_client(), _valid_sheet())
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "commit_failed"
+    assert TOKEN not in resp.text
+
+
+@pytest.mark.parametrize("status", [409, 422])
+def test_put_conflict_maps_to_commit_conflict(calls, monkeypatch, status) -> None:
+    t = _FakeTransport((status, b'{"message":"sha does not match"}'))
+    monkeypatch.setattr(
+        web_publish, "github_put_file",
+        lambda config, path, content, message, sha: _github.github_put_file(
+            config, path, content, message, sha, transport=t),
+    )
+    resp = _post(_client(), _valid_sheet())
+    assert resp.status_code == 502
+    detail = resp.json()["detail"]
+    assert detail["code"] == "commit_conflict"
+    assert detail["message"] == "La ficha cambió en GitHub; vuelve a cargar y publica de nuevo."
+    assert calls["dispatch"] == []
+
+
+def test_stale_limiter_entries_are_pruned(calls, monkeypatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(web_publish, "_clock", lambda: now[0])
+    web_publish._claim("viejo-uno")
+    web_publish._claim("viejo-dos")
+    now[0] += 61
+    web_publish._claim("nuevo")
+    assert set(web_publish._last_publish) == {"nuevo"}
+
+
+def test_transport_does_not_follow_redirects() -> None:
+    import urllib.request
+
+    handler = next(h for h in _github._OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler))
+    req = urllib.request.Request("https://api.github.com/x")
+    assert handler.redirect_request(req, None, 302, "Found", {}, "https://evil.invalid/") is None

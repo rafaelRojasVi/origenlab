@@ -9,6 +9,7 @@ the response body (GitHub echoes request details in error messages).
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import re
 import urllib.error
@@ -55,10 +56,20 @@ class GithubPublishConfig:
             raise ValueError("github_ref is not a valid branch name")
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """GitHub's API answers directly; following a redirect would forward the token to wherever it points."""
+
+    def redirect_request(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, bytes]:
     request = urllib.request.Request(url, data=body or None, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
+        with _OPENER.open(request, timeout=timeout) as resp:
             return resp.status, resp.read(MAX_BODY_BYTES + 1)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read(MAX_BODY_BYTES + 1)
@@ -79,7 +90,7 @@ def _call(
         headers["Content-Type"] = "application/json"
     try:
         return transport(method, url, headers, payload, TIMEOUT_SECONDS)
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
         # `exc` can name the URL but never the headers; still, only its type is kept.
         raise GithubError(code, f"GitHub could not be reached ({type(exc).__name__})") from None
 
@@ -98,7 +109,7 @@ def github_file_sha(config: GithubPublishConfig, path: str, *, transport: Transp
         raise GithubError("commit_failed", f"GitHub answered HTTP {status} reading the file", status)
     try:
         sha = json.loads(raw)["sha"]
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, RecursionError):
         raise GithubError("commit_failed", "GitHub returned an unreadable file record", status) from None
     if not isinstance(sha, str) or not sha:
         raise GithubError("commit_failed", "GitHub returned an unreadable file record", status)
@@ -119,11 +130,15 @@ def github_put_file(
     if sha:
         body["sha"] = sha
     status, raw = _call(config, "PUT", _contents_url(config, path), body, transport, "commit_failed")
+    if status in (409, 422):  # the file changed under the editor (stale sha) or already exists
+        raise GithubError(
+            "commit_conflict", "La ficha cambió en GitHub; vuelve a cargar y publica de nuevo.", status,
+        )
     if status not in (200, 201):
         raise GithubError("commit_failed", f"GitHub answered HTTP {status} writing the file", status)
     try:
         commit = json.loads(raw)["commit"]["sha"]
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, RecursionError):
         raise GithubError("commit_failed", "GitHub returned an unreadable commit record", status) from None
     if not isinstance(commit, str) or not commit:
         raise GithubError("commit_failed", "GitHub returned an unreadable commit record", status)
@@ -150,7 +165,7 @@ def _json_object(raw: bytes, code: str, status: int, what: str) -> dict:
         raise GithubError(code, f"GitHub returned an oversized {what}", status)
     try:
         data = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise GithubError(code, f"GitHub returned an unreadable {what}", status) from None
     if not isinstance(data, dict):
         raise GithubError(code, f"GitHub returned an unreadable {what}", status)

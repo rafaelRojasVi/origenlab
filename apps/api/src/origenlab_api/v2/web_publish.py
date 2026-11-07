@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Path as PathParam, Request
+from fastapi.concurrency import run_in_threadpool
 from jsonschema import Draft7Validator
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from origenlab_api.v2._github import (
     GithubError,
@@ -42,6 +43,10 @@ CONTENT_DIR = "apps/web/src/content/modelos"
 RATE_WINDOW_SECONDS = 60.0
 STATUS_CACHE_SECONDS = 10.0
 MAX_ERRORS = 20
+# A real sheet is a few KB. The cap is applied to the raw body, streamed, before any parsing.
+MAX_BODY_BYTES = 256 * 1024
+# The schema leaves these arrays unbounded and is shared byte-identical with the site, so the cap lives here.
+ARRAY_CAPS = {"specs": 50, "accessories": 50, "related": 50, "faqs": 50}
 
 
 def find_schema(start: Path | None = None) -> Path:
@@ -88,16 +93,24 @@ class PublishModelSheetRequest(BaseModel):
 
 def _schema_errors(sheet: dict[str, Any]) -> list[dict[str, str]]:
     errors = sorted(_VALIDATOR.iter_errors(sheet), key=lambda e: [str(p) for p in e.absolute_path])
-    return [
+    found = [
         {"path": "/".join(str(p) for p in e.absolute_path), "message": e.message[:300]}
-        for e in errors[:MAX_ERRORS]
+        for e in errors
     ]
+    for name, cap in ARRAY_CAPS.items():
+        value = sheet.get(name)
+        if isinstance(value, list) and len(value) > cap:
+            found.append({"path": name, "message": f"at most {cap} items are allowed ({len(value)} given)"})
+    found.sort(key=lambda e: e["path"])
+    return found[:MAX_ERRORS]
 
 
 def _claim(model_id: str) -> None:
     """One publish per model per 60 s. The slot is taken before the write so a double click cannot race."""
     now = _clock()
     with _lock:
+        for stale in [k for k, t in _last_publish.items() if now - t >= RATE_WINDOW_SECONDS]:
+            del _last_publish[stale]
         last = _last_publish.get(model_id)
         if last is not None and now - last < RATE_WINDOW_SECONDS:
             wait = int(RATE_WINDOW_SECONDS - (now - last)) + 1
@@ -127,13 +140,65 @@ ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9-]+$", max_length=60)]
 web_publish_router = APIRouter(prefix="/v2/web", tags=["v2-web-publish"])
 
 
-@web_publish_router.post("/publish-model-sheet")
-def publish_model_sheet(
-    body: PublishModelSheetRequest,
-    operator: Deciding,
-    request: Request,
-) -> dict[str, Any]:
+async def _read_bounded_body(request: Request) -> bytes:
+    """The raw body, streamed and capped; Content-Length alone is never trusted."""
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            too_big = int(declared) > MAX_BODY_BYTES
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail={"code": "bad_content_length", "message": "invalid Content-Length"},
+            ) from None
+        if too_big:
+            raise _too_large()
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            raise _too_large()
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _too_large() -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail={"code": "sheet_too_large", "message": f"the request body may not exceed {MAX_BODY_BYTES // 1024} KB"},
+    )
+
+
+def _parse_body(raw: bytes) -> PublishModelSheetRequest:
+    try:
+        data = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise HTTPException(
+            status_code=422, detail={"code": "body_invalid", "message": "the body is not valid JSON"},
+        ) from None
+    try:
+        return PublishModelSheetRequest.model_validate(data)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422, detail=exc.errors(include_url=False, include_input=False, include_context=False),
+        ) from None
+
+
+@web_publish_router.post(
+    "/publish-model-sheet",
+    openapi_extra={"requestBody": {
+        "required": True,
+        "content": {"application/json": {"schema": PublishModelSheetRequest.model_json_schema()}},
+    }},
+)
+async def publish_model_sheet(operator: Deciding, request: Request) -> dict[str, Any]:
+    # The role gate (`Deciding`) has already run: a viewer is refused before any byte is read.
     config = _config(request)
+    body = _parse_body(await _read_bounded_body(request))
+    return await run_in_threadpool(_publish, config, operator, body)
+
+
+def _publish(config: GithubPublishConfig, operator: Any, body: PublishModelSheetRequest) -> dict[str, Any]:
     errors = _schema_errors(body.sheet)
     if errors:
         raise HTTPException(
