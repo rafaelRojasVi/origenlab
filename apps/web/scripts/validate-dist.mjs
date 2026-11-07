@@ -112,6 +112,34 @@ for (const file of pages) {
   const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
   assert(canonical?.endsWith('/'), at(`la canónica debe llevar barra final: ${canonical}`));
   assert(/<meta name="theme-color"/.test(html), at('falta theme-color'));
+  // Organization: exactamente una por página, JSON válido, sameAs sólo con URL https reales (nunca vacías)
+  // y un contactPoint de ventas con el correo y nada más.
+  const orgs = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => {
+      try {
+        return JSON.parse(match[1]);
+      } catch {
+        assert(false, at('JSON-LD que no es JSON válido'));
+        return null;
+      }
+    })
+    .filter((entry) => entry?.['@type'] === 'Organization');
+  assert(orgs.length === 1, at(`debe haber un solo Organization en JSON-LD (hay ${orgs.length})`));
+  const org = orgs[0];
+  if (org) {
+    assert(org.url === 'https://origenlab.cl/' && org.name, at('Organization sin url o name'));
+    if ('sameAs' in org) {
+      assert(
+        Array.isArray(org.sameAs) && org.sameAs.length > 0 && org.sameAs.every((u) => typeof u === 'string' && /^https:\/\/[^\s]+$/.test(u)),
+        at('Organization.sameAs vacío o con una URL no válida'),
+      );
+    }
+    const point = org.contactPoint?.[0];
+    assert(
+      org.contactPoint?.length === 1 && point.contactType === 'sales' && point.email && !('telephone' in point),
+      at('Organization.contactPoint: sólo contactType sales y correo'),
+    );
+  }
   // Sólo una página de modelo (`productos/<familia>/<slug>/`) puede llevar su póster 3D
   // (scripts/generate-posters.mjs), y exactamente `/products/<slug>-poster.jpg`; el resto, el PNG del sitio.
   // Las fichas heredadas de centrifugación (`productos/centrifugas/<slug>/`) usan el id de la colección: `ortoalresa-<slug>`.

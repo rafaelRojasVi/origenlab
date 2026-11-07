@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: web-maintainers
-Last reviewed: 2026-09-06
+Last reviewed: 2026-11-07
 
 Este documento describe el sistema visual del sitio público tras el rediseño V2.
 Es la referencia para decidir si algo nuevo pertenece al sitio o no. La verdad de
@@ -47,6 +47,9 @@ que introduce un color, un radio o una sombra propia está fuera del sistema.
 | `paper` | `#FAFAF7` | Fondo de página |
 | `surface` | `#F2F2EE` | Banda de marcas, estado hover de filas |
 | `hairline` | `#E3E3DE` | Filetes de 1 px |
+| `hairline-strong` | `#C8CAC6` | Sólo decorativo (subrayados de enlace, filetes de énfasis). **No es borde de control**: contra papel queda en torno a 1,4:1, el piso que `qa:contrast` tolera para lo decorativo |
+| `pressed` / `raised` | `#E9E9E4` / `#FFFFFF` | Fondo del botón secundario pulsado; superficie elevada (hover del primario sobre tinta, tarjetas) |
+| `ink-900` / `ink-disabled` | `#1D2022` / `#8A8F92` | Botón primario pulsado; texto de un control deshabilitado (exento de contraste por WCAG) |
 | `ink-950` | `#141617` | Titulares, texto principal, banda de cierre y pie |
 | `ink-800` | `#2B2E30` | Texto corrido |
 | `ink-600` | `#54595D` | Texto secundario |
@@ -55,6 +58,8 @@ que introduce un color, un radio o una sombra propia está fuera del sistema.
 | `teal-800` | `#115E59` | Hover del primario, enlaces sobre papel |
 | `teal-500` | `#14B8A6` | Acento sobre superficie oscura únicamente |
 | `onink-100/300/500` | `#ECECEB` / `#B9BCBD` / `#8D9295` | Texto sobre la banda oscura |
+| `onink-hairline` / `onink-line` | `#33383A` / `#4B5154` | Filetes y bordes de control sobre tinta |
+| `teal-100` / `teal-50` | `#CCFBF1` / `#F0FDFA` | Selección de texto y fondos tenues |
 
 Contraste verificado (WCAG 2.x): `ink-950` sobre `paper` 17,4:1; `ink-800` 13,1:1;
 `ink-600` 6,8:1; `ink-500` 5,0:1; `teal-800` sobre `paper` 7,3:1; blanco sobre
@@ -63,6 +68,12 @@ Contraste verificado (WCAG 2.x): `ink-950` sobre `paper` 17,4:1; `ink-800` 13,1:
 `npm run qa:contrast` recalcula el contraste de cada texto visible del sitio
 construido sobre su fondo efectivo. El par más ajustado hoy es `ink-500` sobre
 `surface` con 4,67:1, en las etiquetas mono del riel de marcas.
+
+**El foco se divide por fondo**: `teal-700` sobre papel y `teal-500` sobre tinta
+(`.on-ink`). `qa:contrast` mide el anillo de foco de cada control contra su fondo
+efectivo. El borde de los botones secundarios, de WhatsApp y de icono es de 1 px
+en `ink-500` o más oscuro: debe llegar a 3:1 contra papel (WCAG 1.4.11), así que
+`hairline-strong` no puede hacer de borde.
 
 Reglas: un solo acento en todo el sitio; sin degradados; el color nunca es el
 único portador de significado; los filetes no transportan información.
@@ -110,8 +121,16 @@ License 1.1, que permite el auto-hospedaje. Se sincronizan con
 - **IBM Plex Mono** (400 y 500): medidas, numerales de sección, códigos de ítem,
   pies de imagen y valores de ficha. Cifras tabulares.
 
-Roles definidos como clases en `global.css`: `.t-display`, `.t-h2`, `.t-h3`,
-`.t-lead`, `.t-body`, `.t-small`, `.t-label`, `.t-data`.
+Roles definidos como clases en `global.css`: `.t-d1`, `.t-d2`, `.t-d3` (display),
+`.t-h2`, `.t-h3`, `.t-lead`, `.t-body`, `.t-small`, `.t-label`, `.t-data`.
+`.t-display` sigue existiendo como alias de `.t-d3`.
+
+| Rol | Peso | Tamaño (390 a 1280 px) | Interlínea | Uso |
+|---|---|---|---|---|
+| `.t-d1` | 800, -0,02 em | 48 a 96 px | 0,98 | Titular de la portada |
+| `.t-d2` | 800, -0,02 em | 40 a 72 px | 1,0 | Primera pantalla de modelo y de familia |
+| `.t-d3` | 800, -0,02 em | 34 a 56 px | 1,04 | Titular de página interior |
+| `.t-h2` | 700, -0,02 em | 32 a 40 px | 1,1 | Título de sección |
 
 Reglas: ningún texto por debajo de 13 px; la versalita con tracking sólo existe
 en el rol `.t-label`; medidas de 60 a 66 caracteres en texto corrido; sin rayas
@@ -121,12 +140,46 @@ en el rol `.t-label`; medidas de 60 a 66 caracteres en texto corrido; sin rayas
 
 - Base de 8 px. Ritmo de sección: 64 px en móvil, 96 px desde 768 px.
 - Ancho de página 80 rem, con 20 / 32 / 48 px de margen exterior (`.shell`).
-- **Un solo radio: 2 px** (`--radius-edge`), en botones, imágenes y campos.
+- **Radios: 10 px controles** (`--radius-btn`), **16 px tarjetas** (`--radius-card`),
+  **24 px escena 3D** (`--radius-scene`), **28 px banda de cierre** (`--radius-band`)
+  y **2 px** (`--radius-edge`) para etiquetas, tablas, imágenes y campos de
+  lectura. Bajo 640 px la banda baja a 20 px y la escena a 16 px.
+- **Altura de botón**: 48 px (`--btn-h`) y 40 px el pequeño (`--btn-h-sm`), que
+  **bajo 1024 px sube a 44 px**: ningún objetivo táctil queda por debajo de 44 px.
+  Relleno horizontal 20 y 16 px.
+- **Transición de interfaz**: `--ease-ui` = 150 ms ease-out, para color, borde y
+  flecha. Cabecera y marca tienen sus propios tiempos (abajo).
 - **Sin sombras.** La cabecera fija se separa con un filete, no con desenfoque.
-- Movimiento: respuesta a hover y foco, el desplazamiento de 2 px de la flecha
-  en los enlaces, el revelado al desplazarse de la portada y los dos bucles
-  acotados de más abajo. Nada de parallax, ninguna librería de animación. Todo
+- Movimiento: respuesta a hover y foco, la flecha del botón (4 px) y el escalado
+  .98 al pulsar, la cabecera que se encoge, la marca, el revelado `.rv` y los dos
+  bucles acotados de más abajo. Nada de parallax, ninguna librería de animación. Todo
   lo que se mueve está bajo `prefers-reduced-motion`.
+
+**Cabecera y marca.** La cabecera pasa de 72 a 56 px ligada al desplazamiento
+(`animation-timeline: scroll(root)`, CSS puro); sin soporte, un observador marca
+`data-scrolled` y la transición es de 200 ms ease-out. La marca de tres cuerpos se
+dibuja **una vez al cargar y otra en cada `pointerenter`**, 1,2 s
+(`SiteLogo.astro`, clase `.is-playing`); no es un bucle. Bajo
+`prefers-reduced-motion: reduce` la marca queda quieta y dibujada, y la cabecera
+cambia de tamaño de golpe, sin transición.
+
+**`.rv`, revelado ligado al desplazamiento** (`global.css`): CSS puro con
+`animation-timeline: view()`, rango `entry 0% a 35%`, de opacidad .15 y 20 px a
+su sitio. Sin soporte de `animation-timeline`, con movimiento reducido o en
+impresión no hace nada y el contenido está siempre pintado. Nada de la primera
+pantalla lleva `.rv`. Es el mecanismo de las páginas de la 1b; `[data-reveal]`
+(abajo) es el heredado.
+
+**Movimiento reducido, política única.** Una regla global pone a cero toda
+transición (`transition-duration: 0s !important`); el desplazamiento de la flecha
+y el escalado del botón sólo existen bajo `no-preference`; `.rv`, el bucle de
+la marca del hero y el del riel no se declaran con `reduce`. `qa:interaction`
+comprueba que con `reduce` no queda ninguna animación activa.
+
+**Presupuestos** (`validate:dist`): JavaScript de página < 15 kB (la medición de
+`visita` va en línea y cuenta), CSS < 80 kB, la sala 3D bajo demanda < 900 kB
+aparte. Con la 1b: JS 13,8 kB, CSS 74,5 kB. Una pieza nueva de CSS borra primero
+lo que reemplaza.
 
 **Los dos únicos bucles del sitio, los dos en la portada.** No hay más, y añadir
 un tercero exige la misma justificación que estos dos:
@@ -231,23 +284,46 @@ estas resuelve el problema.
 | `ui/Icon` | Trazos de Tabler Icons (MIT), 24x24, stroke 1,5 |
 | `ui/LegalDraftNotice` | Estado de borrador de las rutas legales |
 | `ui/PendingFactsTable` | Datos legales que faltan, nombrados uno a uno |
-| `home/Hero` | Portada: titular a escala propia, constelación e índice de alcance enlazado |
+| `ui/Button` | Botón del sistema, `<a>` con `href` y `<button>` sin él (ver más abajo) |
+| `home/HomeHero` | Portada A: titular B en `.t-d1`, dos acciones y la sala 3D |
 | `home/Showroom` | El equipo en 3D (Hielscher UP400St, medidas del plano oficial) sobre la fotografía oficial como respaldo; se gira, se enciende y se recorre por vistas |
-| `home/BrandRail` | Riel horizontal de las siete marcas, una sola altura, gris, con control de pausa |
-| `home/EquipmentFamilies` | Las seis familias, en cuatro composiciones distintas |
+| `home/HomeBrands` | Riel de las siete marcas (OHAUS incluida), una altura, gris, con control de pausa |
+| `home/HomeFamilies` | Las seis familias, desde `homeFamilyCards` |
 | `home/FamilyMotif` | Diagrama de qué le hace el equipo a la muestra, para las familias sin fotografía |
-| `home/ConsultationSection` | Asesoría técnica y la especialista |
-| `home/ProcessSection` | Franja de hechos y cómo comprar, en el resumen de cuatro pasos |
-| `home/AudienceSection` | Seis entradas por sector hacia sus páginas de familia, y las tres líneas comerciales |
+| `home/HomeIndustries` | Entradas por sector hacia las páginas de familia y compras públicas |
+| `home/HomeSteps` | Cómo comprar en pasos (`buyingSteps()`); la reusan la portada y `/como-comprar/` |
+| `home/HomeNotes` | Notas de aplicación; sólo se dibuja si existen (hoy ninguna) |
+| `product/ModelCard` | Tarjeta de modelo (`entry`, `variant`); una de las dos únicas con tarjeta |
+| `product/FamilyScale` | Escala logarítmica o lineal de la familia (`familyScale`, `parseSpecNumber`), con tarjetas por potencia ascendente |
+| `product/SpecTable` | Ficha técnica de modelo en tabla que se desplaza dentro de su caja |
+| `product/ModelHero`, `ModelHeroCopy` | Primera pantalla de modelo: 3D (`[data-first-screen]`) y copia; barra fija `[data-sticky-cta]` tras ella |
+| `product/TrustStrip`, `ModelFaq`, `RelatedModels`, `AccessoryCards`, `FamilyConsult` | Secciones de la ficha y de la familia |
 | `ui/StepList` | Procedimiento vertical con filete continuo; por defecto los cuatro pasos de compra |
 
 Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
 `.section` (ritmo vertical), `.rule-top` (filete de separación), `.link-row`
 (fila de enlaces con flecha) y los roles tipográficos.
 
-Acciones: `.btn-primary` (relleno teal), `.btn-secondary` (contorno tinta),
-`.btn-invert` (sólo sobre la banda) y `.link-arrow` (texto y flecha, nunca
-compite con el primario). Una intención, una etiqueta, y el sitio tiene dos:
+Acciones: se escriben con `ui/Button.astro` y no con clases a mano.
+
+| `variant` | Aspecto | Uso |
+|---|---|---|
+| `primary` | Relleno tinta (`ink-950`), texto papel, flecha | La acción de la página; una por pantalla |
+| `secondary` | Contorno 1 px `ink-500`, fondo transparente, flecha | Acción alterna |
+| `tertiary` | Texto subrayado con `hairline-strong` y flecha | Enlace de acción; nunca compite con el primario |
+| `whatsapp` | Contorno, glifo de WhatsApp | Canal directo |
+| `icon` | Cuadrado con glifo; `label` obligatorio (nombre accesible) | Menú, cerrar, pausa |
+
+Tamaños `md` (48 px) y `sm` (40 px; 44 px bajo 1024 px). `tone="ink"` (o estar
+dentro de `.on-ink`) lo pinta para fondos oscuros: el primario pasa a papel. Estados
+sobre papel: hover (primario a `ink-800`, secundario con borde `ink-950` y fondo
+`surface`), pulsado (primario a `ink-900`, secundario a `pressed`, y escala .98 sólo
+con movimiento), foco (anillo 2 px, `teal-700` sobre papel y `teal-500` sobre
+tinta), deshabilitado (primario `hairline` con texto `ink-disabled`, secundario con
+borde `hairline`; `aria-disabled`). La flecha avanza 4 px al hover. Los `data-*` y
+`aria-*` extra se reenvían. El primario ya no es teal y `.btn-invert` desapareció;
+las clases `.btn-*` existen pero no se escriben a mano. Una intención,
+una etiqueta, y el sitio tiene dos:
 
 - **«Solicitar cotización»** pide una propuesta formal. Es la acción de la
   cabecera, de la banda de cierre y de las páginas de producto. La forma corta
@@ -288,7 +364,9 @@ en blanco al llegar.
 
 ## 6. Lo que el sistema no admite
 
-- Fichas dentro de fichas, o una rejilla de tres fichas iguales.
+- Tarjetas fuera de las de modelo y de familia (`ModelCard`, `FamilyScale`): en
+  todo lo demás se agrupa con filetes y espacio. Nunca fichas dentro de fichas ni
+  una rejilla de tres tarjetas iguales.
 - Un segundo verde, un degradado, una sombra o un segundo radio. Las seis tintas
   de familia no son un segundo acento: sólo `family-sonicacion` sigue en uso, en
   los marcadores de la sala 3D del hero.

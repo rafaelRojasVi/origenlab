@@ -9,7 +9,7 @@ import HomeNotes from '../components/home/HomeNotes.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import { site } from '../config/site';
 import { publicClaim } from '../data/claims';
-import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
+import { websiteJsonLd } from '../lib/jsonld';
 
 /**
  * Portada (tablero HomeA).
@@ -42,7 +42,7 @@ const bandBody = sameDay
   title={`${site.name} | ${site.tagline}`}
   description={site.description}
   isHome
-  jsonLd={[organizationJsonLd(), websiteJsonLd()]}
+  jsonLd={[websiteJsonLd()]}
 >
   <HomeHero headlineB={headlineB} />
   <HomeFamilies headlineB={headlineB} />

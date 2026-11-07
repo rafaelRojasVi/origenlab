@@ -45,4 +45,6 @@ export const site = {
   quoteHref: '/contacto/',
   /** Perfil de LinkedIn. Vacío hasta que el negocio lo confirme: el pie sólo dibuja el enlace si hay valor. */
   linkedinUrl: '' as string,
+  /** Perfil de empresa en Google. Vacío hasta que el negocio lo confirme: sólo entra en `sameAs` del JSON-LD si hay valor. */
+  googleProfileUrl: '' as string,
 } as const;
