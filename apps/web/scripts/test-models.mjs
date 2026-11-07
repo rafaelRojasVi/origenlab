@@ -75,6 +75,11 @@ function catalogIds() {
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : catalogIds();
 let failed = 0;
 
+if (ids.length === 0) {
+  console.error('test:models: no hay ids que probar (¿catalog.ts cambió de forma y ya no se reconocen sus imports?)');
+  process.exit(1);
+}
+
 for (const id of ids) {
   const file = join(modelsDir, `${id}.ts`);
   const started = performance.now();

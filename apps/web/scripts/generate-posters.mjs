@@ -16,7 +16,7 @@
  * salta con un aviso y no detiene a los demás. Cada póster pesa ≤ 150 kB (baja
  * la calidad JPEG desde 82 hasta cumplirlo).
  *
- * Ejecutar: npm run build && npm run posters   (no forma parte de `validate`:
+ * Ejecutar: npm run build && npm run posters [slug ...]   (sin slugs, todos; no forma parte de `validate`:
  * necesita un navegador con WebGL). Después, `npm run build` otra vez para que
  * las páginas incluyan los pósteres nuevos.
  */
@@ -40,7 +40,8 @@ if (!existsSync(join(root, 'dist'))) {
 const models = readdirSync(modelsDir)
   .filter((file) => file.endsWith('.json'))
   .map((file) => JSON.parse(readFileSync(join(modelsDir, file), 'utf8')))
-  .filter((entry) => entry.showroom_id);
+  .filter((entry) => entry.showroom_id)
+  .filter((entry) => process.argv.length <= 2 || process.argv.slice(2).includes(entry.slug));
 if (models.length === 0) {
   console.log('Ningún modelo declara showroom_id: nada que generar.');
   process.exit(0);
@@ -82,7 +83,14 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 const server = createServer((req, res) => {
-  const path = normalize(decodeURIComponent(new URL(req.url, 'http://l').pathname)).replace(/^(\.\.[/\\])+/, '');
+  let path;
+  try {
+    path = normalize(decodeURIComponent(new URL(req.url, 'http://l').pathname)).replace(/^(\.\.[/\\])+/, '');
+  } catch {
+    res.writeHead(400, { 'content-type': 'text/plain' });
+    res.end('bad request');
+    return;
+  }
   let file = join(dist, path);
   if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');
   if (!file.startsWith(dist) || !existsSync(file)) {
@@ -91,7 +99,9 @@ const server = createServer((req, res) => {
     return;
   }
   res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
-  createReadStream(file).pipe(res);
+  const stream = createReadStream(file);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
 });
 await new Promise((resolve, reject) => {
   server.once('error', reject);
@@ -100,9 +110,14 @@ await new Promise((resolve, reject) => {
 const base = `http://127.0.0.1:${server.address().port}`;
 const stop = () => server.close();
 process.on('exit', stop);
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(130));
 
 let browser;
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, async () => {
+    await browser?.close().catch(() => {});
+    process.exit(130);
+  });
+}
 let failed = 0;
 try {
   // WebGL por software, como qa-interaction.mjs: sirve sin GPU.

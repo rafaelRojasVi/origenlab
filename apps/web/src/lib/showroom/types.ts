@@ -28,6 +28,8 @@ export interface BuiltModel {
    * (una varilla de soporte, una tapa abierta). Sin valor, encuadra todo.
    */
   frameTop?: number;
+  /** Holgura de la vista general (por defecto 1,18): más alta, el equipo se ve más pequeño. */
+  frameMargin?: number;
   /** Giro de presentación en radianes (por defecto 0,55). */
   yaw?: number;
   /** Avanza la animación; `level` va de 0 (en reposo) a 1 (en marcha). */

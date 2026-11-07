@@ -187,7 +187,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     const at = framed.getCenter(new THREE.Vector3());
     const half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     const across = Math.hypot(framedSize.x, framedSize.z) * 0.8;
-    const distance = Math.max(framedSize.y / 2 / half, across / 2 / (half * camera.aspect)) * 1.18;
+    const distance = Math.max(framedSize.y / 2 / half, across / 2 / (half * camera.aspect)) * (model.frameMargin ?? 1.18);
     return { at, pos: at.clone().add(new THREE.Vector3(0.32, 0.18, 1).normalize().multiplyScalar(distance)) };
   };
   const viewFor = (name: string) => {

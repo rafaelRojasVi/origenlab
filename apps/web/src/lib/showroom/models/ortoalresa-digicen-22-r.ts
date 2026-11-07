@@ -630,7 +630,9 @@ export function build(): BuiltModel {
         distance:  950,
       },
     },
-    frameTop: BODY_T + 30,
+    // Con la tapa abierta (reposo) la punta llega a ~840 mm: el encuadre general la incluye.
+    frameTop: BODY_T + 620,
+    frameMargin: 1.45, // la cámara mira desde arriba: la tapa alta y el frente entran enteros
     yaw: 0.56,
 
     setPower(on: boolean) {
