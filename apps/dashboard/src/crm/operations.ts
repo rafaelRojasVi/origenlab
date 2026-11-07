@@ -197,7 +197,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     ejemplo: "«Gracias, nos quedamos con otro proveedor» → caso perdido.",
   },
   R7: {
-    cuando: "Llega una solicitud de cotización clara que no pertenece a ningún hilo conocido: palabras de cotización en el asunto, o la lectura del correo (IA) dice que pide precio. Nunca una respuesta («Re:») ni la oferta de un proveedor.",
+    cuando: "Llega una solicitud de cotización clara que no pertenece a ningún hilo conocido: palabras de cotización en el asunto, o la lectura del correo (IA) dice que pide precio. Nunca una respuesta («Re:») ni la oferta de un proveedor. También el formulario del sitio web con modelo: el modelo pasa a «Qué busca».",
     hace: "Abre un caso en «Solicitada» y anota su origen: «Correo», o «Web» si es el formulario del sitio. Si el remitente usa un correo gratuito, el caso queda sin institución hasta que una persona la confirme. Una persona puede corregir el origen en el caso.",
     automatica: true,
     ejemplo: "«Solicito cotización de una balanza» desde un correo nuevo → caso «Solicitada».",
