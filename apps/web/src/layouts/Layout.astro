@@ -13,9 +13,10 @@ interface Props {
   robots?: string;
   jsonLd?: readonly unknown[];
   ogImagePath?: string;
+  ogImageSize?: { width: number; height: number };
 }
 
-const { title, description, isHome, noindex, robots, jsonLd, ogImagePath } = Astro.props;
+const { title, description, isHome, noindex, robots, jsonLd, ogImagePath, ogImageSize } = Astro.props;
 const effectiveNoindex = noindex || robots === 'noindex';
 ---
 
@@ -29,6 +30,7 @@ const effectiveNoindex = noindex || robots === 'noindex';
       noindex={effectiveNoindex}
       jsonLd={jsonLd}
       ogImagePath={ogImagePath}
+      ogImageSize={ogImageSize}
     />
   </head>
   <body>

@@ -126,12 +126,20 @@ for (const file of pages) {
   const ogImage = html.match(/property="og:image" content="([^"]+)"/)?.[1];
   const modelSlug = rel.match(/^productos\/[^/]+\/([^/]+)\/index\.html$/)?.[1];
   const posterSlug = modelSlug && rel.startsWith('productos/centrifugas/') ? `ortoalresa-${modelSlug}` : modelSlug;
-  // Sin póster, la página de modelo usa su fotografía verificada: un WebP derivado bajo /products/ que exista en dist.
-  const photoPath = ogImage?.match(/^https:\/\/origenlab\.cl(\/products\/[A-Za-z0-9._\/-]+-\d+\.webp)$/)?.[1];
+  // Sin póster, la página de modelo usa su fotografía verificada: un WebP derivado de `/products/<marca>/`
+  // que exista en dist y que la propia página dibuje (su srcset lleva la misma base), no uno cualquiera.
+  // Las fichas heredadas de centrifugación sólo pueden llevar póster o el PNG del sitio.
+  const photoBase = ogImage?.match(/^https:\/\/origenlab\.cl(\/products\/[a-z0-9-]+\/[a-z0-9-]+)-\d+\.webp$/)?.[1];
+  const photoOk =
+    modelSlug !== undefined &&
+    !rel.startsWith('productos/centrifugas/') &&
+    photoBase !== undefined &&
+    html.includes(`${photoBase}-480.webp`) &&
+    existsSync(join(dist, ogImage.replace('https://origenlab.cl/', '')));
   const ogOk =
     ogImage === sitePng ||
     (posterSlug !== undefined && ogImage === `https://origenlab.cl/products/${posterSlug}-poster.jpg` && existsSync(join(dist, 'products', `${posterSlug}-poster.jpg`))) ||
-    (modelSlug !== undefined && photoPath !== undefined && !photoPath.includes('..') && existsSync(join(dist, photoPath)));
+    photoOk;
   assert(ogOk, at(`og:image debe ser el PNG del sitio${posterSlug ? `, /products/${posterSlug}-poster.jpg o la foto WebP de /products/` : ''} (${ogImage})`));
   const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? '';
   assert(description.length > 50, at('descripción demasiado corta'));

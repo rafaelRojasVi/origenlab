@@ -16,14 +16,20 @@ interface Props {
   jsonLd?: readonly unknown[];
   /** Imagen social específica (ruta bajo public/). */
   ogImagePath?: string;
+  /** Medidas reales de `ogImagePath` si no es el póster 3D (1200x900) ni el PNG del sitio. */
+  ogImageSize?: { width: number; height: number };
 }
 
-const { title, description, isHome = false, noindex = false, jsonLd = [], ogImagePath } =
+const { title, description, isHome = false, noindex = false, jsonLd = [], ogImagePath, ogImageSize } =
   Astro.props;
 
 const fullTitle = isHome ? title : `${title} | ${site.name}`;
 const path = Astro.url.pathname.replace(/\/+$/, '');
 const canonicalUrl = path === '' ? `${site.baseUrl}/` : `${site.baseUrl}${path}/`;
+// Medidas declaradas: el PNG del sitio, el póster 3D o las que pasa la página; si no se conocen, se omiten.
+const ogSize =
+  ogImageSize ??
+  (!ogImagePath ? { width: 1200, height: 630 } : ogImagePath.endsWith('-poster.jpg') ? { width: 1200, height: 900 } : undefined);
 const ogImageUrl = `${site.baseUrl}${ogImagePath ?? site.ogImagePath}`;
 ---
 
@@ -61,8 +67,8 @@ const ogImageUrl = `${site.baseUrl}${ogImagePath ?? site.ogImagePath}`;
 <meta property="og:description" content={description} />
 <meta property="og:url" content={canonicalUrl} />
 <meta property="og:image" content={ogImageUrl} />
-<meta property="og:image:width" content="1200" />
-<meta property="og:image:height" content={ogImagePath?.endsWith("-poster.jpg") ? "900" : "630"} />
+{ogSize && <meta property="og:image:width" content={String(ogSize.width)} />}
+{ogSize && <meta property="og:image:height" content={String(ogSize.height)} />}
 <meta property="og:image:alt" content={site.ogImageAlt} />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content={fullTitle} />

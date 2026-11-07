@@ -393,6 +393,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     let active = figure.dataset.active ?? '';
     let room: Showroom | null = null;
     let gone = false;
+    let wasLive = false;
     let ready = false;
     let loading = 0;
 
@@ -483,6 +484,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
         if (gone) return;
         canvas.hidden = false;
         room = createShowroom(canvas, module.build({ lite: tier === 'medium' }), { tier });
+        wasLive = true;
         room.onFrame(onFrame);
       } catch (error) {
         canvas.hidden = true;
@@ -530,6 +532,12 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
       gone = true;
       room?.dispose();
       room = null;
+    });
+    // Desde la caché de ida y vuelta el lienzo queda en blanco: se rehace la sala por el mismo camino del primer arranque.
+    addEventListener('pageshow', (event) => {
+      if (!event.persisted || !wasLive) return;
+      gone = false;
+      void boot();
     });
   }
 
