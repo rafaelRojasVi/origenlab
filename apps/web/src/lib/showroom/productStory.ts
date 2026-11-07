@@ -86,7 +86,6 @@ interface Note {
   h: number;
   side: NoteSide;
   gap: number;
-  lead: number;
   on: boolean;
   shown: boolean;
   /** En pantallas de toque, lado impuesto por el orden vertical de las anclas. */
@@ -94,6 +93,35 @@ interface Note {
 }
 
 const byY = (a: Note, b: Note) => a.y - b.y;
+
+/** Largo mínimo del hilo: la nota nunca queda más cerca que esto de su punto. */
+const MIN_LEAD = 12;
+
+const SIDES: readonly NoteSide[] = ['left', 'right', 'top', 'bottom'];
+const OPPOSITE: Record<NoteSide, NoteSide> = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' };
+
+/** Pone la nota (sin acotar) en `side` del punto, a `gap` px. */
+function placeAt(n: Note, side: NoteSide, px: number, py: number, gap: number) {
+  n.side = side;
+  n.x = side === 'right' ? px + gap : side === 'left' ? px - gap - n.w : px - n.w / 2;
+  n.y = side === 'top' ? py - gap - n.h : side === 'bottom' ? py + gap : py - n.h / 2;
+}
+
+/** Acota la nota al lienzo y por encima de `floorY`. */
+function clampNote(n: Note, width: number, floorY: number) {
+  n.x = Math.min(Math.max(n.x, 0), Math.max(0, width - n.w));
+  n.y = Math.min(Math.max(n.y, 0), Math.max(0, floorY - n.h));
+}
+
+/** Lo que separa a la nota del punto en el eje de su lado (negativo: lo cubre). */
+function leadLength(n: Note, side: NoteSide, px: number, py: number): number {
+  return side === 'right' ? n.x - px : side === 'left' ? px - (n.x + n.w) : side === 'bottom' ? n.y - py : py - (n.y + n.h);
+}
+
+/** ¿Cabe la nota en `side` del punto, con `gap`, dentro del lienzo y sobre `floorY`? */
+function fits(n: Note, side: NoteSide, px: number, py: number, gap: number, width: number, floorY: number): boolean {
+  return side === 'right' ? px + gap + n.w <= width : side === 'left' ? px - gap - n.w >= 0 : side === 'top' ? py - gap - n.h >= 0 : py + gap + n.h <= floorY;
+}
 
 export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, options: ShowroomOptions = {}): StoryScene {
   const showroom = createShowroom(canvas, model, options);
@@ -109,6 +137,17 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
   let seenMode = '';
   let positions: AnchorPositions = {};
   let userFrame: ((anchors: AnchorPositions) => void) | null = null;
+
+  /** ¿Taparía la nota, puesta en `side`, el ancla de otra nota visible? */
+  const coversOtherAnchor = (n: Note, side: NoteSide, px: number, py: number, gap: number): boolean => {
+    placeAt(n, side, px, py, gap);
+    for (const o of overlays) {
+      const q = positions[o.anchor];
+      if (o === n || !q || !o.on) continue;
+      if (q.x > n.x - 6 && q.x < n.x + n.w + 6 && q.y > n.y - 6 && q.y < n.y + n.h + 6) return true;
+    }
+    return false;
+  };
 
   /**
    * Coloca cada nota a un lado de su ancla y no encima, con un hilo entre la
@@ -184,17 +223,25 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
         const dy = height ? (p.y - height / 2) / height : 0;
         side = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'top' : 'bottom';
       }
-      const fitsRight = p.x + gap + w <= width;
-      const fitsLeft = p.x - gap - w >= 0;
-      if (side === 'right' && !fitsRight) side = fitsLeft ? 'left' : p.y - gap - h >= 0 ? 'top' : 'bottom';
-      else if (side === 'left' && !fitsLeft) side = fitsRight ? 'right' : p.y - gap - h >= 0 ? 'top' : 'bottom';
-      n.side = side;
       n.gap = gap;
       n.w = w;
       n.h = h;
-      n.x = side === 'right' ? p.x + gap : side === 'left' ? p.x - gap - w : p.x - w / 2;
-      n.y = side === 'top' ? p.y - gap - h : side === 'bottom' ? p.y + gap : p.y - h / 2;
-      n.lead = p.y - n.y;
+      // Lado pedido; si no cabe con su hilo entero, con un hilo más corto (hasta MIN_LEAD)
+      // y, si tampoco, el opuesto y luego los otros dos, en ese orden.
+      const order = side === 'left' || side === 'right' ? [side, OPPOSITE[side], 'top', 'bottom'] : [side, OPPOSITE[side], p.x < width / 2 ? 'right' : 'left', p.x < width / 2 ? 'left' : 'right'];
+      let chosen: NoteSide = side;
+      let chosenGap = gap;
+      search: for (const candidate of order as NoteSide[]) {
+        for (const g of [gap, Math.min(gap, 24), MIN_LEAD]) {
+          if (fits(n, candidate, p.x, p.y, g, width, floorY) && !coversOtherAnchor(n, candidate, p.x, p.y, g)) {
+            chosen = candidate;
+            chosenGap = g;
+            break search;
+          }
+        }
+      }
+      placeAt(n, chosen, p.x, p.y, chosenGap);
+      n.gap = chosenGap;
     }
     // Acota cada nota al lienzo y fuera de la franja de controles.
     stack.length = 0;
@@ -221,11 +268,39 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
     for (const n of overlays) {
       if (!n.shown) continue;
       const p = positions[n.anchor]!;
+      // Tras acotar y apilar, la nota no puede cubrir su propio punto ni quedar a menos
+      // de MIN_LEAD: se pasa al lado más cercano que lo cumpla (o al de más hilo).
+      if (leadLength(n, n.side, p.x, p.y) < MIN_LEAD) {
+        const fromX = n.x;
+        const fromY = n.y;
+        let best: NoteSide | null = null;
+        let feasible = false;
+        let bestCost = Infinity;
+        let bestLead = -Infinity;
+        for (const side of SIDES) {
+          placeAt(n, side, p.x, p.y, Math.max(n.gap, MIN_LEAD));
+          clampNote(n, width, floorY);
+          const lead = leadLength(n, side, p.x, p.y);
+          const cost = Math.abs(n.x - fromX) + Math.abs(n.y - fromY);
+          if (lead >= MIN_LEAD) {
+            if (!feasible || cost < bestCost) {
+              best = side;
+              feasible = true;
+              bestCost = cost;
+            }
+          } else if (!feasible && lead > bestLead) {
+            best = side;
+            bestLead = lead;
+          }
+        }
+        placeAt(n, best ?? n.side, p.x, p.y, Math.max(n.gap, MIN_LEAD));
+        clampNote(n, width, floorY);
+      }
       const x = n.x;
       const y = Math.max(0, n.y);
       const at = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       // El hilo mide lo que de verdad separa a la nota del punto tras acotarla.
-      const len = n.side === 'right' ? x - p.x : n.side === 'left' ? p.x - (x + n.w) : n.side === 'bottom' ? y - p.y : p.y - (y + n.h);
+      const len = leadLength(n, n.side, p.x, p.y);
       const leadY = Math.min(n.h - 8, Math.max(8, p.y - y));
       const leadX = Math.min(n.w - 8, Math.max(8, p.x - x));
       const key = `${at}|${n.side}|${len.toFixed(0)}|${leadY.toFixed(0)}|${leadX.toFixed(0)}`;
@@ -298,7 +373,6 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
         h: 0,
         side: 'right' as NoteSide,
         gap: 0,
-        lead: 0,
         on: false,
         shown: false,
         forced: '' as const,
@@ -309,7 +383,9 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
     renderOverlays(progress) {
       root?.style.setProperty('--story-progress', progress.toFixed(4));
       // Pasado el último tramo la historia termina: la ficha vuelve a tener la barra fija.
-      root?.toggleAttribute('data-end', progress >= 0.999);
+      // Con histéresis (se enciende en 0,999, se apaga bajo 0,99) para que no parpadee en el borde.
+      if (progress >= 0.999) root?.setAttribute('data-end', '');
+      else if (progress < 0.99) root?.removeAttribute('data-end');
       apply();
     },
   };
