@@ -1516,20 +1516,28 @@ describe("Publicar web: publish a model sheet", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("refuses a body one byte over the cap even when Content-Length understates it", async () => {
+  // A JSON body of exactly `bytes` bytes (the pad fills the difference).
+  const bodyOf = (bytes: number) => JSON.stringify({ pad: "x".repeat(bytes - JSON.stringify({ pad: "" }).length) });
+
+  it("refuses a body of 32_769 bytes (one byte over the cap) with no Content-Length, so only the buffered check can refuse it", async () => {
     stubUpstreamFetch();
-    const over = JSON.stringify({ pad: "x".repeat(32_768) });
-    const res = await handleRequest(publish({}, over), TEST_ENV);
+    const over = bodyOf(32_769);
+    expect(new TextEncoder().encode(over).byteLength).toBe(32_769);
+    const req = publish({}, over);
+    expect(req.headers.get("Content-Length")).toBeNull();
+    const res = await handleRequest(req, TEST_ENV);
     expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: { code: "payload_too_large" } });
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("accepts a body exactly at the cap", async () => {
+  it("accepts a body of exactly 32_768 bytes, the cap itself", async () => {
     stubUpstreamFetch();
-    const exact = JSON.stringify({ pad: "x".repeat(32_768 - JSON.stringify({ pad: "" }).length) });
+    const exact = bodyOf(32_768);
     expect(new TextEncoder().encode(exact).byteLength).toBe(32_768);
     const res = await handleRequest(publish({}, exact), TEST_ENV);
     expect(res.status).toBe(200);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
   });
 
   it.each(["GET", "PUT", "DELETE"])("refuses %s on the publish path", async (method) => {
