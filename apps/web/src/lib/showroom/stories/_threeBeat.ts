@@ -4,7 +4,7 @@
  *   hero    vuelta completa al equipo en la vista general, en reposo
  *   reveal  el equipo en marcha, la cámara en la vista elegida y una nota sobre
  *           cada ancla (el texto de cada nota sale del marcador de la sala)
- *   close   vuelta al reposo y paso a la ficha técnica
+ *   close   vuelta al reposo, «Solicitar cotización» y paso a la ficha técnica
  *
  * Cada `stories/<id>.ts` es sólo la configuración (textos, vista, anclas y
  * grupos de la ficha) y su propio fragmento `scene-story-<id>`. Las cifras no se
@@ -30,6 +30,12 @@ export interface ThreeBeatOptions {
     view: string;
     /** Anclas con nota (2–3), con el nombre de `content/<id>.ts`. */
     anchors: string[];
+    /**
+     * Lado de la nota de cada ancla (`left`, `right`, `top`, `bottom`, con
+     * `:px` de hilo): para que no tape lo que describe. Sin entrada, hacia
+     * afuera del centro del lienzo.
+     */
+    placement?: Record<string, string>;
     headline: string;
     body: string;
   };
@@ -78,6 +84,7 @@ export function threeBeatStory(options: ThreeBeatOptions): ProductStoryConfig {
         animationHook: (scene, t) => pose(scene, 'reveal', t),
         overlayComponent: 'hotspot',
         overlayData: reveal.anchors,
+        overlayPlacement: reveal.placement,
       },
       {
         id: 'close',
@@ -87,6 +94,7 @@ export function threeBeatStory(options: ThreeBeatOptions): ProductStoryConfig {
         textHeadline: close.headline,
         textBody: close.body,
         animationHook: (scene, t) => pose(scene, 'close', t),
+        overlayComponent: 'cta',
       },
     ],
     specs: options.specs,

@@ -5,6 +5,7 @@ import ModelPhoto from '../ui/ModelPhoto.astro';
 import ExternalLink from '../ui/ExternalLink.astro';
 import { imageForModel } from '../../data/productImages';
 import { getBrandById } from '../../lib/catalog';
+import { ctaLabels } from '../../lib/ctaLabels';
 import { showroomEntry } from '../../lib/showroom/catalog';
 import type { BeatSpec, ProductStoryConfig } from '../../lib/showroom/productStory';
 import type { Modelo } from '../../content.config';
@@ -64,10 +65,10 @@ const spots = config.beats.flatMap((beat: BeatSpec) => {
     // Una nota por ancla: un beat puede señalar varias a la vez.
     return (beat.overlayData ?? []).flatMap((name) => {
       const spot = hotspots.find((item) => item.anchor === name);
-      return spot && spot.body.length ? [{ beat: beat.id, anchor: name, title: spot.title, body: spot.body }] : [];
+      return spot && spot.body.length ? [{ beat: beat.id, anchor: name, title: spot.title, body: spot.body, place: beat.overlayPlacement?.[name] }] : [];
     });
   }
-  if (beat.overlayComponent === 'callout') return [{ beat: beat.id, anchor, title: label, body: [spec(label).value] }];
+  if (beat.overlayComponent === 'callout') return [{ beat: beat.id, anchor, title: label, body: [spec(label).value], place: undefined }];
   return [];
 });
 
@@ -113,7 +114,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       <div class="story__spots" aria-hidden="true">
         {
           spots.map((spot) => (
-            <div class="story-spot" data-anchor={spot.anchor} data-beats={spot.beat}>
+            <div class="story-spot" data-anchor={spot.anchor} data-beats={spot.beat} data-place={spot.place}>
               <b class="block">{spot.title}</b>
               {spot.body.map((line) => <span class="block">{line}</span>)}
             </div>
@@ -144,6 +145,13 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
                     </div>
                   ))}
                 </dl>
+              )}
+              {beat.overlayComponent === 'cta' && (
+                <p class="story__row">
+                  <a href={`/contacto/?producto=${entry.slug}`} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>
+                    {ctaLabels.solicitarCotizacion}
+                  </a>
+                </p>
               )}
               {beat.overlayComponent === 'meter' && range && (
                 <div class="story__row">
@@ -338,7 +346,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   .story-spot {
     position: absolute;
     inset: 0 auto auto 0;
-    width: min(14rem, 45vw);
+    width: min(13rem, 45vw);
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--color-hairline);
     border-left: 2px solid var(--color-family-sonicacion);
@@ -346,6 +354,66 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     font-size: 0.8125rem;
     line-height: 1.45;
     transition: opacity 0.3s;
+  }
+  /* Hilo y punto: de la nota al ancla (`productStory.ts` fija `data-side`, `--gap`, `--lead-x` y `--lead-y`). */
+  .story-spot::before,
+  .story-spot::after {
+    content: '';
+    position: absolute;
+    background: var(--color-ink-600);
+  }
+  .story-spot::after {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .story-spot[data-side='right']::before,
+  .story-spot[data-side='left']::before {
+    top: var(--lead-y, 50%);
+    width: var(--gap, 64px);
+    height: 1px;
+  }
+  .story-spot[data-side='right']::after,
+  .story-spot[data-side='left']::after {
+    top: calc(var(--lead-y, 50%) - 3px);
+  }
+  .story-spot[data-side='right']::before {
+    right: 100%;
+  }
+  .story-spot[data-side='right']::after {
+    right: calc(100% + var(--gap, 64px) - 4px);
+  }
+  .story-spot[data-side='left'] {
+    border-left-width: 1px;
+    border-right: 2px solid var(--color-family-sonicacion);
+  }
+  .story-spot[data-side='left']::before {
+    left: 100%;
+  }
+  .story-spot[data-side='left']::after {
+    left: calc(100% + var(--gap, 64px) - 4px);
+  }
+  .story-spot[data-side='top']::before,
+  .story-spot[data-side='bottom']::before {
+    left: var(--lead-x, 50%);
+    width: 1px;
+    height: var(--gap, 64px);
+  }
+  .story-spot[data-side='top']::after,
+  .story-spot[data-side='bottom']::after {
+    left: calc(var(--lead-x, 50%) - 3px);
+  }
+  .story-spot[data-side='top']::before {
+    top: 100%;
+  }
+  .story-spot[data-side='top']::after {
+    top: calc(100% + var(--gap, 64px) - 4px);
+  }
+  .story-spot[data-side='bottom']::before {
+    bottom: 100%;
+  }
+  .story-spot[data-side='bottom']::after {
+    bottom: calc(100% + var(--gap, 64px) - 4px);
   }
   .story-specs__groups {
     display: grid;

@@ -7,6 +7,7 @@ export const story = threeBeatStory({
   reveal: {
     view: 'general',
     anchors: ['screen', 'tip'],
+    placement: { screen: 'bottom:70', tip: 'bottom:110' },
     headline: 'Generador y transductor, por separado',
     body: 'Protección: {Protección}. Volumen de muestra: {Volumen de muestra}.',
   },

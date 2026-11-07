@@ -61,6 +61,9 @@ export interface StoryScene extends Showroom {
   renderOverlays(progress: number): void;
 }
 
+/** Distancia en px entre el ancla y su nota (el largo del hilo). */
+const NOTE_GAP = 64;
+
 export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, options: ShowroomOptions = {}): StoryScene {
   const showroom = createShowroom(canvas, model, options);
 
@@ -72,17 +75,70 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
   let positions: AnchorPositions = {};
   let userFrame: ((anchors: AnchorPositions) => void) | null = null;
 
+  /**
+   * Coloca cada nota a un lado de su ancla y no encima, con un hilo de `gap` px
+   * entre la nota y el punto. El lado sale de `data-place` (`left`, `right`,
+   * `top` o `bottom`, con `:gap` opcional; lo fija la historia) o, sin él, es el
+   * eje en que el ancla más se aleja del centro del lienzo, hacia afuera. Si un
+   * lado derecho o izquierdo no tiene sitio, se usa el otro. Las notas visibles
+   * de un mismo lado se apilan para no taparse entre sí. `data-side`, `--gap`,
+   * `--lead-x` y `--lead-y` (dónde cae el ancla dentro de la nota) los usa el
+   * CSS del hilo y del punto.
+   */
   const apply = () => {
+    const stage = overlays[0]?.el.parentElement;
+    const width = stage?.clientWidth ?? 0;
+    const height = stage?.clientHeight ?? 0;
+    type Side = 'left' | 'right' | 'top' | 'bottom';
+    const placed: { o: (typeof overlays)[number]; x: number; y: number; w: number; h: number; side: Side; gap: number; lead: number; px: number; py: number }[] = [];
     for (const o of overlays) {
       const p = positions[o.anchor];
-      const at = p ? `translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)` : '';
-      if (at !== o.at) {
-        o.at = at;
-        if (at) o.el.style.transform = at;
-        o.el.dataset.occluded = p ? 'false' : 'true';
+      if (!p) {
+        o.at = '';
+        if (o.el.dataset.occluded !== 'true') o.el.dataset.occluded = 'true';
+        continue;
+      }
+      if (o.el.dataset.occluded !== 'false') o.el.dataset.occluded = 'false';
+      const w = o.el.offsetWidth;
+      const h = o.el.offsetHeight;
+      const [hint, hintGap] = (o.el.dataset.place ?? '').split(':');
+      const gap = Number(hintGap) || NOTE_GAP;
+      let side = hint as Side;
+      if (!['left', 'right', 'top', 'bottom'].includes(side)) {
+        const dx = width ? (p.x - width / 2) / width : 0;
+        const dy = height ? (p.y - height / 2) / height : 0;
+        side = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'top' : 'bottom';
+      }
+      if (width && side === 'right' && p.x + gap + w > width) side = 'left';
+      else if (width && side === 'left' && p.x - gap - w < 0) side = 'right';
+      const x = side === 'right' ? p.x + gap : side === 'left' ? p.x - gap - w : Math.min(Math.max(p.x - w / 2, 0), Math.max(0, width - w));
+      const y = side === 'top' ? p.y - gap - h : side === 'bottom' ? p.y + gap : p.y - h / 2;
+      placed.push({ o, x, y, w, h, side, gap, lead: h / 2, px: p.x - x, py: p.y - y });
+    }
+    // Apila por lado, de arriba abajo, sólo las notas del beat activo.
+    for (const side of ['left', 'right'] as const) {
+      let floor = -Infinity;
+      for (const n of placed.filter((item) => item.side === side && item.o.el.hasAttribute('data-on')).sort((a, b) => a.y - b.y)) {
+        const anchorY = n.y + n.h / 2;
+        n.y = Math.max(n.y, floor);
+        floor = n.y + n.h + 8;
+        n.lead = anchorY - n.y;
       }
     }
+    for (const n of placed) {
+      const at = `translate(${n.x.toFixed(1)}px, ${n.y.toFixed(1)}px)`;
+      const key = `${at}|${n.lead.toFixed(1)}|${n.px.toFixed(1)}`;
+      if (key === n.o.at) continue;
+      n.o.at = key;
+      const el = n.o.el;
+      el.style.transform = at;
+      el.dataset.side = n.side;
+      el.style.setProperty('--gap', `${n.gap}px`);
+      el.style.setProperty('--lead-y', `${Math.min(n.h - 8, Math.max(8, n.lead)).toFixed(1)}px`);
+      el.style.setProperty('--lead-x', `${Math.min(n.w - 8, Math.max(8, n.px)).toFixed(1)}px`);
+    }
   };
+
   showroom.onFrame((anchors) => {
     positions = anchors;
     apply();
@@ -167,13 +223,20 @@ export interface BeatSpec {
    * `facts` cifras de la ficha (`overlayData`: etiquetas); `hotspot` una nota
    * sobre cada ancla de `overlayData` (una o varias; el texto sale del
    * marcador de la sala);
-   * `meter` medidor de la cifra de pantalla (`overlayData`: [etiqueta con el
+   * `cta` el botón «Solicitar cotización» de la página; `meter` medidor de la cifra de pantalla (`overlayData`: [etiqueta con el
    * rango «del N al M %»]); `callout` nota sobre un ancla con un valor de la
    * ficha (`overlayData`: [ancla, etiqueta]); `sonotrodes` las puntas
    * (`overlayData`: ids); `pills` las aplicaciones de la ficha.
    */
-  overlayComponent?: 'facts' | 'hotspot' | 'meter' | 'callout' | 'sonotrodes' | 'pills';
+  overlayComponent?: 'facts' | 'cta' | 'hotspot' | 'meter' | 'callout' | 'sonotrodes' | 'pills';
   overlayData?: string[];
+  /**
+   * Para `hotspot`: dónde va la nota de cada ancla respecto de su punto,
+   * `left`, `right`, `top` o `bottom`, con `:px` de hilo opcional
+   * (`{ display: 'left:64' }`). Sin entrada, la nota va hacia afuera del centro
+   * del lienzo. Sirve para que la nota no tape lo que describe.
+   */
+  overlayPlacement?: Record<string, string>;
 }
 
 /** Un grupo de la ficha técnica: título y etiquetas de la ficha del modelo, en orden. */

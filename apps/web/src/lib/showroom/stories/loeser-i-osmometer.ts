@@ -7,6 +7,7 @@ export const story = threeBeatStory({
   reveal: {
     view: 'general',
     anchors: ['screen', 'printer'],
+    placement: { screen: 'bottom:100', printer: 'bottom:100' },
     headline: 'El resultado, impreso junto a la muestra',
     body: 'Tiempo de medición: {Tiempo de medición}. Memoria: {Memoria}.',
   },
