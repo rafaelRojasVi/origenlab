@@ -143,6 +143,9 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
   .showroom__photo {
     transition: opacity 0.6s ease;
   }
+  /* La figura y su caja llenan el escenario: con alto automático la caja medía
+     0 px y la foto de respaldo quedaba reducida a su relleno. */
+  .showroom__photo :global(.model-photo),
   .showroom__photo :global(.model-photo__frame) {
     height: 100%;
     aspect-ratio: auto !important;
