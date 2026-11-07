@@ -630,6 +630,31 @@ export function isAllowedCatalogUploadPostPath(pathname: string): boolean {
 }
 
 /**
+ * «Publicar web» (`apps/api` v2/web_publish.py): the operator's model sheet, validated upstream and
+ * committed to the site. One exact POST path, never GET. Every request here must pass
+ * `webPublishRefusal` in index.ts: an allowed `Origin`, no cross-site `Sec-Fetch-Site`, a JSON body
+ * within `WEB_PUBLISH_MAX_BYTES`. No `Idempotency-Key`: the API does not read one (its guard is one
+ * publish per model per 60 s, upstream). Roles are enforced upstream.
+ */
+export const WEB_PUBLISH_POST_PATHS: readonly RegExp[] = [/^\/v2\/web\/publish-model-sheet$/];
+
+/**
+ * 32 KiB. The body is `{model_id, sheet}`, a whole model file: the largest sheet in the site's
+ * history is about 3.8 kB, so four times that is about 15 kB, rounded up to 32 KiB.
+ */
+export const WEB_PUBLISH_MAX_BYTES = 32_768;
+
+export function isAllowedWebPublishPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return WEB_PUBLISH_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/** Whether a body of `bytes` bytes fits the publish limit. Used for the declared length and the buffered body. */
+export function webPublishBodyWithinLimit(bytes: number): boolean {
+  return Number.isFinite(bytes) && bytes <= WEB_PUBLISH_MAX_BYTES;
+}
+
+/**
  * Sign-out. Clears the session cookie upstream (and records the logout); listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
@@ -669,6 +694,7 @@ export function isAllowedPostPath(pathname: string): boolean {
     isAllowedCatalogCommandPostPath(pathname) ||
     isAllowedCatalogUploadPostPath(pathname) ||
     isAllowedQuotePreviewPostPath(pathname) ||
+    isAllowedWebPublishPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }

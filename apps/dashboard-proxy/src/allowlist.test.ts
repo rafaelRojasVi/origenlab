@@ -1444,3 +1444,39 @@ describe("People first: weak guesses and «Confirmar» (Task 7)", () => {
     }
   });
 });
+
+describe("«Publicar web» (T7.3): publish a model sheet", () => {
+  const PUBLISH = "/v2/web/publish-model-sheet";
+
+  it("allows the exact path as a POST, never as a GET", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, isAllowedWebPublishPostPath } = await import("./allowlist");
+    expect(isAllowedWebPublishPostPath(PUBLISH)).toBe(true);
+    expect(isAllowedPostPath(PUBLISH)).toBe(true);
+    expect(isAllowedUpstreamPath(PUBLISH)).toBe(false);
+  });
+
+  it("refuses its near misses as POST and as GET", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, isAllowedWebPublishPostPath } = await import("./allowlist");
+    for (const near of [
+      "/v2/web/publish-model-sheets",
+      "/v2/web/publish-model-sheet/x",
+      "/v2/web/publish-model-sheet/",
+      "/v2/web/PUBLISH-model-sheet",
+      "/v2/web/publish-model-sheet-x",
+      "/v2/commands/publish-model-sheet",
+    ]) {
+      expect(isAllowedWebPublishPostPath(near), near).toBe(false);
+      expect(isAllowedPostPath(near), near).toBe(false);
+      expect(isAllowedUpstreamPath(near), near).toBe(false);
+    }
+  });
+
+  it("caps the body at 32 KiB, which is more than four times the largest model sheet", async () => {
+    const { WEB_PUBLISH_MAX_BYTES, webPublishBodyWithinLimit } = await import("./allowlist");
+    expect(WEB_PUBLISH_MAX_BYTES).toBe(32_768);
+    expect(webPublishBodyWithinLimit(3_780 * 4)).toBe(true);
+    expect(webPublishBodyWithinLimit(WEB_PUBLISH_MAX_BYTES)).toBe(true);
+    expect(webPublishBodyWithinLimit(WEB_PUBLISH_MAX_BYTES + 1)).toBe(false);
+    expect(webPublishBodyWithinLimit(Number.NaN)).toBe(false);
+  });
+});

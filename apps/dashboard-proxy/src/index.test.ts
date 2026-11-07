@@ -1462,3 +1462,80 @@ describe("compressed upstream replies (2026-10-30, Render bandwidth)", () => {
     expect(response.headers.get("Content-Length")).toBeNull();
   });
 });
+
+describe("Publicar web: publish a model sheet", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const PUBLISH = "https://proxy.test/api/v2/web/publish-model-sheet";
+  const BODY = JSON.stringify({ model_id: "hielscher-up100h", sheet: { id: "hielscher-up100h" } });
+  const publish = (extra: Record<string, string> = {}, body = BODY, method = "POST") =>
+    requestWithOrigin(PUBLISH, {
+      method,
+      body: method === "GET" || method === "HEAD" ? undefined : body,
+      headers: {
+        "Content-Type": "application/json",
+        "Sec-Fetch-Site": "same-origin",
+        Cookie: "__Host-origenlab_session=s1; CF_Authorization=leak",
+        ...extra,
+      },
+    });
+
+  it("forwards a same-origin JSON publish with only the session cookie and no Idempotency-Key", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(publish(), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe("/v2/web/publish-model-sheet");
+    expect(upstream.method).toBe("POST");
+    expect(upstream.headers.get("Cookie")).toBe("__Host-origenlab_session=s1");
+    expect(await upstream.text()).toBe(BODY);
+  });
+
+  it.each([
+    [
+      "a foreign Origin",
+      requestWithOrigin(PUBLISH, {
+        method: "POST",
+        body: BODY,
+        origin: "https://evil.test",
+        headers: { "Content-Type": "application/json" },
+      }),
+      403,
+      "origin_not_allowed",
+    ],
+    ["a cross-site fetch", publish({ "Sec-Fetch-Site": "cross-site" }), 403, "cross_site_request"],
+    ["a form post", publish({ "Content-Type": "application/x-www-form-urlencoded" }), 415, "unsupported_media_type"],
+    ["a declared body one byte over the cap", publish({ "Content-Length": "32769" }), 413, "payload_too_large"],
+  ])("refuses %s before anything is forwarded", async (_label, req, status, code) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: { code } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body one byte over the cap even when Content-Length understates it", async () => {
+    stubUpstreamFetch();
+    const over = JSON.stringify({ pad: "x".repeat(32_768) });
+    const res = await handleRequest(publish({}, over), TEST_ENV);
+    expect(res.status).toBe(413);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("accepts a body exactly at the cap", async () => {
+    stubUpstreamFetch();
+    const exact = JSON.stringify({ pad: "x".repeat(32_768 - JSON.stringify({ pad: "" }).length) });
+    expect(new TextEncoder().encode(exact).byteLength).toBe(32_768);
+    const res = await handleRequest(publish({}, exact), TEST_ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it.each(["GET", "PUT", "DELETE"])("refuses %s on the publish path", async (method) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(publish({}, BODY, method), TEST_ENV);
+    expect([403, 405]).toContain(res.status);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});
