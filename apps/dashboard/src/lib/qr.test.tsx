@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { encodeQr, formatBitsM, QrSvg } from "./qr";
 
 afterEach(cleanup);
@@ -102,8 +102,11 @@ describe("QrSvg", () => {
     expect(d.startsWith("M4 4h7")).toBe(true); // the top-left finder starts at the quiet zone's edge
   });
 
-  it("renders nothing when the text cannot be encoded safely", () => {
+  it("renders nothing, and warns once in dev, when the text cannot be encoded safely", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { container } = render(<QrSvg text={"a".repeat(200)} />);
     expect(container).toBeEmptyDOMElement();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

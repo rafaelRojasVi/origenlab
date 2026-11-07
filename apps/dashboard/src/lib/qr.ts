@@ -197,7 +197,8 @@ export function QrSvg({ text, size = "22mm", label = "Código QR para escribir p
   let m: QrMatrix;
   try {
     m = encodeQr(text);
-  } catch {
+  } catch (error) {
+    if (import.meta.env.DEV) console.warn("QrSvg: no QR rendered.", error);
     return null; // too long for a safe symbol: print no code rather than a wrong one
   }
   const quiet = 4;

@@ -13,9 +13,9 @@ export function parseWhatsappNumber(raw: string | undefined | null): string | nu
 
 export const WHATSAPP_NUMBER: string | null = parseWhatsappNumber(import.meta.env.VITE_ORIGENLAB_WHATSAPP);
 
-/** `wa.me` link that opens a chat with the message already typed: «Hola OrigenLab, consulto por la cotización CN…». */
+/** `wa.me` link that opens a chat with the message already typed: «Hola OrigenLab, cotización CN…» (short on purpose: it has to fit the QR with room to spare). */
 export function whatsappQuoteUrl(number: string, quoteNumber: string): string {
-  const text = `Hola OrigenLab, consulto por la cotización ${quoteNumber}.`;
+  const text = `Hola OrigenLab, cotización ${quoteNumber}.`;
   return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
 }
 

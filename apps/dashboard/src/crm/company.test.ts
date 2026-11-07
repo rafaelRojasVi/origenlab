@@ -1,3 +1,4 @@
+import { encodeQr } from "../lib/qr";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatWhatsappNumber, parseWhatsappNumber, whatsappQuoteUrl } from "./company";
 
@@ -34,9 +35,18 @@ describe("whatsappQuoteUrl", () => {
     const url = whatsappQuoteUrl("56912345678", "CN01272");
     expect(url.startsWith("https://wa.me/56912345678?text=")).toBe(true);
     const text = new URL(url).searchParams.get("text");
-    expect(text).toBe("Hola OrigenLab, consulto por la cotización CN01272.");
+    expect(text).toBe("Hola OrigenLab, cotización CN01272.");
     expect(url).toContain("cotizaci%C3%B3n%20CN01272.");
     expect(url).not.toContain(" ");
+  });
+});
+
+describe("the link always fits the QR", () => {
+  it("leaves at least 15 of version 6's 106 bytes for the longest realistic quote number", () => {
+    const url = whatsappQuoteUrl("56912345678", "CN01234A-26");
+    expect(new TextEncoder().encode(url).length).toBeLessThanOrEqual(106 - 15);
+    expect(encodeQr(url).length).toBeLessThanOrEqual(41); // version 6
+    expect(() => encodeQr(whatsappQuoteUrl("123456789012345", "CN012345A-26"))).not.toThrow();
   });
 });
 
