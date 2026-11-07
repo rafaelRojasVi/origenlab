@@ -29,7 +29,7 @@ const pastFirstScreen = async (page) => {
     window.scrollTo({ top: first.getBoundingClientRect().bottom + window.scrollY + 120, behavior: 'instant' });
   });
   // El observador y la transición de 200 ms pueden tardar con el WebGL por software ocupando la página.
-  await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 10000 });
   await page.waitForTimeout(450);
 };
 
@@ -1538,15 +1538,23 @@ console.log('\nObjetivos táctiles (375 px)');
         const style = getComputedStyle(el);
         if (style.visibility === 'hidden' || style.display === 'none') continue;
         // WCAG 2.5.8: un enlace dentro de una frase o de una celda queda exento.
-        if (el.closest('p, td')) continue;
+        // Exención de frase (WCAG 2.5.8): sólo si el enlace va dentro de un texto más largo que él.
+        const para = el.closest('p, td');
+        if (para && (para.textContent || '').trim().length > (el.textContent || '').trim().length + 12) continue;
         const host = el.parentElement;
-        if (host && el.matches('a') && !el.matches('nav a, .btn, [class*="btn"]') && (host.textContent || '').trim().length > (el.textContent || '').trim().length + 12 && host.children.length <= 3) continue;
+        if (host?.matches('p, li, label') && !el.matches('nav a, .btn, [class*="btn"]') && (host.textContent || '').trim().length > (el.textContent || '').trim().length + 12) continue;
         let rect = el.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
         // Enlace estirado (`::after` absoluto sobre la tarjeta): el objetivo es la tarjeta entera.
         // Casilla o botón de opción: el objetivo es su etiqueta.
         if (el.matches('input[type="checkbox"], input[type="radio"]') && el.labels?.[0]) rect = el.labels[0].getBoundingClientRect();
-        if (getComputedStyle(el, '::after').position === 'absolute') rect = (el.closest('article, li') ?? el).getBoundingClientRect();
+        if (getComputedStyle(el, '::after').position === 'absolute') {
+          const card = el.closest('article, li') ?? el;
+          const cover = card.getBoundingClientRect();
+          const after = getComputedStyle(el, '::after');
+          const full = ['top', 'right', 'bottom', 'left'].every((side) => parseFloat(after[side]) === 0) || (parseFloat(after.width) >= cover.width * 0.9 && parseFloat(after.height) >= cover.height * 0.9);
+          if (full) rect = cover;
+        }
         if (rect.width < 43.5 || rect.height < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]}@${(el.parentElement?.closest('[class]')?.className || '').toString().split(' ')[0]} "${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)}" ${Math.round(rect.width)}×${Math.round(rect.height)}`);
       }
       return out;
