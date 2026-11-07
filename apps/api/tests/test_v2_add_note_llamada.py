@@ -38,6 +38,21 @@ def test_the_five_outcomes_are_defined_once() -> None:
     assert NOTE_KIND_LLAMADA == "llamada"
 
 
+def test_dashboard_names_the_same_outcomes_as_the_api() -> None:
+    """`callOutcome.ts` repeats these five values and the 500-character limit (it cannot import them)."""
+    import re
+    from pathlib import Path
+
+    from origenlab_api.v2.call_outcome import CALL_NEXT_STEP_MAX
+
+    ts = (Path(__file__).resolve().parents[2] / "dashboard/src/crm/callOutcome.ts").read_text(encoding="utf-8")
+    block = re.search(r"export const CALL_OUTCOMES = \[(.*?)\] as const;", ts, re.S)
+    assert block is not None
+    assert re.findall(r'"([a-z_]+)"', block.group(1)) == list(CALL_OUTCOMES)
+    limit = re.search(r"export const CALL_NEXT_STEP_MAX = (\d+);", ts)
+    assert limit is not None and int(limit.group(1)) == CALL_NEXT_STEP_MAX
+
+
 # ─────────────────────────────────────────────────────────────── body validation ──
 
 

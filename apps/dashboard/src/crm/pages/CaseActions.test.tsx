@@ -443,7 +443,7 @@ describe("case drawer actions", () => {
   it("keeps every write disabled for a viewer", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("viewer"));
-    for (const name of ["Cambiar estado", "Marcar ganada", "Recordarme…", "Registrar cotización", "Nueva revisión"]) {
+    for (const name of ["Cambiar estado", "Marcar ganada", "Recordarme…", "Registrar llamada", "Registrar cotización", "Nueva revisión"]) {
       expect(within(dialog).getByRole("button", { name })).toBeDisabled();
     }
   });
@@ -1037,6 +1037,35 @@ describe("case drawer actions", () => {
     const due = Date.parse(String(posts[1].body?.due_at));
     expect(due - Date.now()).toBeGreaterThan(5 * 86_400_000);
     expect(posts[2].body).toMatchObject({ task_id: "t-old", task_version: 3 });
+  });
+
+  it("«Registrar llamada» records a typed call note and refreshes the case", async () => {
+    const calls = stubApi({
+      pipelines: [page([card()])],
+      onPost: () => ({ body: { ok: true, note_id: "n9", version: 1 } }),
+    });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar llamada" }));
+    const form = await within(dialog).findByTestId("log-call");
+    fireEvent.change(within(form).getByLabelText(/¿Cómo terminó la llamada\?/), { target: { value: "reunion" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Registrar llamada" }));
+    await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual({
+      subject_kind: "opportunity",
+      subject_id: CASE,
+      body: "Llamada: Reunión agendada",
+      note_kind: "llamada",
+      call_outcome: "reunion",
+    });
+    await waitFor(() => expect(screen.queryByTestId("log-call")).toBeNull());
+  });
+
+  it("with the case commands off, a call can still be noted but takes no reminder", async () => {
+    stubApi({ pipelines: [page([card()])] });
+    const dialog = await openDrawer(session("sales", { cases: false }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar llamada" }));
+    const form = await within(dialog).findByTestId("log-call");
+    expect(within(form).queryByRole("checkbox", { name: /Recordarme volver a llamar/ })).toBeNull();
   });
 
   it("the case says when and where its reminder shows, with the note", async () => {

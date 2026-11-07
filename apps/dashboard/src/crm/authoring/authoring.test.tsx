@@ -596,3 +596,55 @@ describe("NoteList archive", () => {
     expect(posts).toHaveLength(1);
   });
 });
+
+// ── a «Llamada» reads as a call in the note list ──────────────────────────────
+
+describe("NoteList call notes", () => {
+  const note = (over: Record<string, unknown>) => ({
+    id: "n1", root_note_id: "n1", revision_no: 1, body: "Nota ficticia", author_operator_id: "op-1",
+    author_name: "Operadora Ficticia", created_at: "2026-10-01T00:00:00Z", status: "active", archived_at: null,
+    archive_reason: null, version: 1, is_latest: true, ...over,
+  });
+
+  it("shows «Llamada · outcome» and the next step for a call, never the raw key", async () => {
+    const { NoteList } = await import("./NoteList");
+    const { container } = render(
+      withRole(
+        "sales",
+        <NoteList
+          notes={[
+            note({ id: "c1", root_note_id: "c1", body: "Llamada: No contestó", note_kind: "llamada", call_outcome: "no_contesto", call_next_step: "Insistir el jueves" }) as never,
+            note({ id: "o1", root_note_id: "o1", body: "Una nota común", note_kind: null, call_outcome: null, call_next_step: null }) as never,
+          ]}
+          subjectKind="opportunity"
+          subjectId="00000000-0000-4000-8000-000000000001"
+          mayAuthor
+          onRefresh={() => undefined}
+        />,
+      ),
+    );
+    expect(screen.getAllByText("Llamada · No contestó")).toHaveLength(1);
+    expect(screen.getByText(/Siguiente paso:/).parentElement).toHaveTextContent("Siguiente paso: Insistir el jueves");
+    expect(container.textContent).not.toMatch(/no_contesto|\bllamada\b/);
+    expect(screen.getAllByText(/Llamada/)).toHaveLength(2); // badge + the call's own body
+    expect(screen.getByText("Una nota común")).toBeInTheDocument();
+  });
+
+  it("a call from an outcome this build does not know still reads as a call, in words", async () => {
+    const { NoteList } = await import("./NoteList");
+    render(
+      withRole(
+        "sales",
+        <NoteList
+          notes={[note({ note_kind: "llamada", call_outcome: "telepatia" }) as never]}
+          subjectKind="opportunity"
+          subjectId="00000000-0000-4000-8000-000000000001"
+          mayAuthor
+          onRefresh={() => undefined}
+        />,
+      ),
+    );
+    expect(screen.getByText("Llamada · Otro resultado")).toBeInTheDocument();
+    expect(screen.queryByText(/Siguiente paso/)).toBeNull();
+  });
+});

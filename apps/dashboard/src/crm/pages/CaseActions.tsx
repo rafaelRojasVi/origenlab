@@ -42,6 +42,7 @@ import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, NotRequestConfirm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
 import { FollowUpReminder } from "./FollowUpReminder";
+import { LogCallForm } from "./LogCallForm";
 import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
 import { PurchaseOrderReview } from "./PurchaseOrderReview";
 import {
@@ -58,7 +59,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup" | "notrequest";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup" | "call" | "notrequest";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "enviada", "conversacion", "pausa", "perdida"];
@@ -115,6 +116,8 @@ export function CaseActions({
         : null;
   // A reminder is a task (case commands) with a note (authoring); a closed case takes no task.
   const followUpReason = !mayDecide || !mayAuthor ? WRITE_DISABLED_REASON : closed ? "El caso está cerrado" : null;
+  // A call is a typed note (authoring only); its optional reminder also needs the case commands.
+  const callReason = !mayAuthor ? WRITE_DISABLED_REASON : null;
   const wonReason =
     decideReason ??
     (!mayBeWonFrom(card.stage)
@@ -166,6 +169,15 @@ export function CaseActions({
         ) : (
           <Button variant="primary" aria-expanded={mode === "followup"} onClick={() => toggle("followup")}>
             Recordarme…
+          </Button>
+        )}
+        {callReason ? (
+          <DisabledAction id="drawer-call" reason={callReason}>
+            Registrar llamada
+          </DisabledAction>
+        ) : (
+          <Button aria-expanded={mode === "call"} onClick={() => toggle("call")}>
+            Registrar llamada
           </Button>
         )}
         {decideReason && !(reopenable && decideReason === "El caso está cerrado") ? (
@@ -258,6 +270,17 @@ export function CaseActions({
       {mode === "followup" && !followUpReason ? (
         <FollowUpReminder
           card={card}
+          onCancel={() => setMode(null)}
+          onDone={() => {
+            setMode(null);
+            onChanged();
+          }}
+        />
+      ) : null}
+      {mode === "call" && !callReason ? (
+        <LogCallForm
+          card={card}
+          canRemind={!followUpReason}
           onCancel={() => setMode(null)}
           onDone={() => {
             setMode(null);
