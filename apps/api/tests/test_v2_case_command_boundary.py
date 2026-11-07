@@ -316,6 +316,26 @@ def test_an_unknown_field_is_refused_rather_than_dropped(
     assert repo.calls == []
 
 
+def test_opening_a_case_names_its_origin_from_the_nine_channels_or_none() -> None:
+    from origenlab_api.v2.case_origin import CASE_ORIGINS
+
+    assert CASE_ORIGINS == ("correo", "web", "whatsapp", "campana", "mercado_publico", "fabricante",
+                            "recomendacion", "llamada", "ex_labdelivery")
+    path, _command, body = next(r for r in ROUTES if r[0].endswith("/open-commercial-case"))
+    repo = _FakeCaseRepo()
+    for bad in ("Correo", "email", "", "sitio_web"):
+        response = _client(repo).post(path, json={**body, "origin": bad}, headers=_headers())
+        assert response.status_code == 422, bad
+    assert repo.calls == []
+    for good in (*CASE_ORIGINS, None):
+        response = _client(repo).post(path, json={**body, "origin": good}, headers=_headers())
+        assert response.status_code == 200, good
+        assert repo.calls[-1]["fields"]["origin"] == good
+    # Left out, it is none: no rule and no default guesses a channel.
+    _client(repo).post(path, json=body, headers=_headers())
+    assert repo.calls[-1]["fields"]["origin"] is None
+
+
 @pytest.mark.parametrize(("path", "command", "body"), ROUTES)
 def test_the_router_hands_the_repository_the_command_it_named(
     path: str, command: str, body: dict
@@ -985,6 +1005,27 @@ def test_opening_a_case_writes_the_case_and_its_origin_together(
             ("opportunity.created", "operator"),
             ("case_evidence.linked", "operator"),
         ]
+
+
+@_needs_db
+def test_a_case_opens_with_the_origin_it_names_and_the_event_says_so(disposable_database, world) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    results = {}
+    for origin in ("whatsapp", None):
+        results[origin] = _run(
+            repo, OPEN_COMMERCIAL_CASE,
+            OpenCommercialCaseBody(title="Caso con canal", origin_source_record_id=world["source_record_id"],
+                                   origin=origin, note="llegó por whatsapp"),
+            world)
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        for origin, result in results.items():
+            cur.execute("select origin from crm.opportunity where id = %s", (result["opportunity_id"],))
+            assert cur.fetchone() == (origin,)
+            cur.execute("select payload->'origin' from crm.domain_event where aggregate_id = %s "
+                        "and event_type = 'opportunity.created'", (result["opportunity_id"],))
+            assert cur.fetchone() == (origin,)
 
 
 @_needs_db

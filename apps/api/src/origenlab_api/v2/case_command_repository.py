@@ -539,11 +539,11 @@ class V2CaseCommandRepository(CommandTransaction):
         cur.execute(
             """
             insert into crm.opportunity
-                (title, stage, owner_operator_id, origin_source_record_id)
-            values (%s, %s, %s, %s)
+                (title, stage, owner_operator_id, origin_source_record_id, origin)
+            values (%s, %s, %s, %s, %s)
             returning id::text as id, version
             """,
-            (fields["title"], OPENING_STAGE, operator.operator_id, record["id"]),
+            (fields["title"], OPENING_STAGE, operator.operator_id, record["id"], fields.get("origin")),
         )
         case = self._row(cur)
         assert case is not None  # noqa: S101 - `returning` on a successful insert
@@ -560,6 +560,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     "owner_operator_id": operator.operator_id,
                     "origin_source_record_id": record["id"],
                     "source_kind": record["kind"],
+                    **({"origin": fields["origin"]} if fields.get("origin") else {}),
                     "note": fields["note"],
                 },
                 operator=operator,
@@ -601,6 +602,7 @@ class V2CaseCommandRepository(CommandTransaction):
         note: str,
         kind: str = "sale",
         tender_status: str | None = None,
+        origin: str | None = None,
         extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """A case an operator opens to quote a client, with no document behind it (plan R1).
@@ -618,11 +620,11 @@ class V2CaseCommandRepository(CommandTransaction):
         """
         cur.execute(
             """
-            insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status)
-            values (%s, %s, %s, %s, %s)
+            insert into crm.opportunity (title, stage, owner_operator_id, kind, tender_status, origin)
+            values (%s, %s, %s, %s, %s, %s)
             returning id::text as id, version
             """,
-            (title, OPENING_STAGE, operator.operator_id, kind, tender_status),
+            (title, OPENING_STAGE, operator.operator_id, kind, tender_status, origin),
         )
         case = self._row(cur)
         assert case is not None  # noqa: S101 - `returning` on a successful insert
@@ -638,6 +640,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     "owner_operator_id": operator.operator_id,
                     "origin_source_record_id": None,
                     "source_kind": None,
+                    **({"origin": origin} if origin else {}),
                     "note": note,
                     **(extra_payload or {}),
                 },

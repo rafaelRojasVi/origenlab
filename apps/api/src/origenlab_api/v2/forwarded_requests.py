@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from origenlab_api.v2.case_kind import tender_not_a_sale
+from origenlab_api.v2.case_origin import forward_case_origin
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
 
@@ -143,7 +144,8 @@ def create_request_from_forward(repo: Any, cur: Any, operator: OperatorIdentity,
     note = fields["note"]
     item = _PREFIX.sub("", str(p.get("requested_item") or p.get("subject") or "")).strip() or "solicitud reenviada"
     opened = repo._open_commercial_case(cur, operator, {
-        "title": f"Solicitud — {item}"[:200], "origin_source_record_id": lead["id"], "note": note}, receipt_id)
+        "title": f"Solicitud — {item}"[:200], "origin_source_record_id": lead["id"], "note": note,
+        "origin": forward_case_origin(_payload(m).get("origin") for m in members)}, receipt_id)
     case_id, version = opened["opportunity_id"], int(opened["opportunity_version"])
 
     organization_id, organization_created = None, False

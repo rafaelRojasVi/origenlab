@@ -58,6 +58,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from origenlab_api.v2.commands import CommandRefused, DecisionBody, as_uuid
+from origenlab_api.v2.case_origin import CaseOrigin
 from origenlab_api.v2.quotes.draft import NewOrganizationKind
 
 #: The closed command vocabulary, in the order an operator meets them.
@@ -215,6 +216,9 @@ class OpenCommercialCaseBody(DecisionBody):
 
     title: Annotated[str, Field(min_length=1, max_length=400)]
     origin_source_record_id: str
+    #: The channel the case came from (`crm.opportunity.origin`, `case_origin.py`). Optional: a case
+    #: nobody classified has none, and it is written once, here — never by linking evidence later.
+    origin: CaseOrigin | None = None
 
     @model_validator(mode="after")
     def _title_is_not_whitespace(self) -> OpenCommercialCaseBody:
@@ -608,6 +612,7 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields["origin_source_record_id"] = as_uuid(
             body.origin_source_record_id, "origin_source_record_id"
         )
+        fields["origin"] = body.origin
         return fields
 
     if isinstance(body, CompleteCaseFromSentQuoteBody):

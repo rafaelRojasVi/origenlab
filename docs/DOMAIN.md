@@ -1425,6 +1425,12 @@ NULL`) serves "cases by origin". The API's existing table-level select/insert/up
 worker's select cover it, so no grant, policy or foreign key changes, and no domain event is added
 by the column. Migration `20261109100000_slice8_opportunity_origin.sql`. Counts are unchanged.
 
+The API sets it **only when a case is created**, and says so in the `opportunity.created` payload
+(`origin`): `open_commercial_case` takes it as an optional field; the mail rules pass `correo` (R7),
+`web` (a web-form message) and, through `create_request_from_forward`, `ex_labdelivery` or `correo`
+(R11); `open-tender-case` sets `mercado_publico`. Linking a message to an existing case never
+changes it. The nine values live once in `apps/api/src/origenlab_api/v2/case_origin.py`.
+
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
 suffice); a quote party-snapshot table (a validated snapshot column on the

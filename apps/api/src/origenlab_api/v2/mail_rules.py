@@ -50,6 +50,13 @@ once); a proposal records none. The consent the message carries is not a rule: i
 included — by `MailRulesRepository.record_web_form_consents`, which the automatic pass and «Aplicar»
 both call. Undoing R7 keeps that row: a consent is evidence of the submission, not of the case.
 
+**Origin.** A case the rules open says which channel it came from (`crm.opportunity.origin`,
+`case_origin.py`), once, at creation: R7 `correo` (a web-form message: `web`); R11 `ex_labdelivery`
+when any copy of the forwarded request came from the Labdelivery mailbox, else `correo` (the
+`create_request_from_forward` command derives it from the request's copies, so the dashboard's button
+does the same). A rule that joins an existing case (R11, R12) never touches its origin; R3/R10 open
+a case for a quote already sent and leave it null.
+
 **What the rules read.** The capture stores no message body (`apps/worker/.../capture.py`), so
 R5 and R6 read the subject and the attachment file names only. Their phrase lists are below,
 by name, and nothing else triggers them.
@@ -65,6 +72,8 @@ from datetime import datetime
 from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from origenlab_api.v2.case_origin import ORIGIN_CORREO, ORIGIN_WEB
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
                              "R14", "R15", "R16", "R17", "R18", "R19")
@@ -1043,7 +1052,8 @@ def _plan_one(e: MailEvidence, ix: _Index) -> PlannedAction | None:
             c, why = joined
             return _with_web_form_records(
                 _link_rule(e_as_inbound, "R12", [c], f"formulario del sitio web: {why}", None), e)
-        return _with_web_form_records(_inbound_rules(e_as_inbound, ix, [rt_domain] if rt_domain else []), e)
+        return _with_web_form_records(
+            _inbound_rules(e_as_inbound, ix, [rt_domain] if rt_domain else [], ORIGIN_WEB), e)
 
     if e.direction == "outbound":
         return _creation_rules(e, ix, domains)
@@ -1999,8 +2009,10 @@ def _case_with_quote_steps(e: MailEvidence, doc: MailDocument, number: str, toke
     )
 
 
-def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAction:
-    """R7 opens a real lead for an explicit inbound quote request; identity stays conservative."""
+def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str], origin: str = ORIGIN_CORREO) -> PlannedAction:
+    """R7 opens a real lead for an explicit inbound quote request; identity stays conservative.
+
+    `origin` is the channel the case opens from (`case_origin.py`): `correo`, or `web` for the site's form."""
     if not domains:
         return PlannedAction(e.id, "R8", NONE, ("correo interno",))
     d = domains[0]
@@ -2057,7 +2069,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
         sender_addr = _sender(e) or ""
         commands = (
             {"command": "open_commercial_case", "inputs": {
-                "title": title, "origin_source_record_id": e.id, "note": note}},
+                "title": title, "origin_source_record_id": e.id, "origin": origin, "note": note}},
             # Add the sender as a participant so client_open_cases finds this case. (owner, 2026-10-22)
             {"command": ADD_CASE_SENDER_PARTICIPANT, "inputs": {
                 "opportunity_id": "@case", "email": sender_addr, "note": note}},
@@ -2088,7 +2100,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
         case_title=title,
         commands=(
             {"command": "open_commercial_case", "inputs": {
-                "title": title, "origin_source_record_id": e.id, "note": note}},
+                "title": title, "origin_source_record_id": e.id, "origin": origin, "note": note}},
             # Add the sender as a participant so client_open_cases finds this case. (owner, 2026-10-22)
             {"command": ADD_CASE_SENDER_PARTICIPANT, "inputs": {
                 "opportunity_id": "@case", "email": sender_addr, "note": note}},
