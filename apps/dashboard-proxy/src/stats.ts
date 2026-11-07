@@ -258,8 +258,13 @@ export async function handleStatsRequest(request: Request, env: StatsEnv): Promi
   } catch {
     return empty(502);
   }
-  // The body is never read; release the connection.
-  await upstream.body?.cancel();
+  // The body is never read; release the connection. A failed cancel must not
+  // become a 500 for the visitor.
+  try {
+    await upstream.body?.cancel();
+  } catch {
+    // ignore
+  }
   if (upstream.status >= 300 && upstream.status < 400) return empty(502);
   return empty(upstream.status);
 }
