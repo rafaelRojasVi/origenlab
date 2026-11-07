@@ -44,8 +44,11 @@ the receipts by the repository) or that a person already linked to a case plans 
 executor keys each action's receipt by `(evidence id, rule id)`.
 
 **Web form.** R7 and R12, on a web-quote-form message whose triage left `web_form:v1` (product,
-consent version, time), add two steps: `record_web_form_consent` (one `crm.consent` row per message)
-and `record_web_form_interest` (the product as the case's interest, once). A proposal records neither.
+consent version, time), add the step `record_web_form_interest` (the product as the case's interest,
+once); a proposal records none. The consent the message carries is not a rule: it is written to
+`crm.consent`, once per message, for every such message whatever the rules plan for it — a proposal
+included — by `MailRulesRepository.record_web_form_consents`, which the automatic pass and «Aplicar»
+both call. Undoing R7 keeps that row: a consent is evidence of the submission, not of the case.
 
 **What the rules read.** The capture stores no message body (`apps/worker/.../capture.py`), so
 R5 and R6 read the subject and the attachment file names only. Their phrase lists are below,
@@ -851,27 +854,21 @@ CREATE_REQUEST_FROM_FORWARD_STEP = "create_request_from_forward"
 ADD_CASE_SENDER_PARTICIPANT = "add_case_sender_participant"
 
 
-#: Steps R7/R12 add to a web-form message that carries a consent or a product: the consent row
-#: (`crm.consent`, once per message) and the case interest (the product the visitor named).
-RECORD_WEB_FORM_CONSENT = "record_web_form_consent"
+#: The step R7/R12 add to a web-form message that names a product: the case interest. The consent the
+#: same message carries is not a case step — it is recorded for every such message, whatever the
+#: rules plan for it (`MailRulesRepository.record_web_form_consents`).
 RECORD_WEB_FORM_INTEREST = "record_web_form_interest"
 
 
 def _with_web_form_records(action: PlannedAction, e: MailEvidence) -> PlannedAction:
-    """The same action plus the records the web form's own facts call for. Only an automatic action
-    that acts on a case: a proposal waits for a person and records nothing yet."""
-    if action.mode != AUTO or not action.commands:
+    """The same action plus the product the visitor named as the case's interest. Only an automatic
+    action that acts on a case: a proposal waits for a person and records no interest yet."""
+    if action.mode != AUTO or not action.commands or not e.web_form_product:
         return action
-    extra: list[Mapping[str, Any]] = []
-    if e.web_form_consent_version and e.reply_to:
-        extra.append({"command": RECORD_WEB_FORM_CONSENT, "inputs": {
-            "email": e.reply_to, "text_version": e.web_form_consent_version,
-            "accepted_at": e.web_form_accepted_at or e.sent_at, "source_record_id": e.id}})
-    if e.web_form_product:
-        extra.append({"command": RECORD_WEB_FORM_INTEREST, "inputs": {
-            "opportunity_id": "@case", "model_text": e.web_form_product,
-            "note": _note(action.rule_id, ["producto indicado en el formulario del sitio web"])}})
-    return replace(action, commands=(*action.commands, *extra)) if extra else action
+    step = {"command": RECORD_WEB_FORM_INTEREST, "inputs": {
+        "opportunity_id": "@case", "model_text": e.web_form_product,
+        "note": _note(action.rule_id, ["producto indicado en el formulario del sitio web"])}}
+    return replace(action, commands=(*action.commands, step))
 
 
 def _client_open_case(email: str, ix: _Index) -> tuple[CaseState, str] | None:
@@ -2102,7 +2099,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str]) -> PlannedAc
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "RECORD_WEB_FORM_CONSENT", "RECORD_WEB_FORM_INTEREST", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
+    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "RECORD_WEB_FORM_INTEREST", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
     "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
     "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",

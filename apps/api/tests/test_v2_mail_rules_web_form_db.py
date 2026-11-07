@@ -14,6 +14,7 @@ from datetime import datetime
 from test_v2_mail_rules_db import (  # noqa: F401 - `db` and `world` are the module's fixtures, reused
     _all,
     _apply_only,
+    _one,
         _operator,
     _owner,
     _repo,
@@ -100,11 +101,47 @@ def test_a_second_form_joining_the_case_adds_its_consent_but_not_the_same_intere
     assert _consents(db, third) == []  # no consent line, no consent row
 
 
+def test_a_proposal_still_records_the_consent_but_no_interest_and_opens_no_case(db, world) -> None:
+    shared = f"compartido-{uuid.uuid4().hex[:6]}.test"
+    with _owner(db) as conn:
+        for n in (1, 2):
+            org = conn.execute(
+                "insert into crm.organization (kind, name, confirmation) values ('institution', %s, 'confirmed') "
+                "returning id::text", (f"Instituto Ficticio {n} {shared}",)).fetchone()[0]
+            conn.execute("insert into crm.organization_domain (organization_id, domain_norm, scope) "
+                         "values (%s, %s, 'shared')", (org, shared))
+        visitor = f"ana@{shared}"
+        record = _web_form_mail(conn, reply_to=visitor)
+        cases_before = conn.execute("select count(*) from crm.opportunity").fetchone()[0]
+    _facts(db, record, product="UP400St", consent_version=VERSION, accepted_at=STAMP)
+    repo = _repo(db)
+    planned = _planned_for(repo, record)
+    assert planned is not None and planned.mode == "proposal"
+    assert repo.record_web_form_consents() >= 1
+    assert repo.record_web_form_consents() == 0  # recorded once
+    assert [c[0] for c in _consents(db, record)] == [visitor]
+    assert _one(db, "select count(*) from crm.opportunity")[0] == cases_before
+    assert _one(db, "select count(*) from crm.opportunity_interest where model_text = 'UP400St' "
+                    "and origin_source_record_id = %s", record)[0] == 0
+    assert _planned_for(repo, record).mode == "proposal"  # nothing was applied on it
+
+
+def test_a_marked_message_from_a_foreign_sender_records_no_consent(db, world) -> None:
+    visitor = f"ana-{uuid.uuid4().hex[:6]}@{world['new_domain']}"
+    with _owner(db) as conn:
+        record = _web_form_mail(conn, reply_to=visitor)
+        conn.execute("update evidence.source_record set payload = payload || '{\"sender\": \"x@elsewhere.invalid\"}' "
+                     "where id = %s", (record,))
+    _facts(db, record, consent_version=VERSION, accepted_at=STAMP)
+    _repo(db).record_web_form_consents()
+    assert _consents(db, record) == []
+
+
 def test_a_web_form_without_the_lines_changes_nothing(db, world) -> None:
     record, _visitor = _form(db, world)
     applied = _apply_only(db, world, record)
     assert applied["rule_id"] == "R7"
-    assert [s["command"] for s in applied["steps"]][-1] != "record_web_form_consent"
+    assert [s["command"] for s in applied["steps"]][-1] != "record_web_form_interest"
     assert _consents(db, record) == []
     assert _interests(db, applied["case_id"]) == []
 

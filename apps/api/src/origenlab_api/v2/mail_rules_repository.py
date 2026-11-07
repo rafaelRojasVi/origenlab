@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -69,7 +70,6 @@ from origenlab_api.v2.mail_rules import (
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     RECORD_AUTHORED_QUOTE_SENT,
-    RECORD_WEB_FORM_CONSENT,
     RECORD_WEB_FORM_INTEREST,
     REPLY_WINDOW_DAYS,
     SETTLE_DAYS,
@@ -77,6 +77,7 @@ from origenlab_api.v2.mail_rules import (
     UNCONFIRM_ORGANIZATION_RECORD,
     UPDATE_ORGANIZATION,
     WEB_QUOTE_ORIGIN,
+    web_form_enquirer,
     CaseQuote,
     CaseState,
     ForwardRequest,
@@ -101,6 +102,8 @@ from origenlab_api.v2.quote_import_commands import (
 )
 from origenlab_api.v2.quote_import_repository import V2QuoteImportRepository
 from origenlab_api.v2.quote_sent import record_authored_quote_sent
+
+logger = logging.getLogger(__name__)
 
 APPLY_COMMAND = "apply_mail_rule"
 UNDO_COMMAND = "undo_mail_rule_action"
@@ -311,6 +314,25 @@ _APPLIED_EVIDENCE_SQL = """
 select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
   from platform.command_receipt
  where command_name = %s and status = 'completed'
+"""
+#: Web-form messages whose consent is not recorded yet: the sender and reply-to the rules read, the
+#: worker's `web_form:v1` facts, the message's own time. Bounded: a recorded one drops out.
+_WEB_FORM_CONSENT_SQL = """
+select sr.id::text, sr.payload ->> 'sender',
+       (select p.address_norm from comms.message_participant p
+         where p.message_id = cm.id and p.role = 'reply_to' order by p.address_norm limit 1),
+       wf.value, sr.payload ->> 'sent_at'
+  from evidence.source_record sr
+  join comms.message cm on cm.provider_message_id = sr.payload ->> 'gmail_message_id'
+  join evidence.assertion wf on wf.source_record_id = sr.id and wf.kind = 'message_triage'
+                            and wf.value_norm = 'web_form:v1' and wf.value ->> 'consent_version' is not null
+ where sr.kind = 'gmail_message' and not sr.is_quarantined and sr.review_status <> 'rejected'
+   and exists (select 1 from evidence.assertion a
+                where a.source_record_id = sr.id and a.kind = 'message_triage'
+                  and a.value_norm ~ '^triage:v[0-9]+$' and a.value -> 'reasons' ? 'header:x-origenlab-origin')
+   and not exists (select 1 from crm.consent c where c.source_record_id = sr.id and c.purpose = 'quote_request')
+ order by sr.id
+ limit %s
 """
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
@@ -650,6 +672,29 @@ class MailRulesRepository(V2CaseCommandRepository):
 
     # ------------------------------------------------------------------ apply
 
+    def record_web_form_consents(self, *, limit: int = 200) -> int:
+        """Write the `crm.consent` row of every web-form message that carries a consent and has none
+        yet, whatever the rules plan for it (a case, a proposal or nothing): the consent is evidence
+        of the visitor's submission, not of a case. Idempotent (`consent_idempotent_idx`), no
+        receipt, no case side effect. Returns how many rows were written."""
+        with self._write() as cur:
+            cur.execute(_WEB_FORM_CONSENT_SQL, (limit,))
+            pending = cur.fetchall()
+            written = 0
+            for record_id, sender, reply_to, facts, sent_at in pending:
+                if web_form_enquirer(sender, reply_to) is None:
+                    continue  # the sender is not OrigenLab's own: the marker alone proves nothing
+                facts = _json(facts) or {}
+                stamp = facts.get("accepted_at") or sent_at
+                try:
+                    accepted_at = datetime.fromisoformat(str(stamp)) if stamp else None
+                except ValueError:
+                    accepted_at = None
+                written += self.write_web_form_consent(
+                    cur, email=reply_to, text_version=str(facts["consent_version"]),
+                    accepted_at=accepted_at, source_record_id=record_id)
+            return written
+
     def apply(self, operator: OperatorIdentity, pairs: list[dict[str, str]]) -> dict[str, Any]:
         """Apply the previewed `(evidence_id, rule_id)` pairs — at most `APPLY_BATCH` per call — and
         only those whose fresh re-plan still says the same rule in `auto` mode. Anything else is
@@ -674,6 +719,10 @@ class MailRulesRepository(V2CaseCommandRepository):
                 continue
             outcome = self.apply_planned(operator, action)
             (refused if "code" in outcome else applied).append(outcome)
+        try:
+            self.record_web_form_consents()
+        except Exception:  # the consents are retried by the next pass; this apply already happened
+            logger.exception("mail rules: recording web-form consents failed")
         return {"applied": applied, "refused": refused}
 
     def apply_planned(self, operator: OperatorIdentity, action: PlannedAction, *,
@@ -1005,7 +1054,6 @@ class MailRulesRepository(V2CaseCommandRepository):
             CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
             RECORD_AUTHORED_QUOTE_SENT: record_authored_quote_sent,
             ADD_CASE_SENDER_PARTICIPANT: MailRulesRepository._add_case_sender_participant_step,
-            RECORD_WEB_FORM_CONSENT: MailRulesRepository._record_web_form_consent_step,
             RECORD_WEB_FORM_INTEREST: MailRulesRepository._record_web_form_interest_step,
         }
         if command not in local:
@@ -1024,19 +1072,6 @@ class MailRulesRepository(V2CaseCommandRepository):
             case_id=str(fields["opportunity_id"]),
             note=str(fields.get("note") or ""),
         )
-
-    def _record_web_form_consent_step(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
-                                      receipt_id: str) -> dict[str, Any]:
-        """R7/R12 step: the consent the web form's message proves, once per message (`crm.consent`)."""
-        raw = fields.get("accepted_at")
-        try:
-            accepted_at = datetime.fromisoformat(str(raw)) if raw else None
-        except ValueError:
-            accepted_at = None
-        written = self.write_web_form_consent(
-            cur, email=str(fields["email"]), text_version=str(fields["text_version"]),
-            accepted_at=accepted_at, source_record_id=str(fields["source_record_id"]))
-        return {"command": RECORD_WEB_FORM_CONSENT, "consent_written": written}
 
     def _record_web_form_interest_step(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                        receipt_id: str) -> dict[str, Any]:
