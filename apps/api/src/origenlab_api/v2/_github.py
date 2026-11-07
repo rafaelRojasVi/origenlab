@@ -23,6 +23,8 @@ API = "https://api.github.com"
 WEB_URL = "https://github.com"
 WORKFLOW_FILE = "web-deploy.yml"
 TIMEOUT_SECONDS = 20.0
+# A model sheet is a few KB and a runs page a few dozen KB; anything near this is not what we asked for.
+MAX_BODY_BYTES = 2_000_000
 
 Transport = Callable[[str, str, dict[str, str], bytes, float], tuple[int, bytes]]
 
@@ -57,9 +59,9 @@ def urllib_transport(method: str, url: str, headers: dict[str, str], body: bytes
     request = urllib.request.Request(url, data=body or None, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
-            return resp.status, resp.read()
+            return resp.status, resp.read(MAX_BODY_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
+        return exc.code, exc.read(MAX_BODY_BYTES + 1)
 
 
 def _call(
@@ -141,3 +143,66 @@ def github_dispatch_workflow(config: GithubPublishConfig, *, transport: Transpor
     if status != 204:
         raise GithubError("dispatch_failed", f"GitHub answered HTTP {status} starting the deploy", status)
     return f"{WEB_URL}/{config.repo}/actions/workflows/{config.workflow}"
+
+
+def _json_object(raw: bytes, code: str, status: int, what: str) -> dict:
+    if len(raw) > MAX_BODY_BYTES:
+        raise GithubError(code, f"GitHub returned an oversized {what}", status)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise GithubError(code, f"GitHub returned an unreadable {what}", status) from None
+    if not isinstance(data, dict):
+        raise GithubError(code, f"GitHub returned an unreadable {what}", status)
+    return data
+
+
+def github_read_file(
+    config: GithubPublishConfig, path: str, *, transport: Transport = urllib_transport,
+) -> dict | None:
+    """`{content: bytes, sha, html_url}` of `path` on the configured branch; None when it does not exist.
+
+    Files over 1 MB come back from the Contents API without content (`encoding: none`); a model
+    sheet is never that big, so that and a directory listing are reported as unreadable.
+    """
+    url = f"{_contents_url(config, path)}?ref={urllib.parse.quote(config.ref)}"
+    status, raw = _call(config, "GET", url, None, transport, "read_failed")
+    if status == 404:
+        return None
+    if status != 200:
+        raise GithubError("read_failed", f"GitHub answered HTTP {status} reading the file", status)
+    record = _json_object(raw, "read_failed", status, "file record")
+    sha, html_url, encoded = record.get("sha"), record.get("html_url"), record.get("content")
+    if (
+        record.get("encoding") != "base64"
+        or not isinstance(sha, str) or not sha
+        or not isinstance(encoded, str)
+    ):
+        raise GithubError("read_failed", "GitHub returned an unreadable file record", status)
+    try:
+        content = base64.b64decode(encoded, validate=False)
+        if encoded.strip() and not content:
+            raise ValueError
+    except ValueError:
+        raise GithubError("read_failed", "GitHub returned an unreadable file record", status) from None
+    return {"content": content, "sha": sha, "html_url": html_url if isinstance(html_url, str) else None}
+
+
+def github_latest_deploy_run(
+    config: GithubPublishConfig, *, transport: Transport = urllib_transport,
+) -> dict | None:
+    """The most recent manually dispatched run of the deploy workflow, as GitHub describes it; None if none."""
+    url = (
+        f"{API}/repos/{config.repo}/actions/workflows/{config.workflow}/runs"
+        "?per_page=5&event=workflow_dispatch"
+    )
+    status, raw = _call(config, "GET", url, None, transport, "status_failed")
+    if status != 200:
+        raise GithubError("status_failed", f"GitHub answered HTTP {status} reading the runs", status)
+    runs = _json_object(raw, "status_failed", status, "runs record").get("workflow_runs")
+    if not isinstance(runs, list):
+        raise GithubError("status_failed", "GitHub returned an unreadable runs record", status)
+    runs = [r for r in runs if isinstance(r, dict)]
+    if not runs:
+        return None
+    return max(runs, key=lambda r: str(r.get("created_at") or ""))

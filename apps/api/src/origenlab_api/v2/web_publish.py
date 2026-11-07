@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Path as PathParam, Request
 from jsonschema import Draft7Validator
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,7 +29,9 @@ from origenlab_api.v2._github import (
     GithubPublishConfig,
     github_dispatch_workflow,
     github_file_sha,
+    github_latest_deploy_run,
     github_put_file,
+    github_read_file,
 )
 from origenlab_api.v2.command_routes import Deciding
 
@@ -38,6 +40,7 @@ logger = logging.getLogger(__name__)
 SCHEMA_RELATIVE = Path("apps/web/src/content/modelos.schema.json")
 CONTENT_DIR = "apps/web/src/content/modelos"
 RATE_WINDOW_SECONDS = 60.0
+STATUS_CACHE_SECONDS = 10.0
 MAX_ERRORS = 20
 
 
@@ -62,11 +65,19 @@ _VALIDATOR = Draft7Validator(MODEL_SCHEMA)
 _clock = time.monotonic
 _last_publish: dict[str, float] = {}
 _lock = threading.Lock()
+_status_lock = threading.Lock()
+_status_cache: tuple[float, dict[str, Any]] | None = None
 
 
 def reset_rate_guard() -> None:
     with _lock:
         _last_publish.clear()
+
+
+def reset_status_cache() -> None:
+    global _status_cache
+    with _status_lock:
+        _status_cache = None
 
 
 class PublishModelSheetRequest(BaseModel):
@@ -110,6 +121,8 @@ def _config(request: Request) -> GithubPublishConfig:
         raise HTTPException(status_code=503, detail="web publishing is not configured")
     return config
 
+
+ModelId = Annotated[str, PathParam(pattern=r"^[a-z0-9-]+$", max_length=60)]
 
 web_publish_router = APIRouter(prefix="/v2/web", tags=["v2-web-publish"])
 
@@ -160,3 +173,75 @@ def publish_model_sheet(
         operator.operator_id, operator.role, body.model_id, commit_sha,
     )
     return {"outcome": "dispatched", "run_url": run_url, "commit_sha": commit_sha}
+
+
+@web_publish_router.get("/model-sheet/{model_id}")
+def read_model_sheet(model_id: ModelId, operator: Deciding, request: Request) -> dict[str, Any]:
+    """The published sheet, so the editor prefills from it instead of overwriting it with blanks.
+
+    Validated leniently: an invalid sheet is still returned, with `valid: false` and the errors, so
+    the editor can show what is wrong.
+    """
+    config = _config(request)
+    try:
+        record = github_read_file(config, f"{CONTENT_DIR}/{model_id}.json")
+    except GithubError as exc:
+        logger.warning("web sheet read failed: model_id=%s code=%s status=%s", model_id, exc.code, exc.status)
+        raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from None
+    if record is None:
+        raise HTTPException(status_code=404, detail={"code": "sheet_not_found", "message": "no published sheet"})
+    try:
+        sheet = json.loads(record["content"].decode("utf-8"))
+    except ValueError:  # includes UnicodeDecodeError
+        sheet = None
+    if not isinstance(sheet, dict):
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "read_failed", "message": "the published file is not a JSON object"},
+        )
+    errors = _schema_errors(sheet)
+    return {
+        "model_id": model_id, "sheet": sheet, "sha": record["sha"], "html_url": record["html_url"],
+        "valid": not errors, "errors": errors,
+    }
+
+
+def _map_run(run: dict[str, Any] | None) -> dict[str, Any]:
+    if run is None:
+        return {"status": "unknown", "run_url": None, "updated_at": None, "head_sha": None}
+    gh_status, conclusion = run.get("status"), run.get("conclusion")
+    if gh_status in ("queued", "requested", "pending"):
+        status = "queued"
+    elif gh_status == "in_progress":
+        status = "running"
+    elif gh_status == "waiting":  # the `production` environment is awaiting its approval
+        status = "waiting"
+    elif gh_status == "completed" and conclusion:
+        status = "success" if conclusion == "success" else "failure"
+    else:
+        status = "unknown"
+    return {
+        "status": status, "run_url": run.get("html_url"),
+        "updated_at": run.get("updated_at"), "head_sha": run.get("head_sha"),
+    }
+
+
+@web_publish_router.get("/publish-status/{model_id}")
+def get_publish_status(model_id: ModelId, operator: Deciding, request: Request) -> dict[str, Any]:
+    """State of the latest deploy run. `model_id` is accepted for symmetry with the other routes and
+    for future filtering; today the latest `web-deploy.yml` dispatch is returned whichever model it
+    was for (a dispatch carries no model). One GitHub call per 10 s per process, however many
+    editors poll; failures are not cached."""
+    global _status_cache
+    config = _config(request)
+    with _status_lock:
+        now = _clock()
+        if _status_cache is not None and now - _status_cache[0] < STATUS_CACHE_SECONDS:
+            return _status_cache[1]
+        try:
+            answer = _map_run(github_latest_deploy_run(config))
+        except GithubError as exc:
+            logger.warning("web publish status failed: code=%s status=%s", exc.code, exc.status)
+            raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from None
+        _status_cache = (now, answer)
+        return answer
