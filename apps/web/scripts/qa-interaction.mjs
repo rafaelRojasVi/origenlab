@@ -639,6 +639,28 @@ console.log('\nEnlaces');
   );
 }
 
+/* -- 4b. Pie y promesas (HTML construido) ---------------------------------- */
+console.log('\nPie y promesas de garantía');
+{
+  const read = (path) => readFileSync(join(dist, path, 'index.html'), 'utf8');
+  const footerOf = (html) => html.match(/<footer\b[\s\S]*?<\/footer>/)?.[0] ?? '';
+  const footer = footerOf(read('.'));
+  const navOf = (label) => footer.match(new RegExp(`<nav\\b[^>]*aria-label="${label}"[\\s\\S]*?<\\/nav>`))?.[0] ?? '';
+  const brandLinks = [...navOf('Marcas').matchAll(/href="\/marcas\/([\w-]+)\/"/g)].map((m) => m[1]);
+  const familyLinks = [...navOf('Familias').matchAll(/href="(\/productos\/[\w-]+\/)"/g)].map((m) => m[1]);
+  check(brandLinks.length === 7 && new Set(brandLinks).size === 7, `Pie: siete enlaces a /marcas/{slug}/ (${brandLinks.length})`);
+  check(familyLinks.length === 6 && new Set(familyLinks).size === 6, `Pie: seis enlaces de familia (${familyLinks.length})`);
+  check(!/on-ink/.test(footer.match(/<footer\b[^>]*>/)?.[0] ?? ''), 'Pie: sobre papel, sin la clase on-ink');
+  const linkedinSet = /linkedinUrl:\s*'[^']+'/.test(readFileSync(join(root, 'src/config/site.ts'), 'utf8'));
+  check(/linkedin\.com/.test(footer) === linkedinSet, `Pie: LinkedIn sólo si site.linkedinUrl tiene valor (${linkedinSet ? 'con valor' : 'vacío, sin enlace'})`);
+  check(/href="\/como-comprar\/#compras-publicas"/.test(footer) && /mailto:contacto@origenlab\.cl/.test(footer), 'Pie: Mercado Público y contacto@');
+  for (const legal of ['/privacidad/', '/cookies/', '/aviso-legal/']) check(footer.includes(`href="${legal}"`), `Pie: enlaza ${legal}`);
+
+  // La garantía no es una promesa de marketing en estas páginas. El aviso legal conserva la palabra sólo para decir qué no publica el sitio.
+  const withGuarantee = ['.', 'servicios', 'nosotros', 'como-comprar', 'contacto'].filter((path) => /garant/i.test(read(path)));
+  check(withGuarantee.length === 0, `Sin «garantía» en portada, servicios, nosotros, cómo comprar y contacto (${withGuarantee.join(', ') || 'ninguna'})`);
+}
+
 /* -- 5. Formulario de cotización ------------------------------------------- */
 console.log('\nFormulario de cotización (/contacto/, 375 px)');
 {
@@ -665,6 +687,43 @@ console.log('\nFormulario de cotización (/contacto/, 375 px)');
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   check(errors.length === 0, 'formulario: sin errores JS en /contacto/');
+  await context.close();
+}
+
+/* -- 5b. Contacto y pie en la tinta del sistema (1440 px) ------------------- */
+console.log('\nContacto y pie (1440 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/contacto/`, { waitUntil: 'load' });
+  const btn = page.locator('#solicitud-btn');
+  check((await btn.innerText()).trim() === 'Pedir cotización', `Contacto: el envío dice «${(await btn.innerText()).trim()}» (Pedir cotización)`);
+  check((await btn.getAttribute('type')) === 'submit', 'Contacto: el botón sigue siendo type=submit');
+  const box = await btn.boundingBox();
+  check(box && Math.round(box.height) === 48, `Contacto: el botón mide 48 px (${box?.height})`);
+  check((await btn.locator('svg.arrow').count()) === 1, 'Contacto: el botón lleva la flecha');
+  const radius = await page.locator('#solicitud-email').evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
+  check(radius === '10px', `Contacto: el campo de correo tiene radio 10 px (${radius})`);
+  const heights = await page.evaluate(() =>
+    ['#solicitud-email', '#solicitud-org', '#solicitud-product'].map((sel) => Math.round(document.querySelector(sel).getBoundingClientRect().height)),
+  );
+  check(heights.every((h) => h === 48), `Contacto: los campos de una línea miden 48 px (${heights.join(', ')})`);
+  const area = await page.locator('#solicitud-need').evaluate((el) => el.getBoundingClientRect().height);
+  check(area >= 128, `Contacto: el área de texto mide al menos 128 px (${Math.round(area)})`);
+  const waLabel = (await page.locator('.solicitud-aside a[href^="https://wa.me/"]').first().innerText()).replace(/\s+/g, ' ');
+  check(/Escribir por WhatsApp/.test(waLabel), `Contacto: el botón de WhatsApp dice «Escribir por WhatsApp» (${waLabel.trim()})`);
+  await page.locator('#solicitud-email').focus();
+  const ring = await page.locator('#solicitud-email').evaluate((el) => {
+    const style = getComputedStyle(el);
+    return `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`;
+  });
+  check(ring === '2px solid rgb(15, 118, 110)', `Contacto: el foco del campo es teal-700 de 2 px (${ring})`);
+
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  const bg = await page.locator('footer').evaluate((el) => getComputedStyle(el).backgroundColor);
+  check(bg === 'rgb(250, 250, 247)', `Pie: fondo papel en la portada (${bg})`);
+  const paddingTop = await page.locator('footer').evaluate((el) => getComputedStyle(el).paddingTop);
+  check(paddingTop === '88px', `Pie: 88 px de aire superior (${paddingTop})`);
   await context.close();
 }
 
@@ -1115,6 +1174,9 @@ console.log('\nPortada y cómo comprar');
     `Cómo comprar: four steps and consent note present (${steps} pasos, nota ${consent ? 'sí' : 'no'})`,
   );
 
+  const faqCount = (guide.match(/<details\b[^>]*\bclass="faq__item"/g) ?? []).length;
+  check(faqCount >= 4 && !/50\s?%|50\/50|garant/i.test(guide.replace(/<style[\s\S]*?<\/style>/g, '')), `Cómo comprar: preguntas desde buyingFaqs (${faqCount}) y sin 50/50 ni garantía`);
+
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   for (const path of ['/', '/como-comprar/']) {
@@ -1220,6 +1282,13 @@ console.log('\nConsentimiento (/contacto/)');
   await page.click('button[type="submit"]');
   await page.waitForTimeout(600);
   check(posts.length === 1, `Consent: con la casilla marcada sí se envía (${posts.length} solicitud)`);
+  // El envío cambia el texto a «Enviando…» y, si el servidor falla, lo restituye sin borrar la flecha.
+  await page.waitForTimeout(300);
+  const after = page.locator('#solicitud-btn');
+  check(
+    (await after.innerText()).trim() === 'Pedir cotización' && (await after.locator('svg.arrow').count()) === 1 && (await after.isEnabled()),
+    'Consent: tras un envío fallido el botón recupera «Pedir cotización», la flecha y vuelve a estar activo',
+  );
   await context.close();
 }
 

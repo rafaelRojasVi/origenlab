@@ -49,7 +49,7 @@ export const company = {
     },
     {
       title: 'Acompañamiento postventa',
-      text: 'Soporte y asesoría; garantía según fabricante y equipo; instalación o puesta en marcha en equipos más complejos cuando aplique.',
+      text: 'Soporte y asesoría; instalación o puesta en marcha en equipos más complejos cuando aplique.',
     },
     {
       title: 'Cotización sin fricción',

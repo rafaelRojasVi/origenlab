@@ -1,0 +1,69 @@
+---
+import Icon from './Icon.astro';
+
+/**
+ * Preguntas frecuentes como acordeón nativo (`<details name="faq">`: se abre una
+ * a la vez, sin JavaScript). Lo comparten `/contacto/` y `/como-comprar/`.
+ */
+interface Props {
+  items: readonly { q: string; a: string }[];
+}
+const { items } = Astro.props;
+---
+
+<div class="faq">
+  {
+    items.map((item) => (
+      <details name="faq" class="faq__item">
+        <summary>
+          <span>{item.q}</span>
+          <Icon name="chevron-down" size={20} class="faq__chevron" />
+        </summary>
+        <p class="t-body faq__answer">{item.a}</p>
+      </details>
+    ))
+  }
+</div>
+
+<style>
+  .faq {
+    margin-top: 3rem;
+    border-top: 1px solid var(--color-ink-950);
+    max-width: 52rem;
+  }
+  .faq__item {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .faq__item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    min-height: 3.5rem;
+    padding-block: 1rem;
+    font-size: 1.0625rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+    cursor: pointer;
+    list-style: none;
+  }
+  .faq__item summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq__chevron {
+    color: var(--color-ink-500);
+    flex-shrink: 0;
+  }
+  .faq__item[open] .faq__chevron {
+    transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .faq__chevron {
+      transition: transform 150ms;
+    }
+  }
+  .faq__answer {
+    padding-bottom: 1.5rem;
+    color: var(--color-ink-600);
+  }
+</style>

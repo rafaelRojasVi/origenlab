@@ -20,16 +20,11 @@ export const serviceOfferings: ServiceOffering[] = [
   },
   {
     id: '3',
-    name: 'Garantía',
-    shortDescription: 'Según fabricante y condiciones del equipo; detalle en cotización.',
-  },
-  {
-    id: '4',
     name: 'Instalación',
     shortDescription: 'Cuando el equipo lo exige; alcance acordado por escrito.',
   },
   {
-    id: '5',
+    id: '4',
     name: 'Puesta en marcha',
     shortDescription: 'Equipos más complejos: puesta en marcha según equipo y acuerdo comercial.',
   },

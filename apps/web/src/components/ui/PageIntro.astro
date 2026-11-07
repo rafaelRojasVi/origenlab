@@ -21,7 +21,7 @@ const hasAside = Astro.slots.has('aside');
   {crumbs && <Breadcrumbs items={crumbs} />}
   <div class:list={['page-intro__body', hasAside && 'page-intro__body--split']}>
     <div>
-      <h1 class="t-display">{title}</h1>
+      <h1 class="t-d3">{title}</h1>
       {lead && <p class="t-lead mt-5">{lead}</p>}
     </div>
     {hasAside && (
@@ -34,6 +34,7 @@ const hasAside = Astro.slots.has('aside');
 </header>
 
 <style>
+  /* Migas en mono 13, titular t-d3, frase t-lead y 48 px de aire debajo. */
   .page-intro {
     padding-top: 2rem;
     padding-bottom: 3rem;
@@ -47,7 +48,6 @@ const hasAside = Astro.slots.has('aside');
   @media (min-width: 768px) {
     .page-intro {
       padding-top: 3rem;
-      padding-bottom: 4.5rem;
     }
     .page-intro__body--split {
       display: grid;

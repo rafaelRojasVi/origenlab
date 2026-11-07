@@ -1,87 +1,94 @@
 ---
 import { site } from '../config/site';
-import { contact, telUrl } from '../data/contact';
-import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
-import { categories } from '../data/categories';
-import { productFamilies } from '../data/productFamilies';
+import { contact } from '../data/contact';
+import { APPROVED_BRAND_IDS } from '../data/brands';
+import { equipmentScope } from '../data/equipmentScope';
 import { legalRoutes } from '../data/legal';
+import { getBrandById } from '../lib/catalog';
+import { familyForScope, familyHref, familyInfo } from '../lib/modelos';
+import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import SiteLogo from './SiteLogo.astro';
-import Icon from './ui/Icon.astro';
 
+/**
+ * Pie sobre papel (tablero HomeA): marca, las seis familias, las siete marcas en
+ * el orden de la lista cerrada, la empresa y el contacto, y una fila legal.
+ * Las marcas se enlazan todas: la regla de la portada que oculta una marca del
+ * riel no alcanza al pie.
+ *
+ * LinkedIn sólo se dibuja cuando `site.linkedinUrl` tiene valor: hoy está vacío
+ * y el enlace no existe.
+ */
 const year = new Date().getFullYear();
 const whatsappHref = buildWhatsAppQuoteUrl();
+
+const families = equipmentScope.flatMap((scope) => {
+  const slug = familyForScope(scope.id);
+  return slug ? [{ name: familyInfo(slug).short, href: familyHref(slug) }] : [];
+});
+const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
+  const brand = getBrandById(id);
+  return brand ? [{ name: brand.name, href: `/marcas/${brand.slug}/` }] : [];
+});
 ---
 
-<footer class="site-footer on-ink">
-  <div class="shell site-footer__inner">
+<footer class="site-footer">
+  <div class="shell">
     <div class="site-footer__grid">
-      <nav aria-label="Productos">
-        <h2 class="t-label site-footer__heading">Productos</h2>
+      <div class="site-footer__brand">
+        <a href="/" class="site-footer__logo" aria-label="OrigenLab, ir al inicio">
+          <SiteLogo size={28} />
+        </a>
+        <p>Equipos de laboratorio para todo Chile. Trabajamos directo con el fabricante.</p>
+      </div>
+
+      <nav aria-label="Familias">
+        <h2 class="t-label site-footer__heading">Familias</h2>
         <ul>
-          {
-            productFamilies.map((family) => (
-              <li>
-                <a href={`/productos/${family.slug}/`}>{family.name}</a>
-              </li>
-            ))
-          }
-          <li><a href="/marcas/serva-electrophoresis/">Reactivos SERVA</a></li>
-          <li><a href="/productos/">Todo el catálogo</a></li>
+          {families.map((family) => <li><a href={family.href}>{family.name}</a></li>)}
         </ul>
       </nav>
 
-      <nav aria-label="Aplicaciones">
-        <h2 class="t-label site-footer__heading">Aplicaciones</h2>
+      <nav aria-label="Marcas">
+        <h2 class="t-label site-footer__heading">Marcas</h2>
         <ul>
-          {
-            categories.map((category) => (
-              <li>
-                <a href={`/categorias/${category.slug}/`}>{category.shortName}</a>
-              </li>
-            ))
-          }
-          <li><a href="/aplicaciones/">Todas las aplicaciones</a></li>
+          {brandLinks.map((brand) => <li><a href={brand.href}>{brand.name}</a></li>)}
         </ul>
       </nav>
 
       <nav aria-label="Empresa">
         <h2 class="t-label site-footer__heading">Empresa</h2>
         <ul>
-          <li><a href="/nosotros/">Nosotros</a></li>
-          <li><a href="/servicios/">Servicios</a></li>
           <li><a href="/como-comprar/">Cómo comprar</a></li>
-          <li><a href="/marcas/">Marcas</a></li>
-          <li><a href="/contacto/">Contacto</a></li>
+          <li><a href="/servicios/">Servicios</a></li>
+          <li><a href="/nosotros/">Nosotros</a></li>
+          <li><a href="/aplicaciones/">Aplicaciones</a></li>
         </ul>
       </nav>
 
-      <div class="site-footer__contact">
+      <nav aria-label="Contacto">
         <h2 class="t-label site-footer__heading">Contacto</h2>
         <ul>
-          <li>
-            <a href={`mailto:${contact.email}`}>
-              <Icon name="mail" size={17} />{contact.email}
-            </a>
-          </li>
-          <li>
-            <a href={telUrl()}>
-              <Icon name="phone" size={17} />{contact.phoneDisplay}
-            </a>
-          </li>
+          <li><a href="/contacto/">Contacto</a></li>
+          <li><a href={`mailto:${contact.email}`}>{contact.email}</a></li>
           <li>
             <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
-              <Icon name="whatsapp" size={17} />WhatsApp
+              WhatsApp
               <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
             </a>
           </li>
-          <li class="site-footer__static">
-            <Icon name="clock" size={17} />Lunes a viernes, {contact.hours}
-          </li>
-          <li class="site-footer__static">
-            <Icon name="map-pin" size={17} />{contact.locationPublic}
-          </li>
+          <li><a href="/como-comprar/#compras-publicas">Mercado Público</a></li>
+          {
+            site.linkedinUrl && (
+              <li>
+                <a href={site.linkedinUrl} target="_blank" rel="noopener noreferrer">
+                  LinkedIn
+                  <span class="sr-only">(abre una pestaña nueva)</span>
+                </a>
+              </li>
+            )
+          }
         </ul>
-      </div>
+      </nav>
     </div>
 
     <!--
@@ -91,102 +98,100 @@ const whatsappHref = buildWhatsAppQuoteUrl();
       publicación, no un mensaje para el visitante. El seguimiento interno vive
       en docs/design/CONTENT_NEEDED.md.
     -->
-    <div class="site-footer__legal">
-      <a href="/" class="site-footer__brand" aria-label="OrigenLab, ir al inicio">
-        <SiteLogo tone="paper" size={26} />
-      </a>
-      <nav class="site-footer__legal-nav" aria-label="Información legal">
+    <div class="site-footer__legal t-data">
+      <span>&copy; {year} {site.name}</span>
+      <nav aria-label="Información legal">
         <ul>
-          {
-            legalRoutes.map((route) => (
-              <li>
-                <a href={route.href}>{route.label}</a>
-              </li>
-            ))
-          }
+          {legalRoutes.map((route) => <li><a href={route.href}>{route.label}</a></li>)}
         </ul>
       </nav>
-      <p class="site-footer__copy">
-        &copy; {year} {site.name}. Equipos para laboratorio. Base en {contact.city}, atención en todo Chile.
-      </p>
     </div>
   </div>
 </footer>
 
 <style>
   .site-footer {
-    background-color: var(--color-ink-950);
-    color: var(--color-onink-300);
-  }
-  .site-footer__inner {
-    padding-block: 3.5rem 2.5rem;
+    background-color: var(--color-paper);
+    padding: 88px 0 40px;
   }
   .site-footer__grid {
     display: grid;
-    gap: 2.5rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.5rem 2rem;
+  }
+  .site-footer__brand {
+    grid-column: 1 / -1;
+  }
+  .site-footer__logo {
+    display: inline-flex;
+    border-radius: var(--radius-edge);
+  }
+  .site-footer__brand p {
+    margin-top: 1rem;
+    max-width: 22em;
+    color: var(--color-ink-600);
+    font-size: 0.9375rem;
+    line-height: 1.5;
   }
   .site-footer__heading {
-    color: var(--color-onink-500);
-    margin-bottom: 0.875rem;
+    margin-bottom: 0.75rem;
+    color: var(--color-ink-500);
   }
   .site-footer ul {
-    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
     margin: 0;
     padding: 0;
+    list-style: none;
   }
-  .site-footer a,
-  .site-footer__static {
-    display: flex;
+  .site-footer li a {
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    min-height: 2.25rem;
+    min-height: 2rem;
+    color: var(--color-ink-800);
     font-size: 0.9375rem;
-    color: var(--color-onink-300);
-    transition: color 150ms;
-  }
-  .site-footer a:hover {
-    color: #fff;
-  }
-  .site-footer__static {
-    color: var(--color-onink-500);
+    transition: color var(--ease-ui);
+    &:hover {
+      color: var(--color-teal-700);
+    }
   }
   .site-footer__legal {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
     justify-content: space-between;
-    gap: 1.25rem;
-    margin-top: 3.5rem;
-    padding-top: 2rem;
-    border-top: 1px solid var(--color-onink-hairline);
-  }
-  .site-footer__brand {
-    display: inline-flex;
-    border-radius: var(--radius-edge);
-  }
-  .site-footer__copy {
+    gap: 0.5rem 1.5rem;
+    margin-top: 4.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--color-hairline);
+    color: var(--color-ink-500);
     font-size: 0.8125rem;
-    color: var(--color-onink-500);
-    margin: 0;
   }
-  .site-footer__legal-nav ul {
-    display: flex;
+  .site-footer .site-footer__legal ul {
+    flex-direction: row;
     flex-wrap: wrap;
-    gap: 0 1.75rem;
+    gap: 0 1.5rem;
   }
-  @media (min-width: 640px) {
-    .site-footer__grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 2.5rem 3rem;
-    }
+  .site-footer .site-footer__legal li a {
+    color: var(--color-ink-500);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+  }
+  .site-footer .site-footer__legal li a:hover {
+    color: var(--color-ink-950);
+  }
+  .site-footer__legal > span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
   }
   @media (min-width: 1024px) {
-    .site-footer__inner {
-      padding-block: 5rem 3rem;
-    }
     .site-footer__grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr)) 1.3fr;
-      gap: 4rem;
+      grid-template-columns: 1.6fr 1fr 1fr 1fr 1fr;
+      gap: 2rem;
+    }
+    .site-footer__brand {
+      grid-column: auto;
     }
   }
 </style>

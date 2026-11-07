@@ -48,7 +48,7 @@ const ortoalresaAvailability =
   'Cotización y disponibilidad sujetas a confirmación comercial.' as const;
 
 const ortoalresaCommercialNote =
-  'La configuración, accesorios, disponibilidad, garantía y condiciones comerciales se confirman en la cotización.' as const;
+  'La configuración, accesorios, disponibilidad y condiciones comerciales se confirman en la cotización.' as const;
 
 /**
  * Productos destacados para vitrina editorial.

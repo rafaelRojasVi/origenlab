@@ -43,4 +43,6 @@ export const site = {
   ] as readonly NavItem[],
   /** Destino único del CTA primario en todo el sitio. */
   quoteHref: '/contacto/',
+  /** Perfil de LinkedIn. Vacío hasta que el negocio lo confirme: el pie sólo dibuja el enlace si hay valor. */
+  linkedinUrl: '' as string,
 } as const;

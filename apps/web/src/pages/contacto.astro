@@ -4,15 +4,23 @@ import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
 import Icon from '../components/ui/Icon.astro';
+import Button from '../components/ui/Button.astro';
+import FaqList from '../components/ui/FaqList.astro';
 import { contact, telUrl } from '../data/contact';
 import { company } from '../data/company';
 import { faqItems } from '../data/faq';
+import { publicClaim } from '../data/claims';
 import { buildQuoteMailtoWithTemplate, buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import { ctaLabels } from '../lib/ctaLabels';
 import { faqJsonLd } from '../lib/jsonld';
 
 // Slugs de modelo conocidos: `form_submit` sólo lleva `modelo` si `?producto=` es uno de ellos.
 const modeloSlugs = (await getCollection('modelos')).map((item) => item.data.slug);
+
+// La promesa de plazo sólo se dice si el registro de afirmaciones la aprueba.
+const formLead = publicClaim('cotizacion-mismo-dia-habil')
+  ? 'Cuéntenos la aplicación. Le enviamos la cotización el mismo día hábil.'
+  : 'Cuéntenos la aplicación y le enviamos la cotización por escrito.';
 
 const mailtoHref = buildQuoteMailtoWithTemplate();
 const whatsappHref = buildWhatsAppQuoteUrl();
@@ -67,10 +75,7 @@ const steps = [
 
       <div class="solicitud-main">
         <h2 id="solicitud-title" class="t-h2">¿Qué necesita cotizar?</h2>
-        <p class="t-lead mt-5">
-          Complete el formulario y le respondemos con una propuesta concreta.
-          Si prefiere escribirnos directamente, use los datos del panel derecho.
-        </p>
+        <p class="t-lead mt-5">{formLead}</p>
 
         {/* Network error panel (hidden until JS shows it) */}
         <div id="solicitud-network-error" hidden tabindex="-1" class="solicitud-panel solicitud-panel--err" role="alert">
@@ -205,9 +210,11 @@ const steps = [
             <p id="solicitud-consent-error" role="alert" hidden class="sol-field-error"></p>
           </div>
 
-          <button type="submit" id="solicitud-btn" class="btn btn-primary" style="margin-top:0.5rem">
-            Enviar solicitud
-          </button>
+          <div class="sol-submit">
+            <Button type="submit" id="solicitud-btn">
+              <span data-btn-label>{ctaLabels.pedirCotizacion}</span>
+            </Button>
+          </div>
 
           <p class="t-small" style="margin-top:1rem">
             Respondemos en horario hábil, de lunes a viernes entre las {contact.hours}.
@@ -226,12 +233,8 @@ const steps = [
           ))}
         </ol>
         <div class="sol-aside-actions">
-          <a href={mailtoHref} class="btn btn-secondary sol-aside-btn">{ctaLabels.solicitarCotizacion}</a>
-          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
-            <Icon name="whatsapp" size={18} />
-            WhatsApp
-            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
-          </a>
+          <Button href={whatsappHref} variant="whatsapp" external>{ctaLabels.escribirWhatsapp}</Button>
+          <Button href={mailtoHref} variant="secondary">{ctaLabels.email}</Button>
         </div>
         <dl class="details mt-8">
           <div class="detail">
@@ -263,12 +266,8 @@ const steps = [
           deja registro escrito. WhatsApp funciona bien para consultas rápidas.
         </p>
         <div class="channels__actions">
-          <a href={mailtoHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
-          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
-            <Icon name="whatsapp" size={18} />
-            Escribir por WhatsApp
-            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
-          </a>
+          <Button href={mailtoHref}>{ctaLabels.email}</Button>
+          <Button href={whatsappHref} variant="whatsapp" external>{ctaLabels.escribirWhatsapp}</Button>
         </div>
         <p class="t-small channels__hint">
           El botón abre su cliente de correo con el asunto y los campos ya preparados. Si no se abre,
@@ -327,7 +326,7 @@ const steps = [
     </ol>
 
     <p class="mt-10">
-      <a href={mailtoHref} class="btn btn-secondary">Escribir con estos datos</a>
+      <Button href={mailtoHref} variant="secondary">Escribir con estos datos</Button>
     </p>
   </section>
 
@@ -335,19 +334,7 @@ const steps = [
   <section class="shell section rule-top" aria-labelledby="faq-title">
     <SectionIndex index={4} label="Preguntas frecuentes" />
     <h2 id="faq-title" class="t-h2">Antes de escribirnos</h2>
-    <div class="faq">
-      {
-        faqItems.map((item) => (
-          <details name="faq" class="faq__item">
-            <summary>
-              <span>{item.question}</span>
-              <Icon name="chevron-down" size={20} class="faq__chevron" />
-            </summary>
-            <p class="t-body faq__answer">{item.answer}</p>
-          </details>
-        ))
-      }
-    </div>
+    <FaqList items={faqItems.map((item) => ({ q: item.question, a: item.answer }))} />
   </section>
 </Layout>
 
@@ -356,6 +343,7 @@ const steps = [
 var form=document.getElementById('solicitud-form');
 if(!form)return;
 var btn=document.getElementById('solicitud-btn');
+var lab=btn.querySelector('[data-btn-label]')||btn;
 form.noValidate=true;
 var errPanel=document.getElementById('solicitud-network-error');
 var summary=form.querySelector('[data-error-summary]');
@@ -422,8 +410,8 @@ form.addEventListener('submit',function(ev){
   }
   summary.setAttribute('hidden','');
   btn.disabled=true;
-  var orig=btn.textContent;
-  btn.textContent='Enviando…';
+  var orig=lab.textContent;
+  lab.textContent='Enviando…';
   var data=Object.fromEntries(new FormData(form));
   if(!data.product||!data.product.trim())delete data.product;
   fetch('/api/web/solicitud',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
@@ -436,7 +424,7 @@ form.addEventListener('submit',function(ev){
         if(ml)ml.href=buildMailto();
         errPanel.removeAttribute('hidden');
         btn.disabled=false;
-        btn.textContent=orig;
+        lab.textContent=orig;
         errPanel.focus();
       }
     })
@@ -445,7 +433,7 @@ form.addEventListener('submit',function(ev){
       if(ml)ml.href=buildMailto();
       errPanel.removeAttribute('hidden');
       btn.disabled=false;
-      btn.textContent=orig;
+      lab.textContent=orig;
       errPanel.focus();
     });
 });
@@ -487,24 +475,29 @@ form.addEventListener('submit',function(ev){
   .sol-trap-wrap { position: absolute; opacity: 0; pointer-events: none; left: -9999px; top: 0; height: 0; overflow: hidden; }
   .sol-field { display: grid; gap: 0.375rem; margin-bottom: 1.25rem; }
   .sol-label { font-size: 0.9375rem; font-weight: 600; color: var(--color-ink-900); }
+  /* Campos de 48 px, radio de botón. El borde es ink-500 (3:1 sobre blanco, WCAG 1.4.11):
+     hairline-strong, el del tablero, queda en 1,6:1. */
   .sol-input, .sol-textarea {
     width: 100%;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-edge);
-    font-size: 0.9375rem;
+    height: 3rem;
+    padding: 0 0.875rem;
+    border: 1px solid var(--color-ink-500);
+    border-radius: var(--radius-btn);
+    font-size: 1rem;
+    line-height: 1.5;
     color: var(--color-ink-950);
-    background-color: #fff;
+    background-color: var(--color-raised);
     font-family: inherit;
   }
-  .sol-input:focus, .sol-textarea:focus { outline: 2px solid var(--color-teal-700); outline-offset: 1px; border-color: var(--color-teal-700); }
+  .sol-input:focus-visible, .sol-textarea:focus-visible { outline: 2px solid var(--color-teal-700); outline-offset: 2px; border-color: var(--color-teal-700); }
   .sol-input[aria-invalid='true'], .sol-textarea[aria-invalid='true'] { border-color: #dc2626; }
-  .sol-textarea { resize: vertical; min-height: 7rem; }
+  .sol-textarea { height: auto; padding-block: 0.75rem; resize: vertical; min-height: 8rem; }
+  .sol-submit { margin-top: 0.5rem; }
   .sol-consent { grid-template-columns: auto minmax(0, 1fr); column-gap: 0.75rem; align-items: start; }
   .sol-consent input { width: 1.25rem; height: 1.25rem; margin: 0.125rem 0 0; accent-color: var(--color-teal-700); }
   .sol-consent .sol-field-error { grid-column: 2; }
   .sol-field-error { font-size: 0.875rem; color: #dc2626; margin: 0; }
-  .sol-optional { margin-bottom: 1.5rem; border: 1px solid var(--color-hairline); border-radius: var(--radius-edge); }
+  .sol-optional { margin-bottom: 1.5rem; border: 1px solid var(--color-hairline); border-radius: var(--radius-btn); }
   .sol-optional__summary { padding: 0.75rem 1rem; cursor: pointer; list-style: none; color: var(--color-ink-600); }
   .sol-optional__summary::-webkit-details-marker { display: none; }
   .sol-optional__body { padding: 0.75rem 1rem 1rem; border-top: 1px solid var(--color-hairline); display: grid; gap: 0.75rem; }
@@ -602,48 +595,6 @@ form.addEventListener('submit',function(ev){
     margin-top: 0.5rem;
     color: var(--color-ink-600);
     max-width: 60ch;
-  }
-
-  /* ---- Section 04: FAQ --------------------------------------------------- */
-  .faq {
-    margin-top: 3rem;
-    border-top: 1px solid var(--color-ink-950);
-    max-width: 52rem;
-  }
-  .faq__item {
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .faq__item summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    min-height: 3.5rem;
-    padding-block: 1rem;
-    font-size: 1.0625rem;
-    font-weight: 500;
-    color: var(--color-ink-950);
-    cursor: pointer;
-    list-style: none;
-  }
-  .faq__item summary::-webkit-details-marker {
-    display: none;
-  }
-  .faq__chevron {
-    color: var(--color-ink-500);
-    flex-shrink: 0;
-  }
-  .faq__item[open] .faq__chevron {
-    transform: rotate(180deg);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .faq__chevron {
-      transition: transform 150ms;
-    }
-  }
-  .faq__answer {
-    padding-bottom: 1.5rem;
-    color: var(--color-ink-600);
   }
 
   /* ---- Responsive adjustments -------------------------------------------- */

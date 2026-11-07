@@ -9,25 +9,32 @@ import { publicClaim } from '../../data/claims';
  * ítem de garantía: nadie la ha aprobado.
  *
  * `tone="raised"` es la banda blanca de la portada, con filetes arriba y abajo;
- * `tone="paper"` la deja sobre el papel de la página (`/como-comprar/`).
+ * `tone="paper"` la deja sobre el papel de la página (`/como-comprar/`), donde
+ * además se cambian la etiqueta y el titular, se da un `id` de ancla y se omite
+ * la fila de promesas (la página las dice en su propia franja).
  */
 interface Props {
   tone?: 'raised' | 'paper';
+  id?: string;
+  label?: string;
+  title?: string;
+  claims?: boolean;
 }
-const { tone = 'raised' } = Astro.props;
+const { tone = 'raised', id, label = 'Cómo comprar', title = 'Cuatro pasos, sin vueltas', claims = true } = Astro.props;
 
 const steps = buyingSteps();
-const pay = [publicClaim('despacho-todo-chile'), publicClaim('vende-mercado-publico')].filter(Boolean);
+const pay = claims ? [publicClaim('despacho-todo-chile'), publicClaim('vende-mercado-publico')].filter(Boolean) : [];
 ---
 
 <section
+  id={id}
   class:list={['home-steps', 'home-sec', { 'home-steps--raised': tone === 'raised' }]}
   aria-labelledby="pasos-title"
 >
   <div class="shell home-steps__inner">
     <div class="home-head rv">
-      <p class="t-label">Cómo comprar</p>
-      <h2 id="pasos-title" class="home-h2">Cuatro pasos, sin vueltas</h2>
+      <p class="t-label">{label}</p>
+      <h2 id="pasos-title" class="home-h2">{title}</h2>
     </div>
     <ol class="steps">
       {
