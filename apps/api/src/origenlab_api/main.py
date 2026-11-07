@@ -290,6 +290,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     _mount_campaign_blocks(app, settings, dsn, connect)
     _mount_campaign_test_send(app, settings, dsn, connect)
     _mount_web_quote_form(app, settings, dsn, connect)
+    _mount_web_publish(app, settings)
     _mount_unsubscribe(app, settings, dsn, connect)
 
 
@@ -388,6 +389,30 @@ def _mount_web_quote_form(app: FastAPI, settings: Settings, dsn: str, connect: A
     app.state.web_quote_form_caps = caps
     app.include_router(web_quote_form_router)
     app.state.web_quote_form_enabled = True
+
+
+def _mount_web_publish(app: FastAPI, settings: Settings) -> None:
+    """«Publicar web»: needs its own switch and a GitHub token; off, the route is a 404."""
+    app.state.web_publish_enabled = False
+    if not settings.v2_web_publish_configured():
+        return
+    from origenlab_api.v2._github import GithubPublishConfig
+    from origenlab_api.v2.web_publish import web_publish_router
+
+    assert settings.github_publish_token is not None
+    try:
+        app.state.web_publish_config = GithubPublishConfig(
+            token=settings.github_publish_token,
+            repo=settings.github_repo,
+            ref=settings.github_ref,
+            committer_name=settings.github_publish_committer_name,
+            committer_email=settings.github_publish_committer_email,
+        )
+    except ValueError as exc:
+        logging.getLogger(__name__).warning("web publish disabled: %s", exc)
+        return
+    app.include_router(web_publish_router)
+    app.state.web_publish_enabled = True
 
 
 def _mount_campaign_blocks(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:
