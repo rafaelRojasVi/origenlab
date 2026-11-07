@@ -12,6 +12,7 @@ describe("parseWhatsappNumber", () => {
     expect(parseWhatsappNumber("56912345678")).toBe("56912345678");
     expect(parseWhatsappNumber(" +56 9 1234 5678 ")).toBe("56912345678");
     expect(parseWhatsappNumber("+56-9-1234-5678")).toBe("56912345678");
+    expect(parseWhatsappNumber("0056 9 1234 5678")).toBe("56912345678");
   });
   it("is null for empty, missing or malformed values", () => {
     for (const bad of [undefined, null, "", "   ", "abc", "1234567", "5691234567890123", "56 9 12x4 5678"]) {

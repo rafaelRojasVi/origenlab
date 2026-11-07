@@ -11,10 +11,10 @@
  * page, so an unapproved quote is never taken for the final one. While it is open the window's
  * title names the quote and its institution, which becomes the saved file's name.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
-import { QrSvg } from "../../lib/qr";
+import { fitsQr, QrSvg } from "../../lib/qr";
 import { formatMoney } from "../money";
 import { formatWhatsappNumber, WHATSAPP_NUMBER, whatsappQuoteUrl } from "../company";
 import { isWithoutIva, type PrintableQuote } from "./printableQuote";
@@ -109,6 +109,16 @@ export function QuotePrintView({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // The QR and its caption print together or not at all: a link too long for the symbol (it should
+  // not happen: see company.test.ts) leaves only the WhatsApp text line.
+  const waUrl = whatsapp ? whatsappQuoteUrl(whatsapp, quote.label) : null;
+  const qrFits = useMemo(() => {
+    if (!waUrl) return false;
+    const fits = fitsQr(waUrl);
+    if (!fits && import.meta.env.DEV) console.warn("QuotePrintView: the WhatsApp link does not fit a QR; printing the number only.");
+    return fits;
+  }, [waUrl]);
 
   const money = (v: string | null) => formatMoney(v, quote.currency) ?? "—";
   const date = longDay(quote.date);
@@ -287,9 +297,9 @@ export function QuotePrintView({
             <span className="qp-sign-title">{ISSUER.title}</span>
             {quote.draft ? <span className="qp-strong qp-draft-note">Borrador sin aprobar: no válido como cotización.</span> : null}
           </div>
-          {whatsapp ? (
+          {waUrl && qrFits ? (
             <div className="qp-wa">
-              <QrSvg text={whatsappQuoteUrl(whatsapp, quote.label)} size="22mm" />
+              <QrSvg text={waUrl} size="22mm" />
               <span>Escanee para escribir por WhatsApp sobre esta cotización</span>
             </div>
           ) : null}

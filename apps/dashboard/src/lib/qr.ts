@@ -4,8 +4,8 @@
  * data codewords -> Reed-Solomon error correction over GF(256) (polynomial 0x11D) -> block
  * interleaving -> function patterns (finders, timing, alignment, format info) -> zigzag placement
  * -> best of the 8 masks by the standard's four penalty rules. Layout and format-bit conventions
- * were checked against the public reference implementation by Project Nayuki and against a
- * decoder (see qr.test.ts). Throws RangeError when the text does not fit version 6.
+ * follow the public reference implementation by Project Nayuki; qr.test.tsx checks the
+ * Reed-Solomon vector from the standard's worked example and reads every symbol back. Throws RangeError when the text does not fit version 6.
  */
 import { createElement } from "react";
 
@@ -28,7 +28,7 @@ for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
 const gmul = (a: number, b: number) => (a && b ? EXP[LOG[a] + LOG[b]] : 0);
 
 /** Reed-Solomon remainder of `data` x^n divided by prod (x - a^i), i < n. */
-function rsRemainder(data: number[], n: number): number[] {
+export function rsRemainder(data: number[], n: number): number[] {
   let gen = [1];
   for (let i = 0; i < n; i++) {
     const next = new Array<number>(gen.length + 1).fill(0);
@@ -190,6 +190,16 @@ export function encodeQr(text: string): QrMatrix {
     for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && MASKS[mask](y, x)) grid[y][x] = !grid[y][x]; // undo
   }
   return best!;
+}
+
+/** Whether `text` can be encoded (at most 106 UTF-8 bytes). */
+export function fitsQr(text: string): boolean {
+  try {
+    encodeQr(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Inline SVG of the symbol: crisp black squares on white, 4-module quiet zone, `size` a CSS length. */

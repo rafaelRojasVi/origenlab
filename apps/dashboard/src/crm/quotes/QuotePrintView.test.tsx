@@ -94,7 +94,8 @@ const index = (): Promise<CatalogIndex> =>
 
 function show(ws: QuoteWorkspace) {
   const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
-  render(<QuotePrintView quote={q} onClose={vi.fn()} loadIndex={index} />);
+  // No WhatsApp number whatever the machine's .env says: these tests are about the plain document.
+  render(<QuotePrintView quote={q} onClose={vi.fn()} loadIndex={index} whatsapp={null} />);
   return screen.getByRole("dialog");
 }
 
@@ -200,6 +201,18 @@ describe("Vista previa PDF — WhatsApp line and QR", () => {
     expect(within(dialog).queryByRole("img", { name: /WhatsApp/ })).toBeNull();
     expect(dialog.textContent).not.toMatch(/WhatsApp/);
     expect(dialog.innerHTML).toBe(plain);
+  });
+
+  it("prints neither the QR nor its caption when the link cannot fit a QR, only the number", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const q = printableQuote(approved(), null, new Date("2026-10-17T12:00:00Z"))!;
+    render(<QuotePrintView quote={{ ...q, label: `CN${"9".repeat(60)}` }} onClose={vi.fn()} loadIndex={index} whatsapp={PHONE} />);
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.queryByRole("img", { name: /WhatsApp/ })).toBeNull();
+    expect(sheet.queryByText(/Escanee/)).toBeNull();
+    expect(sheet.getByText("WhatsApp +56 9 1234 5678")).toBeInTheDocument();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it("encodes the wa.me link for this quote's number in the QR", () => {

@@ -5,9 +5,10 @@
  * Unset or invalid: the quotation prints no WhatsApp line and no QR.
  */
 
-/** Digits only, 8 to 15 of them (E.164 without «+»); `+`, spaces, dots and dashes are tolerated. */
+/** Digits only, 8 to 15 of them (E.164 without «+»); `+`, a leading `00`, spaces, dots and dashes are tolerated. */
 export function parseWhatsappNumber(raw: string | undefined | null): string | null {
-  const digits = (raw ?? "").trim().replace(/[\s+().-]/g, "");
+  // «00» is the international prefix written out («0056 9 …»): not part of the number.
+  const digits = (raw ?? "").trim().replace(/[\s+().-]/g, "").replace(/^00/, "");
   return /^\d{8,15}$/.test(digits) ? digits : null;
 }
 
