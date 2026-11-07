@@ -129,6 +129,9 @@ silent localhost fallback). No token goes into a `VITE_*` variable — they are 
 bundle. See [docs/PRODUCTION_API_AUTH.md](docs/PRODUCTION_API_AUTH.md). Restart `npm run dev`
 after changing `.env`.
 
+Optional `VITE_ORIGENLAB_WHATSAPP` (digits with country code, e.g. `56912345678`; set it in the
+build environment) adds a WhatsApp line and a QR to the quotation PDF. Unset: nothing is printed.
+
 ### Development operator identity
 
 `ORIGENLAB_DEV_OPERATOR_EMAIL` is read by `vite.config.ts` in the Node process and injected as

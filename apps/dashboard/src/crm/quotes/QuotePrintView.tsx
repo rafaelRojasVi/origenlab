@@ -14,7 +14,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
+import { QrSvg } from "../../lib/qr";
 import { formatMoney } from "../money";
+import { formatWhatsappNumber, WHATSAPP_NUMBER, whatsappQuoteUrl } from "../company";
 import { isWithoutIva, type PrintableQuote } from "./printableQuote";
 import "./quotePrint.css";
 
@@ -63,10 +65,13 @@ export function QuotePrintView({
   quote,
   onClose,
   loadIndex = loadCatalogIndex,
+  whatsapp = WHATSAPP_NUMBER,
 }: {
   quote: PrintableQuote;
   onClose: () => void;
   loadIndex?: () => Promise<CatalogIndex>;
+  /** OrigenLab's WhatsApp number (digits); defaults to the build setting. Null: no line, no QR. */
+  whatsapp?: string | null;
 }) {
   const [models, setModels] = useState<Map<string, string>>(() => new Map());
   const printRef = useRef<HTMLButtonElement>(null);
@@ -282,10 +287,17 @@ export function QuotePrintView({
             <span className="qp-sign-title">{ISSUER.title}</span>
             {quote.draft ? <span className="qp-strong qp-draft-note">Borrador sin aprobar: no válido como cotización.</span> : null}
           </div>
+          {whatsapp ? (
+            <div className="qp-wa">
+              <QrSvg text={whatsappQuoteUrl(whatsapp, quote.label)} size="22mm" />
+              <span>Escanee para escribir por WhatsApp sobre esta cotización</span>
+            </div>
+          ) : null}
           <div className="qp-muted qp-right">
             {ISSUER.contactLines.map((line) => (
               <span key={line}>{line}</span>
             ))}
+            {whatsapp ? <span>WhatsApp {formatWhatsappNumber(whatsapp)}</span> : null}
           </div>
         </footer>
       </article>
