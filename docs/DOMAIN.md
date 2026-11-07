@@ -1413,6 +1413,18 @@ Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.
 Counts by schema: `crm` 32, `comms` 4, `outbound` 9, `evidence` 7,
 `catalog` 8, `procurement` 1, `platform` 7 — **68**.
 
+### 7.16 Where a case came from — `crm.opportunity.origin`, built 2026-11-09
+
+No table. `crm.opportunity` gains one nullable text column, `origin`: the channel the case came
+from, closed by `opportunity_origin_check` to nine values — `correo`, `web`, `whatsapp`, `campana`,
+`mercado_publico`, `fabricante`, `recomendacion`, `llamada`, `ex_labdelivery`. Null means *not
+recorded* (every case that exists today); there is no default and no `desconocido` value. It is
+**not** `origin_source_record_id` (the one evidence record a case was promoted from): `origin` is a
+channel an operator can set or correct. A partial index (`opportunity_origin_idx`, `origin IS NOT
+NULL`) serves "cases by origin". The API's existing table-level select/insert/update and the
+worker's select cover it, so no grant, policy or foreign key changes, and no domain event is added
+by the column. Migration `20261109100000_slice8_opportunity_origin.sql`. Counts are unchanged.
+
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
 suffice); a quote party-snapshot table (a validated snapshot column on the
