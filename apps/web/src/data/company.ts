@@ -13,12 +13,12 @@ export const company = {
     'Alimentos, control de calidad y laboratorio clínico. Cotice por correo o WhatsApp; asesoría, soporte e instalación o puesta en marcha cuando el equipo lo requiera.',
   /**
    * Línea de valor del titular para la franja del hero de las páginas de
-   * modelo (plan de la versión 1 del sitio, 2026-11-07). Sin cifras. «Distribuidor
+   * modelo, con el texto exacto que el titular aprobó el 2026-11-07. Sin cifras. «Distribuidor
    * en Chile de …» no va aquí: sólo lo dice `TrustStrip`, y sólo para una marca
    * con `commercialScopeConfirmed`.
    */
   valueLine:
-    'Trabajamos directo con Hielscher, OHAUS y Ortoalresa · despacho a todo Chile · puesta en marcha incluida',
+    'Trabajamos directo con Hielscher, OHAUS y Ortoalresa · despacho a todo Chile · puesta en marcha y capacitación con fábrica',
   /** Párrafo breve home: audiencia desde datos confirmados */
   homeIntro:
     'Atendemos laboratorios de servicios e investigación, universidades, clínicas, hospitales e industrias de I+D en todo Chile. Equipamiento de laboratorio y cotización según su necesidad.',
