@@ -46,6 +46,8 @@ export type StatsEnv = ProxyEnv & {
   STATS_ORIGIN?: string;
   STATS_EVENT_PATH?: string;
   STATS_SCRIPT_PATH?: string;
+  /** Comma-separated modelo slugs the counter may key on; anything else counts as "other". */
+  STATS_MODELOS?: string;
   STATS_RATELIMIT?: RateLimit;
   STATS_KV?: KVNamespace;
 };
@@ -123,14 +125,33 @@ function parseEvent(buf: ArrayBuffer): StatsEvent | null {
   return { name, modelo };
 }
 
+const OTHER_MODELO = "other";
+
+function allowedModelos(raw: string | undefined): Set<string> {
+  return new Set(
+    (raw ?? "")
+      .split(",")
+      .map((slug) => slug.trim())
+      .filter((slug) => MODELO_RE.test(slug)),
+  );
+}
+
 /**
- * Best-effort daily counter, `daily:{YYYY-MM-DD}:{name}:{modelo}`. Read-then-write, so two events
+ * Best-effort daily counter, `daily:{YYYY-MM-DD}:{name}:{modelo}`. The modelo is part of the key only
+ * when it is in `STATS_MODELOS`; any other value counts as "other", so a client cannot mint keys
+ * (an event with no modelo keeps the empty segment). Read-then-write, so two events
  * landing in the same instant can lose one count: acceptable for coarse click totals, and
  * counting never blocks or fails the visitor's request.
  */
-async function incrementCounter(kv: KVNamespace, name: string, modelo: string | undefined): Promise<void> {
+async function incrementCounter(
+  kv: KVNamespace,
+  name: string,
+  modelo: string | undefined,
+  known: Set<string>,
+): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
-  const key = `daily:${today}:${name}:${modelo ?? ""}`;
+  const segment = modelo === undefined ? "" : known.has(modelo) ? modelo : OTHER_MODELO;
+  const key = `daily:${today}:${name}:${segment}`;
   try {
     const current = parseInt((await kv.get(key)) ?? "0", 10);
     await kv.put(key, String(Number.isFinite(current) ? current + 1 : 1), {
@@ -203,8 +224,9 @@ export async function handleStatsRequest(request: Request, env: StatsEnv): Promi
     const headers = new Headers({
       "Cache-Control": upstream.ok ? "public, max-age=3600" : "no-store",
     });
-    const contentType = upstream.headers.get("Content-Type");
-    if (contentType) headers.set("Content-Type", contentType);
+    // Forced, not echoed: whatever the upstream says, the browser gets a script and may not sniff it.
+    headers.set("Content-Type", "application/javascript; charset=utf-8");
+    headers.set("X-Content-Type-Options", "nosniff");
     return new Response(upstream.body, { status: upstream.status, headers });
   }
 
@@ -214,7 +236,7 @@ export async function handleStatsRequest(request: Request, env: StatsEnv): Promi
   if (event === null) return empty(400);
 
   if (!proxyMode) {
-    if (env.STATS_KV) await incrementCounter(env.STATS_KV, event.name, event.modelo);
+    if (env.STATS_KV) await incrementCounter(env.STATS_KV, event.name, event.modelo, allowedModelos(env.STATS_MODELOS));
     return empty(204);
   }
 
@@ -236,6 +258,8 @@ export async function handleStatsRequest(request: Request, env: StatsEnv): Promi
   } catch {
     return empty(502);
   }
+  // The body is never read; release the connection.
+  await upstream.body?.cancel();
   if (upstream.status >= 300 && upstream.status < 400) return empty(502);
   return empty(upstream.status);
 }

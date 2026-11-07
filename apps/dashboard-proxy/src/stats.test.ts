@@ -341,7 +341,7 @@ describe("stats proxy mode (STATS_ORIGIN set)", () => {
 describe("stats script.js", () => {
   it("is proxied in proxy mode with no cookies, ignoring any query string", async () => {
     const fetchMock = stubFetch(200, "console.log(1)", {
-      "Content-Type": "application/javascript",
+      "Content-Type": "text/html",
       "Set-Cookie": "sid=abc",
       "X-Secret": "nope",
     });
@@ -351,7 +351,8 @@ describe("stats script.js", () => {
     );
     expect(resp.status).toBe(200);
     expect(await resp.text()).toBe("console.log(1)");
-    expect(resp.headers.get("Content-Type")).toBe("application/javascript");
+    expect(resp.headers.get("Content-Type")).toBe("application/javascript; charset=utf-8");
+    expect(resp.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(resp.headers.get("Cache-Control")).toBe("public, max-age=3600");
     expect(resp.headers.get("Set-Cookie")).toBeNull();
     expect(resp.headers.get("X-Secret")).toBeNull();
@@ -396,7 +397,7 @@ describe("stats fallback counter (STATS_ORIGIN empty)", () => {
   it("increments the daily counter and answers 204 with no body", async () => {
     const fetchMock = stubFetch();
     const { kv, store, put } = makeKv();
-    const env = { ...BASE_ENV, STATS_ORIGIN: "", STATS_KV: kv };
+    const env = { ...BASE_ENV, STATS_ORIGIN: "", STATS_KV: kv, STATS_MODELOS: "UP400St, UP200St" };
 
     const first = await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "UP400St" } }), env);
     expect(first.status).toBe(204);
@@ -414,7 +415,7 @@ describe("stats fallback counter (STATS_ORIGIN empty)", () => {
 
   it("keys by name and modelo, with an empty modelo when none is given", async () => {
     const { kv, store } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv };
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_MODELOS: "UP400St,UP200St" };
     await handleStatsRequest(eventRequest({ name: "form_submit" }), env);
     await handleStatsRequest(eventRequest({ name: "form_submit", props: {} }), env);
     await handleStatsRequest(eventRequest({ name: "3d_interact", props: { modelo: "UP200St" } }), env);
@@ -424,6 +425,30 @@ describe("stats fallback counter (STATS_ORIGIN empty)", () => {
         [`daily:${today()}:form_submit:`, "2"],
       ].sort(),
     );
+  });
+
+  it("keeps an allowlisted modelo and collapses everything else to one \"other\" key", async () => {
+    const { kv, store } = makeKv();
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_MODELOS: "UP400St,UP200St" };
+    for (const modelo of ["UP400St", "rnd-9f3a1", "rnd-77c0e", "rnd-0b2d4"]) {
+      await handleStatsRequest(eventRequest({ name: "whatsapp_click", props: { modelo } }), env);
+    }
+    expect([...store.entries()].sort()).toEqual(
+      [
+        [`daily:${today()}:whatsapp_click:UP400St`, "1"],
+        [`daily:${today()}:whatsapp_click:other`, "3"],
+      ].sort(),
+    );
+  });
+
+  it("collapses every modelo to \"other\" when STATS_MODELOS is empty or unset", async () => {
+    for (const modelos of [undefined, "", " , "]) {
+      const { kv, store } = makeKv();
+      const env = { ...BASE_ENV, STATS_KV: kv, STATS_MODELOS: modelos };
+      await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "UP400St" } }), env);
+      await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "anything-else" } }), env);
+      expect([...store.keys()]).toEqual([`daily:${today()}:pdf_download:other`]);
+    }
   });
 
   it("starts a new key when the UTC date rolls over", async () => {

@@ -6,6 +6,9 @@ compatibility_date = "2025-04-01"
 ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
 # Empty = built-in counter mode; set to the analytics origin (https://host) to proxy. See the stats block below.
 STATS_ORIGIN = ""
+# Counter mode only: comma-separated modelo slugs that may appear in counter keys (e.g. "UP100H,UP200St,UP400St").
+# Any other modelo counts as "other"; empty = every modelo counts as "other".
+STATS_MODELOS = ""
 
 [[routes]]
 pattern = "dashboard.origenlab.cl/api*"
