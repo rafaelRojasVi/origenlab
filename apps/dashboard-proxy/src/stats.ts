@@ -7,7 +7,8 @@ import type { ProxyEnv } from "./proxy";
  * This Worker route family is public (like `/api/web/*`), has no session, no operator identity
  * and no CORS, and is separate from the dashboard allowlist. Exactly two requests exist:
  *
- *   POST /api/stats/event      one of five named events, `{name, props:{modelo?}}`
+ *   POST /api/stats/event      one of six named events, `{name, props}`: the five click events take
+ *                              `props:{modelo?}`, `visita` takes `props:{origen, pagina}`
  *   GET  /api/stats/script.js  the analytics script, only when an analytics origin is configured
  *
  * Two modes, picked by `STATS_ORIGIN`:
@@ -27,6 +28,16 @@ export const STATS_EVENT_NAMES: ReadonlySet<string> = new Set([
   "pdf_download",
   "3d_interact",
   "form_submit",
+  "visita",
+]);
+/** Where a visit came from, decided by the site; a closed set so a client cannot mint keys. */
+export const STATS_ORIGENES: ReadonlySet<string> = new Set([
+  "google",
+  "perfil-google",
+  "linkedin",
+  "directo",
+  "whatsapp",
+  "otro",
 ]);
 
 const STATS_SITE_ORIGIN = "https://origenlab.cl";
@@ -35,6 +46,7 @@ const SCRIPT_PATH = "/api/stats/script.js";
 const DEFAULT_UPSTREAM_EVENT_PATH = "/api/event"; // Plausible CE; Umami is "/api/send"
 const DEFAULT_UPSTREAM_SCRIPT_PATH = "/js/script.js"; // Plausible CE; Umami is "/script.js"
 const COUNTER_TTL_SECONDS = 60 * 60 * 24 * 90;
+const PAGINA_RE = /^\/[a-z0-9/-]{0,80}$/;
 const MODELO_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const UPSTREAM_PATH_RE = /^\/[A-Za-z0-9._\-/]*$/;
 
@@ -48,6 +60,8 @@ export type StatsEnv = ProxyEnv & {
   STATS_SCRIPT_PATH?: string;
   /** Comma-separated modelo slugs the counter may key on; anything else counts as "other". */
   STATS_MODELOS?: string;
+  /** Comma-separated page paths a visit counter may key on; any other page counts as "otra". */
+  STATS_PAGINAS?: string;
   STATS_RATELIMIT?: RateLimit;
   STATS_KV?: KVNamespace;
 };
@@ -55,6 +69,8 @@ export type StatsEnv = ProxyEnv & {
 interface StatsEvent {
   name: string;
   modelo: string | undefined;
+  origen: string | undefined;
+  pagina: string | undefined;
 }
 
 const empty = (status: number, headers?: Record<string, string>): Response =>
@@ -113,16 +129,25 @@ function parseEvent(buf: ArrayBuffer): StatsEvent | null {
   const { name, props } = data as { name?: unknown; props?: unknown };
   if (typeof name !== "string" || !STATS_EVENT_NAMES.has(name)) return null;
 
-  let modelo: string | undefined;
-  if (props !== undefined && props !== null) {
-    if (typeof props !== "object" || Array.isArray(props)) return null;
-    const raw = (props as { modelo?: unknown }).modelo;
-    if (raw !== undefined) {
-      if (typeof raw !== "string" || !MODELO_RE.test(raw)) return null;
-      modelo = raw;
-    }
+  if (props !== undefined && props !== null && (typeof props !== "object" || Array.isArray(props))) return null;
+  const p = (props ?? {}) as { modelo?: unknown; origen?: unknown; pagina?: unknown };
+
+  if (name === "visita") {
+    // A visit carries exactly a source and a page; no modelo, nothing else is kept.
+    if (p.modelo !== undefined) return null;
+    if (typeof p.origen !== "string" || !STATS_ORIGENES.has(p.origen)) return null;
+    if (typeof p.pagina !== "string" || !PAGINA_RE.test(p.pagina)) return null;
+    return { name, modelo: undefined, origen: p.origen, pagina: p.pagina };
   }
-  return { name, modelo };
+
+  // The five click events keep their contract: only `modelo`, never origen/pagina.
+  if (p.origen !== undefined || p.pagina !== undefined) return null;
+  let modelo: string | undefined;
+  if (p.modelo !== undefined) {
+    if (typeof p.modelo !== "string" || !MODELO_RE.test(p.modelo)) return null;
+    modelo = p.modelo;
+  }
+  return { name, modelo, origen: undefined, pagina: undefined };
 }
 
 const OTHER_MODELO = "other";
@@ -136,6 +161,17 @@ function allowedModelos(raw: string | undefined): Set<string> {
   );
 }
 
+const OTHER_PAGINA = "otra";
+
+function allowedPaginas(raw: string | undefined): Set<string> {
+  return new Set(
+    (raw ?? "")
+      .split(",")
+      .map((path) => path.trim())
+      .filter((path) => PAGINA_RE.test(path)),
+  );
+}
+
 /**
  * Best-effort daily counter, `daily:{YYYY-MM-DD}:{name}:{modelo}`. The modelo is part of the key only
  * when it is in `STATS_MODELOS`; any other value counts as "other", so a client cannot mint keys
@@ -143,15 +179,7 @@ function allowedModelos(raw: string | undefined): Set<string> {
  * landing in the same instant can lose one count: acceptable for coarse click totals, and
  * counting never blocks or fails the visitor's request.
  */
-async function incrementCounter(
-  kv: KVNamespace,
-  name: string,
-  modelo: string | undefined,
-  known: Set<string>,
-): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
-  const segment = modelo === undefined ? "" : known.has(modelo) ? modelo : OTHER_MODELO;
-  const key = `daily:${today}:${name}:${segment}`;
+async function bump(kv: KVNamespace, key: string): Promise<void> {
   try {
     const current = parseInt((await kv.get(key)) ?? "0", 10);
     await kv.put(key, String(Number.isFinite(current) ? current + 1 : 1), {
@@ -160,6 +188,23 @@ async function incrementCounter(
   } catch {
     console.warn("stats_counter_failed"); // a fixed string: no key, no IP, no body
   }
+}
+
+async function incrementCounter(kv: KVNamespace, event: StatsEvent, env: StatsEnv): Promise<void> {
+  const today = new Date().toISOString().slice(0, 10);
+  if (event.name === "visita" && event.origen !== undefined && event.pagina !== undefined) {
+    // Origin-only total (works with an empty page list) plus origin x page. Both segments are bounded:
+    // origen is a closed set of six, pagina is STATS_PAGINAS or "otra", so at most
+    // 6 x (STATS_PAGINAS size + 1) + 6 keys per day.
+    const base = `daily:${today}:visita:${event.origen}`;
+    const pagina = allowedPaginas(env.STATS_PAGINAS).has(event.pagina) ? event.pagina : OTHER_PAGINA;
+    await bump(kv, base);
+    await bump(kv, `${base}:${pagina}`);
+    return;
+  }
+  const known = allowedModelos(env.STATS_MODELOS);
+  const segment = event.modelo === undefined ? "" : known.has(event.modelo) ? event.modelo : OTHER_MODELO;
+  await bump(kv, `daily:${today}:${event.name}:${segment}`);
 }
 
 export async function handleStatsRequest(request: Request, env: StatsEnv): Promise<Response> {
@@ -236,14 +281,19 @@ export async function handleStatsRequest(request: Request, env: StatsEnv): Promi
   if (event === null) return empty(400);
 
   if (!proxyMode) {
-    if (env.STATS_KV) await incrementCounter(env.STATS_KV, event.name, event.modelo, allowedModelos(env.STATS_MODELOS));
+    if (env.STATS_KV) await incrementCounter(env.STATS_KV, event, env);
     return empty(204);
   }
 
   // Only the validated shape is forwarded; whatever else the browser sent stops here.
   const body = JSON.stringify({
     name: event.name,
-    props: event.modelo === undefined ? {} : { modelo: event.modelo },
+    props:
+      event.name === "visita"
+        ? { origen: event.origen, pagina: event.pagina }
+        : event.modelo === undefined
+          ? {}
+          : { modelo: event.modelo },
   });
   let upstream: Response;
   try {

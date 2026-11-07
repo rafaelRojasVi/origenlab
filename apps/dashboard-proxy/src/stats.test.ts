@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { STATS_BODY_LIMIT, STATS_EVENT_NAMES, handleStatsRequest } from "../src/stats";
+import { STATS_BODY_LIMIT, STATS_EVENT_NAMES, STATS_ORIGENES, handleStatsRequest } from "../src/stats";
 import worker from "../src/index";
 import type { ProxyEnv } from "../src/proxy";
 
@@ -197,10 +197,88 @@ describe("stats event guards", () => {
     expect(resp.status).toBe(400);
   });
 
-  it("knows exactly the five event names", () => {
+  it("knows exactly the six event names", () => {
     expect([...STATS_EVENT_NAMES].sort()).toEqual(
-      ["3d_interact", "cotizacion_click", "form_submit", "pdf_download", "whatsapp_click"].sort(),
+      ["3d_interact", "cotizacion_click", "form_submit", "pdf_download", "visita", "whatsapp_click"].sort(),
     );
+  });
+
+  it("knows exactly the six visit origins", () => {
+    expect([...STATS_ORIGENES].sort()).toEqual(
+      ["directo", "google", "linkedin", "otro", "perfil-google", "whatsapp"].sort(),
+    );
+  });
+
+  it.each(["cotizacion_click", "whatsapp_click", "pdf_download", "3d_interact", "form_submit"])(
+    "%s still refuses origen and pagina with 400",
+    async (name) => {
+      const fetchMock = stubFetch();
+      const { kv, put } = makeKv();
+      for (const props of [{ origen: "google" }, { pagina: "/catalogo" }, { modelo: "UP400St", origen: "google", pagina: "/" }]) {
+        const resp = await handleStatsRequest(eventRequest({ name, props }), proxyEnv({ STATS_KV: kv }));
+        expect(resp.status).toBe(400);
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(put).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("stats visita event", () => {
+  const ORIGENES = ["google", "perfil-google", "linkedin", "directo", "whatsapp", "otro"];
+
+  it.each(ORIGENES)("accepts origen %s", async (origen) => {
+    stubFetch(202);
+    const resp = await handleStatsRequest(eventRequest({ name: "visita", props: { origen, pagina: "/catalogo/ultrasonido" } }), proxyEnv());
+    expect(resp.status).toBe(202);
+  });
+
+  it.each([
+    ["bad origen", { origen: "facebook", pagina: "/" }],
+    ["uppercase origen", { origen: "Google", pagina: "/" }],
+    ["non-string origen", { origen: 3, pagina: "/" }],
+    ["origen with a separator", { origen: "google:x", pagina: "/" }],
+    ["missing origen", { pagina: "/" }],
+    ["missing pagina", { origen: "google" }],
+    ["no props", undefined],
+    ["pagina too long", { origen: "google", pagina: "/" + "a".repeat(81) }],
+    ["pagina with query", { origen: "google", pagina: "/catalogo?utm=x" }],
+    ["pagina with fragment", { origen: "google", pagina: "/catalogo#x" }],
+    ["pagina uppercase", { origen: "google", pagina: "/Catalogo" }],
+    ["pagina without leading slash", { origen: "google", pagina: "catalogo" }],
+    ["pagina with colon", { origen: "google", pagina: "/a:b" }],
+    ["pagina with dot", { origen: "google", pagina: "/a.html" }],
+    ["pagina empty", { origen: "google", pagina: "" }],
+    ["pagina a full URL", { origen: "google", pagina: "https://origenlab.cl/" }],
+    ["non-string pagina", { origen: "google", pagina: 7 }],
+    ["a modelo", { origen: "google", pagina: "/", modelo: "UP400St" }],
+  ])("refuses %s with 400 and stores nothing", async (_label, props) => {
+    const fetchMock = stubFetch();
+    const { kv, put } = makeKv();
+    const resp = await handleStatsRequest(eventRequest({ name: "visita", props }), proxyEnv({ STATS_KV: kv }));
+    expect(resp.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("accepts the root path and a path of exactly 81 characters", async () => {
+    stubFetch(202);
+    for (const pagina of ["/", "/" + "a".repeat(80)]) {
+      const resp = await handleStatsRequest(eventRequest({ name: "visita", props: { origen: "directo", pagina } }), proxyEnv());
+      expect(resp.status).toBe(202);
+    }
+  });
+
+  it("forwards only {origen, pagina} in proxy mode", async () => {
+    const fetchMock = stubFetch(202);
+    await handleStatsRequest(
+      eventRequest({ name: "visita", props: { origen: "linkedin", pagina: "/contacto", email: "a@b.invalid" } }),
+      proxyEnv(),
+    );
+    expect(await fetchMock.mock.calls[0][0].json()).toEqual({
+      name: "visita",
+      props: { origen: "linkedin", pagina: "/contacto" },
+    });
   });
 });
 
@@ -494,6 +572,99 @@ describe("stats fallback counter (STATS_ORIGIN empty)", () => {
     const resp = await handleStatsRequest(eventRequest({ name: "pageview" }), { ...BASE_ENV, STATS_KV: kv });
     expect(resp.status).toBe(400);
     expect(put).not.toHaveBeenCalled();
+  });
+});
+
+describe("stats visita counter", () => {
+  const today = () => new Date().toISOString().slice(0, 10);
+  const visita = (origen: string, pagina: string) => eventRequest({ name: "visita", props: { origen, pagina } });
+
+  it("counts an allowlisted page under its own key and always under the origin-only key", async () => {
+    const { kv, store } = makeKv();
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/, /catalogo ,/contacto" };
+    await handleStatsRequest(visita("google", "/catalogo"), env);
+    await handleStatsRequest(visita("google", "/catalogo"), env);
+    await handleStatsRequest(visita("google", "/"), env);
+    expect([...store.entries()].sort()).toEqual(
+      [
+        [`daily:${today()}:visita:google`, "3"],
+        [`daily:${today()}:visita:google:/catalogo`, "2"],
+        [`daily:${today()}:visita:google:/`, "1"],
+      ].sort(),
+    );
+  });
+
+  it("collapses every page outside STATS_PAGINAS to one \"otra\" key", async () => {
+    const { kv, store } = makeKv();
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/catalogo" };
+    for (const pagina of ["/rnd-9f3a1", "/rnd-77c0e", "/catalogo/ultrasonido"]) {
+      await handleStatsRequest(visita("linkedin", pagina), env);
+    }
+    expect([...store.entries()].sort()).toEqual(
+      [
+        [`daily:${today()}:visita:linkedin`, "3"],
+        [`daily:${today()}:visita:linkedin:otra`, "3"],
+      ].sort(),
+    );
+  });
+
+  it("matches the page list exactly: no prefix, no trailing-slash folding", async () => {
+    const { kv, store } = makeKv();
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/catalogo" };
+    await handleStatsRequest(visita("directo", "/catalogo/"), env);
+    expect(store.has(`daily:${today()}:visita:directo:otra`)).toBe(true);
+    expect(store.has(`daily:${today()}:visita:directo:/catalogo/`)).toBe(false);
+  });
+
+  it("collapses every page to \"otra\" when STATS_PAGINAS is empty or unset, keeping the origin total", async () => {
+    for (const paginas of [undefined, "", " , "]) {
+      const { kv, store } = makeKv();
+      const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: paginas };
+      await handleStatsRequest(visita("whatsapp", "/"), env);
+      await handleStatsRequest(visita("whatsapp", "/catalogo"), env);
+      expect([...store.entries()].sort()).toEqual(
+        [
+          [`daily:${today()}:visita:whatsapp`, "2"],
+          [`daily:${today()}:visita:whatsapp:otra`, "2"],
+        ].sort(),
+      );
+    }
+  });
+
+  it("ignores malformed STATS_PAGINAS entries instead of keying on them", async () => {
+    const { kv, store } = makeKv();
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/Catalogo,catalogo,/a?b,/ok" };
+    await handleStatsRequest(visita("google", "/ok"), env);
+    expect([...store.keys()].sort()).toEqual(
+      [`daily:${today()}:visita:google`, `daily:${today()}:visita:google:/ok`].sort(),
+    );
+  });
+
+  it("keeps the keys per day within 6 origins x (allowlist + 1) + 6, whatever the client sends", async () => {
+    const { kv, store } = makeKv();
+    const allowlist = ["/", "/catalogo", "/contacto", "/nosotros"];
+    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: allowlist.join(",") };
+    const pages = [...allowlist, ...Array.from({ length: 25 }, (_, i) => `/rnd-${i}`)];
+    for (const origen of STATS_ORIGENES) {
+      for (const pagina of pages) await handleStatsRequest(visita(origen, pagina), env);
+    }
+    const maximum = STATS_ORIGENES.size * (allowlist.length + 1) + STATS_ORIGENES.size;
+    expect(maximum).toBe(36);
+    expect(store.size).toBe(maximum); // every combination was hit, none beyond the bound
+    expect([...store.keys()].every((key) => key.startsWith(`daily:${today()}:visita:`))).toBe(true);
+  });
+
+  it("does not touch the five old events' keys", async () => {
+    const { kv, store } = makeKv();
+    await handleStatsRequest(eventRequest({ name: "whatsapp_click" }), { ...BASE_ENV, STATS_KV: kv });
+    expect([...store.keys()]).toEqual([`daily:${today()}:whatsapp_click:`]);
+  });
+
+  it("still answers 204 when the KV write fails on a visit", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const kv = { get: vi.fn(async () => { throw new Error("kv down"); }), put: vi.fn() } as unknown as KVNamespace;
+    const resp = await handleStatsRequest(visita("google", "/"), { ...BASE_ENV, STATS_KV: kv });
+    expect(resp.status).toBe(204);
   });
 });
 
