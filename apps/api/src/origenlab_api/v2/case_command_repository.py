@@ -74,6 +74,7 @@ from origenlab_api.v2.case_commands import (
     REQUESTING_INSTITUTION,
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
+    SET_CASE_ORIGIN,
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
     SUPPLIER_RELATIONSHIP_ROLES,
     TERMINAL_STAGES,
@@ -197,7 +198,7 @@ class V2CaseCommandRepository(CommandTransaction):
             select id::text as id, title, stage, version,
                    organization_id::text as organization_id,
                    owner_operator_id::text as owner_operator_id,
-                   closed_at, close_reason
+                   closed_at, close_reason, origin
               from crm.opportunity
              where id = %s
                for update
@@ -1302,6 +1303,61 @@ class V2CaseCommandRepository(CommandTransaction):
             "event_ids": events,
         }
 
+    # ------------------------------------------------------------------ origin (operator correction)
+
+    def _set_case_origin(
+        self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
+    ) -> dict[str, Any]:
+        """Set, correct or clear `crm.opportunity.origin`, with one `opportunity.origin_set` event.
+
+        Compare-and-set on the case version like every case command; the event carries the old and
+        the new value (either may be null) and the operator's note. A closed case may be
+        corrected. Setting what the case already has is refused: there is no change to record.
+        """
+        case = self._live_case(
+            cur, fields["opportunity_id"], fields["opportunity_version"], allow_closed=True
+        )
+        previous = case["origin"]
+        target = fields["origin"]
+        if target == previous:
+            raise CommandRefused(
+                409,
+                "case_origin_unchanged",
+                "this case already has that origin" if target else "this case has no origin recorded",
+            )
+        cur.execute(
+            """
+            update crm.opportunity
+               set origin = %s, version = version + 1, updated_at = now()
+             where id = %s and version = %s
+            """,
+            (target, case["id"], int(case["version"])),
+        )
+        if cur.rowcount != 1:
+            raise CommandRefused(
+                409,
+                "case_version_conflict",
+                "this case changed while the command ran; re-read it and decide again",
+            )
+        event = self._append_event(
+            cur,
+            aggregate_kind="opportunity",
+            aggregate_id=case["id"],
+            event_type="opportunity.origin_set",
+            payload={"from_origin": previous, "to_origin": target, "note": fields["note"]},
+            operator=operator,
+            receipt_id=receipt_id,
+        )
+        return {
+            "command": SET_CASE_ORIGIN,
+            "opportunity_id": case["id"],
+            "opportunity_version": int(case["version"]) + 1,
+            "origin": target,
+            "previous_origin": previous,
+            "created": [],
+            "event_ids": [event],
+        }
+
     # ------------------------------------------------------------------ sender participant (owner, 2026-10-22)
 
     def _add_case_sender_participant(
@@ -1422,6 +1478,7 @@ class V2CaseCommandRepository(CommandTransaction):
         SET_CASE_ORGANIZATION_ROLE: _set_case_organization_role,
         RECORD_CASE_INTEREST: _record_case_interest,
         ADVANCE_CASE_STAGE: _advance_case_stage,
+        SET_CASE_ORIGIN: _set_case_origin,
         # The one writer of a win, shared with the email → cases rules (`case_won.py`).
         RECORD_CASE_WON: record_case_won,
         # The quote acts, each in the module that owns the quote SQL (`current_revision.py`,

@@ -524,8 +524,10 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/set-invoice-case",
       "/v2/commands/mark-invoice-paid",
       "/v2/commands/mark-invoice-unpaid",
+      // The case panel's «Origen» select (2026-11-09).
+      "/v2/commands/set-case-origin",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(25);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(26);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -684,7 +686,11 @@ describe("V2 durable read boundary allowlist", () => {
     expect(marketingCommandMaxBytes("/v2/commands/record-case-quotation")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/link-case-evidence")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/create-task")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/set-case-origin")).toBe(16_384);
     for (const path of [
+      "/v2/commands/set-case-origin/",
+      "/v2/commands/set-case-origins",
+      "/v2/commands/SET-CASE-ORIGIN",
       "/v2/commands/advance-case-stage/",
       "/v2/commands/advance-case-stage-all",
       "/v2/commands/record-case-won/x",

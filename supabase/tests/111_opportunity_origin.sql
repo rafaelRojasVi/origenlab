@@ -2,7 +2,7 @@
 -- Fictitious fixtures only.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(27);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -92,6 +92,27 @@ select is(left(pg_temp.run_as('anon', $$ select origin from crm.opportunity $$),
   'anon is denied crm.opportunity.origin');
 select is(left(pg_temp.run_as('anon', $$ update crm.opportunity set origin = 'web' $$), 5), '42501',
   'anon cannot write the origin');
+
+-- ── the event of a correction: opportunity.origin_set (20261109110000) ──────────────────────
+select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'domain_event_type_check'))
+    like '%opportunity.origin_set%', 'event vocabulary: opportunity.origin_set');
+select ok(pg_get_constraintdef((select oid from pg_constraint where conname = 'domain_event_type_check'))
+    like '%invoice.unpaid%', 'the rebuilt vocabulary keeps the newest earlier type');
+select is(pg_temp.run_as('origenlab_api', $$ insert into crm.domain_event
+    (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('opportunity', '99000000-0000-4000-9900-000000001111', 1, 'opportunity.origin_set', 1,
+          '{"from_origin": null, "to_origin": "web"}'::jsonb, 'operator', '99000000-0000-4000-9900-000000001110') $$),
+  'ok', 'the API appends an opportunity.origin_set event under an opportunity');
+select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.domain_event
+    (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('opportunity_organization', '99000000-0000-4000-9900-000000001111', 1, 'opportunity.origin_set', 1,
+          '{}'::jsonb, 'operator', '99000000-0000-4000-9900-000000001110') $$), 5),
+  '23514', 'opportunity.origin_set may not be filed under another aggregate kind');
+select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.domain_event
+    (aggregate_kind, aggregate_id, seq, event_type, payload_version, payload, actor_kind, actor_operator_id)
+  values ('opportunity', '99000000-0000-4000-9900-000000001111', 2, 'opportunity.origin_invented', 1,
+          '{}'::jsonb, 'operator', '99000000-0000-4000-9900-000000001110') $$), 5),
+  '23514', 'the event vocabulary stays closed');
 
 select * from finish();
 rollback;

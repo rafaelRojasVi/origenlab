@@ -43,6 +43,7 @@ from origenlab_api.v2.case_commands import (
     RECORD_CASE_WON,
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
+    SET_CASE_ORIGIN,
     STAGE_TRANSITIONS,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
@@ -53,6 +54,7 @@ from origenlab_api.v2.case_commands import (
     RecordCaseWonBody,
     ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
+    SetCaseOriginBody,
     stage_transition_allowed,
     validated_case,
 )
@@ -70,6 +72,8 @@ DOCUMENT_SHA = "ab" * 32
 #: Used by the authorization and header tests, so a route added without one of the four
 #: universal requirements fails here rather than in production.
 ROUTES: tuple[tuple[str, str, dict], ...] = (
+    ("/v2/commands/set-case-origin", SET_CASE_ORIGIN,
+     {"opportunity_id": CASE_ID, "opportunity_version": 1, "origin": "web", "note": "porque sí"}),
     ("/v2/commands/create-request-from-forward", CREATE_REQUEST_FROM_FORWARD,
      {"forwarded_request_id": RECORD_ID, "new_organization_name": "Laboratorio Ficticio", "note": "porque sí"}),
     ("/v2/commands/dismiss-forwarded-request", DISMISS_FORWARDED_REQUEST,
@@ -235,7 +239,7 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
 def test_every_case_command_has_a_route_and_every_route_a_command() -> None:
     """The vocabulary and the surface are the same list, counted from both ends."""
     assert {command for _, command, _ in ROUTES} == set(CASE_COMMAND_NAMES)
-    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 12
+    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 13
 
 
 def test_the_case_router_exposes_nothing_but_post() -> None:
@@ -334,6 +338,32 @@ def test_opening_a_case_names_its_origin_from_the_nine_channels_or_none() -> Non
     # Left out, it is none: no rule and no default guesses a channel.
     _client(repo).post(path, json=body, headers=_headers())
     assert repo.calls[-1]["fields"]["origin"] is None
+
+
+def test_set_case_origin_names_one_of_the_nine_channels_or_null_and_never_defaults() -> None:
+    """The correction says its value: a channel, or null to clear. Leaving `origin` out is a 422 —
+    a request that forgot the field must not silently erase what the case recorded."""
+    from origenlab_api.v2.case_origin import CASE_ORIGINS
+
+    path, _command, body = next(r for r in ROUTES if r[0].endswith("/set-case-origin"))
+    repo = _FakeCaseRepo()
+    for bad in ("Web", "email", "", "sitio_web", 3, ["web"]):
+        response = _client(repo).post(path, json={**body, "origin": bad}, headers=_headers())
+        assert response.status_code == 422, bad
+    without = {k: v for k, v in body.items() if k != "origin"}
+    assert _client(repo).post(path, json=without, headers=_headers()).status_code == 422
+    assert repo.calls == []
+    for good in (*CASE_ORIGINS, None):
+        response = _client(repo).post(path, json={**body, "origin": good}, headers=_headers())
+        assert response.status_code == 200, good
+        fields = repo.calls[-1]["fields"]
+        assert fields["origin"] == good
+        assert fields["opportunity_id"] == CASE_ID
+        assert fields["opportunity_version"] == 1
+
+
+def test_set_case_origin_carries_nothing_but_the_case_the_version_the_origin_and_a_note() -> None:
+    assert set(SetCaseOriginBody.model_fields) == {"opportunity_id", "opportunity_version", "origin", "note"}
 
 
 @pytest.mark.parametrize(("path", "command", "body"), ROUTES)
@@ -1928,6 +1958,130 @@ def test_a_command_replays_instead_of_deciding_twice(disposable_database, world)
             (case_id,),
         )
         assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_set_case_origin_sets_corrects_and_clears_with_an_event_each(disposable_database, world) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso sin canal")
+
+    def _set(origin, version, note="el cliente escribió por el formulario"):
+        return _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+            opportunity_id=case_id, opportunity_version=version, origin=origin, note=note), world)
+
+    first = _set("web", version)
+    assert first["command"] == SET_CASE_ORIGIN
+    assert first["opportunity_id"] == case_id
+    assert first["origin"] == "web" and first["previous_origin"] is None
+    assert first["opportunity_version"] == version + 1
+    second = _set("correo", first["opportunity_version"], "en realidad fue un correo")
+    assert second["origin"] == "correo" and second["previous_origin"] == "web"
+    assert second["opportunity_version"] == version + 2
+    third = _set(None, second["opportunity_version"], "no se sabe de dónde vino")
+    assert third["origin"] is None and third["previous_origin"] == "correo"
+    assert third["opportunity_version"] == version + 3
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select origin, version from crm.opportunity where id = %s", (case_id,))
+        assert cur.fetchone() == (None, version + 3)
+        cur.execute(
+            "select event_type, actor_kind, payload from crm.domain_event "
+            "where aggregate_id = %s and event_type = 'opportunity.origin_set' order by seq", (case_id,))
+        rows = cur.fetchall()
+    assert [(r[0], r[1]) for r in rows] == [("opportunity.origin_set", "operator")] * 3
+    assert [(r[2]["from_origin"], r[2]["to_origin"]) for r in rows] == [
+        (None, "web"), ("web", "correo"), ("correo", None)]
+    assert [r[2]["note"] for r in rows] == [
+        "el cliente escribió por el formulario", "en realidad fue un correo", "no se sabe de dónde vino"]
+
+
+@_needs_db
+def test_set_case_origin_refuses_a_stale_version_and_writes_nothing(disposable_database, world) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso con versión vieja")
+    _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+        opportunity_id=case_id, opportunity_version=version, origin="whatsapp", note="llamó por whatsapp"), world)
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+            opportunity_id=case_id, opportunity_version=version, origin="llamada", note="con la versión vieja"),
+            world)
+    assert (excinfo.value.status_code, excinfo.value.code) == (409, "case_version_conflict")
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select origin, version from crm.opportunity where id = %s", (case_id,))
+        assert cur.fetchone() == ("whatsapp", version + 1)
+        cur.execute("select count(*) from crm.domain_event where aggregate_id = %s "
+                    "and event_type = 'opportunity.origin_set'", (case_id,))
+        assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_set_case_origin_on_a_case_that_does_not_exist_is_a_404(disposable_database, world) -> None:
+    repo = _repo(disposable_database)
+    with pytest.raises(CommandRefused) as excinfo:
+        _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+            opportunity_id=str(uuid.uuid4()), opportunity_version=1, origin="web", note="no existe"), world)
+    assert (excinfo.value.status_code, excinfo.value.code) == (404, "case_not_found")
+
+
+@_needs_db
+def test_set_case_origin_to_the_value_it_already_has_is_refused_without_an_event(
+    disposable_database, world
+) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso que ya tiene canal")
+    for origin, code in ((None, "case_origin_unchanged"), ("web", None)):
+        if code is None:
+            version = _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+                opportunity_id=case_id, opportunity_version=version, origin="web", note="formulario"),
+                world)["opportunity_version"]
+        with pytest.raises(CommandRefused) as excinfo:
+            _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+                opportunity_id=case_id, opportunity_version=version, origin=origin, note="sin cambio"), world)
+        assert (excinfo.value.status_code, excinfo.value.code) == (409, "case_origin_unchanged")
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select version from crm.opportunity where id = %s", (case_id,))
+        assert cur.fetchone()[0] == version
+        cur.execute("select count(*) from crm.domain_event where aggregate_id = %s "
+                    "and event_type = 'opportunity.origin_set'", (case_id,))
+        assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_set_case_origin_replays_instead_of_deciding_twice(disposable_database, world) -> None:
+    import psycopg
+
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso con canal repetido")
+    body = SetCaseOriginBody(
+        opportunity_id=case_id, opportunity_version=version, origin="recomendacion", note="lo recomendó un colega")
+    first = _run(repo, SET_CASE_ORIGIN, body, world, key="origin-replay")
+    second = _run(repo, SET_CASE_ORIGIN, body, world, key="origin-replay")
+    assert first["replayed"] is False and second["replayed"] is True
+    assert second["opportunity_version"] == first["opportunity_version"] == version + 1
+    assert second["event_ids"] == first["event_ids"]
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select version from crm.opportunity where id = %s", (case_id,))
+        assert cur.fetchone()[0] == version + 1
+        cur.execute("select count(*) from crm.domain_event where aggregate_id = %s "
+                    "and event_type = 'opportunity.origin_set'", (case_id,))
+        assert cur.fetchone()[0] == 1
+
+
+@_needs_db
+def test_set_case_origin_works_on_a_closed_case(disposable_database, world) -> None:
+    """Where the sales come from is asked of the won cases above all, so a closed case is correctable."""
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso cerrado")
+    version = _close(repo, world, case_id, version)
+    done = _run(repo, SET_CASE_ORIGIN, SetCaseOriginBody(
+        opportunity_id=case_id, opportunity_version=version, origin="llamada", note="fue una llamada"), world)
+    assert done["origin"] == "llamada"
 
 
 @_needs_db

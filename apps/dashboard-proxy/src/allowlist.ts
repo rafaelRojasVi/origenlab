@@ -343,8 +343,9 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). The six
  * «Pendientes» commands of Hoy (`create-todo`, `update-todo`, `move-todo`, `complete-todo`,
  * `reopen-todo`, `delete-todo`) ride the same list: a todo never changes a case, and so do the three
- * «Pagos» commands (`set-invoice-case`, `mark-invoice-paid`, `mark-invoice-unpaid`). Twenty-five
- * exact paths, and only twenty-five. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * «Pagos» commands (`set-invoice-case`, `mark-invoice-paid`, `mark-invoice-unpaid`) and the case panel's
+ * «Origen» select (`set-case-origin`: the channel a case came from, or null to clear it). Twenty-six
+ * exact paths, and only twenty-six. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -385,6 +386,9 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/set-invoice-case$/,
   /^\/v2\/commands\/mark-invoice-paid$/,
   /^\/v2\/commands\/mark-invoice-unpaid$/,
+  // The case panel's «Origen» select (2026-11-09): set or correct the channel a case came from. The case
+  // version shown is the case's; upstream refuses a stale one (409) and a value outside the nine (422).
+  /^\/v2\/commands\/set-case-origin$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */

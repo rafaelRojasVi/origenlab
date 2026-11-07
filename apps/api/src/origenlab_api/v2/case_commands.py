@@ -16,6 +16,7 @@ sign.
 | `record_case_won` | the case was won, against this sent, current quote revision |
 | `resolve_current_revision` | of this quote's current revisions, this one is the current one |
 | `record_case_quotation` | this quote, printing this number, was already sent on this case, by this message |
+| `set_case_origin` | an operator says which channel this case came from, or corrects it (null clears) |
 
 **Nine, and deliberately only nine.** There is no command that closes an evidence link, no
 command that withdraws an interest, no command that creates a person or a participant, no
@@ -79,6 +80,8 @@ COMPLETE_CASE_FROM_SENT_QUOTE = "complete_case_from_sent_quote"
 #: Forwarded requests (spec 2026-10-14): «Crear solicitud» / «Descartar» in Hoy (`forwarded_requests.py`).
 CREATE_REQUEST_FROM_FORWARD = "create_request_from_forward"
 DISMISS_FORWARDED_REQUEST = "dismiss_forwarded_request"
+#: An operator sets or corrects the channel a case came from (`case_origin.py`); null clears it.
+SET_CASE_ORIGIN = "set_case_origin"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
@@ -93,6 +96,7 @@ CASE_COMMAND_NAMES: tuple[str, ...] = (
     COMPLETE_CASE_FROM_SENT_QUOTE,
     CREATE_REQUEST_FROM_FORWARD,
     DISMISS_FORWARDED_REQUEST,
+    SET_CASE_ORIGIN,
 )
 
 #: The one stage a case is won from (`STAGE_TRANSITIONS`: only `negotiating` leads to `won`).
@@ -551,6 +555,23 @@ class DismissForwardedRequestBody(DecisionBody):
     forwarded_request_id: str
 
 
+class SetCaseOriginBody(_CaseBody):
+    """Set or correct the channel a case came from — `crm.opportunity.origin`.
+
+    `origin` is one of the nine channels (`case_origin.py`) or `null` to clear it. It has **no
+    default**: a request that leaves the field out is a 422, so a caller that forgot it cannot
+    silently erase what the case recorded. Setting the value the case already has is refused
+    (`case_origin_unchanged`) rather than recorded as a change that did not happen.
+
+    A case is opened with its origin by the command that opens it; this is the only way a person
+    changes it afterwards. It moves nothing else on the case — not the stage, the institution or
+    the owner — and a closed case is correctable too, because where the sales come from is asked
+    of the won ones above all.
+    """
+
+    origin: CaseOrigin | None
+
+
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
@@ -564,6 +585,7 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     COMPLETE_CASE_FROM_SENT_QUOTE: CompleteCaseFromSentQuoteBody,
     CREATE_REQUEST_FROM_FORWARD: CreateRequestFromForwardBody,
     DISMISS_FORWARDED_REQUEST: DismissForwardedRequestBody,
+    SET_CASE_ORIGIN: SetCaseOriginBody,
 }
 
 
@@ -680,6 +702,8 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields["quantity_unit"] = body.quantity_unit.strip() if body.quantity_unit else None
     elif isinstance(body, AdvanceCaseStageBody):
         fields.update(validated_stage(body))
+    elif isinstance(body, SetCaseOriginBody):
+        fields["origin"] = body.origin
     elif isinstance(body, (RecordCaseWonBody, ResolveCurrentRevisionBody)):
         fields["quote_id"] = as_uuid(body.quote_id, "quote_id")
         fields["revision_no"] = int(body.revision_no)

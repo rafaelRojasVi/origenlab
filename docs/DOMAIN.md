@@ -1422,8 +1422,14 @@ recorded* (every case that exists today); there is no default and no `desconocid
 **not** `origin_source_record_id` (the one evidence record a case was promoted from): `origin` is a
 channel an operator can set or correct. A partial index (`opportunity_origin_idx`, `origin IS NOT
 NULL`) serves "cases by origin". The API's existing table-level select/insert/update and the
-worker's select cover it, so no grant, policy or foreign key changes, and no domain event is added
-by the column. Migration `20261109100000_slice8_opportunity_origin.sql`. Counts are unchanged.
+worker's select cover it, so no grant, policy or foreign key changes, and the column adds no domain
+event. Migration `20261109100000_slice8_opportunity_origin.sql`.
+
+Domain event added: `opportunity.origin_set` (aggregate kind `opportunity`, payload `from_origin`,
+`to_origin` — either may be null — and `note`), written by the operator command `set-case-origin`
+(an operator sets or corrects a case's origin; null clears it; compare-and-set on the case version).
+Migration `20261109110000_slice8_opportunity_origin_event.sql` only rebuilds
+`domain_event_type_check`. Counts are unchanged.
 
 The API sets it **only when a case is created**, and says so in the `opportunity.created` payload
 (`origin`): `open_commercial_case` takes it as an optional field; the mail rules pass `correo` (R7),
