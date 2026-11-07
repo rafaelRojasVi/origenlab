@@ -151,7 +151,7 @@ export const claims: readonly Claim[] = [
     approvedOn: null,
     status: 'proposed',
     visibility: 'internal',
-    variants: ['50 % al pedido', '50 % contra entrega'],
+    variants: ['50 % al pedido', '50 % contra entrega', '50/50', '50%', 'mitad al pedido', 'de anticipo', '50 % de anticipo'],
     note:
       'Propuesta del brief, NO aprobada para el sitio público (titular, 2026-11-07). Mientras tanto el sitio dice «Condiciones de pago en la cotización». Además falta confirmar que la proporción rija también en las órdenes de compra de Mercado Público.',
   },
@@ -218,7 +218,7 @@ export const claims: readonly Claim[] = [
     status: 'proposed',
     visibility: 'internal',
     note:
-      'Promesa de servicio propuesta, no aprobada. Requiere que el negocio la asuma por escrito y defina qué cuenta como respuesta inicial. Hasta entonces el sitio usa la redacción cualitativa de respuesta-agil. Es distinta del plazo de la cotización formal, que depende de precio de fábrica, configuración, flete y confirmación de entrega.',
+      'Promesa de servicio propuesta, no aprobada: la respuesta inicial en 1 día hábil. Requiere que el negocio la asuma por escrito y defina qué cuenta como respuesta inicial. Hasta entonces el sitio usa la redacción cualitativa de respuesta-agil. Es distinta de la promesa aprobada en cotizacion-mismo-dia-habil, que cubre la cotización, y del plazo de entrega, que depende de precio de fábrica, flete y confirmación de fábrica y no se promete.',
   },
   {
     id: 'clientes-atendidos',

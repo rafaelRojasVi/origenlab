@@ -72,10 +72,11 @@ export interface BuyingFaq {
 export function buyingFaqs(resolve: (id: string) => string | undefined = publicClaim): BuyingFaq[] {
   const faqs: BuyingFaq[] = [];
 
-  if (resolve('cotizacion-mismo-dia-habil')) {
+  const sameDay = resolve('cotizacion-mismo-dia-habil');
+  if (sameDay) {
     faqs.push({
       q: '¿Cuánto demora la cotización?',
-      a: 'Cotizamos el mismo día hábil. Cuéntenos su aplicación para ajustar la cotización al equipo.',
+      a: `${sameDay}. Cuéntenos su aplicación para ajustar la cotización al equipo.`,
     });
   }
   if (resolve('despacho-todo-chile')) {

@@ -11,6 +11,7 @@
  * Ejecutar: npm run test:message
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { register } from 'node:module';
 
 // Los módulos importan `./contact` sin extensión (lo resuelve Vite, no Node).
@@ -35,6 +36,7 @@ const { buyingSteps } = await import('../src/data/consultation.ts');
 const { buyingFaqs } = await import('../src/data/faq.ts');
 const { company } = await import('../src/data/company.ts');
 const { claims, publicClaim } = await import('../src/data/claims.ts');
+const { withheldClaimTexts, publishesClaimText } = await import('./lib/claim-variants.mjs');
 
 let failed = 0;
 const cases = [];
@@ -104,6 +106,7 @@ test('buyingSteps: cuatro pasos, con las afirmaciones aprobadas', () => {
 test('buyingSteps: el paso de pago sólo habla de pago cuando el registro lo aprueba', () => {
   const approved = buyingSteps(only('pago-50-50'))[2];
   assert.equal(approved.title, 'Abono al pedido');
+  assert.equal(buyingSteps(none)[2].title, 'Pago y confirmación del pedido');
   assert.equal(approved.body, 'Pago 50 % al pedido, 50 % contra entrega.');
   const withheld = buyingSteps(none)[2];
   assert.equal(withheld.body, 'Condiciones de pago en la cotización.');
@@ -187,6 +190,65 @@ test('registro: estado de las afirmaciones nuevas', () => {
 });
 test('registro: «garantía del fabricante» no es una afirmación', () => {
   assert.equal(claims.some((claim) => /garant/i.test(claim.text) || /garant/i.test(claim.id)), false);
+});
+
+/* -- Detección de paráfrasis (validate:dist) --------------------------------- */
+const fakeClaims = `header
+  {
+    id: 'aprobada',
+    text: 'Despacho a todo Chile',
+    value: null,
+    status: 'approved',
+    variants: ['Envío a todo Chile'],
+  },
+  {
+    id: 'pago',
+    text: 'Pago 50 % al pedido, 50 % contra entrega',
+    value: 50,
+    status: 'proposed',
+    variants: ['50 % al pedido', '50/50', '50%', 'mitad al pedido', 'de anticipo', '50 % de anticipo'],
+    note: 'x',
+  },
+`;
+test('variantes: sólo las afirmaciones sin aprobar se vigilan, con su text y sus variants', () => {
+  const watched = withheldClaimTexts(fakeClaims);
+  assert.ok(watched.every((claim) => claim.id === 'pago'));
+  assert.equal(watched.length, 7);
+  assert.ok(watched.some((claim) => claim.text === 'Pago 50 % al pedido, 50 % contra entrega'));
+});
+test('variantes: cada paráfrasis se detecta, sin importar mayúsculas ni el espacio ante «%»', () => {
+  const watched = withheldClaimTexts(fakeClaims);
+  const caught = (page) => watched.some((claim) => publishesClaimText(page, claim.text));
+  for (const page of [
+    'Pago 50 % al pedido, 50 % contra entrega',
+    'pago 50% al pedido, 50% contra entrega',
+    'Se paga 50/50',
+    'Aceptamos 50%',
+    'La MITAD AL PEDIDO y el resto a la entrega',
+    'Con un 50  % de anticipo',
+    'Pedimos de anticipo una parte',
+    'Pagamos 50 % contra entrega',
+  ]) {
+    assert.ok(caught(page), `no detectó: ${page}`);
+  }
+});
+test('variantes: el texto aprobado y la redacción neutra no se marcan', () => {
+  const watched = withheldClaimTexts(fakeClaims);
+  const caught = (page) => watched.some((claim) => publishesClaimText(page, claim.text));
+  for (const page of [
+    'Despacho a todo Chile',
+    'Envío a todo Chile',
+    'Condiciones de pago en la cotización.',
+    'Cotización el mismo día hábil',
+    'Pago y confirmación del pedido',
+  ]) {
+    assert.ok(!caught(page), `marcó por error: ${page}`);
+  }
+});
+test('variantes: con el registro real, ninguna página de pasos ni preguntas publica el pago 50/50', () => {
+  const watched = withheldClaimTexts(readFileSync(new URL('../src/data/claims.ts', import.meta.url), 'utf8'));
+  const page = JSON.stringify([buyingSteps(), buyingFaqs(), company]);
+  for (const claim of watched) assert.ok(!publishesClaimText(page, claim.text), `publica ${claim.id}: ${claim.text}`);
 });
 
 for (const [name, fn] of cases) {

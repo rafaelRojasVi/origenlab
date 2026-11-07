@@ -148,7 +148,7 @@ export function buyingSteps(resolve: (id: string) => string | undefined = public
     },
     payment
       ? { title: 'Abono al pedido', body: `${payment}.` }
-      : { title: 'Confirmación del pedido', body: 'Condiciones de pago en la cotización.' },
+      : { title: 'Pago y confirmación del pedido', body: 'Condiciones de pago en la cotización.' },
     {
       title: 'Entrega y puesta en marcha',
       body: delivery,

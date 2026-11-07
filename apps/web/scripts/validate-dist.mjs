@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { publishesClaimText, withheldClaimTexts } from './lib/claim-variants.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -80,19 +81,7 @@ const NO_APP_STORAGE_CLAIM = 'La aplicación de OrigenLab no fija cookies ni alm
  * `validate:catalog`.
  */
 const claimsSrc = readFileSync(join(root, 'src/data/claims.ts'), 'utf8');
-const withheldTexts = claimsSrc
-  .split(/\n  \{\n/)
-  .slice(1)
-  .filter((block) => !/status: 'approved'/.test(block))
-  .flatMap((block) => {
-    const id = block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)';
-    // `variants: [...]` lista otras redacciones públicas de la misma afirmación:
-    // se vigilan igual que `text`, porque una paráfrasis también la publica.
-    const variantList = block.match(/variants: \[([^\]]*)\]/)?.[1] ?? '';
-    const variants = [...variantList.matchAll(/'([^']*)'/g)].map((match) => match[1]);
-    return [block.match(/text: '([^']*)'/)?.[1] ?? '', ...variants].map((text) => ({ id, text }));
-  })
-  .filter((claim) => claim.text.length > 0);
+const withheldTexts = withheldClaimTexts(claimsSrc);
 assert(withheldTexts.length > 0, 'claims.ts: se esperaba al menos una afirmación redactada sin aprobar');
 
 for (const file of pages) {
@@ -192,7 +181,7 @@ for (const file of pages) {
   const flat = visible.replace(/\s+/g, ' ');
   for (const claim of withheldTexts) {
     assert(
-      !flat.includes(claim.text),
+      !publishesClaimText(flat, claim.text),
       at(`publica la afirmación sin aprobar "${claim.text}" (claims.ts: ${claim.id})`),
     );
   }
