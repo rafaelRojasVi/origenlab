@@ -146,6 +146,11 @@ describe("dashboard read-only policy", () => {
   const PAGOS_API_FILE = "../crm/pagos/invoiceApi.ts";
   const PAGOS_API_PATHS = ["/v2/commands/import-invoices", "/v2/commands/mark-invoice-paid",
     "/v2/commands/mark-invoice-unpaid", "/v2/commands/set-invoice-case"];
+  // «Catálogo web» (admin only): webPublishApi.ts's one POST commits a model sheet to the site's repository
+  // and starts its deployment; the API checks the schema and the role. Two GETs read a sheet and the
+  // deployment's status. It writes no commercial record and sends nothing to anyone.
+  const WEB_PUBLISH_FILE = "../crm/web/webPublishApi.ts";
+  const WEB_PUBLISH_PATHS = ["/v2/web/model-sheet/", "/v2/web/publish-model-sheet", "/v2/web/publish-status/"];
   const AUTH_LOGOUT_FILE = "../api/authClient.ts";
   const CAMPAIGN_DRAFT_FILE = "../crm/marketing/marketingApi.ts";
   const CRM_AUTHORING_FILE = "../crm/authoring/crmAuthoringApi.ts";
@@ -281,6 +286,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === WEB_PUBLISH_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const webPaths = [...text.matchAll(/["'](\/v2\/web\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(webPaths) !== JSON.stringify([...WEB_PUBLISH_PATHS].sort())) {
+          hits.push(`${path} (web publish paths mismatch: found ${webPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path === TODO_API_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -351,6 +367,13 @@ describe("dashboard read-only policy", () => {
     const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE, TODO_API_FILE, PAGOS_API_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
+      .map(([path]) => path);
+    expect(hits).toEqual([]);
+  });
+
+  it("names no /v2/web path outside the «Catálogo web» client", () => {
+    const hits = entries
+      .filter(([path, text]) => path !== WEB_PUBLISH_FILE && /\/v2\/web\//.test(text))
       .map(([path]) => path);
     expect(hits).toEqual([]);
   });
