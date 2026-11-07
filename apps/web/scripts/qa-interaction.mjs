@@ -768,6 +768,8 @@ for (const story of STORY_PAGES) {
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}${path}`, { waitUntil: 'load' });
     check((await page.locator('[data-story]').count()) === 1, 'Ficha heredada del Digicen 22 R: monta la historia ([data-story])');
+    check((await page.locator('[data-sticky-cta]').count()) === 1, 'Ficha heredada del Digicen 22 R: lleva la barra fija de cotización');
+    check((await page.locator('#especificaciones-title').count()) === 0, 'Ficha heredada del Digicen 22 R: la ficha técnica sólo la cuenta la historia');
     await page.locator('[data-story]').scrollIntoViewIfNeeded();
     await page.waitForTimeout(800);
     check(errors.length === 0, `Ficha heredada del Digicen 22 R: sin errores de JavaScript (${errors.join('; ') || 'ninguno'})`);

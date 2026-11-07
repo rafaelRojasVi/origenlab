@@ -59,6 +59,20 @@ const poster =
     ? `/products/${entry.slug}-poster.jpg`
     : undefined;
 
+/* Con historia, ella cuenta aplicaciones y ficha (como en la página de modelo): esas secciones no se repiten. */
+const shown = {
+  apps: !story && Boolean(product.applications?.length),
+  specs: !story && Boolean(product.keySpecs?.length),
+  related: true,
+  conditions: true,
+};
+let counter = 0;
+const index = Object.fromEntries(Object.entries(shown).map(([key, on]) => [key, on ? ++counter : 0])) as Record<
+  keyof typeof shown,
+  number
+>;
+const bandIndex = counter + 1;
+
 const metaTitle = product.metaTitle
   ? product.metaTitle.replace(/\s*\|\s*OrigenLab\s*$/, '')
   : `${product.name}, ${product.equipmentType ?? 'centrífuga'}`;
@@ -74,6 +88,7 @@ const metaDescription = (
   jsonLd={[productJsonLd(product, brand)]}
   ogImagePath={poster}
 >
+  <div class="legacy-page">
   <div class="shell">
     <PageIntro
       title={product.name}
@@ -130,9 +145,9 @@ const metaDescription = (
   {story && entry && <ProductStory config={story} entry={entry} />}
 
   {
-    product.applications && product.applications.length > 0 && (
+    shown.apps && product.applications && (
       <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
-        <SectionIndex index={1} label="Aplicaciones" />
+        <SectionIndex index={index.apps} label="Aplicaciones" />
         <div class="product-apps__grid">
           <div>
             <h2 id="aplicaciones-title" class="t-h2">Para qué se usa</h2>
@@ -152,9 +167,9 @@ const metaDescription = (
   }
 
   {
-    product.keySpecs && product.keySpecs.length > 0 && (
+    shown.specs && product.keySpecs && (
       <section class="shell section rule-top" aria-labelledby="especificaciones-title">
-        <SectionIndex index={2} label="Especificaciones" />
+        <SectionIndex index={index.specs} label="Especificaciones" />
         <h2 id="especificaciones-title" class="t-h2">Ficha técnica</h2>
         <div class="mt-10">
           <SpecGroups specs={product.keySpecs} attribution={product.specsAttribution} />
@@ -177,7 +192,7 @@ const metaDescription = (
   }
 
   <section class="shell section rule-top" aria-labelledby="relacionados-title">
-    <SectionIndex index={3} label="Modelos relacionados" />
+    <SectionIndex index={index.related} label="Modelos relacionados" />
     <h2 id="relacionados-title" class="t-h2">Otros modelos de la familia</h2>
     <ModelList class="mt-10">
       {related.map((item) => <ModelRow product={item} size="compact" />)}
@@ -189,7 +204,7 @@ const metaDescription = (
   </section>
 
   <section class="shell section rule-top" aria-labelledby="condiciones-title">
-    <SectionIndex index={4} label="Condiciones" />
+    <SectionIndex index={index.conditions} label="Condiciones" />
     <h2 id="condiciones-title" class="t-h2">Condiciones comerciales</h2>
     <div class="prose-block conditions">
       <p class="t-body">{product.commercialNote}</p>
@@ -200,8 +215,25 @@ const metaDescription = (
     </div>
   </section>
 
+  {
+    story && (
+      <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${product.name}`}>
+        <div class="shell cta-bar__inner">
+          <p class="cta-bar__name t-data" translate="no">{brand?.name} {product.name}</p>
+          <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+          <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+            <Icon name="whatsapp" size={18} />
+            WhatsApp
+            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+          </a>
+        </div>
+      </aside>
+    )
+  }
+  </div>
+
   <ClosingQuoteBand
-    index={5}
+    index={bandIndex}
     title={`Cotizar ${product.name}`}
     body="Comparta la aplicación, la configuración de rotor que necesita y su institución. Respondemos con alternativas y condiciones por escrito."
     productName={product.name}
@@ -210,6 +242,47 @@ const metaDescription = (
 </Layout>
 
 <style>
+  /* Barra fija de cotización de la historia: la misma de `ModelHero` (página de modelo). */
+  .cta-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    background-color: var(--color-paper);
+    border-top: 1px solid var(--color-hairline);
+  }
+  .cta-bar__inner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding-block: 0.625rem;
+  }
+  .cta-bar__name {
+    display: none;
+    margin-right: auto;
+    color: var(--color-ink-800);
+  }
+  .cta-bar .btn {
+    min-height: 2.75rem;
+    padding-inline: 1rem;
+  }
+  .cta-bar .btn-primary {
+    flex: 1 1 auto;
+  }
+  :global(:root:has([data-sticky-cta])) {
+    scroll-padding-bottom: 5rem;
+  }
+  @media (min-width: 760px) {
+    .cta-bar__name {
+      display: block;
+    }
+    .cta-bar .btn-primary {
+      flex: none;
+    }
+    /* El escenario fijo de la historia termina sobre la barra, no debajo. */
+    .legacy-page :global(.story__stage) {
+      height: calc(100vh - 8rem);
+    }
+  }
   .product-hero {
     display: grid;
     gap: 2.5rem;
