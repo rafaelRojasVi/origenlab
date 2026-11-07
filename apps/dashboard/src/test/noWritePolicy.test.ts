@@ -95,6 +95,8 @@ describe("dashboard read-only policy", () => {
     "/v2/commands/dismiss-forwarded-request",
     // «Quitar» on Hoy (2026-10-14): undo one action the automatic email rules took.
     "/v2/commands/remove-automatic-action",
+    // «Origen del caso» (2026-11-07): an operator corrects the channel a case came from, with a note.
+    "/v2/commands/set-case-origin",
   ];
   const CASE_DOCUMENTS_FILE = "../crm/caseDocuments.ts";
   const CASE_DOCUMENT_PATHS = [

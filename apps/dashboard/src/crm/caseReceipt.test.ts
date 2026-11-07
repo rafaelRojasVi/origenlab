@@ -66,4 +66,23 @@ describe("applyCaseReceipt", () => {
     const c = card({ version: 5 });
     expect(applyCaseReceipt([c], receipt({ stage: "lost" }), NOW)[0]).toBe(c);
   });
+
+  it("shows a corrected origin at once, and leaves it alone for any other command", () => {
+    const [fixed] = applyCaseReceipt(
+      [card({ origin: null })],
+      receipt({ command: "set_case_origin", origin: "web", previous_origin: null }),
+      NOW,
+    );
+    expect(fixed.origin).toBe("web");
+    expect(fixed.version).toBe(4);
+    expect(fixed.stage).toBe("quoting");
+    const [cleared] = applyCaseReceipt(
+      [card({ origin: "web" })],
+      receipt({ command: "set_case_origin", origin: null, previous_origin: "web" }),
+      NOW,
+    );
+    expect(cleared.origin).toBeNull();
+    const [other] = applyCaseReceipt([card({ origin: "web" })], receipt({ command: "create-task" }), NOW);
+    expect(other.origin).toBe("web");
+  });
 });

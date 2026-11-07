@@ -1513,3 +1513,65 @@ describe("Decidir casos", () => {
   });
 });
 
+describe("case origin in the pipeline", () => {
+  const OTHER = "99999999-9999-4999-8999-999999999999";
+  const THIRD = "88888888-8888-4888-8888-888888888888";
+  const web = card({ origin: "web" });
+  const mail = card({ opportunity_id: OTHER, title: "Cotización 00002-26 — Instituto Ficticio", origin: "correo" });
+  const none = card({ opportunity_id: THIRD, title: "Cotización 00003-26 — Centro Ficticio", origin: null });
+
+  it("shows the origin on the board card, the cards view and the case header, never the raw key", async () => {
+    stubApi({ pipelines: [page([web, mail, none])] });
+    render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByTestId("case-origin-badge")).toHaveTextContent("Origen: Web");
+    expect(within(dialog).getByRole("combobox", { name: "Origen del caso" })).toHaveValue("web");
+    expect(screen.getByTestId(`board-card-${CASE}`)).toHaveTextContent("Web");
+    expect(screen.getByTestId(`board-card-${OTHER}`)).toHaveTextContent("Correo");
+    expect(screen.getByTestId(`board-card-${THIRD}`)).not.toHaveTextContent("Sin origen");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Cerrar/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Tarjetas" }));
+    expect(screen.getByTestId(`opportunity-card-${CASE}`)).toHaveTextContent("Web");
+    expect(screen.getByTestId(`opportunity-card-${THIRD}`)).toHaveTextContent("Sin origen");
+    expect(document.body.textContent).not.toMatch(/mercado_publico|ex_labdelivery|\bcorreo\b(?=.*Origen)/);
+  });
+
+  it("filters the pipeline by origin, including «Sin origen»", async () => {
+    stubApi({ pipelines: [page([web, mail, none])] });
+    render(withSession(session("sales"), <PipelinePage />));
+    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
+    const filter = screen.getByRole("combobox", { name: "Origen" });
+    expect(within(filter).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Todos", "Correo", "Web", "WhatsApp", "Campaña", "Mercado Público", "Fabricante", "Recomendación", "Llamada", "Ex Labdelivery", "Sin origen",
+    ]);
+    const shown = () => ["opportunity-card-" + CASE, "opportunity-card-" + OTHER, "opportunity-card-" + THIRD].map((id) => !!screen.queryByTestId(id));
+    expect(shown()).toEqual([true, true, true]);
+    fireEvent.change(filter, { target: { value: "web" } });
+    expect(shown()).toEqual([true, false, false]);
+    fireEvent.change(filter, { target: { value: "none" } });
+    expect(shown()).toEqual([false, false, true]);
+    fireEvent.change(filter, { target: { value: "mercado_publico" } });
+    expect(screen.getByText("Ninguna oportunidad coincide")).toBeInTheDocument();
+  });
+
+  it("corrects the origin from the case panel and refetches", async () => {
+    const calls = stubApi({
+      pipelines: [page([web]), page([card({ origin: "llamada", version: 6 })])],
+      onPost: () => ({
+        body: { command: "set_case_origin", opportunity_id: CASE, opportunity_version: 6, origin: "llamada", previous_origin: "web",
+          created: [], event_ids: ["e1"], replayed: false },
+      }),
+    });
+    render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Origen del caso" }), { target: { value: "llamada" } });
+    fireEvent.change(within(dialog).getByLabelText(/^Nota/), { target: { value: "Fue una llamada, no el formulario." } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Guardar origen" }));
+    await waitFor(() => expect(within(dialog).getByTestId("case-origin-badge")).toHaveTextContent("Origen: Llamada"));
+    const post = calls.find((c) => c.method === "POST")!;
+    expect(post.path).toBe("/v2/commands/set-case-origin");
+    expect(post.body).toEqual({ opportunity_id: CASE, opportunity_version: 5, origin: "llamada", note: "Fue una llamada, no el formulario." });
+    await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline").length).toBeGreaterThanOrEqual(2));
+  });
+});
+

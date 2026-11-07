@@ -232,6 +232,8 @@ export interface OpportunityCardData {
   updated_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
+  /** The channel the case came from (`caseOrigin.ts`); null = nobody classified it. Absent from an older API. */
+  origin?: string | null;
   organization: {
     organization_id: string;
     name: string | null;

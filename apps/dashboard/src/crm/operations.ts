@@ -198,7 +198,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
   },
   R7: {
     cuando: "Llega una solicitud de cotización clara que no pertenece a ningún hilo conocido: palabras de cotización en el asunto, o la lectura del correo (IA) dice que pide precio. Nunca una respuesta («Re:») ni la oferta de un proveedor.",
-    hace: "Abre un caso en «Solicitada». Si el remitente usa un correo gratuito, el caso queda sin institución hasta que una persona la confirme.",
+    hace: "Abre un caso en «Solicitada» y anota su origen: «Correo», o «Web» si es el formulario del sitio. Si el remitente usa un correo gratuito, el caso queda sin institución hasta que una persona la confirme. Una persona puede corregir el origen en el caso.",
     automatica: true,
     ejemplo: "«Solicito cotización de una balanza» desde un correo nuevo → caso «Solicitada».",
   },
@@ -222,7 +222,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
   },
   R11: {
     cuando: "Llega a contacto@ una solicitud reenviada desde otro correo (un marketplace, el correo de Labdelivery, un proveedor que pasa un contacto).",
-    hace: "Si el cliente ya tiene un caso abierto, la suma a ese caso; si no, abre una «Solicitada» con sus datos. Nunca vincula un correo del buzón de Labdelivery.",
+    hace: "Si el cliente ya tiene un caso abierto, la suma a ese caso; si no, abre una «Solicitada» con sus datos y origen «Correo» («Ex Labdelivery» si la solicitud vino del buzón de Labdelivery). Nunca vincula un correo del buzón de Labdelivery.",
     automatica: true,
     ejemplo: "«Fwd: Solicitud cotización Gradillas» de un cliente con caso abierto → queda en ese caso.",
   },
