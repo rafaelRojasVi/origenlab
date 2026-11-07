@@ -20,7 +20,8 @@
  *     esquema se desvió de ellos
  *   - `slug` no coincide con el nombre del archivo, o dos archivos colisionan
  *   - `image_id` no apunta a una fila `VERIFIED` de `productImages.ts`
- *   - `showroom_id` no tiene escena en `src/lib/showroom/content/`
+ *   - `showroom_id` no tiene escena en `src/lib/showroom/content/`, o no está
+ *     registrado en `src/lib/showroom/catalog.ts`
  *   - `related` nombra un modelo que no existe (o a sí mismo)
  *
  * También exige que cada `src/content/aplicaciones/*.md` abra con un
@@ -47,6 +48,13 @@ const schema = JSON.parse(readFileSync(join(root, 'src/content/modelos.schema.js
 // al cargar un `.ts`, el mismo camino que `validate-images.mjs`.
 const { APPROVED_BRAND_IDS } = await import('../src/data/brands.ts');
 const { productImages } = await import('../src/data/productImages.ts');
+
+/** Ids registrados en `catalog.ts`: cada `import { entry as eN } from './content/<id>'`. */
+const catalogIds = new Set(
+  [...readFileSync(join(root, 'src/lib/showroom/catalog.ts'), 'utf8').matchAll(/from '\.\/content\/([a-z0-9-]+)'/g)]
+    .map((m) => m[1])
+    .filter((id) => id !== 'types'),
+);
 
 const URL_PATTERN = '^https?://';
 /** Las seis familias: segmento de URL de `/productos/{family}/{slug}/`. */
@@ -109,7 +117,7 @@ const allImageIds = new Set(productImages.map((row) => row.id));
 /* -- Modelos ------------------------------------------------------------------ */
 
 /** Todos los errores de un modelo, ya con el nombre del archivo. `slugs` son los modelos que existen. */
-function modelErrors(file, data, slugs) {
+function modelErrors(file, data, slugs, catalog = catalogIds) {
   const found = [];
   check(data, schema, '', found);
   if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
@@ -126,6 +134,8 @@ function modelErrors(file, data, slugs) {
     }
     if (typeof data.showroom_id === 'string' && !existsSync(join(showroomDir, `${data.showroom_id}.ts`)))
       found.push(`showroom_id «${data.showroom_id}» no tiene escena en src/lib/showroom/content/`);
+    if (typeof data.showroom_id === 'string' && !catalog.has(data.showroom_id))
+      found.push(`showroom_id «${data.showroom_id}» no está en src/lib/showroom/catalog.ts`);
     if (Array.isArray(data.related)) {
       for (const other of data.related) {
         if (other === id) found.push('related no puede nombrar al propio modelo');
@@ -141,10 +151,10 @@ function modelErrors(file, data, slugs) {
 function selfTest() {
   const base = JSON.parse(readFileSync(join(modelosDir, 'hielscher-up400st.json'), 'utf8'));
   const slugs = new Set(['hielscher-up400st', 'hielscher-up200st']);
-  const run = (mutate) => {
+  const run = (mutate, catalog) => {
     const data = structuredClone(base);
     mutate(data);
-    return modelErrors('hielscher-up400st.json', data, slugs).join('\n');
+    return modelErrors('hielscher-up400st.json', data, slugs, catalog).join('\n');
   };
   const cases = [
     ['modelo válido', (d) => d, null],
@@ -164,12 +174,13 @@ function selfTest() {
     ['image_id inexistente', (d) => (d.image_id = 'no-existe'), 'no existe en productImages.ts'],
     ['image_id sin fila VERIFIED', (d) => (d.image_id = 'ortoalresa-bioprocen-22-r'), 'no tiene fila VERIFIED'],
     ['showroom_id sin escena', (d) => (d.showroom_id = 'no-existe'), 'no tiene escena'],
+    ['showroom_id fuera del catálogo', (d) => d, 'no está en src/lib/showroom/catalog.ts', new Set(['otro-modelo'])],
     ['slug distinto del archivo', (d) => (d.slug = 'otro'), 'slug «otro» debe ser'],
     ['related inexistente', (d) => (d.related = ['fantasma']), 'related «fantasma» no es un modelo'],
     ['headline demasiado largo', (d) => (d.headline = 'x'.repeat(121)), 'headline mide 121'],
   ];
-  for (const [name, mutate, expected] of cases) {
-    const out = run(mutate);
+  for (const [name, mutate, expected, catalog] of cases) {
+    const out = run(mutate, catalog);
     if (expected === null) assert(out === '', `autoprueba «${name}»: debía pasar y dio\n${out}`);
     else assert(out.includes(expected), `autoprueba «${name}»: se esperaba «${expected}» y salió «${out}»`);
   }
