@@ -1,0 +1,123 @@
+{
+  "slug": "ortoalresa-digicen-22-r",
+  "family": "centrifugacion",
+  "brand": "ortoalresa",
+  "name": "Digicen 22 R",
+  "headline": "Ortoalresa Digicen 22 R: centrífuga universal refrigerada",
+  "lead": "Centrífuga universal refrigerada con versatilidad de rotores y control de temperatura en preparación de muestras.",
+  "applications": [
+    "Universal refrigerada",
+    "Microplacas",
+    "Criotubos",
+    "Microtubos",
+    "Tubos cónicos",
+    "Refrigeración",
+    "Investigación",
+    "Control de calidad"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad máxima",
+      "value": "4 × 100 ml",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Pantalla",
+      "value": "TFT táctil a color",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Velocidad máxima",
+      "value": "16.500 RPM / 26.480 ×g",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Versión",
+      "value": "Refrigerada",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Temperatura",
+      "value": "Regulable de -20 °C a 40 °C",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Temperatura a máximas RPM",
+      "value": "4 °C según ficha del fabricante",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Pre-enfriamiento",
+      "value": "Programa con rotor girando",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Sensor",
+      "value": "Temperatura en cámara",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Refrigerante",
+      "value": "Gas R 449A HFO libre de CFC",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Accesorios",
+      "value": "Sistema REI",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Conectividad",
+      "value": "SmartConnect según ficha del fabricante",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Motor",
+      "value": "Inducción sin escobillas",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Nivel de ruido",
+      "value": "Inferior a 60 dB",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Rotor",
+      "value": "Reconocimiento automático",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Cámara",
+      "value": "Acero inoxidable",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Dimensiones (CE 259 / CE 260)",
+      "value": "590 × 620 × 320 mm",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Peso neto",
+      "value": "65 kg",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Alimentación CE 259",
+      "value": "220-230 V, 50 Hz, 700 W",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    },
+    {
+      "label": "Alimentación CE 260",
+      "value": "110-120 V, 60 Hz, 700 W",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22-r/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://ortoalresa.com/centrifugas/digicen-22-r/",
+  "official_pdf_url": "https://ortoalresa.com/catalogo_producto/Catalogo_serie_Digicen_22_ESP.pdf",
+  "image_id": "ortoalresa-digicen-22-r",
+  "showroom_id": "ortoalresa-digicen-22-r",
+  "verified_on": "2026-09-07"
+}

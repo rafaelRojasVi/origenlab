@@ -1,0 +1,53 @@
+{
+  "slug": "hielscher-up100h",
+  "family": "sonicacion",
+  "brand": "hielscher",
+  "name": "UP100H",
+  "headline": "Hielscher Ultrasonics UP100H: sonicación y procesamiento ultrasónico",
+  "lead": "Sonicador de sobremesa con sonda intercambiable para muestras pequeñas y medianas, con el generador y el transductor en una sola pieza de mano.",
+  "applications": [
+    "Lisis de células y de tejido blando antes de extraer",
+    "Dispersión de nanopartículas y desaglomeración",
+    "Desgasificación de disolventes y de muestras para HPLC",
+    "Emulsión de fases inmiscibles a escala de tubo"
+  ],
+  "specs": [
+    {
+      "label": "Potencia",
+      "value": "100 W",
+      "source": "https://www.hielscher.com/100h_p.htm"
+    },
+    {
+      "label": "Frecuencia",
+      "value": "30 kHz",
+      "source": "https://www.hielscher.com/100h_p.htm"
+    },
+    {
+      "label": "Amplitud",
+      "value": "Regulable del 20 al 100 %",
+      "source": "https://www.hielscher.com/100h_p.htm"
+    },
+    {
+      "label": "Volumen de muestra",
+      "value": "0,1 a 500 ml según sonotrodo",
+      "source": "https://www.hielscher.com/100h_p.htm"
+    },
+    {
+      "label": "Peso",
+      "value": "1,1 kg",
+      "source": "https://www.hielscher.com/100h_p.htm"
+    },
+    {
+      "label": "Régimen de trabajo",
+      "value": "Operación continua",
+      "source": "https://www.hielscher.com/100h_p.htm"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.hielscher.com/100h_p.htm",
+  "official_pdf_url": "https://www.hielscher.com/wp-content/uploads/FactSheet-sonicator-UP100H-eng-14022024.pdf",
+  "image_id": "hielscher-up100h",
+  "verified_on": "2026-09-07"
+}

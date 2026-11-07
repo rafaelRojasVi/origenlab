@@ -1,0 +1,52 @@
+{
+  "slug": "ika-t10-basic",
+  "family": "dispersion",
+  "brand": "ika",
+  "name": "T 10 basic ULTRA-TURRAX",
+  "headline": "IKA T 10 basic ULTRA-TURRAX: dispersión y homogeneización",
+  "lead": "Dispersor de rotor y estátor de mano para volúmenes pequeños, el único de la línea que baja al medio mililitro.",
+  "applications": [
+    "Homogeneización de muestra en tubo de microcentrífuga y en tubo cónico",
+    "Preparación de muestra para PCR y para extracción de ácidos nucleicos",
+    "Disgregación de biopsias y de tejido en volumen mínimo"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de trabajo (H₂O)",
+      "value": "0,5 a 100 ml",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Revoluciones",
+      "value": "8.000 a 30.000 rpm, regulación continua",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Potencia",
+      "value": "125 W de entrada, 75 W de salida",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Viscosidad máxima",
+      "value": "5.000 mPas",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Herramienta dispersora",
+      "value": "Serie S 10, generadores de 5, 8 y 10 mm",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Peso",
+      "value": "0,5 kg",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/",
+  "official_pdf_url": "https://www.ika.com/ika/pdf/flyer-catalog/Disperser_Brochure_IWS_EN_wop_screen.pdf",
+  "image_id": "ika-t10-basic",
+  "verified_on": "2026-09-07"
+}

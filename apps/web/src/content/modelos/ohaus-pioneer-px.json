@@ -1,0 +1,54 @@
+{
+  "slug": "ohaus-pioneer-px",
+  "family": "pesaje-humedad",
+  "brand": "ohaus",
+  "name": "Pioneer PX",
+  "headline": "OHAUS Pioneer PX: pesaje y análisis de humedad",
+  "lead": "Balanzas analíticas con legibilidad de 0,1 mg, protector de vidrio contra corrientes de aire y salida de datos GLP/GMP con reloj de tiempo real.",
+  "applications": [
+    "Pesaje analítico de muestras pequeñas",
+    "Formulación y pesaje porcentual",
+    "Determinación de densidad",
+    "Docencia en química analítica"
+  ],
+  "specs": [
+    {
+      "label": "Tipo",
+      "value": "Balanza analítica",
+      "source": "https://mx.ohaus.com/es-mx/pioneeranalytical-33"
+    },
+    {
+      "label": "Capacidad",
+      "value": "82, 120 y 220 g (PX84, PX124 y PX224)",
+      "source": "https://mx.ohaus.com/es-mx/pioneeranalytical-33"
+    },
+    {
+      "label": "Legibilidad",
+      "value": "0,1 mg",
+      "source": "https://mx.ohaus.com/es-mx/pioneeranalytical-33"
+    },
+    {
+      "label": "Calibración",
+      "value": "Interna InCal semiautomática; externa en las versiones /E",
+      "source": "https://mx.ohaus.com/es-mx/pioneeranalytical-33"
+    },
+    {
+      "label": "Plato",
+      "value": "90 mm, acero inoxidable, con protector contra corrientes de aire",
+      "source": "https://mx.ohaus.com/es-mx/pioneeranalytical-33"
+    },
+    {
+      "label": "Interfaces",
+      "value": "RS232 y USB, con salida de datos GLP/GMP",
+      "source": "https://mx.ohaus.com/es-mx/pioneeranalytical-33"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://mx.ohaus.com/es-mx/pioneeranalytical-33",
+  "official_pdf_url": "https://dmx.ohaus.com/assets/0/14/4294980994/4294980995/4294980996/6dfb2947-8547-488c-b0ad-417194196a33.pdf",
+  "image_id": "ohaus-pioneer-px",
+  "showroom_id": "ohaus-pioneer-px",
+  "verified_on": "2026-10-19"
+}

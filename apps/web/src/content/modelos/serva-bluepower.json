@@ -1,0 +1,53 @@
+{
+  "slug": "serva-bluepower",
+  "family": "electroforesis",
+  "brand": "serva",
+  "name": "BluePower",
+  "headline": "SERVA Electrophoresis BluePower: electroforesis",
+  "lead": "Fuentes de alimentación programables para electroforesis, con voltaje, corriente y potencia constantes y conmutación automática entre los tres.",
+  "applications": [
+    "Alimentar una o varias cubetas verticales a la vez",
+    "Transferencia en tanque y semiseca",
+    "Enfoque isoeléctrico con rampa de voltaje",
+    "Corridas con integrador de voltios por hora para reproducibilidad"
+  ],
+  "specs": [
+    {
+      "label": "BluePower 300 BLOT",
+      "value": "Cat. BP-300-BLO, para transferencia",
+      "source": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html"
+    },
+    {
+      "label": "BluePower 600 PRIME",
+      "value": "Cat. BP-600-PRI, 600 V, 1.000 mA y 300 W",
+      "source": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html"
+    },
+    {
+      "label": "BluePower 3000 HPE",
+      "value": "Cat. BP-3000-HPE, para el sistema horizontal HPE",
+      "source": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html"
+    },
+    {
+      "label": "BluePower 6000 IPG",
+      "value": "Cat. BP-6000-IPG, para enfoque isoeléctrico",
+      "source": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html"
+    },
+    {
+      "label": "Programación",
+      "value": "Hasta 9 programas de 9 pasos, con registro por USB",
+      "source": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html"
+    },
+    {
+      "label": "Seguridad",
+      "value": "Protección de sobrecarga y corte por fuga a tierra",
+      "source": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.serva.de/enDE/Catalog/459_Laboratory_Equipment_Electrophoresis_Devices_Power_Supplies_212_449.html",
+  "official_pdf_url": "https://www.serva.de/www_root/documents/Electrophoresis%20by%20SERVA_web.pdf",
+  "image_id": "serva-bluepower",
+  "verified_on": "2026-09-07"
+}

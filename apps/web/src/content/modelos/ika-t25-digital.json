@@ -1,0 +1,54 @@
+{
+  "slug": "ika-t25-digital",
+  "family": "dispersion",
+  "brand": "ika",
+  "name": "T 25 digital ULTRA-TURRAX",
+  "headline": "IKA T 25 digital ULTRA-TURRAX: dispersión y homogeneización",
+  "lead": "Dispersor de sobremesa de 800 W para lotes de hasta dos litros, con la mayor variedad de herramientas de la línea, incluidas las de trabajo en vacío.",
+  "applications": [
+    "Homogeneización de lotes de laboratorio y de planta piloto pequeña",
+    "Dispersión de sólidos difíciles de mojar",
+    "Emulsión en vacío para evitar arrastre de aire",
+    "Molienda húmeda hasta finura de suspensión de 10 a 50 µm"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de trabajo (H₂O)",
+      "value": "1 a 2.000 ml",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Revoluciones",
+      "value": "3.000 a 25.000 rpm, regulación continua",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Potencia",
+      "value": "800 W de entrada, 500 W de salida",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Viscosidad máxima",
+      "value": "5.000 mPas",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Herramienta dispersora",
+      "value": "Serie S 25, generadores de 8 a 25 mm, con variantes para vacío",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Indicación",
+      "value": "LED de revoluciones",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/",
+  "official_pdf_url": "https://www.ika.com/ika/pdf/flyer-catalog/Disperser_Brochure_IWS_EN_wop_screen.pdf",
+  "image_id": "ika-t25-digital",
+  "showroom_id": "ika-t25-digital",
+  "verified_on": "2026-09-07"
+}

@@ -1,0 +1,52 @@
+{
+  "slug": "ohaus-mb32",
+  "family": "pesaje-humedad",
+  "brand": "ohaus",
+  "name": "MB32",
+  "headline": "OHAUS MB32: pesaje y análisis de humedad",
+  "lead": "Analizador de humedad de calentamiento por fibra de carbono para comprobaciones periódicas, con pantalla de segunda línea y dos programas de secado.",
+  "applications": [
+    "Comprobaciones periódicas de humedad",
+    "Humedad en entornos de trabajo exigentes",
+    "Rutinas con uno o dos métodos guardados"
+  ],
+  "specs": [
+    {
+      "label": "Tipo",
+      "value": "Analizador de humedad",
+      "source": "https://mx.ohaus.com/es-mx/mb32-6"
+    },
+    {
+      "label": "Capacidad",
+      "value": "90 g",
+      "source": "https://mx.ohaus.com/es-mx/mb32-6"
+    },
+    {
+      "label": "Legibilidad",
+      "value": "0,001 g / 0,01 %",
+      "source": "https://mx.ohaus.com/es-mx/mb32-6"
+    },
+    {
+      "label": "Calentamiento",
+      "value": "Fibra de carbono, 40 a 180 °C en pasos de 1 °C",
+      "source": "https://mx.ohaus.com/es-mx/mb32-6"
+    },
+    {
+      "label": "Programas",
+      "value": "Estándar y rápido",
+      "source": "https://mx.ohaus.com/es-mx/mb32-6"
+    },
+    {
+      "label": "Interfaces",
+      "value": "RS232 y USB dispositivo",
+      "source": "https://mx.ohaus.com/es-mx/mb32-6"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://mx.ohaus.com/es-mx/mb32-6",
+  "official_pdf_url": "https://dmx.ohaus.com/assets/0/14/4294999538/4294999539/4294999540/21a91517-84fc-4f2d-afd9-cd38c826eaa5.pdf",
+  "image_id": "ohaus-mb32",
+  "verified_on": "2026-10-19"
+}

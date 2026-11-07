@@ -1,0 +1,53 @@
+{
+  "slug": "hielscher-uip2000hdt",
+  "family": "sonicacion",
+  "brand": "hielscher",
+  "name": "UIP2000hdT",
+  "headline": "Hielscher Ultrasonics UIP2000hdT: sonicación y procesamiento ultrasónico",
+  "lead": "Procesador ultrasónico industrial de 2 kW para trabajo continuo en línea, con registro automático de amplitud, potencia, tiempo, temperatura y presión.",
+  "applications": [
+    "Paso de laboratorio a planta piloto con la misma técnica",
+    "Homogeneización y emulsión en flujo continuo",
+    "Extracción y lisis a escala de producción",
+    "Reacciones sonoquímicas con control de proceso"
+  ],
+  "specs": [
+    {
+      "label": "Potencia",
+      "value": "2.000 W",
+      "source": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm"
+    },
+    {
+      "label": "Frecuencia",
+      "value": "20 kHz",
+      "source": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm"
+    },
+    {
+      "label": "Amplitud",
+      "value": "Regulable del 20 al 100 % en el generador",
+      "source": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm"
+    },
+    {
+      "label": "Caudal",
+      "value": "Aprox. 1,0 a 8,0 l/min según producto y objetivo",
+      "source": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm"
+    },
+    {
+      "label": "Capacidad diaria",
+      "value": "Aprox. 2 a 10 m³/día según energía aplicada",
+      "source": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm"
+    },
+    {
+      "label": "Registro",
+      "value": "CSV automático y control remoto por LAN",
+      "source": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.hielscher.com/uip2000hdt-2000-watts-powerful-industrial-ultrasonicator-for-full-process-control.htm",
+  "official_pdf_url": "https://www.hielscher.com/wp-content/uploads/FactSheet-UIP2000hdT-2kW-sonicator-engl-082022.pdf",
+  "image_id": "hielscher-uip2000hdt",
+  "verified_on": "2026-09-07"
+}

@@ -1,0 +1,52 @@
+{
+  "slug": "ika-t18-digital",
+  "family": "dispersion",
+  "brand": "ika",
+  "name": "T 18 digital ULTRA-TURRAX",
+  "headline": "IKA T 18 digital ULTRA-TURRAX: dispersión y homogeneización",
+  "lead": "Dispersor de sobremesa con soporte y lectura digital de revoluciones para lotes de hasta un litro y medio.",
+  "applications": [
+    "Homogeneización de alimentos y de matrices sólidas en suspensión",
+    "Emulsión de cremas, ungüentos y formulaciones de laboratorio",
+    "Preparación de muestra en serie con parámetro repetible"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de trabajo (H₂O)",
+      "value": "1 a 1.500 ml",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Revoluciones",
+      "value": "3.000 a 25.000 rpm, regulación continua",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Potencia",
+      "value": "500 W de entrada, 300 W de salida",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Viscosidad máxima",
+      "value": "5.000 mPas",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Herramienta dispersora",
+      "value": "Serie S 18, generadores de 10 y 19 mm",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    },
+    {
+      "label": "Indicación",
+      "value": "LED de revoluciones",
+      "source": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.ika.com/en/Products-LabEq/Dispersers-pg177/",
+  "official_pdf_url": "https://www.ika.com/ika/pdf/flyer-catalog/Disperser_Brochure_IWS_EN_wop_screen.pdf",
+  "image_id": "ika-t18-digital",
+  "verified_on": "2026-09-07"
+}

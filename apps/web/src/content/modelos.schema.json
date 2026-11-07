@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://origenlab.cl/schemas/modelos.schema.json",
+  "title": "Modelo",
+  "description": "Un equipo del fabricante con página propia en origenlab.cl. Un archivo por modelo en src/content/modelos/<slug>.json. Sin precio, stock, plazo ni garantía: ninguno está verificado y el validador los rechaza.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slug",
+    "family",
+    "brand",
+    "name",
+    "headline",
+    "lead",
+    "applications",
+    "specs",
+    "accessories",
+    "related",
+    "faqs",
+    "official_url",
+    "verified_on"
+  ],
+  "properties": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Igual al nombre del archivo sin .json."
+    },
+    "family": {
+      "type": "string",
+      "enum": ["sonicacion", "dispersion", "pesaje-humedad", "osmometria", "electroforesis", "centrifugacion"]
+    },
+    "brand": {
+      "type": "string",
+      "enum": ["hielscher", "ika", "ortoalresa", "adam-equipment", "ohaus", "loeser", "serva"],
+      "description": "Identificador de APPROVED_BRAND_IDS (src/data/brands.ts)."
+    },
+    "name": { "type": "string", "maxLength": 80, "description": "Nombre exacto del fabricante." },
+    "headline": { "type": "string", "maxLength": 120 },
+    "lead": { "type": "string", "maxLength": 300 },
+    "applications": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 80 }
+    },
+    "specs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "value", "source"],
+        "properties": {
+          "label": { "type": "string" },
+          "value": { "type": "string" },
+          "source": {
+            "type": "string",
+            "pattern": "^https?://",
+            "description": "Página o PDF del fabricante donde figura la cifra."
+          }
+        }
+      }
+    },
+    "accessories": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 120 }
+    },
+    "related": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+      "description": "Slugs de otros modelos de esta colección."
+    },
+    "faqs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["q", "a"],
+        "properties": {
+          "q": { "type": "string" },
+          "a": { "type": "string" }
+        }
+      }
+    },
+    "official_url": { "type": "string", "pattern": "^https?://" },
+    "official_pdf_url": { "type": "string", "pattern": "^https?://" },
+    "image_id": {
+      "type": "string",
+      "description": "Id de una fila VERIFIED de src/data/productImages.ts."
+    },
+    "showroom_id": {
+      "type": "string",
+      "description": "Id de una escena de la sala 3D (src/lib/showroom/content/<id>.ts)."
+    },
+    "verified_on": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "Fecha ISO en que se leyó la fuente oficial."
+    }
+  }
+}

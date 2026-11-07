@@ -1,0 +1,54 @@
+{
+  "slug": "adam-highland",
+  "family": "pesaje-humedad",
+  "brand": "adam-equipment",
+  "name": "Highland",
+  "headline": "Adam Equipment Highland: pesaje y análisis de humedad",
+  "lead": "Balanzas de precisión portátiles con calibración interna y protección de sobrecarga, pensadas para pesar fuera del banco de analítica.",
+  "applications": [
+    "Pesaje de precisión en planta y en terreno",
+    "Recepción de materia prima y dosificación",
+    "Conteo de piezas y acumulación",
+    "Segundo puesto de pesaje junto a una analítica"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad",
+      "value": "120 a 6.000 g según modelo",
+      "source": "https://adamequipment.com/highland-portable-precision-balances-us.html"
+    },
+    {
+      "label": "Legibilidad",
+      "value": "0,001 a 0,1 g según modelo",
+      "source": "https://adamequipment.com/highland-portable-precision-balances-us.html"
+    },
+    {
+      "label": "Calibración",
+      "value": "Interna, sin juego de masas externo",
+      "source": "https://adamequipment.com/highland-portable-precision-balances-us.html"
+    },
+    {
+      "label": "Protección",
+      "value": "Sistema de protección contra sobrecarga",
+      "source": "https://adamequipment.com/highland-portable-precision-balances-us.html"
+    },
+    {
+      "label": "Interfaces",
+      "value": "USB y RS-232",
+      "source": "https://adamequipment.com/highland-portable-precision-balances-us.html"
+    },
+    {
+      "label": "Pantalla",
+      "value": "LCD retroiluminado",
+      "source": "https://adamequipment.com/highland-portable-precision-balances-us.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://adamequipment.com/highland-portable-precision-balances-us.html",
+  "official_pdf_url": "https://adamequipment.com/media/docs/data_sheets/HCB-DS-A4-EN.pdf",
+  "image_id": "adam-highland",
+  "showroom_id": "adam-highland",
+  "verified_on": "2026-09-07"
+}

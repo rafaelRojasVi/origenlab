@@ -1,0 +1,53 @@
+{
+  "slug": "ohaus-ranger-count-3000",
+  "family": "pesaje-humedad",
+  "brand": "ohaus",
+  "name": "Ranger Count 3000",
+  "headline": "OHAUS Ranger Count 3000: pesaje y análisis de humedad",
+  "lead": "Balanzas contadoras portátiles que cuentan piezas a partir de su peso, con control de peso por luces de color y batería recargable.",
+  "applications": [
+    "Conteo de piezas en la industria",
+    "Control de peso con límites de aceptación",
+    "Acumulación de pesadas",
+    "Pesaje general en planta"
+  ],
+  "specs": [
+    {
+      "label": "Tipo",
+      "value": "Balanza contadora",
+      "source": "https://mx.ohaus.com/es-mx/ranger3000count-16"
+    },
+    {
+      "label": "Capacidad",
+      "value": "1,5 a 30 kg (RC31P1502 a RC31P30)",
+      "source": "https://mx.ohaus.com/es-mx/ranger3000count-16"
+    },
+    {
+      "label": "Legibilidad",
+      "value": "0,05 a 1 g según modelo",
+      "source": "https://mx.ohaus.com/es-mx/ranger3000count-16"
+    },
+    {
+      "label": "Plataforma",
+      "value": "225 × 300 mm, acero inoxidable",
+      "source": "https://mx.ohaus.com/es-mx/ranger3000count-16"
+    },
+    {
+      "label": "Autonomía",
+      "value": "Batería recargable de 210 horas",
+      "source": "https://mx.ohaus.com/es-mx/ranger3000count-16"
+    },
+    {
+      "label": "Interfaces",
+      "value": "RS232 incluido; segundo RS232, USB o Ethernet como accesorio",
+      "source": "https://mx.ohaus.com/es-mx/ranger3000count-16"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://mx.ohaus.com/es-mx/ranger3000count-16",
+  "official_pdf_url": "https://dmx.ohaus.com/privateAssets/0/14/70506/70512/70514/7E4B04BB-4290-4005-91BB-FD24A3A4401D.pdf",
+  "image_id": "ohaus-ranger-count-3000",
+  "verified_on": "2026-10-19"
+}

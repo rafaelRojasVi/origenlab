@@ -1,0 +1,51 @@
+{
+  "slug": "loeser-i-osmometer-basic",
+  "family": "osmometria",
+  "brand": "loeser",
+  "name": "i Osmometer basic",
+  "headline": "Löser Messtechnik i Osmometer basic: osmometría",
+  "lead": "La misma medición del Osmometer basic con el ciclo automatizado y salida de datos a computador o impresora.",
+  "applications": [
+    "Osmolalidad de rutina con volcado de datos",
+    "Laboratorio clínico con exigencia de registro",
+    "Series de medición sin intervención en cada tubo"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de muestra",
+      "value": "100 o 50 µl",
+      "source": "http://www.loeser-osmometer.de/typ7i-eng.html"
+    },
+    {
+      "label": "Tiempo de medición",
+      "value": "Aprox. 1,5 min con 100 µl",
+      "source": "http://www.loeser-osmometer.de/typ7i-eng.html"
+    },
+    {
+      "label": "Proceso",
+      "value": "Automático",
+      "source": "http://www.loeser-osmometer.de/typ7i-eng.html"
+    },
+    {
+      "label": "Rango",
+      "value": "0 a 2.500 mosm/kg H₂O, resolución 1 mosm/kg",
+      "source": "http://www.loeser-osmometer.de/typ7i-eng.html"
+    },
+    {
+      "label": "Interfaces",
+      "value": "1 USB y 1 RS-232, con software para Windows incluido",
+      "source": "http://www.loeser-osmometer.de/typ7i-eng.html"
+    },
+    {
+      "label": "Memoria",
+      "value": "100 mediciones con número de muestra y usuario",
+      "source": "http://www.loeser-osmometer.de/typ7i-eng.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "http://www.loeser-osmometer.de/typ7i-eng.html",
+  "image_id": "loeser-i-osmometer-basic",
+  "verified_on": "2026-09-07"
+}

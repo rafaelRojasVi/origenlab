@@ -1,0 +1,53 @@
+{
+  "slug": "hielscher-up200st",
+  "family": "sonicacion",
+  "brand": "hielscher",
+  "name": "UP200St",
+  "headline": "Hielscher Ultrasonics UP200St: sonicación y procesamiento ultrasónico",
+  "lead": "Sonicador de laboratorio con transductor separado del generador, pantalla táctil y registro de parámetros en tarjeta SD.",
+  "applications": [
+    "Preparación de muestra reproducible con parámetros documentados",
+    "Homogeneización y emulsión de lotes de decenas a cientos de mililitros",
+    "Molienda húmeda y desaglomeración",
+    "Extracción y sonoquímica en banco"
+  ],
+  "specs": [
+    {
+      "label": "Potencia",
+      "value": "200 W",
+      "source": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm"
+    },
+    {
+      "label": "Frecuencia",
+      "value": "26 kHz",
+      "source": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm"
+    },
+    {
+      "label": "Amplitud",
+      "value": "Regulable del 20 al 100 %",
+      "source": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm"
+    },
+    {
+      "label": "Volumen de muestra",
+      "value": "2 a 1.000 ml",
+      "source": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm"
+    },
+    {
+      "label": "Protección",
+      "value": "Transductor IP65, generador IP30",
+      "source": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm"
+    },
+    {
+      "label": "Registro",
+      "value": "Tarjeta SD integrada y control remoto por LAN",
+      "source": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.hielscher.com/up200st-powerful-ultrasonic-lab-homogenizer.htm",
+  "official_pdf_url": "https://www.hielscher.com/wp-content/uploads/FactSheet-UP200St-HielscherUltrasonics_eng-13022024.pdf",
+  "image_id": "hielscher-up200st",
+  "verified_on": "2026-09-07"
+}
