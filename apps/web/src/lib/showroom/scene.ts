@@ -21,6 +21,16 @@ export interface Showroom {
   setPower(on: boolean): void;
   /** `general` o el nombre de una vista del modelo. */
   goTo(view: string): void;
+  /**
+   * Como `goTo`, con duración propia y suavizado `smoothstep` (la página de
+   * producto lo usa por tramos de scroll; `goTo` conserva su salida suave de 1,2 s).
+   */
+  tweenTo(view: string, durationMs?: number): void;
+  /**
+   * Fija el nivel de marcha (0–1) sin transición, p. ej. desde el scroll; `null`
+   * devuelve el nivel al que sigue a `setPower`. No toca la pantalla del modelo.
+   */
+  setLevel(level: number | null): void;
   /** Posición en píxeles del lienzo de cada ancla, o `null` si queda detrás. */
   onFrame(callback: (anchors: AnchorPositions) => void): void;
   /** Cambia el equipo en el mismo escenario (un solo lienzo, un solo WebGL). */
@@ -121,13 +131,14 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
     return { at, pos: at.clone().addScaledVector(worldDir(view.direction).normalize(), view.distance * MM) };
   };
 
-  let tween: { fromP: THREE.Vector3; fromT: THREE.Vector3; toP: THREE.Vector3; toT: THREE.Vector3; t: number } | null = null;
+  let tween: { fromP: THREE.Vector3; fromT: THREE.Vector3; toP: THREE.Vector3; toT: THREE.Vector3; t: number; ms: number; smooth: boolean } | null = null;
   let idle = true;
-  const goTo = (name: string) => {
+  const startTween = (name: string, ms: number, smooth: boolean) => {
     idle = name === 'general' && idle;
     const v = viewFor(name);
-    tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0 };
+    tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0, ms, smooth };
   };
+  const goTo = (name: string) => startTween(name, 1200, false);
   canvas.addEventListener('pointerdown', () => {
     idle = false;
     tween = null;
@@ -160,6 +171,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
 
   let powered = false;
   let level = 0;
+  let levelOverride: number | null = null;
   let t = 0;
   let raf = 0;
   let last = performance.now();
@@ -173,11 +185,11 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
     t += dt;
-    level += ((powered ? 1 : 0) - level) * Math.min(1, dt * 3);
+    level = levelOverride ?? level + ((powered ? 1 : 0) - level) * Math.min(1, dt * 3);
 
     if (tween) {
-      tween.t = Math.min(1, tween.t + Math.max(dt, 1 / 60) / 1.2);
-      const e = 1 - Math.pow(1 - tween.t, 3);
+      tween.t = Math.min(1, tween.t + Math.max(dt, 1 / 60) / (tween.ms / 1000));
+      const e = tween.smooth ? tween.t * tween.t * (3 - 2 * tween.t) : 1 - Math.pow(1 - tween.t, 3);
       camera.position.lerpVectors(tween.fromP, tween.toP, e);
       controls.target.lerpVectors(tween.fromT, tween.toT, e);
       if (tween.t >= 1) tween = null;
@@ -245,13 +257,19 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel): 
       for (const name of Object.keys(hidden)) delete hidden[name];
       powered = false;
       level = 0;
+      levelOverride = null;
       mount(next);
       idle = true;
       const v = general();
-      tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0 };
+      tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), toP: v.pos, toT: v.at, t: 0, ms: 1200, smooth: false };
       start();
     },
     goTo,
+    tweenTo: (name, ms = 800) => startTween(name, ms, true),
+    setLevel(next) {
+      levelOverride = next === null ? null : Math.min(1, Math.max(0, next));
+      if (levelOverride !== null) level = levelOverride;
+    },
     onFrame(callback) {
       frameCallback = callback;
     },
