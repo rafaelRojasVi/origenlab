@@ -46,6 +46,11 @@ export function familyInfo(slug: FamilySlug): FamilyInfo {
   return { slug, scopeId, name: scope.name, short, purpose: scope.purpose, question: scope.question };
 }
 
+/** Slug de familia de la colección para un id de `equipmentScope.ts`. */
+export function familyForScope(scopeId: string): FamilySlug | undefined {
+  return (Object.keys(SHORT) as FamilySlug[]).find((slug) => SHORT[slug].scopeId === scopeId);
+}
+
 /** Familias con páginas generadas desde la colección (todas menos centrifugación). */
 export const hasCollectionPages = (slug: FamilySlug) => slug !== 'centrifugacion';
 
@@ -70,6 +75,14 @@ export function modelHref(entry: Modelo): string {
 }
 
 /**
+ * Página de cada modelo de una marca, por slug de la ficha (el mismo id que en
+ * `brandModels.ts` o en `products.ts`), para enlazarla desde `/marcas/…`.
+ */
+export function modelHrefsForBrand(brandId: string, all: readonly Modelo[]): Record<string, string> {
+  return Object.fromEntries(all.filter((entry) => entry.brand === brandId).map((entry) => [entry.slug, modelHref(entry)]));
+}
+
+/**
  * Fotografía VERIFIED del modelo. `image_id` es el id de la fila del registro;
  * los modelos documentados la tienen como `modelId` y las centrífugas y el
  * pulverizador SERVA, que tienen ficha en `products.ts`, como `productId`.
@@ -81,13 +94,17 @@ export function imageForEntry(entry: Modelo): ProductImageRecord | undefined {
 
 /**
  * Modelos que se muestran junto a uno: primero los que la ficha nombra en
- * `related`, después los de su familia, hasta `limit`.
+ * `related`, después los de su familia, hasta `limit`. El relleno de familia
+ * empieza en el modelo que sigue a éste y da la vuelta, para que cada modelo
+ * reciba al menos un enlace aunque la familia tenga más de `limit + 1`.
  */
 export function relatedFor(entry: Modelo, all: readonly Modelo[], limit = 4): Modelo[] {
   const named = entry.related
     .map((slug) => all.find((other) => other.slug === slug))
     .filter((other): other is Modelo => Boolean(other));
-  const family = all.filter((other) => other.family === entry.family && other.slug !== entry.slug && !named.includes(other));
+  const members = all.filter((other) => other.family === entry.family);
+  const at = members.findIndex((other) => other.slug === entry.slug);
+  const family = [...members.slice(at + 1), ...members.slice(0, Math.max(at, 0))].filter((other) => !named.includes(other));
   return [...named, ...family].slice(0, limit);
 }
 

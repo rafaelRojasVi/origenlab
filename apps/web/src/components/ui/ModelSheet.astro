@@ -3,6 +3,7 @@ import type { BrandModel } from '../../data/brandModels';
 import type { ProductImageRecord } from '../../data/productImages';
 import ExternalLink from './ExternalLink.astro';
 import ModelPhoto from './ModelPhoto.astro';
+import Icon from './Icon.astro';
 
 /**
  * Ficha de un modelo que el sitio describe pero no aloja.
@@ -29,6 +30,8 @@ interface Props {
   /** Nombre del fabricante para el rótulo de la fotografía. */
   brandName?: string;
   variant?: 'stack' | 'split' | 'compact';
+  /** Ficha del modelo en este sitio (`/productos/…`), si la tiene. */
+  href?: string;
   /** Nivel del encabezado del nombre. La página manda, no el componente. */
   headingLevel?: 3 | 4;
   class?: string;
@@ -39,6 +42,7 @@ const {
   image,
   brandName,
   variant = 'stack',
+  href,
   headingLevel = 3,
   class: className = '',
 } = Astro.props;
@@ -96,6 +100,14 @@ const officialLabel =
   </div>
 
   <div class="sheet__source">
+    {
+      href && (
+        <a href={href} class="link-arrow">
+          Ver la ficha<span class="sr-only"> de {model.name}</span>
+          <Icon name="arrow-right" size={16} class="arrow" />
+        </a>
+      )
+    }
     <ExternalLink href={model.officialUrl} context={officialLabel}>
       {officialLabel}
     </ExternalLink>

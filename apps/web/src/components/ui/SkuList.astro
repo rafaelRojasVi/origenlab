@@ -3,11 +3,13 @@ import type { Product } from '../../data/products';
 import { imageForProduct } from '../../data/productImages';
 import { getBrandById } from '../../lib/catalog';
 import ModelPhoto from './ModelPhoto.astro';
+import Icon from './Icon.astro';
 
 /**
  * Referencias sin ficha propia: nombre, número de ítem y una línea. Se usa para
- * la línea SERVA en /productos/ y en su página de marca. No se enlaza a ningún
- * detalle porque no existe: inventar una ruta vacía sería peor que la fila.
+ * la línea SERVA en /productos/ y en su página de marca. La fila enlaza a una
+ * ficha sólo cuando `hrefs` la trae (`/productos/…`): inventar una ruta vacía
+ * sería peor que la fila.
  *
  * Si `productImages.ts` tiene la fotografía `VERIFIED` de la referencia, la
  * fila abre con ella a tamaño de miniatura; sin ella no reserva hueco.
@@ -16,11 +18,13 @@ interface Props {
   products: readonly Product[];
   /** Añade la frase de aplicación además del resumen. */
   withApplication?: boolean;
+  /** Ficha interna de cada referencia, por id de `products.ts`. */
+  hrefs?: Readonly<Record<string, string>>;
   class?: string;
   [key: string]: unknown;
 }
 
-const { products, withApplication = false, class: className = '', ...rest } = Astro.props;
+const { products, withApplication = false, hrefs = {}, class: className = '', ...rest } = Astro.props;
 const rows = products.map((product) => ({
   product,
   image: imageForProduct(product.id),
@@ -44,6 +48,12 @@ const rows = products.map((product) => ({
         <dd class="t-small sku__desc">
           {product.summary}
           {withApplication && ` ${product.application}`}
+          {hrefs[product.id] && (
+            <a href={hrefs[product.id]} class="link-arrow flex w-fit mt-2">
+              Ver la ficha<span class="sr-only"> de {product.name}</span>
+              <Icon name="arrow-right" size={16} class="arrow" />
+            </a>
+          )}
         </dd>
       </div>
     ))

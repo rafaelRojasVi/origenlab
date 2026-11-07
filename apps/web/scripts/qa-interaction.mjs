@@ -804,6 +804,67 @@ console.log(`\nPágina de familia ${FAMILY_PATH}`);
   const html = existsSync(built) ? readFileSync(built, 'utf8') : '';
   check(html.includes(`href="${MODEL_PATH}"`), 'Family page lists its models');
 }
+/**
+ * Enlaces de entrada: `/productos/` lleva a las seis páginas de familia, cada
+ * página de marca a las fichas de sus modelos, y cada ficha recibe al menos un
+ * enlace «relacionado» desde otra ficha de su familia (el relleno rota).
+ */
+console.log('\nEnlaces hacia las páginas de familia y de modelo');
+{
+  const read = (path) => {
+    const file = join(dist, path, 'index.html');
+    return existsSync(file) ? readFileSync(file, 'utf8') : '';
+  };
+  const entries = readdirSync(join(root, 'src/content/modelos'))
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => JSON.parse(readFileSync(join(root, 'src/content/modelos', name), 'utf8')));
+  const hrefOf = (entry) => `/productos/${entry.family}/${entry.slug}/`;
+  const collection = entries.filter((entry) => entry.family !== 'centrifugacion');
+
+  const index = [...read('/productos/').matchAll(/<a\b[^>]*\bclass="scope-index__link[^"]*"[^>]*>/g)]
+    .map(([tag]) => tag.match(/href="([^"]+)"/)?.[1]);
+  const families = [...new Set(entries.map((entry) => entry.family))]
+    .map((family) => (family === 'centrifugacion' ? '/productos/centrifugas/' : `/productos/${family}/`));
+  check(
+    index.length === 6 && families.every((href) => index.includes(href)),
+    `/productos/: el índice lleva a las seis páginas de familia (${index.join(', ')})`,
+  );
+
+  const brandSlugs = Object.fromEntries(
+    [...readFileSync(join(root, 'src/data/brands.ts'), 'utf8').matchAll(/\n {4}id: '([\w-]+)',[\s\S]*?\n {4}slug: '([\w-]+)'/g)]
+      .map(([, id, slug]) => [id, slug]),
+  );
+  const missing = [];
+  for (const [id, slug] of Object.entries(brandSlugs)) {
+    const html = read(`/marcas/${slug}/`);
+    const own = entries.filter((entry) => entry.brand === id);
+    for (const entry of own.filter((item) => item.family !== 'centrifugacion')) {
+      if (!html.includes(`href="${hrefOf(entry)}"`)) missing.push(`${slug} → ${entry.slug}`);
+    }
+    const centrifuges = own.filter((item) => item.family === 'centrifugacion').length;
+    const legacy = new Set([...html.matchAll(/href="(\/productos\/centrifugas\/[\w-]+\/)"/g)].map(([, href]) => href)).size;
+    if (legacy < centrifuges) missing.push(`${slug} → ${centrifuges - legacy} centrífugas`);
+  }
+  check(missing.length === 0, `cada página de marca enlaza las fichas de sus modelos (faltan: ${missing.join(', ') || 'ninguna'})`);
+
+  const orphans = collection.filter((target) =>
+    !collection.some((other) => other !== target && other.family === target.family && read(hrefOf(other)).includes(`href="${hrefOf(target)}"`)),
+  );
+  check(
+    orphans.length === 0,
+    `cada ficha recibe un enlace relacionado desde otra de su familia (sin enlace: ${orphans.map((entry) => entry.slug).join(', ') || 'ninguna'})`,
+  );
+
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
+  const page = await context.newPage();
+  for (const path of ['/productos/', '/marcas/hielscher/', '/marcas/serva-electrophoresis/']) {
+    await page.goto(`${base}${path}`, { waitUntil: 'load' });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check(overflow <= 0, `${path}: sin desplazamiento horizontal a 375 px (${overflow} px de más)`);
+  }
+  await context.close();
+}
+
 if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
   console.log(`\nBarra fija de cotización ${MODEL_PATH} (375 px)`);
   {

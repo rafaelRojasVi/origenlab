@@ -22,6 +22,9 @@ import { productFamilies } from '../../data/productFamilies';
 import { familyDocsFor, modelsForBrand } from '../../data/brandModels';
 import { scopeById } from '../../data/equipmentScope';
 import { applicationsForFamily } from '../../data/applications';
+import { getCollection } from 'astro:content';
+import type { Modelo } from '../../content.config';
+import { modelHrefsForBrand } from '../../lib/modelos';
 import { imageForModel, publishedImagesForBrand } from '../../data/productImages';
 
 /**
@@ -73,6 +76,8 @@ const models = modelsForBrand(brand.id);
 const scope = scopeById(brand.familyId);
 const familyDocs = familyDocsFor(brand.familyId, brand.id);
 const tasks = applicationsForFamily(brand.familyId);
+/** Ficha de cada modelo en `/productos/…`, por id (colección `modelos`). */
+const modelPages = modelHrefsForBrand(brand.id, (await getCollection('modelos')).map((item) => item.data as Modelo));
 /** Fotografías con procedencia y permiso: sólo ellas se publican. */
 const publishedPhotos = publishedImagesForBrand(brand.id);
 
@@ -357,6 +362,7 @@ const equipmentSectionLabel =
               image={imageForModel(model.id)}
               brandName={brand.name}
               variant={sheetVariant}
+              href={modelPages[model.id]}
               headingLevel={3}
             />
           ))}
@@ -371,7 +377,7 @@ const equipmentSectionLabel =
           <p class="t-small skus__lead">
             Se cotizan por pedido y la documentación se entrega durante la cotización.
           </p>
-          <SkuList products={skuOnly} withApplication class="mt-6" />
+          <SkuList products={skuOnly} withApplication hrefs={modelPages} class="mt-6" />
         </div>
       )
     }
