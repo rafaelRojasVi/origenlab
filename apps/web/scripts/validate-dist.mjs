@@ -10,7 +10,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { publishesClaimText, withheldClaimTexts } from './lib/claim-variants.mjs';
+import { hiddenCopySurfaces, publishesClaimText, withheldClaimTexts } from './lib/claim-variants.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -184,6 +184,14 @@ for (const file of pages) {
       !publishesClaimText(flat, claim.text),
       at(`publica la afirmación sin aprobar "${claim.text}" (claims.ts: ${claim.id})`),
     );
+    // Meta description, og/twitter, alt, aria-label y JSON-LD: el análisis del
+    // cuerpo los descarta al quitar las etiquetas.
+    for (const surface of hiddenCopySurfaces(html)) {
+      assert(
+        !publishesClaimText(surface.text, claim.text),
+        at(`publica la afirmación sin aprobar "${claim.text}" en ${surface.where} (claims.ts: ${claim.id}): ${surface.text.slice(0, 80)}`),
+      );
+    }
   }
 
   /* -- Superficies internas --------------------------------------------- */

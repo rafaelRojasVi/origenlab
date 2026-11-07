@@ -36,7 +36,7 @@ const { buyingSteps } = await import('../src/data/consultation.ts');
 const { buyingFaqs } = await import('../src/data/faq.ts');
 const { company } = await import('../src/data/company.ts');
 const { claims, publicClaim } = await import('../src/data/claims.ts');
-const { withheldClaimTexts, publishesClaimText } = await import('./lib/claim-variants.mjs');
+const { withheldClaimTexts, publishesClaimText, hiddenCopySurfaces } = await import('./lib/claim-variants.mjs');
 
 let failed = 0;
 const cases = [];
@@ -206,14 +206,25 @@ const fakeClaims = `header
     text: 'Pago 50 % al pedido, 50 % contra entrega',
     value: 50,
     status: 'proposed',
-    variants: ['50 % al pedido', '50/50', '50%', 'mitad al pedido', 'de anticipo', '50 % de anticipo'],
+    variants: [
+      '50 % al pedido',
+      '50/50',
+      '50%',
+      '50 por ciento',
+      'mitad al pedido',
+      'la mitad al confirmar',
+      'anticipo del pedido',
+      '50 % de anticipo',
+      'abono al pedido',
+      'saldo contra entrega',
+    ],
     note: 'x',
   },
 `;
 test('variantes: sólo las afirmaciones sin aprobar se vigilan, con su text y sus variants', () => {
   const watched = withheldClaimTexts(fakeClaims);
   assert.ok(watched.every((claim) => claim.id === 'pago'));
-  assert.equal(watched.length, 7);
+  assert.equal(watched.length, 11);
   assert.ok(watched.some((claim) => claim.text === 'Pago 50 % al pedido, 50 % contra entrega'));
 });
 test('variantes: cada paráfrasis se detecta, sin importar mayúsculas ni el espacio ante «%»', () => {
@@ -226,7 +237,10 @@ test('variantes: cada paráfrasis se detecta, sin importar mayúsculas ni el esp
     'Aceptamos 50%',
     'La MITAD AL PEDIDO y el resto a la entrega',
     'Con un 50  % de anticipo',
-    'Pedimos de anticipo una parte',
+    'Pedimos el anticipo del pedido',
+    'Se paga el 50 por ciento al inicio',
+    'La mitad al confirmar y el resto después',
+    'Abono al pedido y saldo contra entrega',
     'Pagamos 50 % contra entrega',
   ]) {
     assert.ok(caught(page), `no detectó: ${page}`);
@@ -241,6 +255,11 @@ test('variantes: el texto aprobado y la redacción neutra no se marcan', () => {
     'Condiciones de pago en la cotización.',
     'Cotización el mismo día hábil',
     'Pago y confirmación del pedido',
+    'Humedad relativa de 0–50 % en la cámara',
+    'Rango 0-50 % HR',
+    'Hasta 150 % de la carga nominal',
+    'Tolerancia de 1,50 % del valor',
+    'Se entrega de anticipo una muestra',
   ]) {
     assert.ok(!caught(page), `marcó por error: ${page}`);
   }
@@ -251,6 +270,31 @@ test('variantes: con el registro real, ninguna página de pasos ni preguntas pub
   for (const claim of watched) assert.ok(!publishesClaimText(page, claim.text), `publica ${claim.id}: ${claim.text}`);
 });
 
+const pageWith = (head, body = '<p>Texto neutro.</p>') =>
+  `<!doctype html><html><head><title>t</title>${head}</head><body>${body}</body></html>`;
+const surfaceHit = (html) => {
+  const watched = withheldClaimTexts(fakeClaims);
+  return hiddenCopySurfaces(html).some((surface) => watched.some((claim) => publishesClaimText(surface.text, claim.text)));
+};
+test('superficies: un «50 % al pedido» sólo en la meta description se detecta', () => {
+  assert.ok(surfaceHit(pageWith('<meta name="description" content="Compre con 50 % al pedido y el resto después">')));
+  assert.ok(surfaceHit(pageWith('<meta property="og:description" content="Pago 50&#37; al pedido">')));
+  assert.ok(surfaceHit(pageWith('<meta name="twitter:description" content="Pagamos &quot;50%&quot; al pedido">')));
+});
+test('superficies: alt, aria-label y JSON-LD también se escanean', () => {
+  assert.ok(surfaceHit(pageWith('', '<img src="x.jpg" alt="Abono al pedido y saldo contra entrega">')));
+  assert.ok(surfaceHit(pageWith('', '<a href="/" aria-label="Pago 50/50">Ir</a>')));
+  assert.ok(
+    surfaceHit(
+      pageWith('<script type="application/ld+json">{"@type":"Offer","description":"Mitad al pedido, mitad contra entrega"}</script>'),
+    ),
+  );
+});
+test('superficies: la copia neutra y los rangos de humedad no se marcan', () => {
+  assert.ok(!surfaceHit(pageWith('<meta name="description" content="Cómo comprar: cuéntenos su aplicación y reciba la cotización el mismo día hábil.">')));
+  assert.ok(!surfaceHit(pageWith('<meta name="description" content="Humedad 0–50 % HR">', '<img alt="Termobalanza" src="x.jpg">')));
+  assert.ok(!surfaceHit(pageWith('<script type="application/ld+json">{"name":"Condiciones de pago en la cotización"}</script>')));
+});
 for (const [name, fn] of cases) {
   try {
     await fn();
