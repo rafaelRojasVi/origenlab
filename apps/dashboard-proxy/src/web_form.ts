@@ -138,7 +138,7 @@ export async function handleWebFormRequest(
 
   // C2: no-JS browsers (form-encoded or multipart submission) get a 303 redirect on success
   if (isNoJs && upstreamResp.ok) {
-    return new Response(null, { status: 303, headers: { Location: "/contacto/?ok=1" } });
+    return new Response(null, { status: 303, headers: { Location: `${WEB_FORM_ORIGIN}/contacto/enviado/` } });
   }
   return new Response(upstreamResp.body, {
     status: upstreamResp.status,
