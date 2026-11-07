@@ -83,6 +83,9 @@ function catalogIds() {
     ['125 W de entrada, 75 W de salida', 125, '125 W'],
     ['18.100 RPM / 31.865 ×g', 18100, '18.100 RPM'],
     ['Formato de gel', null, null],
+    // Número chileno: `1.500` es 1500 y `1,5` es 1.5.
+    ['1.500 W', 1500, '1.500 W'],
+    ['1,5 kW', 1.5, '1,5 kW'],
   ];
   for (const [input, n, display] of cases) {
     const got = typeof parseSpecNumber === 'function' ? parseSpecNumber(input) : undefined;
@@ -102,6 +105,16 @@ function catalogIds() {
   }
   if (familyScale([model('a', '100 W'), model('b', '200 W')], 'sonicacion') !== null || familyScale([model('a', 'x')], 'osmometria') !== null) {
     console.error('  x   familyScale: debe ser null con menos de 3 cifras o sin escala');
+    process.exit(1);
+  }
+  // Un máximo se ordena por el extremo alto del rango: «0,1 a 500 ml» (máx. 500) va después de «300 ml».
+  const maxed = (slug, value) => ({ slug, name: slug, family: 'centrifugacion', brand: 'x', specs: [{ label: 'Velocidad máxima', value, source: 's' }] });
+  const order = (await import(pathToFileURL(join(root, 'src/lib/modelos.ts')).href)).familyOrder(
+    [maxed('rango', '1.000 a 5.000 RPM'), maxed('medio', '4.000 RPM'), maxed('bajo', '2.000 RPM'), maxed('alto', '6.000 RPM')],
+    'centrifugacion',
+  ).map((m) => m.slug).join(',');
+  if (order !== 'bajo,medio,rango,alto') {
+    console.error(`  x   familyOrder (máximo): ${order}, se esperaba bajo,medio,rango,alto`);
     process.exit(1);
   }
   console.log('  ok  parseSpecNumber y familyScale');

@@ -124,6 +124,8 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
   }
   .site-footer__logo {
     display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
     border-radius: var(--radius-edge);
   }
   .site-footer__brand p {
@@ -149,6 +151,10 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     display: inline-flex;
     align-items: center;
     min-height: 2rem;
+    min-width: 2.75rem;
+    @media (width < 1024px) {
+      min-height: 2.75rem;
+    }
     color: var(--color-ink-800);
     font-size: 0.9375rem;
     transition: color var(--ease-ui);
@@ -176,6 +182,9 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     color: var(--color-ink-500);
     font-family: var(--font-mono);
     font-size: 0.8125rem;
+    @media (width < 1024px) {
+      min-height: 2.75rem;
+    }
   }
   .site-footer .site-footer__legal li a:hover {
     color: var(--color-ink-950);

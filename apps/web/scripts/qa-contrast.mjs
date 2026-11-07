@@ -179,10 +179,11 @@ for (const route of ROUTES) {
         size,
         pass: ratio >= required,
         sample: text.slice(0, 40),
+        band: Boolean(el.closest('.band')),
         selector: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`,
       });
     }
-    return { out, edges };
+    return { out, edges, hasBand: document.querySelector('.band') !== null };
   });
 
   for (const edge of result.edges) {
@@ -191,6 +192,12 @@ for (const route of ROUTES) {
     if (edge.ratio < CONTROL_EDGE_MIN) {
       failures.push(`${route} ${edge.selector} borde ${edge.ratio}:1 (mínimo ${CONTROL_EDGE_MIN}:1)`);
     }
+  }
+
+  // La banda de cierre (fondo tinta, botones sobre tinta) debe haberse medido: título, texto y los dos botones.
+  if (result.hasBand) {
+    const inBand = result.out.filter((entry) => entry.band).length;
+    if (inBand < 4) failures.push(`${route}: la banda de cierre sólo midió ${inBand} textos (mínimo 4: título, texto, dos botones)`);
   }
 
   for (const entry of result.out) {

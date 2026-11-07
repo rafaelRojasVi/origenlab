@@ -150,10 +150,18 @@ const id = (index: number) => `src-${entry.slug}-${index}`;
   addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     const open = document.querySelector<HTMLElement>('.spec__s:hover, .spec__s:focus-within');
-    if (!open) return;
+    if (!open || open.hasAttribute('data-dismissed')) return;
     open.dataset.dismissed = '';
-    const clear = () => delete open.dataset.dismissed;
-    open.addEventListener('mouseleave', clear, { once: true });
-    open.addEventListener('focusout', clear, { once: true });
+    // Vuelve sólo cuando ya no quedan ni cursor ni foco dentro; un Escape repetido no apila escuchas.
+    const clear = () =>
+      setTimeout(() => {
+        if (!open.matches(':hover, :focus-within')) {
+          delete open.dataset.dismissed;
+          open.removeEventListener('mouseleave', clear);
+          open.removeEventListener('focusout', clear);
+        }
+      }, 0);
+    open.addEventListener('mouseleave', clear);
+    open.addEventListener('focusout', clear);
   });
 </script>

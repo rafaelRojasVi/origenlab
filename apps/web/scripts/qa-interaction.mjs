@@ -23,12 +23,13 @@ function check(condition, message) {
 
 /** Desplaza hasta justo después de la primera pantalla de la página de modelo (`[data-first-screen]`). */
 const pastFirstScreen = async (page) => {
+  check((await page.locator('[data-sticky-cta]').count()) > 0, 'la página de modelo tiene la barra fija [data-sticky-cta]');
   await page.evaluate(() => {
     const first = document.querySelector('[data-first-screen]');
     window.scrollTo({ top: first.getBoundingClientRect().bottom + window.scrollY + 120, behavior: 'instant' });
   });
   // El observador y la transición de 200 ms pueden tardar con el WebGL por software ocupando la página.
-  await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 5000 });
   await page.waitForTimeout(450);
 };
 
@@ -1226,7 +1227,9 @@ console.log('\nPortada y cómo comprar');
   );
 
   const faqCount = (guide.match(/<details\b[^>]*\bclass="faq__item"/g) ?? []).length;
-  check(faqCount >= 4 && !/50\s?%|50\/50|garant/i.test(guide.replace(/<style[\s\S]*?<\/style>/g, '')), `Cómo comprar: preguntas desde buyingFaqs (${faqCount}) y sin 50/50 ni garantía`);
+  // Sólo el texto visible de las preguntas: ni estilos ni atributos ni otras cifras de la página.
+  const faqText = (guide.match(/<details\b[^>]*\bclass="faq__item"[\s\S]*?<\/details>/g) ?? []).join(' ').replace(/<[^>]+>/g, ' ');
+  check(faqCount >= 4 && !/\b50\s?%|\b50\/50|garant/i.test(faqText), `Cómo comprar: preguntas desde buyingFaqs (${faqCount}) y sin 50/50 ni garantía`);
 
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
@@ -1479,6 +1482,138 @@ for (const path of FIRST_SCREEN_PAGES) {
   await page.waitForTimeout(1200);
   const broken = await page.evaluate(() => [...document.images].filter((img) => img.complete && img.naturalWidth === 0).map((img) => img.currentSrc || img.src));
   check(broken.length === 0, `ninguna imagen sin cargar (${broken.join(', ') || 'ninguna'})`);
+  await context.close();
+}
+
+/* -- 7. Barrido de la pasada de movimiento y accesibilidad (1b) ------------ */
+const SWEEP_ROUTES = ['/', '/productos/sonicacion/', '/productos/sonicacion/hielscher-up400st/', '/contacto/'];
+console.log('\nMovimiento reducido: barrido');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+  const offenders = [];
+  for (const route of SWEEP_ROUTES) {
+    const page = await context.newPage();
+    await page.goto(`${base}${route}`, { waitUntil: 'load' });
+    await page.waitForTimeout(600);
+    const found = await page.evaluate(() => {
+      const out = [];
+      const running = document.getAnimations().filter((a) => a.playState === 'running');
+      for (const a of running) out.push(`animación en curso ${a.animationName ?? a.transitionProperty ?? ''}`);
+      for (const el of document.querySelectorAll('body *')) {
+        const style = getComputedStyle(el);
+        if (style.animationName !== 'none' && style.animationDuration !== '0s') out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]} animation ${style.animationName}`);
+        // Transiciones de movimiento (no las de color); `all` cuenta.
+        const props = style.transitionProperty.split(',').map((v) => v.trim());
+        const durations = style.transitionDuration.split(',').map((v) => parseFloat(v));
+        props.forEach((prop, i) => {
+          const duration = durations[i % durations.length];
+          if (duration > 0 && /^(all|transform|translate|scale|rotate|opacity|top|left|right|bottom|height|width|margin.*|inset.*)$/.test(prop)) {
+            out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]} transition ${prop}`);
+          }
+        });
+      }
+      const faded = [...document.querySelectorAll('.rv')].filter((el) => getComputedStyle(el).opacity !== '1').length;
+      if (faded) out.push(`${faded} .rv atenuados sin desplazar`);
+      return [...new Set(out)];
+    });
+    for (const item of found) offenders.push(`${route}: ${item}`);
+    await page.close();
+  }
+  check(offenders.length === 0, `con movimiento reducido nada se anima ni queda atenuado en ${SWEEP_ROUTES.length} rutas (${offenders.slice(0, 5).join('; ') || 'ninguno'})`);
+  await context.close();
+}
+
+console.log('\nObjetivos táctiles (375 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
+  const small = [];
+  for (const route of [...SWEEP_ROUTES, '/como-comprar/', '/productos/', '/productos/centrifugas/digicen-22-r/']) {
+    const page = await context.newPage();
+    await page.goto(`${base}${route}`, { waitUntil: 'load' });
+    // El menú móvil abierto no cuenta: se mide la página tal como llega.
+    const found = await page.evaluate(() => {
+      const out = [];
+      for (const el of document.querySelectorAll('a, button, summary, input, select, textarea')) {
+        if (el.matches('input[type="hidden"], .skip-link') || el.closest('[hidden], [inert], [aria-hidden="true"], .sr-only, .sol-trap-wrap')) continue;
+        const style = getComputedStyle(el);
+        if (style.visibility === 'hidden' || style.display === 'none') continue;
+        // WCAG 2.5.8: un enlace dentro de una frase o de una celda queda exento.
+        if (el.closest('p, td')) continue;
+        const host = el.parentElement;
+        if (host && el.matches('a') && !el.matches('nav a, .btn, [class*="btn"]') && (host.textContent || '').trim().length > (el.textContent || '').trim().length + 12 && host.children.length <= 3) continue;
+        let rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        // Enlace estirado (`::after` absoluto sobre la tarjeta): el objetivo es la tarjeta entera.
+        // Casilla o botón de opción: el objetivo es su etiqueta.
+        if (el.matches('input[type="checkbox"], input[type="radio"]') && el.labels?.[0]) rect = el.labels[0].getBoundingClientRect();
+        if (getComputedStyle(el, '::after').position === 'absolute') rect = (el.closest('article, li') ?? el).getBoundingClientRect();
+        if (rect.width < 43.5 || rect.height < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className).split(' ')[0]}@${(el.parentElement?.closest('[class]')?.className || '').toString().split(' ')[0]} "${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)}" ${Math.round(rect.width)}×${Math.round(rect.height)}`);
+      }
+      return out;
+    });
+    for (const item of found) small.push(`${route} ${item}`);
+    if (process.env.QA_VERBOSE) console.log(found.join('\n'));
+    await page.close();
+  }
+  check(small.length === 0, `todo control mide al menos 44 × 44 a 375 px (${small.length} menores; primeros: ${small.slice(0, 5).join('; ') || 'ninguno'})`);
+  await context.close();
+}
+
+console.log('\nOrden de tabulación (modelo, 1440 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/productos/sonicacion/hielscher-up400st/`, { waitUntil: 'load' });
+  const labels = [];
+  const ringless = [];
+  for (let i = 0; i < 14; i += 1) {
+    await page.keyboard.press('Tab');
+    const info = await page.evaluate(() => {
+      const el = document.activeElement;
+      const style = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return {
+        label: (el.textContent || el.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ').slice(0, 40),
+        ring: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2,
+        inFirstScreen: Boolean(el.closest('[data-first-screen]')),
+        inHeader: Boolean(el.closest('.site-header')),
+        top: rect.top,
+      };
+    });
+    labels.push(info);
+    if (!info.ring) ringless.push(info.label);
+  }
+  const at = (re) => labels.findIndex((l) => re.test(l.label));
+  const skip = at(/Ir al contenido/);
+  const cta = labels.findIndex((l) => l.inHeader && /Solicitar cotización/.test(l.label));
+  const wa = labels.findIndex((l) => l.inHeader && /WhatsApp/i.test(l.label));
+  const hero = labels.findIndex((l) => l.inFirstScreen && /Solicitar cotización|Cotizar/.test(l.label));
+  check(skip === 0 && cta > skip && wa > cta && hero > wa, `foco: salto → cabecera (cotización, WhatsApp) → CTA de la primera pantalla (${skip}, ${cta}, ${wa}, ${hero})`);
+  check(ringless.length === 0, `cada uno de los primeros 14 elementos enfocados tiene anillo de 2 px (${ringless.join(', ') || 'todos'})`);
+  await context.close();
+}
+
+console.log('\nDesbordamiento horizontal (375 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
+  const routes = [];
+  const collect = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) collect(full);
+      else if (entry.name === 'index.html') routes.push('/' + relative(dist, dirname(full)).split('\\').join('/') + '/');
+    }
+  };
+  collect(join(dist, 'productos'));
+  const over = [];
+  for (const route of ['/', '/productos/', '/contacto/', '/como-comprar/', ...new Set(routes)]) {
+    const page = await context.newPage();
+    await page.goto(`${base}${route}`, { waitUntil: 'load' });
+    const extra = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    if (extra > 0) over.push(`${route} +${extra}px`);
+    await page.close();
+  }
+  check(over.length === 0, `sin desbordamiento horizontal en las rutas de producto y las páginas clave (${over.slice(0, 5).join('; ') || 'ninguna'})`);
   await context.close();
 }
 

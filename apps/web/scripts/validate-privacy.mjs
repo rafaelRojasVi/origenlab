@@ -175,12 +175,18 @@ for (const file of statsFiles) {
   const hosts = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)].map((m) => m[2]).filter((h) => !h.endsWith('origenlab.cl'));
   assert(hosts.length === 0, `${rel}: la medición no nombra dominios ajenos`);
   assert(/sendBeacon/.test(body), `${rel}: la medición usa sendBeacon`);
-  // El sexto nombre es `visita`: origen y página, nunca el referente entero ni la query.
-  assert(body.includes('visita'), `${rel}: el sexto nombre de evento, visita, está en la lista`);
-  assert(!/stringify\([^)]*(referrer|search|href)/i.test(body), `${rel}: la carga útil no incluye el referente ni la query`);
 }
-const statsSource = readFileSync(join(root, 'src/lib/stats.ts'), 'utf8');
-assert(/JSON\.stringify\(payload\)/.test(statsSource) && !/payload[^;]*(referrer|location\.search|location\.href)/.test(statsSource), 'stats.ts: el referente sólo entra por el clasificador, nunca a la carga útil');
+// El sexto nombre es `visita`: origen y página, nunca el referente entero ni la query (vive en visit.ts).
+// Astro incrusta en el HTML el guion de visita (es pequeño): se busca en los JavaScript construidos y en los guiones en línea de la portada.
+const inlineScripts = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+const visitBodies = [...statsFiles.map((file) => readFileSync(file, 'utf8')), ...inlineScripts].filter((body) => body.includes('visita'));
+assert(visitBodies.length > 0, 'el sexto nombre de evento, visita, está en un JavaScript construido o en línea');
+for (const body of visitBodies) {
+  for (const word of ['localStorage', 'sessionStorage', 'document.cookie', 'indexedDB']) assert(!body.includes(word), `el guion de visita no usa ${word}`);
+  assert(/sendBeacon/.test(body), 'el guion de visita usa sendBeacon');
+}
+const visitSource = readFileSync(join(root, 'src/lib/visit.ts'), 'utf8');
+assert(/const body = JSON\.stringify\(\{ name: 'visita', props: \{ origen: classifyOrigin\([^)]*\), pagina \} \}\)/.test(visitSource), 'visit.ts: la carga útil es sólo origen y página; el referente entra por el clasificador');
 
 if (failed) {
   console.error('\nvalidate:privacy FALLÓ');

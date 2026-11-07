@@ -226,7 +226,7 @@ export const SCALE_SPEC: Partial<Record<FamilySlug, string>> = {
 
 const NUM = String.raw`\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+\.\d{1,2}(?!\d)|\d+(?:,\d+)?`;
 const SPEC_NUMBER = new RegExp(
-  String.raw`(${NUM})(?:(?:\s+a\s+|\s*[–—-]\s*)(?:${NUM}))?(?:\s*([A-Za-zµ°%×][^\s,;/]*))?`,
+  String.raw`(${NUM})(?:(?:\s+a\s+|\s*[–—-]\s*)(${NUM}))?(?:\s*([A-Za-zµ°%×][^\s,;/]*))?`,
 );
 
 /**
@@ -236,12 +236,14 @@ const SPEC_NUMBER = new RegExp(
  * palabra que empieza con letra, µ, °, % o ×. `'125 W de entrada, 75 W de
  * salida'` da `125 W`; `'1.5 kW'`, `1,5 kW`.
  */
-export function parseSpecNumber(value: string): { n: number; display: string } | null {
+export function parseSpecNumber(value: string): { n: number; upper: number; display: string } | null {
   const match = value.match(SPEC_NUMBER);
   if (!match) return null;
-  const raw = match[1];
-  const n = /^\d{1,3}(\.\d{3})+/.test(raw) ? Number(raw.replace(/\./g, '').replace(',', '.')) : Number(raw.replace(',', '.'));
-  return { n, display: match[0].trim() };
+  // Número chileno: el punto separa miles (`1.500` = 1500) y la coma es decimal (`1,5` = 1.5).
+  const num = (raw: string) =>
+    /^\d{1,3}(\.\d{3})+/.test(raw) ? Number(raw.replace(/\./g, '').replace(',', '.')) : Number(raw.replace(',', '.'));
+  const n = num(match[1]);
+  return { n, upper: match[2] ? num(match[2]) : n, display: match[0].trim() };
 }
 
 export interface FamilyScalePoint {
@@ -268,7 +270,10 @@ export function familyScale(
     .map((model) => {
       const spec = model.specs.find((item) => item.label === label);
       const parsed = spec && parseSpecNumber(spec.value);
-      return parsed ? { model, ...parsed } : null;
+      if (!parsed) return null;
+      // Una cifra que es un máximo («Velocidad máxima», «hasta 2 l») se ordena por el extremo alto del rango.
+      const isMax = /máxim/i.test(label) || /^\s*hasta\b/i.test(spec.value);
+      return { model, n: isMax ? parsed.upper : parsed.n, display: parsed.display };
     })
     .filter((item): item is NonNullable<typeof item> => item !== null)
     .sort((a, b) => a.n - b.n);
