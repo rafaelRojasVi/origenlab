@@ -1000,6 +1000,51 @@ console.log(`\nPágina de familia ${FAMILY_PATH}`);
   const html = existsSync(built) ? readFileSync(built, 'utf8') : '';
   check(html.includes(`href="${MODEL_PATH}"`), 'Family page lists its models');
 }
+
+/**
+ * Escala de la página de familia: cuatro marcas en sonicación, en el orden de la
+ * cifra y con desplazamientos crecientes; ninguna donde no hay cifra que ordene;
+ * y cada tarjeta, en todas las familias, con fotografía que carga o marco neutro.
+ */
+console.log('\nEscala y tarjetas de la página de familia');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/productos/sonicacion/`, { waitUntil: 'load' });
+  const marks = await page.locator('[data-family-scale] [data-mark]').evaluateAll((els) =>
+    els.map((el) => ({ text: el.querySelector('.fs__n')?.textContent?.trim(), left: el.getBoundingClientRect().left })),
+  );
+  check(marks.length === 4, `escala de la familia: ${marks.length} marcas`);
+  check(
+    marks.map((mark) => mark.text).join('|') === '100 W|200 W|400 W|2.000 W',
+    `escala de la familia: textos en orden (${marks.map((mark) => mark.text).join(', ')})`,
+  );
+  check(marks.every((mark, i) => i === 0 || mark.left > marks[i - 1].left), 'escala de la familia: desplazamientos crecientes');
+  const consult = await page.locator('#consulta-title').count();
+  check(consult === 1, 'familia: bloque «¿No sabe cuál?»');
+  await page.goto(`${base}/productos/electroforesis/`, { waitUntil: 'load' });
+  check((await page.locator('[data-family-scale]').count()) === 0, 'electroforesis: sin escala');
+
+  for (const path of ['/productos/sonicacion/', '/productos/dispersion/', '/productos/pesaje-humedad/', '/productos/osmometria/', '/productos/electroforesis/', '/productos/centrifugas/']) {
+    await page.goto(`${base}${path}`, { waitUntil: 'load' });
+    await page.evaluate(() => document.querySelectorAll('.model-card img, .mc img').forEach((img) => (img.loading = 'eager')));
+    await page.waitForTimeout(400);
+    const bad = await page.locator('.mc').evaluateAll((cards) =>
+      cards
+        .filter((card) => {
+          const imgs = card.querySelectorAll('img');
+          if (card.querySelector('[data-frame="neutral"]')) return imgs.length !== 0;
+          return imgs.length !== 1 || !(imgs[0].naturalWidth > 0);
+        })
+        .map((card) => card.querySelector('h3')?.textContent),
+    );
+    const total = await page.locator('.mc').count();
+    check(total > 0 && bad.length === 0, `${path}: ${total} tarjetas, sin fotografía rota (${bad.join(', ') || 'ninguna'})`);
+  }
+  await page.goto(`${base}/productos/centrifugas/`, { waitUntil: 'load' });
+  check((await page.locator('[data-family-scale] [data-mark]').count()) >= 3, 'centrífugas: la misma escala');
+  await context.close();
+}
 /**
  * Enlaces de entrada: `/productos/` lleva a las seis páginas de familia, cada
  * página de marca a las fichas de sus modelos, y cada ficha recibe al menos un
@@ -1289,6 +1334,24 @@ console.log('\nConsentimiento (/contacto/)');
     (await after.innerText()).trim() === 'Pedir cotización' && (await after.locator('svg.arrow').count()) === 1 && (await after.isEnabled()),
     'Consent: tras un envío fallido el botón recupera «Pedir cotización», la flecha y vuelve a estar activo',
   );
+  await context.close();
+}
+
+/* Visita: un solo envío `visita` por carga de página, origen «directo» sin referente. */
+{
+  console.log('\nVisita: un envío por carga de página');
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  const visits = [];
+  await page.route('**/api/stats/event', (route) => {
+    visits.push(route.request().postData() ?? '');
+    return route.fulfill({ status: 204 });
+  });
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  await page.waitForTimeout(500);
+  const first = visits.filter((b) => b.includes('"visita"'));
+  check(first.length === 1, `Visita: «/» envía una sola visita (${first.length})`);
+  check(first[0]?.includes('"origen":"directo"') && first[0]?.includes('"pagina":"/"') && !first[0]?.includes('modelo'), 'Visita: origen «directo», página «/» y sin modelo');
   await context.close();
 }
 

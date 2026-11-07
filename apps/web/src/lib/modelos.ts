@@ -216,3 +216,66 @@ export function modelSections(
     faqs: [...entry.faqs, ...(story?.faqs ?? []), ...buyingFaqs()],
   };
 }
+
+/** Cifra de la ficha que ordena la escala de cada familia; las demás no tienen escala. */
+export const SCALE_SPEC: Partial<Record<FamilySlug, string>> = {
+  sonicacion: 'Potencia',
+  dispersion: 'Potencia',
+  centrifugacion: 'Velocidad máxima',
+};
+
+/**
+ * Primera cifra de un valor de la ficha: `n` es el número (puntos de millar
+ * fuera, coma decimal como punto) y `display` el número con su unidad tal como
+ * está escrito. `'125 W de entrada, 75 W de salida'` da `125 W`.
+ */
+export function parseSpecNumber(value: string): { n: number; display: string } | null {
+  const match = value.match(/(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?\s*([^\s,;/]+)?/);
+  if (!match) return null;
+  const n = Number(`${match[1].replace(/\./g, '')}${match[2] ? `.${match[2]}` : ''}`);
+  return { n, display: match[0].trim() };
+}
+
+export interface FamilyScalePoint {
+  slug: string;
+  name: string;
+  display: string;
+  /** Posición 0–1 sobre la escala. */
+  x: number;
+}
+
+/**
+ * Escala de comparación de una familia, a partir de la cifra `SCALE_SPEC` de sus
+ * modelos. `null` si la familia no tiene escala o menos de tres modelos traen la
+ * cifra. La escala es logarítmica cuando el rango abarca más de 10 veces (100 W a
+ * 2.000 W no cabría en una recta) y lineal si no.
+ */
+export function familyScale(
+  models: readonly Modelo[],
+  slug: FamilySlug,
+): { label: string; points: FamilyScalePoint[] } | null {
+  const label = SCALE_SPEC[slug];
+  if (!label) return null;
+  const read = models
+    .map((model) => {
+      const spec = model.specs.find((item) => item.label === label);
+      const parsed = spec && parseSpecNumber(spec.value);
+      return parsed ? { model, ...parsed } : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => a.n - b.n);
+  if (read.length < 3) return null;
+  const min = read[0].n;
+  const max = read[read.length - 1].n;
+  const log = min > 0 && max / min > 10;
+  const at = (n: number) => (log ? Math.log(n) - Math.log(min) : n - min) / (log ? Math.log(max) - Math.log(min) : max - min);
+  return {
+    label,
+    points: read.map(({ model, n, display }) => ({
+      slug: model.slug,
+      name: model.name,
+      display,
+      x: max === min ? 0.5 : at(n),
+    })),
+  };
+}

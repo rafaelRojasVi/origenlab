@@ -2,14 +2,18 @@
 import Layout from '../../../layouts/Layout.astro';
 import PageIntro from '../../../components/ui/PageIntro.astro';
 import SectionIndex from '../../../components/ui/SectionIndex.astro';
-import ModelList from '../../../components/ui/ModelList.astro';
-import ModelRow from '../../../components/ui/ModelRow.astro';
+import FamilyScale from '../../../components/product/FamilyScale.astro';
+import FamilyModels from '../../../components/product/FamilyModels.astro';
+import FamilyConsult from '../../../components/product/FamilyConsult.astro';
 import CompareTable from '../../../components/ui/CompareTable.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
 import Notice from '../../../components/ui/Notice.astro';
 import Icon from '../../../components/ui/Icon.astro';
+import { getCollection } from 'astro:content';
+import { byBrandAndName } from '../../../lib/modelos';
+import type { Modelo } from '../../../content.config';
 import { getProductFamilyBySlug } from '../../../data/productFamilies';
 import { categories } from '../../../data/categories';
 import { getBrandById, getOrtoalresaCentrifuges } from '../../../lib/catalog';
@@ -18,6 +22,10 @@ import { itemListJsonLd } from '../../../lib/jsonld';
 const family = getProductFamilyBySlug('centrifugas');
 const products = getOrtoalresaCentrifuges();
 const brand = getBrandById('ortoalresa');
+const models = (await getCollection('modelos'))
+  .map((item) => item.data as Modelo)
+  .filter((entry) => entry.family === 'centrifugacion')
+  .sort(byBrandAndName);
 
 /** Filas de la comparativa: sólo etiquetas presentes en todos los modelos o
  *  claramente diferenciadoras. El resto vive en cada ficha. */
@@ -62,20 +70,11 @@ const relatedCategories = categories.filter((category) =>
     </PageIntro>
   </div>
 
-  <section class="shell section rule-top" aria-labelledby="modelos-title">
-    <SectionIndex index={1} label="Modelos" />
-    <h2 id="modelos-title" class="t-h2">Cinco modelos de catálogo</h2>
-    <p class="t-lead mt-5">
-      Ordenados de menor a mayor capacidad. Las cifras provienen de la documentación del
-      fabricante; la configuración de rotores y accesorios se define al cotizar.
-    </p>
-    <ModelList class="mt-10">
-      {products.map((product) => <ModelRow product={product} />)}
-    </ModelList>
-  </section>
+  <FamilyScale models={models} slug="centrifugacion" />
+  <FamilyModels models={models} title="Modelos de la familia" />
 
   <section class="shell section rule-top" aria-labelledby="comparativa-title">
-    <SectionIndex index={2} label="Comparativa" />
+    <SectionIndex index={1} label="Comparativa" />
     <h2 id="comparativa-title" class="t-h2">Qué diferencia a cada modelo</h2>
     <p class="t-lead mt-5">
       La elección suele resolverse en tres decisiones: volumen por ciclo, si necesita control de
@@ -91,7 +90,7 @@ const relatedCategories = categories.filter((category) =>
   </section>
 
   <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
-    <SectionIndex index={3} label="Aplicaciones" />
+    <SectionIndex index={2} label="Aplicaciones" />
     <h2 id="aplicaciones-title" class="t-h2">Dónde se usan</h2>
     <p class="t-body mt-5 applications">{applications.join(', ')}.</p>
     <ul class="link-row mt-8">
@@ -111,7 +110,7 @@ const relatedCategories = categories.filter((category) =>
   {
     brand && (
       <section class="shell section rule-top" aria-labelledby="marca-title">
-        <SectionIndex index={4} label="Marca" />
+        <SectionIndex index={3} label="Marca" />
         <div class="brand-block">
           <div>
             <h2 id="marca-title" class="t-h2">{brand.name}</h2>
@@ -137,6 +136,8 @@ const relatedCategories = categories.filter((category) =>
       </section>
     )
   }
+
+  <FamilyConsult brandName={brand?.name} />
 
   <ClosingQuoteBand
     title="Cotice la centrífuga adecuada para su flujo de trabajo."
