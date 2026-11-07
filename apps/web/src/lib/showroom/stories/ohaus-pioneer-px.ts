@@ -7,6 +7,7 @@ export const story = threeBeatStory({
   reveal: {
     view: 'general',
     anchors: ['display', 'pan'],
+    placement: { pan: 'left:90' },
     headline: 'Del plato a la pantalla',
     body: 'Plato: {Plato}. Calibración: {Calibración}.',
   },

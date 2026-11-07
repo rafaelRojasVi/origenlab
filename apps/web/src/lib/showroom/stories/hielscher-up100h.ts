@@ -7,6 +7,7 @@ export const story = threeBeatStory({
   reveal: {
     view: 'general',
     anchors: ['housing', 'tip'],
+    placement: { tip: 'bottom:60' },
     headline: 'Pequeño y de operación continua',
     body: 'Peso: {Peso}. Régimen de trabajo: {Régimen de trabajo}.',
   },

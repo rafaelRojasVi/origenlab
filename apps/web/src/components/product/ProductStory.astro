@@ -147,7 +147,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
                 </dl>
               )}
               {beat.overlayComponent === 'cta' && (
-                <p class="story__row">
+                <p class="story__row story__cta">
                   <a href={`/contacto/?producto=${entry.slug}`} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>
                     {ctaLabels.solicitarCotizacion}
                   </a>
@@ -415,6 +415,14 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   .story-spot[data-side='bottom']::after {
     bottom: calc(100% + var(--gap, 64px) - 4px);
   }
+  /* Una sola «Solicitar cotización» a la vista: mientras corre el último beat, la barra fija se oculta. */
+  :root:has(.story[data-live][data-mode='scroll'][data-beat='close']:not([data-end])) .cta-bar {
+    visibility: hidden;
+    opacity: 0;
+  }
+  .cta-bar {
+    transition: opacity 0.25s;
+  }
   .story-specs__groups {
     display: grid;
     gap: 2.5rem 4rem;
@@ -429,6 +437,19 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     color: var(--color-ink-600);
   }
   @media (width < 760px) {
+    /* Notas más angostas en el lienzo de 55 svh; el botón de cotizar ya está en la barra fija. */
+    .story[data-mode='tap'] .story-spot {
+      width: min(11rem, 45vw);
+      padding: 0.375rem 0.625rem;
+      font-size: 0.75rem;
+    }
+    /* Sólo el rótulo: el detalle se lee en el texto del tramo. */
+    .story[data-mode='tap'] .story-spot span {
+      display: none;
+    }
+    .story[data-mode='tap'] .story__cta {
+      display: none;
+    }
     .story[data-mode='tap'] .story__stage {
       position: sticky;
       top: 4rem;
