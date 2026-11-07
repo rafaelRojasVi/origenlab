@@ -41,6 +41,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below
   // (with the three W11 task commands); the other three case commands stay refused. Widening either
   // list is a separate, deliberate decision with its own review.
+  // «Publicar web» editor reads (`apps/api` v2/web_publish.py): one model's sheet, and the state of
+  // its last publish. GET-only; the id is the model file's name (`^[a-z0-9-]{1,60}$`), no query.
+  // The publish itself is the one POST in `WEB_PUBLISH_POST_PATHS`.
+  /^\/v2\/web\/model-sheet\/[a-z0-9-]{1,60}$/,
+  /^\/v2\/web\/publish-status\/[a-z0-9-]{1,60}$/,
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   // CRM Marketing reads (`apps/api` v2/crm_workspace_routes.py). Exact paths only: the

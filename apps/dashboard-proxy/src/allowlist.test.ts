@@ -1480,3 +1480,58 @@ describe("«Publicar web» (T7.3): publish a model sheet", () => {
     expect(webPublishBodyWithinLimit(Number.NaN)).toBe(false);
   });
 });
+
+describe("Publicar web (T7.3b): the editor's model-sheet and publish-status reads", () => {
+  const ID = "hielscher-up100h";
+  const READS = (id: string) => [`/v2/web/model-sheet/${id}`, `/v2/web/publish-status/${id}`];
+
+  it("allows both reads as exact GET paths, never as POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of READS(ID)) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows an id at the 1 and 60 character limits, with the id charset only", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    for (const id of ["a", "a".repeat(60), "ortoalresa-digicen-22-r", "0-9-a"]) {
+      for (const path of READS(id)) expect(isAllowedUpstreamPath(path), path).toBe(true);
+    }
+  });
+
+  it("refuses an empty id, uppercase, 61 characters, extra segments and a trailing slash", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    const bad = [
+      "/v2/web/model-sheet/",
+      "/v2/web/publish-status/",
+      "/v2/web/model-sheet/Hielscher-up100h",
+      "/v2/web/publish-status/HIELSCHER",
+      `/v2/web/model-sheet/${"a".repeat(61)}`,
+      `/v2/web/publish-status/${"a".repeat(61)}`,
+      "/v2/web/model-sheet/x/y",
+      "/v2/web/publish-status/x/y",
+      "/v2/web/model-sheet/x/",
+      "/v2/web/model-sheet/x_y",
+      "/v2/web/model-sheet/x.y",
+      "/v2/web/model-sheet/%2e%2e",
+      "/v2/web/model-sheets/x",
+      "/v2/web/model-sheet",
+    ];
+    for (const path of bad) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(`${path}?x=1`), `${path}?x=1`).toBe(false);
+    }
+  });
+
+  it("refuses POST on either read", async () => {
+    const { isAllowedPostPath } = await import("./allowlist");
+    for (const path of READS(ID)) expect(isAllowedPostPath(path), path).toBe(false);
+  });
+
+  it("keeps the publish POST allowed and its own path GET-refused", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedPostPath("/v2/web/publish-model-sheet")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/web/publish-model-sheet")).toBe(false);
+  });
+});

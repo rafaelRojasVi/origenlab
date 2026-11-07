@@ -1539,3 +1539,45 @@ describe("Publicar web: publish a model sheet", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 });
+
+describe("Publicar web (T7.3b): the editor's reads go through the GET path only", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const SHEET = "https://proxy.test/api/v2/web/model-sheet/hielscher-up100h";
+  const STATUS = "https://proxy.test/api/v2/web/publish-status/hielscher-up100h";
+
+  it.each([SHEET, STATUS])("forwards a GET of %s upstream with the server key", async (url) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(requestWithOrigin(url, { method: "GET" }), TEST_ENV);
+    expect(res.status).toBe(200);
+    const upstream = vi.mocked(fetch).mock.calls[0][0] as Request;
+    expect(new URL(upstream.url).pathname).toBe(new URL(url).pathname.replace(/^\/api/, ""));
+    expect(upstream.method).toBe("GET");
+  });
+
+  it.each([SHEET, STATUS])("refuses POST to %s before anything is forwarded", async (url) => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(url, {
+        method: "POST",
+        body: "{}",
+        headers: { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" },
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(405);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("refuses an uppercase id with 403 and never calls upstream", async () => {
+    stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin("https://proxy.test/api/v2/web/model-sheet/HIELSCHER", { method: "GET" }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(403);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});
