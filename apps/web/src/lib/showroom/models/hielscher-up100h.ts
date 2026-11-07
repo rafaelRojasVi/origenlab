@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import type { BuildOptions, BuiltModel } from '../types';
-import { SANS, canvasTexture, lathe, roundedBox } from './kit';
+import { SANS, canvasTexture, labGlass, lathe, roundedBox } from './kit';
 
 const L = 185;
 const WID = 130;
@@ -30,6 +30,12 @@ const PLATE_TOP = 10;
 const CRADLE_H = 44;
 const YC = PLATE_TOP + CRADLE_H + H / 2;
 const CX = L / 2;
+/** Centro de la placa del soporte: cubre desde detrás de la carcasa hasta el vaso. */
+const PLATE_CX = 130;
+/** Vaso bajo la punta. */
+const BEAKER_X = 251;
+const BEAKER_RIM = 88;
+const BEAKER_H = 60;
 const SONO_LEN = 80;
 
 export function build(options: BuildOptions = {}): BuiltModel {
@@ -49,14 +55,16 @@ export function build(options: BuildOptions = {}): BuiltModel {
     new THREE.MeshPhysicalMaterial({ color: 0x2b313b, roughness: 0.5, metalness: 0.2, clearcoat: 0.7, clearcoatRoughness: 0.25 }),
   );
   const steel = keep(new THREE.MeshPhysicalMaterial({ color: 0xd4d8dc, metalness: 1, roughness: 0.24 }));
-  const titanium = keep(new THREE.MeshPhysicalMaterial({ color: 0xb9bdc0, metalness: 1, roughness: 0.34, envMapIntensity: 1.2 }));
+  // El sonotrodo se ve sobre un fondo claro: titanio más oscuro y con poco reflejo del entorno.
+  const titanium = keep(new THREE.MeshPhysicalMaterial({ color: 0x6f757b, metalness: 0.85, roughness: 0.4, envMapIntensity: 0.6 }));
+  const hornSteel = keep(new THREE.MeshPhysicalMaterial({ color: 0x858b91, metalness: 0.9, roughness: 0.36, envMapIntensity: 0.7 }));
   const black = keep(new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.6 }));
   const rubber = keep(new THREE.MeshStandardMaterial({ color: 0x101113, roughness: 0.9 }));
   const alu = keep(new THREE.MeshPhysicalMaterial({ color: 0xdfe2e4, metalness: 0.9, roughness: 0.34 }));
 
   /* ── soporte: placa y cuna de dos apoyos ── */
-  const plate = new THREE.Mesh(rbox(360, 10, 190, 4), alu);
-  plate.position.set(CX, PLATE_TOP / 2, 0);
+  const plate = new THREE.Mesh(rbox(300, 10, 190, 4), alu);
+  plate.position.set(PLATE_CX, PLATE_TOP / 2, 0);
   plate.castShadow = true;
   plate.receiveShadow = true;
   root.add(plate);
@@ -69,6 +77,41 @@ export function build(options: BuildOptions = {}): BuiltModel {
     pad.position.set(x, PLATE_TOP + CRADLE_H - 1, 0);
     root.add(pad);
   }
+
+  /* ── vaso bajo la punta, sobre un taco: la punta queda sobre su boca ── */
+  const blockH = BEAKER_RIM - BEAKER_H - PLATE_TOP;
+  const block = new THREE.Mesh(rbox(58, blockH, 58, 4), alu);
+  block.position.set(BEAKER_X, PLATE_TOP + blockH / 2, 0);
+  block.castShadow = true;
+  root.add(block);
+  const beakerBase = BEAKER_RIM - BEAKER_H;
+  const LIQUID = 38;
+  const beaker = new THREE.Mesh(
+    keep(lathe([[0, 0], [24, 0], [25.5, 1.5], [25.5, BEAKER_H], [26.8, BEAKER_H + 1.2], [25.2, BEAKER_H + 1.2], [24, BEAKER_H - 0.4], [24, 2.5], [0, 2.5]])),
+    keep(labGlass()),
+  );
+  beaker.position.set(BEAKER_X, beakerBase, 0);
+  beaker.renderOrder = 3;
+  root.add(beaker);
+  const liquid = new THREE.Mesh(
+    keep(lathe([[0, 2.6], [23.8, 2.6], [23.8, LIQUID], [0, LIQUID]])),
+    keep(
+      new THREE.MeshPhysicalMaterial({
+        color: 0x9fd8f5,
+        roughness: 0.15,
+        clearcoat: 0.6,
+        emissive: 0x4aa8d8,
+        emissiveIntensity: 0.15,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    ),
+  );
+  liquid.position.set(BEAKER_X, beakerBase, 0);
+  liquid.renderOrder = 1;
+  root.add(liquid);
 
   /* ── carcasa ── */
   const body = new THREE.Group();
@@ -206,12 +249,12 @@ export function build(options: BuildOptions = {}): BuiltModel {
       new THREE.TubeGeometry(
         new THREE.CatmullRomCurve3([
           cableStart,
-          cableStart.clone().add(new THREE.Vector3(-16, -1, -2)),
-          new THREE.Vector3(-38, YC - 36, -32),
-          new THREE.Vector3(-52, PLATE_TOP + 14, -52),
-          new THREE.Vector3(-46, PLATE_TOP + 3.2, -72),
-          new THREE.Vector3(-20, PLATE_TOP + 3.2, -86),
-          new THREE.Vector3(10, PLATE_TOP + 3.2, -96),
+          cableStart.clone().add(new THREE.Vector3(-8, -1, -2)),
+          new THREE.Vector3(-14, YC - 40, -34),
+          new THREE.Vector3(-10, PLATE_TOP + 8, -56),
+          new THREE.Vector3(2, PLATE_TOP + 3.2, -76),
+          new THREE.Vector3(24, PLATE_TOP + 3.2, -88),
+          new THREE.Vector3(50, PLATE_TOP + 3.2, -92),
         ], false, 'centripetal'),
         64,
         3,
@@ -230,7 +273,7 @@ export function build(options: BuildOptions = {}): BuiltModel {
   root.add(horn);
   const collar = new THREE.Mesh(
     keep(lathe([[0, -4], [23, -4], [23, 3], [16, 4], [16, 11], [12.5, 12], [12.5, 18], [0, 18]])),
-    steel,
+    hornSteel,
   );
   collar.castShadow = true;
   horn.add(collar);
@@ -300,6 +343,10 @@ export function build(options: BuildOptions = {}): BuiltModel {
 
   let powered = false;
   let shownLed = false;
+  const activeTipRadius = () => {
+    for (const s of sonotrodes) if (s.mesh.visible) return s.r;
+    return sonotrodes[1].r;
+  };
 
   return {
     root,
@@ -327,21 +374,23 @@ export function build(options: BuildOptions = {}): BuiltModel {
       knobAngle += (target - knobAngle) * Math.min(1, dt * 5);
       knob.rotation.z = -knobAngle;
 
-      const tipR = (sonotrodes.find((s) => s.mesh.visible) ?? sonotrodes[1]).r;
+      const tipR = activeTipRadius();
       tips.position.x = (Math.random() - 0.5) * 0.2 * level;
       glowMat.opacity = 0.6 * level * (0.8 + Math.random() * 0.2);
       glow.scale.setScalar(26 + tipR * 4);
       // Dos ondas desfasadas que salen de la punta, crecen y se apagan.
-      rings.forEach(({ ring, mat }, i) => {
+      for (let i = 0; i < rings.length; i++) {
+        const { ring, mat } = rings[i];
         const phase = (t * 0.9 + i * 0.5) % 1;
         ring.visible = level > 0.02;
         ring.position.set(L + SONO_LEN + 2 + phase * 26, YC, 0);
         ring.scale.setScalar(tipR + 2 + phase * 11);
         mat.opacity = 0.85 * level * (1 - phase) * Math.min(1, phase * 8);
-      });
+      }
     },
     dispose() {
       for (const item of disposables) item.dispose();
+      disposables.length = 0;
     },
   };
 }
