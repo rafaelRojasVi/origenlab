@@ -41,6 +41,8 @@ RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("apps/dashboard/*", ("dashboard",)),
     ("apps/dashboard-proxy/*", ("proxy",)),
     ("apps/web/*", ("web",)),
+    # The «Catálogo web» editor pins its limits to the site's model-sheet schema (drift test).
+    ("apps/web/src/content/modelos.schema.json", ("dashboard",)),
     ("scripts/*", ("repo",)),
     ("Makefile", ALL),
     (".github/workflows/*", ALL),
