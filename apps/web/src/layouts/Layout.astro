@@ -35,7 +35,8 @@ const effectiveNoindex = noindex || robots === 'noindex';
   </head>
   <body>
     <a href="#contenido" class="skip-link">Ir al contenido</a>
-    <SiteHeader />
+    <div data-hd-sentinel aria-hidden="true"></div>
+    <SiteHeader tone={isHome ? 'ink' : 'paper'} />
     <main id="contenido" tabindex="-1">
       <slot />
     </main>
@@ -56,6 +57,14 @@ const effectiveNoindex = noindex || robots === 'noindex';
         color: var(--color-paper);
         border-radius: var(--radius-edge);
         font-weight: 600;
+      }
+      [data-hd-sentinel] {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        pointer-events: none;
       }
       main:focus {
         outline: none;

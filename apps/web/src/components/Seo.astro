@@ -39,7 +39,7 @@ const ogImageUrl = `${site.baseUrl}${ogImagePath ?? site.ogImagePath}`;
 <meta name="description" content={description} />
 <link rel="canonical" href={canonicalUrl} />
 {noindex && <meta name="robots" content="noindex, nofollow" />}
-<meta name="theme-color" content={site.themeColor} />
+<meta name="theme-color" content={isHome ? '#141617' : site.themeColor} />
 
 <link rel="icon" href="/favicon.ico" sizes="32x32" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />

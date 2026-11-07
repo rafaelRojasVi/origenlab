@@ -58,28 +58,51 @@ console.log('\nMenú móvil (375 px)');
   const page = await context.newPage();
   await page.goto(`${base}/`, { waitUntil: 'load' });
 
-  const summary = page.locator('[data-site-menu] summary');
-  await summary.click();
-  check(await page.locator('[data-site-menu]').evaluate((el) => el.open), 'el clic abre el panel');
+  const toggle = page.locator('[data-menu-toggle]');
+  const expanded = () => toggle.evaluate((el) => el.getAttribute('aria-expanded') === 'true');
+  check(
+    await toggle.evaluate((el) => el.tagName === 'BUTTON' && el.getAttribute('aria-expanded') === 'false'),
+    'el disparador es un <button> con aria-expanded="false"',
+  );
+  await toggle.click();
+  check(await expanded(), 'el clic abre el panel (aria-expanded="true")');
   check(await page.locator('.site-menu__panel a', { hasText: 'Productos' }).isVisible(), 'el panel muestra la navegación');
+  check(
+    (await page.locator('.site-menu__panel a', { hasText: 'Cómo comprar' }).count()) === 1,
+    'el panel incluye «Cómo comprar»',
+  );
+  check(
+    (await page.locator('.site-menu__panel a', { hasText: 'Servicios' }).count()) === 0,
+    'el panel ya no incluye «Servicios»',
+  );
+  check(
+    (await page.locator('.site-menu__panel').evaluate((el) => getComputedStyle(el).backgroundColor)) ===
+      'rgb(20, 22, 23)',
+    'el panel del menú es de tinta (rgb(20, 22, 23))',
+  );
+  const menuWa = await page.locator('.site-menu__panel a.btn-whatsapp').evaluate((el) => ({
+    height: Math.round(el.getBoundingClientRect().height),
+    href: el.getAttribute('href') ?? '',
+    text: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
+  }));
+  check(
+    menuWa.height === 48 && menuWa.href.startsWith('https://wa.me/') && menuWa.text.startsWith('Escribir por WhatsApp'),
+    `el panel trae WhatsApp de 48 px (${menuWa.height} px, "${menuWa.text}")`,
+  );
 
   await page.keyboard.press('Escape');
-  check(!(await page.locator('[data-site-menu]').evaluate((el) => el.open)), 'Escape cierra el panel');
+  check(!(await expanded()), 'Escape cierra el panel');
   check(
-    await page.evaluate(() => document.activeElement?.tagName === 'SUMMARY'),
+    await page.evaluate(() => document.activeElement?.hasAttribute('data-menu-toggle') === true),
     'el foco vuelve al disparador',
   );
 
-  await summary.click();
-  check(await page.locator('[data-site-menu]').evaluate((el) => el.open), 'vuelve a abrirse');
-  await summary.click();
-  check(
-    !(await page.locator('[data-site-menu]').evaluate((el) => el.open)),
-    'el mismo control lo cierra (aspa)',
-  );
+  await toggle.click();
+  check(await expanded(), 'vuelve a abrirse');
+  await toggle.click();
+  check(!(await expanded()), 'el mismo control lo cierra (aspa)');
 
-  await summary.click();
-  // El bloqueo lo aplica el manejador de `toggle`, que se encola tras el clic.
+  await toggle.click();
   const locked = await page
     .waitForFunction(() => document.documentElement.style.overflow === 'hidden', null, {
       timeout: 2000,
@@ -92,12 +115,108 @@ console.log('\nMenú móvil (375 px)');
   check(new URL(page.url()).pathname === '/marcas/', `un enlace del panel navega (${new URL(page.url()).pathname})`);
 
   await page.goto(`${base}/`, { waitUntil: 'load' });
-  await page.locator('[data-site-menu]').evaluate((el) => (el.open = false));
   check(
     await page.evaluate(() => document.documentElement.style.overflow !== 'hidden'),
     'con el panel cerrado el documento vuelve a desplazarse',
   );
   await context.close();
+}
+
+/* -- 1b. Cabecera: 72 → 56 px, marca animada una vez, tinta en la portada --- */
+console.log('\nCabecera (1440 px)');
+{
+  const headerHeight = (page) =>
+    page.evaluate(() => Math.round(document.querySelector('.site-header').getBoundingClientRect().height));
+  const shrinkChecks = async (label, init, reducedMotion = 'no-preference') => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion });
+    if (init) await context.addInitScript(init);
+    const page = await context.newPage();
+    await page.goto(`${base}/productos/`, { waitUntil: 'load' });
+    check((await headerHeight(page)) === 72, `Cabecera${label}: 72 px arriba (${await headerHeight(page)})`);
+    // El scroll es suave y la carga de CPU varía: se espera al valor hasta 3 s en vez de 400 ms fijos.
+    const settles = (px) =>
+      page
+        .waitForFunction(
+          (expected) => Math.round(document.querySelector('.site-header').getBoundingClientRect().height) === expected,
+          px,
+          { timeout: 3000 },
+        )
+        .then(() => true)
+        .catch(() => false);
+    await page.evaluate(() => window.scrollTo({ top: 300, behavior: 'instant' }));
+    await page.waitForTimeout(400);
+    check(await settles(56), `Cabecera${label}: 72 → 56 px con scroll (${await headerHeight(page)})`);
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    await page.waitForTimeout(400);
+    check(
+      await settles(72),
+      `Cabecera${label}: vuelve a 72 px arriba (${await headerHeight(page)} px, scrollY ${await page.evaluate(() => scrollY)})`,
+    );
+    await context.close();
+  };
+  await shrinkChecks('', null);
+  // Con movimiento reducido la animación de scroll no se declara y es el observador quien encoge.
+  await shrinkChecks(' (observador, movimiento reducido)', null, 'reduce');
+  await shrinkChecks(' (fallback JS)', () => {
+    const supports = CSS.supports.bind(CSS);
+    CSS.supports = (q, v) => (String(q).includes('animation-timeline') ? false : supports(q, v));
+  });
+
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage();
+    await page.goto(`${base}/productos/`, { waitUntil: 'load' });
+    const bodies = '.site-logo .origen-mark__body, .site-logo .origen-mark__trace, .site-logo .origen-mark__ring';
+    const motion = () =>
+      page.evaluate((selector) => {
+        const all = [...document.querySelectorAll(selector)].flatMap((el) => el.getAnimations());
+        return { count: all.length, states: all.map((a) => a.playState) };
+      }, bodies);
+    const first = await page.evaluate(
+      () => document.querySelectorAll('.site-logo .origen-mark__body')[0]?.getAnimations().length ?? 0,
+    );
+    check(first >= 1, `la marca de la cabecera anima al cargar (${first} animaciones en el primer cuerpo)`);
+    await page.waitForTimeout(1500);
+    const done = await motion();
+    check(
+      done.count >= 1 && done.states.every((state) => state === 'finished'),
+      `a los 1,5 s todas terminaron, sin bucle (${done.states.join(',')})`,
+    );
+    await page.locator('[data-logo-motion]').hover();
+    await page.waitForTimeout(150);
+    const replay = await motion();
+    check(replay.states.includes('running'), `al pasar el cursor la marca vuelve a animar (${replay.states.join(',')})`);
+    await context.close();
+  }
+
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    await page.goto(`${base}/productos/`, { waitUntil: 'load' });
+    await page.locator('[data-logo-motion]').hover();
+    await page.waitForTimeout(200);
+    const count = await page.evaluate(() =>
+      [...document.querySelectorAll('.site-logo, .site-logo *')].flatMap((el) => el.getAnimations()).length,
+    );
+    check(count === 0, `con movimiento reducido la marca no tiene animaciones (${count})`);
+    await context.close();
+  }
+
+  {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+    const page = await context.newPage();
+    await page.goto(`${base}/`, { waitUntil: 'load' });
+    const bg = await page.evaluate(() => getComputedStyle(document.querySelector('.site-header')).backgroundColor);
+    check(bg === 'rgb(20, 22, 23)', `en la portada la cabecera es de tinta (${bg})`);
+    const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content);
+    check(theme === '#141617', `en la portada theme-color es #141617 (${theme})`);
+    const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav a')].map((a) => a.textContent.trim()));
+    check(
+      nav.join('|') === 'Productos|Aplicaciones|Marcas|Cómo comprar|Nosotros',
+      `la navegación es ${nav.join(' · ')}`,
+    );
+    await context.close();
+  }
 }
 
 /* -- 2. Recorrido de teclado ---------------------------------------------- */

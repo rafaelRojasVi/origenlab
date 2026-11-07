@@ -26,6 +26,12 @@ import {
  *   paper traza en papel y nodos en teal-500, para fondos de tinta o de marca
  *   mono  todo hereda `currentColor`; los nodos llevan recorte para no fundirse
  *
+ * Ganchos de animación: la traza (`pathLength="1"`, para dibujarla con
+ * `stroke-dashoffset`), cada cuerpo y el anillo llevan clase. El grosor de la
+ * traza vive en el `<svg>` y la traza lo hereda; el radio de cada cuerpo sale de
+ * `--r` y `--mk-k`. Así la cabecera reduce la marca a 24 px con sólo CSS, sin
+ * redibujarla. Sin ese CSS el dibujo es idéntico al de los atributos.
+ *
  * Accesibilidad: con `title` la marca es una imagen con nombre; sin él queda
  * `aria-hidden`, que es lo correcto cuando el nombre ya está en texto al lado.
  */
@@ -36,10 +42,12 @@ interface Props {
   tone?: MarkTone;
   /** Texto accesible. Omitir cuando el lockup ya escribe "OrigenLab" al lado. */
   title?: string;
+  /** Añade el anillo que la animación de la cabecera expande; en reposo no se ve. */
+  ring?: boolean;
   class?: string;
 }
 
-const { size = 32, tone = 'ink', title, class: className = '' } = Astro.props;
+const { size = 32, tone = 'ink', title, ring = false, class: className = '' } = Astro.props;
 
 const TONES: Record<MarkTone, { trace: string; node: string }> = {
   ink: { trace: 'var(--color-ink-950)', node: 'var(--color-teal-700)' },
@@ -65,14 +73,18 @@ const radius = small ? MARK_NODE_RADIUS * MARK_SMALL_NODE_MULTIPLIER : MARK_NODE
   aria-label={title}
   aria-hidden={title ? undefined : 'true'}
   focusable="false"
+  stroke-width={stroke}
 >
   {title && <title>{title}</title>}
 
+  {ring && <circle class="origen-mark__ring" cx="24" cy="24" r="12.5" fill="none" stroke={colors.trace} stroke-width="1" opacity="0" />}
+
   <path
     d={MARK_PATH}
+    class="origen-mark__trace"
+    pathLength="1"
     fill="none"
     stroke={colors.trace}
-    stroke-width={stroke}
     stroke-linecap="round"
     stroke-linejoin="round"
   />
@@ -85,7 +97,14 @@ const radius = small ? MARK_NODE_RADIUS * MARK_SMALL_NODE_MULTIPLIER : MARK_NODE
           {tone === 'mono' && (
             <circle cx={x} cy={y} r={r + stroke * 0.42} fill="var(--mark-void, var(--color-paper))" />
           )}
-          <circle cx={x} cy={y} r={r} fill={colors.node} />
+          <circle
+            class={`origen-mark__body origen-mark__body--${index}`}
+            cx={x}
+            cy={y}
+            r={r}
+            fill={colors.node}
+            style={`--r:${r.toFixed(3)}px`}
+          />
         </>
       );
     })
@@ -96,5 +115,13 @@ const radius = small ? MARK_NODE_RADIUS * MARK_SMALL_NODE_MULTIPLIER : MARK_NODE
   .origen-mark {
     display: block;
     flex-shrink: 0;
+  }
+  .origen-mark__trace {
+    stroke-width: inherit;
+  }
+  .origen-mark__body {
+    r: calc(var(--mk-k, 1) * var(--r));
+    transform-box: fill-box;
+    transform-origin: center;
   }
 </style>

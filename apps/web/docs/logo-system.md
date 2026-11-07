@@ -151,12 +151,16 @@ JavaScript**.
 
 Reglas:
 
-- No se anima en cabecera ni en pie. Un bucle permanente en el shell del sitio
-  no tendría control de pausa, y eso incumpliría WCAG 2.2.2.
+- Cabecera: una vez al cargar y al pasar el cursor, 1,2 s, nunca en bucle; pie:
+  quieta. WCAG 2.2.2 se aplica al movimiento que empieza solo y dura más de
+  5 s, así que la cabecera no necesita control de pausa; un bucle permanente en
+  el shell sí lo necesitaría y por eso no existe. La reproducción de entrada es
+  sólo CSS (`SiteLogo` con `motion` lleva `.is-playing` en el HTML); un
+  `pointerenter` la repite.
 - Con `prefers-reduced-motion: reduce` la animación no llega a declararse: el
   bloque entero vive bajo `no-preference`. Los cuerpos se quedan exactamente
   donde los deja la marca estática, no en una posición degradada.
-- Ninguna otra superficie puede animar la marca sin revisar esas dos reglas.
+- Ninguna otra superficie puede animar la marca sin revisar esas reglas.
 
 ---
 

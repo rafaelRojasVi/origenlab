@@ -7,9 +7,13 @@ import OrigenMark from './logo/OrigenMark.astro';
  * El texto es texto, no un trazado dentro del SVG: se selecciona, se busca, se
  * traduce y hereda la tipografía del sitio. La marca sólo aporta el símbolo.
  *
- * La marca del shell es siempre estática. La versión animada existe, pero vive
- * únicamente en el hero de la portada: un bucle permanente en cada página no
- * tiene control de pausa y eso incumpliría WCAG 2.2.2.
+ * La marca de la cabecera (`motion`) se anima una vez durante 1,2 s al cargar y
+ * una vez más en cada `pointerenter`. Nunca en bucle. WCAG 2.2.2 se aplica al
+ * movimiento que empieza solo y dura más de 5 s, así que no hace falta un
+ * control de pausa. Con movimiento reducido los keyframes no se declaran y la
+ * marca es el dibujo estático. La del pie (sin `motion`) está siempre quieta.
+ * La reproducción de entrada es sólo CSS (`.is-playing` ya viene en el HTML);
+ * el script de `SiteHeader` únicamente la repite.
  *
  * El símbolo no lleva texto accesible propio porque «OrigenLab» ya está escrito
  * al lado; anunciarlo dos veces sólo alarga el lector de pantalla.
@@ -17,14 +21,19 @@ import OrigenMark from './logo/OrigenMark.astro';
 interface Props {
   tone?: 'ink' | 'paper';
   size?: number;
+  /** Sólo la cabecera: reproduce la animación de 1,2 s al cargar y al pasar el cursor. */
+  motion?: boolean;
   class?: string;
 }
 
-const { tone = 'ink', size = 30, class: className = '' } = Astro.props;
+const { tone = 'ink', size = 30, motion = false, class: className = '' } = Astro.props;
 ---
 
-<span class:list={['site-logo', `site-logo--${tone}`, className]}>
-  <OrigenMark size={size} tone={tone === 'ink' ? 'ink' : 'paper'} />
+<span
+  class:list={['site-logo', `site-logo--${tone}`, motion && 'is-playing', className]}
+  data-logo-motion={motion ? '' : undefined}
+>
+  <OrigenMark size={size} tone={tone === 'ink' ? 'ink' : 'paper'} ring={motion} />
   <span class="site-logo__word">OrigenLab</span>
 </span>
 
@@ -47,5 +56,81 @@ const { tone = 'ink', size = 30, class: className = '' } = Astro.props;
   }
   .site-logo--paper .site-logo__word {
     color: var(--color-paper);
+  }
+</style>
+
+<style is:global>
+  /* Movimiento de la marca (tablero Sistema, 1,2 s). Sólo bajo no-preference:
+     con movimiento reducido ni siquiera se declara y queda el dibujo quieto. */
+  @media (prefers-reduced-motion: no-preference) {
+    .is-playing .origen-mark__body {
+      animation-duration: 1.2s;
+      animation-timing-function: linear;
+      animation-fill-mode: forwards;
+    }
+    .is-playing .origen-mark__body--0 {
+      animation-name: origen-settle-0;
+    }
+    .is-playing .origen-mark__body--1 {
+      animation-name: origen-settle-1;
+    }
+    .is-playing .origen-mark__body--2 {
+      animation-name: origen-settle-2;
+    }
+    .is-playing .origen-mark__trace {
+      stroke-dasharray: 1;
+      animation: origen-trace 1.2s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    .is-playing .origen-mark__ring {
+      animation: origen-ring 1.2s ease-out forwards;
+    }
+    @keyframes origen-settle-0 {
+      0% { transform: translate(1.82px, 1.01px) scale(0.82); }
+      10% { transform: translate(-16.56px, 4.99px) scale(0.83); }
+      20% { transform: translate(-20.48px, -10.26px) scale(0.86); }
+      30% { transform: translate(-10.1px, -17.51px) scale(0.89); }
+      40% { transform: translate(-0.96px, -14.37px) scale(0.93); }
+      50% { transform: translate(2.5px, -8.39px) scale(0.96); }
+      60% { transform: translate(2.5px, -3.84px) scale(0.99); }
+      70% { transform: translate(1.49px, -1.34px) scale(1); }
+      80% { transform: translate(0.61px, -0.28px) scale(1); }
+      90% { transform: translate(0.13px, 0) scale(1); }
+      100% { transform: none; }
+    }
+    @keyframes origen-settle-1 {
+      0% { transform: translate(4.52px, -2.68px) scale(0.82); }
+      10% { transform: translate(10.37px, -20.55px) scale(0.83); }
+      20% { transform: translate(25.51px, -16.22px) scale(0.86); }
+      30% { transform: translate(26.52px, -3.6px) scale(0.89); }
+      40% { transform: translate(19.27px, 2.96px) scale(0.93); }
+      50% { transform: translate(11.96px, 3.88px) scale(0.96); }
+      60% { transform: translate(6.76px, 2.53px) scale(0.99); }
+      70% { transform: translate(3.43px, 1.01px) scale(1); }
+      80% { transform: translate(1.41px, 0.13px) scale(1); }
+      90% { transform: translate(0.33px, -0.07px) scale(1); }
+      100% { transform: none; }
+    }
+    @keyframes origen-settle-2 {
+      0% { transform: translate(0.04px, -1.67px) scale(0.82); }
+      10% { transform: translate(12.09px, 12.77px) scale(0.83); }
+      20% { transform: translate(0.38px, 23.31px) scale(0.86); }
+      30% { transform: translate(-10.85px, 17.47px) scale(0.89); }
+      40% { transform: translate(-12.39px, 7.89px) scale(0.93); }
+      50% { transform: translate(-8.74px, 1.93px) scale(0.96); }
+      60% { transform: translate(-4.68px, -0.3px) scale(0.99); }
+      70% { transform: translate(-1.94px, -0.64px) scale(1); }
+      80% { transform: translate(-0.55px, -0.39px) scale(1); }
+      90% { transform: translate(-0.07px, -0.11px) scale(1); }
+      100% { transform: none; }
+    }
+    @keyframes origen-trace {
+      0% { opacity: 0; stroke-dashoffset: 1; }
+      38% { opacity: 1; stroke-dashoffset: 1; }
+      100% { opacity: 1; stroke-dashoffset: 0; }
+    }
+    @keyframes origen-ring {
+      0%, 35% { opacity: 0.5; }
+      75%, 100% { opacity: 0; }
+    }
   }
 </style>
