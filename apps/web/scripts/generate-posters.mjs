@@ -4,7 +4,7 @@
  * quieto, para el nivel bajo («Ver en 3D»), la primera pintura de la página y
  * la imagen social (`og:image`).
  *
- * Levanta `astro preview` sobre `dist/` en un puerto libre, abre
+ * Sirve `dist/` en un puerto libre, abre
  * `/productos/<familia>/<slug>/?poster=1` en Chromium (WebGL por software) a
  * 1200x900 y guarda `public/products/<slug>-poster.jpg`. `?poster=1` lo
  * entiende `ProductStory.astro`: nivel alto, sin movimiento ni historia, monta
@@ -19,10 +19,9 @@
  * necesita un navegador con WebGL). Después, `npm run build` otra vez para que
  * las páginas incluyan los pósteres nuevos.
  */
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
-import { dirname, join } from 'node:path';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
@@ -46,36 +45,52 @@ if (models.length === 0) {
   process.exit(0);
 }
 
-const freePort = () =>
-  new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once('error', reject);
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-
-const port = await freePort();
-const base = `http://127.0.0.1:${port}`;
-const preview = spawn('npx', ['astro', 'preview', '--host', '127.0.0.1', '--port', String(port)], {
-  cwd: root,
-  stdio: ['ignore', 'ignore', 'inherit'],
+/*
+ * Servidor estático de `dist/` en el propio proceso, como `qa-interaction.mjs`.
+ * No se usa `astro preview`: en Astro 7 se desprende a segundo plano (el proceso
+ * hijo sale con código 0 y el servidor queda huérfano, fuera de alcance de
+ * `kill()`). Un servidor en proceso se cierra solo con el script.
+ */
+const dist = join(root, 'dist');
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.json': 'application/json',
+  '.xml': 'application/xml',
+  '.txt': 'text/plain; charset=utf-8',
+};
+const server = createServer((req, res) => {
+  const path = normalize(decodeURIComponent(new URL(req.url, 'http://l').pathname)).replace(/^(\.\.[/\\])+/, '');
+  let file = join(dist, path);
+  if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');
+  if (!file.startsWith(dist) || !existsSync(file)) {
+    res.writeHead(404, { 'content-type': 'text/html' });
+    res.end('missing');
+    return;
+  }
+  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+  createReadStream(file).pipe(res);
 });
-const stop = () => preview.kill();
+await new Promise((resolve, reject) => {
+  server.once('error', reject);
+  server.listen(0, '127.0.0.1', resolve);
+});
+const base = `http://127.0.0.1:${server.address().port}`;
+const stop = () => server.close();
 process.on('exit', stop);
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(130));
 
 let browser;
 let failed = 0;
 try {
-  for (let tries = 0; ; tries++) {
-    try {
-      if ((await fetch(`${base}/`)).ok) break;
-    } catch {}
-    if (tries > 100) throw new Error('astro preview no respondió en 30 s');
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-
   // WebGL por software, como qa-interaction.mjs: sirve sin GPU.
   browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   mkdirSync(outDir, { recursive: true });

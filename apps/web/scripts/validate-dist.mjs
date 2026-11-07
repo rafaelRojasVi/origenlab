@@ -119,10 +119,13 @@ for (const file of pages) {
   const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
   assert(canonical?.endsWith('/'), at(`la canónica debe llevar barra final: ${canonical}`));
   assert(/<meta name="theme-color"/.test(html), at('falta theme-color'));
-  // Páginas de modelo con póster 3D (scripts/generate-posters.mjs): su og:image es el póster, 1200x900.
+  // Sólo una página de modelo (`productos/<familia>/<slug>/`) puede llevar su póster 3D
+  // (scripts/generate-posters.mjs), y exactamente `/products/<slug>-poster.jpg`; el resto, el PNG del sitio.
+  const sitePng = 'https://origenlab.cl/og/origenlab-og.png';
   const ogImage = html.match(/property="og:image" content="([^"]+)"/)?.[1];
-  const ogOk = ogImage === 'https://origenlab.cl/og/origenlab-og.png' || (/^https:\/\/origenlab\.cl\/products\/[a-z0-9-]+-poster\.jpg$/.test(ogImage ?? '') && existsSync(join(dist, ogImage.slice('https://origenlab.cl'.length))));
-  assert(ogOk, at(`og:image debe ser el PNG absoluto o el póster del modelo (${ogImage})`));
+  const modelSlug = rel.match(/^productos\/[^/]+\/([^/]+)\/index\.html$/)?.[1];
+  const ogOk = ogImage === sitePng || (modelSlug !== undefined && ogImage === `https://origenlab.cl/products/${modelSlug}-poster.jpg` && existsSync(join(dist, 'products', `${modelSlug}-poster.jpg`)));
+  assert(ogOk, at(`og:image debe ser el PNG del sitio${modelSlug ? ` o /products/${modelSlug}-poster.jpg` : ''} (${ogImage})`));
   const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? '';
   assert(description.length > 50, at('descripción demasiado corta'));
   assert(description.length <= 165, at(`descripción de ${description.length} caracteres (máx. 165)`));
