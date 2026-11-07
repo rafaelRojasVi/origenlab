@@ -13,6 +13,10 @@ export const modelLoaders: Record<string, () => Promise<ModelModule>> = {
   'adam-highland': () => import('./models/adam-highland'),
   'loeser-i-osmometer': () => import('./models/loeser-i-osmometer'),
   'serva-bluevertical-prime': () => import('./models/serva-bluevertical-prime'),
+  'hielscher-up200st': () => import('./models/hielscher-up200st'),
+  'hielscher-up100h': () => import('./models/hielscher-up100h'),
+  'ohaus-mb120': () => import('./models/ohaus-mb120'),
+  'ohaus-mb32': () => import('./models/ohaus-mb32'),
 };
 
 /**

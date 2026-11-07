@@ -11,8 +11,12 @@ import { entry as e3 } from './content/ohaus-pioneer-px';
 import { entry as e4 } from './content/adam-highland';
 import { entry as e5 } from './content/loeser-i-osmometer';
 import { entry as e6 } from './content/serva-bluevertical-prime';
+import { entry as e7 } from './content/hielscher-up200st';
+import { entry as e8 } from './content/hielscher-up100h';
+import { entry as e9 } from './content/ohaus-mb120';
+import { entry as e10 } from './content/ohaus-mb32';
 
-export const showroomEntries: readonly ShowroomEntry[] = [e0, e1, e2, e3, e4, e5, e6];
+export const showroomEntries: readonly ShowroomEntry[] = [e0, e1, e2, e3, e4, e5, e6, e7, e8, e9, e10];
 
 export function showroomEntry(id: string): ShowroomEntry | undefined {
   return showroomEntries.find((entry) => entry.id === id);
