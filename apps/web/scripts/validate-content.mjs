@@ -15,6 +15,9 @@
  *     http(s) del fabricante
  *   - `brand` no está en `APPROVED_BRAND_IDS`, o el enum del esquema se
  *     desvió de esa lista
+ *   - `family` no es uno de los seis slugs de familia (`FAMILY_SLUGS`, que
+ *     son también los segmentos de URL `/productos/{family}/`), o el enum del
+ *     esquema se desvió de ellos
  *   - `slug` no coincide con el nombre del archivo, o dos archivos colisionan
  *   - `image_id` no apunta a una fila `VERIFIED` de `productImages.ts`
  *   - `showroom_id` no tiene escena en `src/lib/showroom/content/`
@@ -46,6 +49,8 @@ const { APPROVED_BRAND_IDS } = await import('../src/data/brands.ts');
 const { productImages } = await import('../src/data/productImages.ts');
 
 const URL_PATTERN = '^https?://';
+/** Las seis familias: segmento de URL de `/productos/{family}/{slug}/`. */
+const FAMILY_SLUGS = ['sonicacion', 'dispersion', 'pesaje-humedad', 'osmometria', 'electroforesis', 'centrifugacion'];
 const FORBIDDEN_KEYS = ['price', 'stock', 'lead_time', 'warranty'];
 
 let failed = false;
@@ -91,6 +96,10 @@ assert(
   JSON.stringify([...schema.properties.brand.enum].sort()) === JSON.stringify([...APPROVED_BRAND_IDS].sort()),
   'modelos.schema.json: el enum de brand no coincide con APPROVED_BRAND_IDS',
 );
+assert(
+  JSON.stringify([...schema.properties.family.enum].sort()) === JSON.stringify([...FAMILY_SLUGS].sort()),
+  'modelos.schema.json: el enum de family no coincide con los seis slugs de familia',
+);
 for (const key of FORBIDDEN_KEYS) {
   assert(!(key in schema.properties), `modelos.schema.json: declara «${key}», que está prohibido`);
 }
@@ -106,6 +115,8 @@ function modelErrors(file, data, slugs) {
   if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
     const id = file.replace(/\.json$/, '');
     if (typeof data.slug === 'string' && data.slug !== id) found.push(`slug «${data.slug}» debe ser «${id}»`);
+    if (typeof data.family === 'string' && !FAMILY_SLUGS.includes(data.family))
+      found.push(`family «${data.family}» no es una de las seis familias`);
     if (typeof data.brand === 'string' && !APPROVED_BRAND_IDS.includes(data.brand))
       found.push(`brand «${data.brand}» no está en APPROVED_BRAND_IDS`);
     if (typeof data.image_id === 'string') {
@@ -144,6 +155,7 @@ function selfTest() {
     ['clave ajena', (d) => (d.color = 'rojo'), 'color no está en el esquema'],
     ['falta lead', (d) => delete d.lead, 'lead es obligatorio y falta'],
     ['familia fuera del enum', (d) => (d.family = 'otra'), 'family «otra» no está en'],
+    ['familia fuera de las seis', (d) => (d.family = 'otra'), 'family «otra» no es una de las seis familias'],
     ['marca no aprobada', (d) => (d.brand = 'acme'), 'brand «acme» no está en APPROVED_BRAND_IDS'],
     ['source vacío', (d) => (d.specs[0].source = ''), 'specs[0].source must be a URL'],
     ['source javascript:', (d) => (d.specs[0].source = 'javascript:alert(1)'), 'specs[0].source must be a URL'],

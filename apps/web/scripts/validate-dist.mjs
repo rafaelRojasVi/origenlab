@@ -326,13 +326,16 @@ for (const file of walk(dist, '.html')) {
 }
 const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).size, 0);
 // Bytes, informados en kB de 1.000 para que el mensaje y el límite usen la misma unidad.
-// CSS 64 kB: Astro 7.4 dejó el CSS en 60.012 bytes (2026-10-22), 12 sobre el límite anterior.
+// CSS 80 kB: Astro 7.4 dejó el CSS en 60.012 bytes (2026-10-22), 12 sobre el límite anterior
+// (64 kB); las plantillas de modelo y de familia (2026-11-07), con la historia de producto,
+// suman una hoja propia que ya no cabe en la incrustación automática de Astro.
+const CSS_BUDGET = 80_000;
 const kb = (bytes) => (bytes / 1000).toFixed(1);
 assert(js < 15_000, `dist: ${kb(js)} kB de JavaScript (presupuesto 15 kB)`);
 // three.js pesa ~560 kB; cada modelo, decenas. El techo cubre la biblioteca y
 // los siete modelos juntos, aunque una página sólo pide los que muestra.
 assert(scene < 900_000, `dist: ${kb(scene)} kB en la sala 3D bajo demanda (techo 900 kB)`);
-assert(css < 64_000, `dist: ${kb(css)} kB de CSS (presupuesto 64 kB)`);
+assert(css < CSS_BUDGET, `dist: ${kb(css)} kB de CSS (presupuesto ${kb(CSS_BUDGET)} kB)`);
 
 if (failed) {
   console.error('\nvalidate:dist FALLÓ');
