@@ -27,16 +27,16 @@ of truth*). Any PR that changes what is built, applied or deployed updates this
 file — including the `Last verified` line — **in the same PR**. A PR that only
 changes design, rules or targets does not touch it.
 
-Last verified: **2026-10-22** against main `e3db0940`.
+Last verified: **2026-11-07** against main `ba228655`.
 
 ## 0. Production now
 
 What runs today. §1–§4 below keep the measured history behind it; where an older row there
 says "frozen", "not deployed" or "not created", this section is the current state.
 
-| Item | State (2026-10-22) |
+| Item | State (2026-11-07) |
 |---|---|
-| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Migration head `20261022100000` (67 files in `supabase/migrations/`), applied by the release automation |
+| Durable database | Supabase `origenlab-v2` (PostgreSQL 17), **in production**. Applied head `20261101100000` (76 files, §2.7.173), applied by the release automation. The repository head is `20261108100000` (77 files in `supabase/migrations/`, 68 tables): that last migration, `crm.consent`, is built on a branch — **not merged, not applied** (row «Built, not applied») |
 | Release | `OL_RELEASE_AUTOMATION_ENABLED=true` since 2026-10-13: a merge to `main`, once CI passes, runs `production-db-migrations` end to end — encrypted backup → migrations → worker → API → dashboard at the merge SHA → postflight. Render auto-deploy stays off |
 | API | Render web service `origenlab` (`render.yaml` calls it `origenlab-api`), Python runtime, root `apps/api`, Starter, Oregon |
 | Worker | Render Background Worker `origenlab-mail-triage`, starter, root `apps/worker`: a supervisor with triage, capture (every minute: gmail-sync → drive-file → quote-read) and tender children. 279–362 MB since 2026-10-21 (#813) |
@@ -47,6 +47,7 @@ says "frozen", "not deployed" or "not created", this section is the current stat
 | Data API | **Disabled** on `origenlab-v2` by the owner on 2026-10-22 (Supabase dashboard → Integrations → Data API) — closes `t01`/`d01`. Supabase keeps PostgREST polling with no exposed schema, so the Postgres log may still show `schema "pg_pgrst_no_exposed_schemas" does not exist` every ~32 s: platform noise, no schema reachable |
 | Open gate | Legacy JWT keys on `origenlab-v2` not yet disabled; the exposed JWT secret not yet rotated ([`OPERATIONS.md`](OPERATIONS.md) §1.2, §2.5 below) |
 | Marketing | Campaigns still go out through the V1 lane (the PC runner). Measured analytics on the Marketing page (§2.7.172); the Cyber and OHAUS sends reach the CRM only after the owner runs `v1_sent_campaign_import.py --apply` once |
+| Built, not applied | Branch `feat/web-backend-form-consent` (not merged, not deployed, nothing applied to `origenlab-v2`): migration `20261108100000` creates `crm.consent` (#72, Ley 21.719 consent records, append-only; 68 tables, 238 policies, 201 foreign keys); the API, the worker and the proxy changes of §2.7.185 ride on it. **Deploy prerequisites:** the page `https://origenlab.cl/contacto/enviado/` must exist on the website before the `dashboard-proxy` Worker deploys (the no-JS form redirects there), and the Astro form's `product` / `consent_version` fields and consent checkbox (`consent-v1-2026-11`) are a separate site plan — until it ships, no consent row is written |
 | Built, flag off | Migrations `20261029100000` + `20261029110000` (`crm.person_name`, «people first»: who wrote each email): built and merged — the release applies the migrations to `origenlab-v2`. Automatic people actions stay **off** until `ORIGENLAB_V2_AUTO_PEOPLE_ENABLED=true`; the 90-day `people-backfill` and the `people_dry_run` read are **pending the owner** (§2.7.164) |
 
 ## 1. Eras
@@ -681,6 +682,7 @@ prose is in git history (see commit referenced by the PR). Entries are in build 
 | §2.7.182 | 2026-11-03 | — | **Web form joins the open case** — no migration: a website quote form from someone who already has one open case (by their address — now also any current participant of the case, e.g. a quote's recipient — or else by their institution's domain, never free mail) is linked to it by R12 instead of opening another request (R7); several or none still opens one. R11 forwards share the same lookup |
 | §2.7.183 | 2026-11-06 | — | **Forwarded request suggests its institution** — no migration: a case opened from Solicitudes (a Labdelivery or own-mailbox forward) with no requesting institution now suggests one in «Asignar institución» from the forward itself — the company the worker read and the customer's email domain (never free mail) — when no client email on the case gives one |
 | §2.7.184 | 2026-11-06 | — | **Web form suggests the institution typed** — no migration: a website quote-form case with no requesting institution now suggests, in «Asignar institución», the «Institución o empresa» the visitor typed (the form writes it into the subject) when the model read none — so a free-mail visitor still gets a one-click suggestion |
+| §2.7.185 | 2026-11-07 | — | **Web form product and consent** — migration `20261108100000` (built, not applied): `crm.consent` (#72, one row per consent: address, purpose `quote_request`/`newsletter`, text version, accepted-at, source, source message; append-only by trigger; api select/insert, no worker access; 68 tables, 238 policies, 201 foreign keys; pgTAP `110_web_consent.sql`). API: `WebQuoteFormRequest` takes optional `product` (≤ 120) and `consent_version` (≤ 80); the self-mail subject carries the product and the body has `Producto:` and `Consentimiento: <version> <submitted_at>` lines. Worker: `web_form_reading.py` reads those lines into the `web_form:v1` triage assertion (consent accepted only in the builder's position, after `Enviado:`). Mail rules: `record_web_form_consents()` runs at the start of every automatic pass and after a manual «Aplicar» (idempotent, own-domain sender only); R7 and R12 add the product as case interest (`record_web_form_interest`) on automatic actions. Proxy: the no-JS form success redirects to `https://origenlab.cl/contacto/enviado/` (page must exist first, §0) |
 
 **Key milestones (highlighted in the table above):**
 
