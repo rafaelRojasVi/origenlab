@@ -22,6 +22,12 @@ export type SonotrodeId = 'S24d7' | 'S24d14' | 'S24d22';
 const SONOTRODES: readonly SonotrodeId[] = ['S24d7', 'S24d14', 'S24d22'];
 
 export interface StoryScene extends Showroom {
+  /**
+   * El modelo montado, para las historias de equipos con piezas propias (la
+   * tapa de un analizador de humedad: `model.root.userData.lidOpen`,
+   * `setLidAngle`). Las historias genéricas no lo necesitan.
+   */
+  readonly model: BuiltModel;
   /** `Showroom.tweenTo`: `smoothstep` entre la cámara actual y la vista; 800 ms por defecto. */
   tweenTo(view: string, durationMs?: number): void;
   /**
@@ -85,6 +91,7 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
 
   return {
     ...showroom,
+    model,
     onFrame(callback) {
       userFrame = callback;
     },
@@ -157,8 +164,9 @@ export interface BeatSpec {
   animationHook?: (scene: StoryScene, localT: number) => void;
   /**
    * Pieza HTML que acompaña al beat; `ProductStory.astro` la pinta:
-   * `facts` cifras de la ficha (`overlayData`: etiquetas); `hotspot` nota sobre
-   * un ancla (`overlayData`: [ancla]; el texto sale del marcador de la sala);
+   * `facts` cifras de la ficha (`overlayData`: etiquetas); `hotspot` una nota
+   * sobre cada ancla de `overlayData` (una o varias; el texto sale del
+   * marcador de la sala);
    * `meter` medidor de la cifra de pantalla (`overlayData`: [etiqueta con el
    * rango «del N al M %»]); `callout` nota sobre un ancla con un valor de la
    * ficha (`overlayData`: [ancla, etiqueta]); `sonotrodes` las puntas

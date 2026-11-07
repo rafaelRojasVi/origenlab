@@ -61,8 +61,11 @@ if (meterBeat && !range) throw new Error(`ProductStory (${entry.slug}): el medid
 const spots = config.beats.flatMap((beat: BeatSpec) => {
   const [anchor, label] = beat.overlayData ?? [];
   if (beat.overlayComponent === 'hotspot') {
-    const spot = hotspots.find((item) => item.anchor === anchor);
-    return spot && spot.body.length ? [{ beat: beat.id, anchor, title: spot.title, body: spot.body }] : [];
+    // Una nota por ancla: un beat puede señalar varias a la vez.
+    return (beat.overlayData ?? []).flatMap((name) => {
+      const spot = hotspots.find((item) => item.anchor === name);
+      return spot && spot.body.length ? [{ beat: beat.id, anchor: name, title: spot.title, body: spot.body }] : [];
+    });
   }
   if (beat.overlayComponent === 'callout') return [{ beat: beat.id, anchor, title: label, body: [spec(label).value] }];
   return [];
@@ -76,6 +79,8 @@ const beats = config.beats.map((beat, index) => ({
   body: fill(beat.textBody),
 }));
 const applications = config.applications.length ? config.applications : entry.applications;
+// Sin accesorios propios de la historia, los de la ficha del modelo.
+const accessories = config.accessories.length ? config.accessories.map((item) => (item.note ? `${item.name} · ${item.note}` : item.name)) : entry.accessories;
 const groups = config.specs.map((group) => ({ title: group.title, rows: group.labels.map(spec) }));
 const sources = [...new Set(entry.specs.map((item) => item.source))];
 const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
@@ -184,10 +189,10 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
         ))
       }
       {
-        config.accessories.length > 0 && (
+        accessories.length > 0 && (
           <div>
             <h3 class="t-label">Accesorios</h3>
-            <ul class="story__row story__chips">{config.accessories.map((item) => <li>{item.name}{item.note && ` · ${item.note}`}</li>)}</ul>
+            <ul class="story__row story__chips">{accessories.map((item) => <li>{item}</li>)}</ul>
           </div>
         )
       }
