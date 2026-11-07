@@ -178,7 +178,7 @@ export const claims: readonly Claim[] = [
     approvedOn: '2026-11-07',
     status: 'approved',
     visibility: 'public',
-    note: 'Nunca «distribuidor oficial» ni «exclusivo»: sólo lo dice TrustStrip, y sólo para una marca con commercialScopeConfirmed.',
+    note: 'Nunca «distribuidor oficial» ni «exclusivo»: no aparece en la franja de la ficha (TrustStrip ya no tiene pilar de distribuidor); sólo se diría para una marca con commercialScopeConfirmed.',
   },
   {
     id: 'despacho-todo-chile',

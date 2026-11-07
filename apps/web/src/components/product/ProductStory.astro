@@ -399,6 +399,9 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   .story__cue {
     display: none;
   }
+  .story[data-live][data-mode='scroll'] .story__cue {
+    display: flex;
+  }
   @media (width < 760px) {
     /* Notas más angostas en el lienzo de 55 svh; el botón de cotizar ya está en la barra fija. */
     .story[data-mode='tap'] .story-spot {
@@ -415,7 +418,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     }
     .story[data-mode='tap'] .story__stage {
       position: sticky;
-      top: 4rem;
+      top: var(--hd-h, 4rem);
       z-index: 1;
       height: 55svh;
       aspect-ratio: auto;
@@ -461,7 +464,6 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       left: calc(120% + 1.5rem);
       bottom: 30px;
       translate: -50%;
-      display: flex;
       flex-direction: column;
       align-items: center;
       gap: 0.5rem;

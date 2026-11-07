@@ -96,12 +96,37 @@ const photo = imageForEntry(entry);
 </script>
 
 <style is:global>
+  /* Alto de la cabecera: 72 px arriba en escritorio y 56 px con scroll, igual que ella (`SiteHeader`). */
+  @property --hd-h {
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 56px;
+  }
   .model-page {
     --hd-h: 56px;
   }
   @media (min-width: 1024px) {
     .model-page {
       --hd-h: 72px;
+    }
+    html:has([data-scrolled]) .model-page {
+      --hd-h: 56px;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      @supports (animation-timeline: scroll()) {
+        .model-page {
+          animation-name: model-hd;
+          animation-timing-function: linear;
+          animation-fill-mode: both;
+          animation-timeline: scroll(root);
+          animation-range: 0 120px;
+        }
+      }
+    }
+  }
+  @keyframes model-hd {
+    to {
+      --hd-h: 56px;
     }
   }
   /* Secciones de la página de modelo (las dos páginas que usan este marco): aire, franja alterna y titular. */

@@ -27,6 +27,8 @@ const pastFirstScreen = async (page) => {
     const first = document.querySelector('[data-first-screen]');
     window.scrollTo({ top: first.getBoundingClientRect().bottom + window.scrollY + 120, behavior: 'instant' });
   });
+  // El observador y la transición de 200 ms pueden tardar con el WebGL por software ocupando la página.
+  await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(450);
 };
 

@@ -46,7 +46,7 @@ const id = (index: number) => `src-${entry.slug}-${index}`;
                   <circle cx="9" cy="5.6" r=".95" fill="currentColor" />
                 </svg>
               </button>
-              <span role="tooltip" id={id(index)} class="tip">Fuente: {host(spec.source)} · verificado el {verified}</span>
+              <span role="tooltip" id={id(index)} class="tip" aria-hidden="true">Fuente: {host(spec.source)} · verificado el {verified}</span>
             </td>
           </tr>
         ))
@@ -139,8 +139,21 @@ const id = (index: number) => `src-${entry.slug}-${index}`;
     pointer-events: none;
     transition: opacity var(--ease-ui);
   }
-  .spec__s:hover .tip,
-  .spec__s:focus-within .tip {
+  .spec__s:not([data-dismissed]):hover .tip,
+  .spec__s:not([data-dismissed]):focus-within .tip {
     opacity: 1;
   }
 </style>
+
+<script>
+  /** Escape cierra la nota de fuente abierta (WCAG 1.4.13): la oculta hasta que el cursor o el foco vuelvan. */
+  addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const open = document.querySelector<HTMLElement>('.spec__s:hover, .spec__s:focus-within');
+    if (!open) return;
+    open.dataset.dismissed = '';
+    const clear = () => delete open.dataset.dismissed;
+    open.addEventListener('mouseleave', clear, { once: true });
+    open.addEventListener('focusout', clear, { once: true });
+  });
+</script>

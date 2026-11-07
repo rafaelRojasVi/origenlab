@@ -7,14 +7,7 @@ import { publicClaim } from '../../data/claims';
  * mono, sin texto de apoyo. Una afirmación sin aprobar no se dibuja; sin
  * ninguna, la franja entera se omite. «Pago», «garantía» y el pilar de
  * distribuidor no están aquí: no son afirmaciones aprobadas.
- *
- * `index` se acepta por compatibilidad con las páginas que aún lo pasan; la
- * franja ya no lleva índice de sección.
  */
-interface Props {
-  index?: number;
-}
-
 const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despacho-todo-chile', 'puesta-en-marcha-con-fabrica']
   .map(publicClaim)
   .filter((text): text is string => Boolean(text));
@@ -25,7 +18,7 @@ const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despa
     <section class="msec msec--alt" aria-labelledby="confianza-title">
       <div class="shell rv">
         <h2 id="confianza-title" class="t-label">Cómo trabajamos</h2>
-        <ul class="trust">
+        <ul class="mtrust">
           {items.map((text, i) => (
             <li>
               <span class="t-label">{String(i + 1).padStart(2, '0')}</span>
@@ -39,7 +32,7 @@ const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despa
 }
 
 <style is:global>
-  .trust {
+  .mtrust {
     list-style: none;
     margin: 2.5rem 0 0;
     padding: 0;
@@ -47,7 +40,7 @@ const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despa
     flex-wrap: wrap;
     gap: 1.5rem;
   }
-  .trust li {
+  .mtrust li {
     flex: 1 1 9.5rem;
     display: flex;
     flex-direction: column;
@@ -55,14 +48,14 @@ const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despa
     padding-top: 1rem;
     border-top: 2px solid var(--color-ink-950);
   }
-  .trust b {
+  .mtrust b {
     font-size: 1rem;
     font-weight: 600;
     line-height: 1.35;
     color: var(--color-ink-950);
   }
   @media (max-width: 639.98px) {
-    .trust li {
+    .mtrust li {
       flex-basis: 44%;
     }
   }
