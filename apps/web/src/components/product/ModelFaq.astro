@@ -1,0 +1,119 @@
+---
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Preguntas frecuentes del modelo: a la izquierda el título y la invitación a
+ * escribir; a la derecha un `<details>` por pregunta, con el chevron que gira
+ * al abrir. La altura se anima con `::details-content` sólo si el navegador la
+ * soporta y el visitante no pidió movimiento reducido.
+ */
+interface Props {
+  faqs: { q: string; a: string }[];
+}
+
+const { faqs } = Astro.props;
+---
+
+<div class="faq">
+  <div>
+    <p class="t-label">Preguntas frecuentes</p>
+    <h2 id="preguntas-title" class="mh2">Antes de cotizar</h2>
+    <p class="faq__lead">¿Otra duda? Escríbanos por WhatsApp y le respondemos.</p>
+  </div>
+  <div class="faq__list">
+    {
+      faqs.map((faq) => (
+        <details>
+          <summary>
+            {faq.q}
+            <Icon name="chevron-down" size={22} class="faq__chev" />
+          </summary>
+          <p>{faq.a}</p>
+        </details>
+      ))
+    }
+  </div>
+</div>
+
+<style is:global>
+  .faq {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+  }
+  .faq__lead {
+    max-width: 20rem;
+    margin-top: 1rem;
+    color: var(--color-ink-600);
+  }
+  .faq details {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .faq details:last-child {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .faq summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    min-height: 4rem;
+    padding-block: 0.875rem;
+    list-style: none;
+    cursor: pointer;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-950);
+  }
+  .faq summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq summary:hover {
+    color: var(--color-teal-800);
+  }
+  .faq summary .faq__chev {
+    flex: none;
+    transition: transform 0.25s ease-out;
+  }
+  .faq details[open] summary .faq__chev {
+    transform: rotate(180deg);
+  }
+  .faq details p {
+    max-width: 64ch;
+    padding: 0 0 1.5rem;
+    color: var(--color-ink-600);
+  }
+  @media (min-width: 640px) {
+    .faq summary {
+      font-size: 1.1875rem;
+    }
+    .faq details p {
+      padding-right: 3rem;
+    }
+  }
+  @media (min-width: 960px) {
+    .faq {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+      gap: 3rem;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    :root {
+      interpolate-size: allow-keywords;
+    }
+    @supports selector(::details-content) {
+      .faq details::details-content {
+        overflow: clip;
+        block-size: 0;
+        transition:
+          block-size 0.25s ease-out,
+          content-visibility 0.25s allow-discrete;
+      }
+      .faq details[open]::details-content {
+        block-size: auto;
+      }
+    }
+  }
+</style>

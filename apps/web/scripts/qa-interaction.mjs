@@ -21,6 +21,15 @@ function check(condition, message) {
   if (!condition) failed = true;
 }
 
+/** Desplaza hasta justo después de la primera pantalla de la página de modelo (`[data-first-screen]`). */
+const pastFirstScreen = async (page) => {
+  await page.evaluate(() => {
+    const first = document.querySelector('[data-first-screen]');
+    window.scrollTo({ top: first.getBoundingClientRect().bottom + window.scrollY + 120, behavior: 'instant' });
+  });
+  await page.waitForTimeout(450);
+};
+
 /* Lecturas de la fuente para los chequeos de la portada: independientes de dist/. */
 const brandsSource = readFileSync(join(root, 'src/data/brands.ts'), 'utf8');
 const idList = (name) =>
@@ -706,11 +715,11 @@ for (const story of STORY_PAGES) {
     await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
     await page.locator('[data-story]').scrollIntoViewIfNeeded();
     await page.waitForTimeout(800);
-    check(await page.locator('.story-specs').isVisible(), 'ProductStory: static DOM present under reduced-motion (.story-specs visible)');
+    check(await page.locator('#ficha-title').isVisible(), 'ProductStory: static DOM present under reduced-motion (la ficha técnica de la página se ve)');
     check(await page.locator('[data-story] canvas').evaluate((el) => el.hidden), 'ProductStory: el lienzo queda con hidden');
     const beats = await page.locator('[data-story] [data-beat]').evaluateAll((els) => els.map((el) => ({
       id: el.dataset.beat,
-      heading: el.querySelector('h2')?.textContent?.trim() ?? '',
+      heading: el.querySelector('h1, h2')?.textContent?.trim() ?? '',
       shown: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none',
     })));
     check(beats.length === 10, `ProductStory: diez tramos en el HTML (${beats.length})`);
@@ -739,7 +748,8 @@ for (const story of STORY_PAGES) {
     });
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
-    const top = await page.locator('[data-story-spacer]').evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+    // El recorrido de la historia empieza donde termina la primera pantalla (`lead`).
+    const top = await page.locator('[data-story-spacer]').evaluate((el) => el.getBoundingClientRect().top + window.scrollY + el.querySelector('[data-first-screen]').offsetHeight);
     await page.evaluate((y) => window.scrollTo(0, y + 1500), top);
     const ready = await waitReady(page);
     check(ready, 'ProductStory: canvas initialises on scroll (canvas[data-ready="1"])');
@@ -869,7 +879,8 @@ for (const story of STORY_PAGES) {
     await page.goto(`${base}${path}`, { waitUntil: 'load' });
     check((await page.locator('[data-story]').count()) === 1, 'Ficha heredada del Digicen 22 R: monta la historia ([data-story])');
     check((await page.locator('[data-sticky-cta]').count()) === 1, 'Ficha heredada del Digicen 22 R: lleva la barra fija de cotización');
-    check((await page.locator('#especificaciones-title').count()) === 0, 'Ficha heredada del Digicen 22 R: la ficha técnica sólo la cuenta la historia');
+    check((await page.locator('#ficha-title').count()) === 1, 'Ficha heredada del Digicen 22 R: la ficha técnica es una sección de la página, no de la historia');
+    check((await page.locator('.story-specs').count()) === 0, 'Ficha heredada del Digicen 22 R: la historia ya no lleva ficha propia');
     await page.locator('[data-story]').scrollIntoViewIfNeeded();
     await page.waitForTimeout(800);
     check(errors.length === 0, `Ficha heredada del Digicen 22 R: sin errores de JavaScript (${errors.join('; ') || 'ninguno'})`);
@@ -1128,8 +1139,7 @@ if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
     );
     const wa = await bar.locator('a[href^="https://wa.me/"]').getAttribute('href');
     check(Boolean(wa) && decodeURIComponent(wa).includes('UP400St'), 'Sticky CTA: WhatsApp con el modelo en el mensaje');
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight / 3));
-    await page.waitForTimeout(200);
+    await pastFirstScreen(page);
     const pinned = await bar.evaluate((el) => {
       const box = el.getBoundingClientRect();
       return box.bottom <= innerHeight + 1 && box.top >= innerHeight - 160;
@@ -1163,17 +1173,16 @@ if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
   await page.waitForLoadState('load');
   check(new URL(page.url()).pathname === FAMILY_PATH, `Model nav: el enlace lleva al índice de la familia (${new URL(page.url()).pathname})`);
 
-  // Sticky CTA: visible tras 200 px de desplazamiento, con el botón «Solicitar cotización».
+  // Sticky CTA: visible al salir de la primera pantalla, con el botón «Solicitar cotización».
   await page.goto(`${base}${MODEL_PATH}`, { waitUntil: 'load' });
-  await page.evaluate(() => window.scrollTo(0, 200));
-  await page.waitForTimeout(250);
+  await pastFirstScreen(page);
   const bar = page.locator('[data-sticky-cta]');
   const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
   const inView = await bar.evaluate((el) => {
     const box = el.getBoundingClientRect();
     return box.height > 0 && box.top < innerHeight && box.bottom > 0;
   });
-  check((await quote.isVisible()) && inView, 'Sticky CTA: «Solicitar cotización» visible tras 200 px de scroll');
+  check((await quote.isVisible()) && inView, 'Sticky CTA: «Solicitar cotización» visible al salir de la primera pantalla');
 
   // WhatsApp: el parámetro `text` nombra el modelo (no sólo el enlace); la marca ya no se exige.
   const wa = await bar.locator('a[href^="https://wa.me/"]').getAttribute('href');
@@ -1230,6 +1239,7 @@ console.log('\nConsentimiento (/contacto/)');
     window.addEventListener('click', (event) => event.target.closest?.('a') && event.preventDefault(), true);
   });
   await page.goto(`${base}${path}`, { waitUntil: 'load' });
+  await pastFirstScreen(page);
   const bar = page.locator('[data-sticky-cta]');
   const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
   check((await quote.getAttribute('data-track')) === 'cotizacion_click', 'Ficha heredada: «Solicitar cotización» de la barra lleva data-track');
@@ -1247,8 +1257,90 @@ console.log('\nConsentimiento (/contacto/)');
   );
   // Modo estático (movimiento reducido): lienzo oculto, ficha técnica de la historia visible.
   check(await page.locator('canvas[data-story-canvas]').evaluate((el) => el.hidden), 'Ficha heredada: con movimiento reducido el lienzo 3D queda oculto');
-  await page.locator('.story-specs').scrollIntoViewIfNeeded();
-  check(await page.locator('.story-specs').isVisible(), 'Ficha heredada: con movimiento reducido la ficha técnica se ve');
+  await page.locator('#ficha-title').scrollIntoViewIfNeeded();
+  check(await page.locator('#ficha-title').isVisible(), 'Ficha heredada: con movimiento reducido la ficha técnica se ve');
+  await context.close();
+}
+
+/* -- 9. Página de modelo: el 3D es la primera pantalla --------------------- */
+
+/**
+ * El modelo con historia abre sobre el 3D: a 1440 × 900 se ven, sin desplazar,
+ * el H1, la primera «Solicitar cotización» y el escenario. La barra fija sólo
+ * entra al terminar esa primera pantalla (`[data-first-screen]`). Debajo vienen,
+ * en este orden, aplicaciones, ficha, accesorios, relacionados, cómo trabajamos
+ * y preguntas. Lo cubren las dos páginas que montan la historia: la de la
+ * colección y la ficha heredada de centrifugación.
+ */
+const FIRST_SCREEN_PAGES = ['/productos/sonicacion/hielscher-up400st/', '/productos/centrifugas/digicen-22-r/'];
+const SECTION_ORDER = ['aplicaciones-title', 'ficha-title', 'accesorios-title', 'relacionados-title', 'confianza-title', 'preguntas-title'];
+// Una sección sin contenido no se dibuja: el Digicen 22 R no tiene accesorios ni en su ficha ni en su historia.
+const NO_ACCESSORIES = ['/productos/centrifugas/digicen-22-r/'];
+for (const path of FIRST_SCREEN_PAGES) {
+  console.log(`\nModelo: primera pantalla y secciones ${path} (1440 × 900)`);
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(`${base}${path}`, { waitUntil: 'load' });
+  await page.waitForTimeout(500);
+  const first = await page.evaluate(() => {
+    const box = (el) => (el ? el.getBoundingClientRect() : null);
+    const inside = (rect) => Boolean(rect) && rect.top >= 0 && rect.bottom <= innerHeight && rect.height > 0;
+    return {
+      h1: inside(box(document.querySelector('h1'))),
+      cta: inside(box(document.querySelector('[data-first-screen] .btn-primary'))),
+      stage: inside(box(document.querySelector('[data-story-photo]') ?? document.querySelector('[data-story] canvas'))),
+    };
+  });
+  check(first.h1 && first.cta && first.stage, `primera pantalla: h1 y CTA visibles junto al escenario (h1 ${first.h1}, CTA ${first.cta}, escenario ${first.stage})`);
+  check((await page.locator('h1').count()) === 1, 'Modelo: un solo h1');
+
+  const bar = page.locator('[data-sticky-cta]');
+  check(await bar.evaluate((el) => el.inert), 'barra fija oculta antes de salir de la primera pantalla (inert)');
+  let reached = '';
+  for (let n = 0; n < 25 && !reached; n += 1) {
+    await page.keyboard.press('Tab');
+    reached = await page.evaluate(() => (document.activeElement?.closest('[data-sticky-cta]') ? document.activeElement.outerHTML.slice(0, 60) : ''));
+  }
+  check(!reached, `Tab 25 veces desde la carga no entra en la barra fija (${reached || 'no entra'})`);
+  await pastFirstScreen(page);
+  check(!(await bar.evaluate((el) => el.inert)), 'pasada la primera pantalla la barra fija se activa (sin inert)');
+  const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
+  await quote.focus();
+  const ring = await page.evaluate(() => {
+    const el = document.activeElement;
+    const style = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return { ring: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2, inView: rect.top >= 0 && rect.bottom <= innerHeight };
+  });
+  check(ring.ring && ring.inView, 'pasada la primera pantalla el foco de teclado se ve en la barra fija');
+
+  const ids = await page.evaluate((wanted) => [...document.querySelectorAll('main [id]')].map((el) => el.id).filter((id) => wanted.includes(id)), SECTION_ORDER);
+  const expectedIds = SECTION_ORDER.filter((id) => id !== 'accesorios-title' || !NO_ACCESSORIES.includes(path));
+  check(JSON.stringify(ids) === JSON.stringify(expectedIds), `secciones en orden (${ids.join(' > ')})`);
+  const details = page.locator('main details');
+  check((await details.count()) >= 1, `preguntas frecuentes como <details> (${await details.count()})`);
+  await details.first().locator('summary').click();
+  check(await details.first().evaluate((el) => el.hasAttribute('open')), 'abrir la primera pregunta fija [open]');
+  // La ficha heredada de las centrífugas conserva su tabla por grupos (`SpecGroups`): sin botones de fuente.
+  const infos = path.includes('/centrifugas/') ? [true] : await page.locator('.info').evaluateAll((els) =>
+    els.map((el) => {
+      const target = document.getElementById(el.getAttribute('aria-describedby') ?? '');
+      return Boolean(target) && (target.textContent ?? '').trim().startsWith('Fuente:');
+    }),
+  );
+  check(infos.length > 0 && infos.every(Boolean), `cada botón .info describe su fuente («Fuente: …») (${infos.filter(Boolean).length} de ${infos.length})`);
+  await context.close();
+}
+{
+  const path = '/productos/sonicacion/hielscher-uip2000hdt/';
+  console.log(`\nModelo: imágenes de ${path}`);
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(`${base}${path}`, { waitUntil: 'load' });
+  await page.evaluate(() => document.querySelectorAll('img[loading="lazy"]').forEach((img) => (img.loading = 'eager')));
+  await page.waitForTimeout(1200);
+  const broken = await page.evaluate(() => [...document.images].filter((img) => img.complete && img.naturalWidth === 0).map((img) => img.currentSrc || img.src));
+  check(broken.length === 0, `ninguna imagen sin cargar (${broken.join(', ') || 'ninguna'})`);
   await context.close();
 }
 

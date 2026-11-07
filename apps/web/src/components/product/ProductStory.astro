@@ -2,21 +2,25 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import ModelPhoto from '../ui/ModelPhoto.astro';
-import ExternalLink from '../ui/ExternalLink.astro';
 import { imageForModel } from '../../data/productImages';
 import { getBrandById } from '../../lib/catalog';
 import { ctaLabels } from '../../lib/ctaLabels';
+import { modelSections } from '../../lib/modelos';
 import { showroomEntry } from '../../lib/showroom/catalog';
 import type { BeatSpec, ProductStoryConfig } from '../../lib/showroom/productStory';
 import type { Modelo } from '../../content.config';
 
 /**
  * Historia de producto por scroll: el equipo en 3D sobre un lienzo fijo y diez
- * tramos de texto que avanzan con la página; después, la ficha técnica.
+ * tramos de texto que avanzan con la página. Es la primera pantalla de la
+ * página de modelo: con el slot `intro` lleno, su contenido (el texto de
+ * `ModelHeroCopy`) reemplaza el titular y el cuerpo del primer tramo, que
+ * conserva su cámara y su animación y mide una pantalla (`data-first-screen`).
+ * La ficha técnica, los accesorios y las preguntas ya no van aquí: son
+ * secciones de la página.
  *
  * Mejora progresiva estricta. El HTML trae todo lo que se lee: el texto de
- * cada tramo, sus cifras, la ficha, los accesorios y las descargas, más la
- * imagen fija del equipo (el póster `public/products/<slug>-poster.jpg` si
+ * cada tramo y sus cifras, más la imagen fija del equipo (el póster `public/products/<slug>-poster.jpg` si
  * existe; si no, la fotografía VERIFIED). El script de abajo decide el nivel
  * de calidad (`canvas[data-tier]`: high, medium o low) y sólo con high o
  * medium, y con la historia cerca de la pantalla, pide los fragmentos
@@ -30,14 +34,15 @@ import type { Modelo } from '../../content.config';
  *
  * Props: `config` (la historia, `src/lib/showroom/stories/<id>.ts`) y `entry`
  * (los datos de la ficha de la colección `modelos`: `entry.data` de
- * `getEntry`). Los modelos relacionados y la banda de cierre los pone la
- * página, en el slot, después de la ficha.
+ * `getEntry`). Aplicaciones, ficha, accesorios, relacionados y preguntas los
+ * pone la página, después de la historia.
  */
 interface Props {
   config: ProductStoryConfig;
   entry: Modelo;
 }
 const { config, entry } = Astro.props;
+const intro = Astro.slots.has('intro');
 
 const brand = getBrandById(entry.brand);
 const name = `${brand?.name ?? entry.brand} ${entry.name}`;
@@ -79,12 +84,7 @@ const beats = config.beats.map((beat, index) => ({
   headline: fill(beat.textHeadline),
   body: fill(beat.textBody),
 }));
-const applications = config.applications.length ? config.applications : entry.applications;
-// Sin accesorios propios de la historia, los de la ficha del modelo.
-const accessories = config.accessories.length ? config.accessories.map((item) => (item.note ? `${item.name} · ${item.note}` : item.name)) : entry.accessories;
-const groups = config.specs.map((group) => ({ title: group.title, rows: group.labels.map(spec) }));
-const sources = [...new Set(entry.specs.map((item) => item.source))];
-const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+const { applications } = modelSections(entry, config);
 
 const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`)) ? `/products/${entry.slug}-poster.jpg` : null;
 const photo = imageForModel(entry.image_id ?? entry.slug);
@@ -104,7 +104,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       <div class="story__photo" data-story-photo>
         {
           poster ? (
-            <img src={poster} width="1200" height="900" alt={`${name}, modelo 3D`} style="width:100%;height:100%;object-fit:contain" />
+            <img src={poster} width="1200" height="900" alt={`${name}, modelo 3D`} class="story__poster" fetchpriority={intro ? 'high' : 'auto'} loading={intro ? 'eager' : 'lazy'} decoding={intro ? 'sync' : 'async'} />
           ) : (
             <ModelPhoto image={photo} size="hero" priority ratio="4 / 5" />
           )
@@ -131,11 +131,24 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
 
     <div class="story__beats">
       {
-        beats.map((beat) => (
-          <section class="story__beat rule-top" data-beat={beat.id} data-beats={beat.id} style={`--span:${beat.span.toFixed(3)}`} aria-labelledby={dom(beat.id)}>
+        beats.map((beat, index) => (
+          <section
+            class:list={['story__beat', !(intro && index === 0) && 'rule-top']}
+            data-beat={beat.id}
+            data-beats={beat.id}
+            data-first-screen={intro && index === 0 ? '' : undefined}
+            style={`--span:${beat.span.toFixed(3)}`}
+            aria-labelledby={intro && index === 0 ? 'modelo-titulo' : dom(beat.id)}
+          >
             <div class="story__text">
-              <h2 class="t-h2" id={dom(beat.id)}>{beat.headline}</h2>
-              {beat.body && <p class="t-lead">{beat.body}</p>}
+              {intro && index === 0 ? (
+                <slot name="intro" />
+              ) : (
+                <>
+                  <h2 class="t-h2" id={dom(beat.id)}>{beat.headline}</h2>
+                  {beat.body && <p class="t-lead">{beat.body}</p>}
+                </>
+              )}
               {beat.overlayComponent === 'facts' && (
                 <dl class="story__row">
                   {(beat.overlayData ?? []).map(spec).map((item) => (
@@ -172,71 +185,18 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
                 </ul>
               )}
             </div>
+            {intro && index === 0 && (
+              <p class="story__cue" aria-hidden="true">
+                <span class="t-label">Deslice para ver el equipo</span>
+                <i></i>
+              </p>
+            )}
           </section>
         ))
       }
     </div>
   </div>
 
-  <section class="story-specs section" aria-labelledby={dom('ficha')}>
-    <h2 class="t-h2" id={dom('ficha')}>Especificaciones técnicas</h2>
-    <div class="story-specs__groups">
-      {
-        groups.map((group) => (
-          <div>
-            <h3 class="t-label">{group.title}</h3>
-            <dl>
-              {group.rows.map((row) => (
-                <div class="rule-top">
-                  <dt>{row.label}</dt>
-                  <dd class="t-data">{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        ))
-      }
-      {
-        accessories.length > 0 && (
-          <div>
-            <h3 class="t-label">Accesorios</h3>
-            <ul class="story__row story__chips">{accessories.map((item) => <li>{item}</li>)}</ul>
-          </div>
-        )
-      }
-    </div>
-    {
-      [...entry.faqs, ...config.faqs].length > 0 && (
-        <div class="mt-8">
-          <h3 class="t-h3">Preguntas frecuentes</h3>
-          {[...entry.faqs, ...config.faqs].map((faq) => (
-            <details>
-              <summary>{faq.q}</summary>
-              <p class="t-body">{faq.a}</p>
-            </details>
-          ))}
-        </div>
-      )
-    }
-    <ul class="link-row mt-8">
-      {
-        entry.official_pdf_url && (
-          <li>
-            <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF" data-track="pdf_download" data-modelo={entry.slug}>Ficha técnica del fabricante (PDF)</ExternalLink>
-          </li>
-        )
-      }
-      {
-        sources.map((href) => (
-          <li>
-            <ExternalLink href={href} context="sitio del fabricante">Fuente de las cifras</ExternalLink>
-          </li>
-        ))
-      }
-    </ul>
-    <p class="t-small mt-8">Datos del fabricante, verificados el {verified}.</p>
-  </section>
-  <slot />
 </div>
 
 <style is:global>
@@ -251,8 +211,12 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   }
   .story__stage {
     position: relative;
-    aspect-ratio: 4 / 5;
-    max-height: 40rem;
+    aspect-ratio: 4 / 3;
+  }
+  .story__poster {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
   }
   .story__photo,
   .story canvas,
@@ -420,21 +384,20 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     visibility: hidden;
     opacity: 0;
   }
-  .cta-bar {
-    transition: opacity 0.25s;
+  /* Primera pantalla: el texto de entrada (slot `intro`) mide una pantalla y se va con la página. */
+  .story__beat[data-first-screen] {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
   }
-  .story-specs__groups {
-    display: grid;
-    gap: 2.5rem 4rem;
-    margin-top: 2rem;
+  .story__beat[data-first-screen] .story__text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
   }
-  .story-specs dl > div {
-    display: grid;
-    column-gap: 1.5rem;
-    padding-block: 0.75rem;
-  }
-  .story-specs dt {
-    color: var(--color-ink-600);
+  .story__cue {
+    display: none;
   }
   @media (width < 760px) {
     /* Notas más angostas en el lienzo de 55 svh; el botón de cotizar ya está en la barra fija. */
@@ -462,20 +425,68 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       display: none;
     }
   }
+  @media (width < 760px) {
+    /* Teléfono: el texto de entrada va primero y el escenario después. */
+    .story__beats {
+      display: contents;
+    }
+    .story__beat[data-first-screen] {
+      order: -1;
+    }
+  }
   @media (width >= 760px) {
     .story__spacer {
-      grid-template-columns: 5fr 7fr;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     }
     .story__stage {
       grid-area: 1 / 2;
       position: sticky;
-      top: 4rem;
-      height: calc(100vh - 4rem);
-      max-height: none;
+      top: var(--hd-h, 4rem);
+      height: calc(100svh - var(--hd-h, 4rem));
       aspect-ratio: auto;
+    }
+    .story__poster {
+      object-position: right center;
     }
     .story__beats {
       grid-area: 1 / 1;
+    }
+    .story__beat[data-first-screen] {
+      min-height: calc(100svh - var(--hd-h, 4rem));
+    }
+    /* Pista de desplazamiento: una raya de 40 px con un segmento de 14 px que baja tres veces. */
+    .story__cue {
+      position: absolute;
+      /* Centrada en la página, no en la columna del texto: 5fr de 12 y el hueco de 3rem. */
+      left: calc(120% + 1.5rem);
+      bottom: 30px;
+      translate: -50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+      white-space: nowrap;
+    }
+    .story__cue i {
+      position: relative;
+      display: block;
+      width: 1px;
+      height: 40px;
+      overflow: hidden;
+      background: var(--color-hairline);
+    }
+    .story__cue i::after {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 1px;
+      height: 14px;
+      background: var(--color-ink-950);
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .story__cue i::after {
+        animation: story-cue 1.6s ease-in-out 1s 3 both;
+      }
     }
     /* Cada tramo mide su parte del recorrido; su texto queda fijo mientras dura. */
     .story[data-mode='scroll'] .story__beat {
@@ -483,23 +494,33 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       padding: 0;
       border: 0;
     }
+    /* El tramo de entrada mide una pantalla y deja su recorrido como margen: el progreso 0 empieza al terminar ella (`lead` de `createScrollStory`). */
+    .story[data-mode='scroll'] .story__beat[data-first-screen] {
+      height: auto;
+      margin-bottom: calc(var(--span) * 500vh);
+    }
     .story[data-mode='scroll'] .story__text {
       position: sticky;
       top: 30vh;
       transition: opacity 0.4s;
     }
+    .story[data-mode='scroll'] .story__beat[data-first-screen] .story__text {
+      position: static;
+    }
     /* Mientras la historia corre se lee un tramo a la vez. */
-    .story[data-live][data-mode='scroll'] .story__beat:not([data-on]) .story__text {
+    .story[data-live][data-mode='scroll'] .story__beat:not([data-on]):not([data-first-screen]) .story__text {
       opacity: 0;
     }
     .story[data-live][data-mode='scroll'] .story__stage {
       opacity: clamp(0, (1 - var(--story-progress, 0)) * 10, 1);
     }
-    .story-specs__groups {
-      grid-template-columns: 1fr 1fr;
+  }
+  @keyframes story-cue {
+    from {
+      top: -14px;
     }
-    .story-specs dl > div {
-      grid-template-columns: 12rem 1fr;
+    to {
+      top: 40px;
     }
   }
 </style>

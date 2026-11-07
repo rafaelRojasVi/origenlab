@@ -36,6 +36,12 @@ export interface ActiveBeat {
 export interface ScrollStoryOptions {
   /** Se llama con el progreso en cada cuadro, también con movimiento reducido. */
   onProgress?(progress: number): void;
+  /**
+   * Píxeles del espaciador que preceden al progreso 0 (la primera pantalla de
+   * la página de modelo: el recorrido empieza cuando ésta termina). Se mide en
+   * cada cuadro, porque depende del alto de la ventana.
+   */
+  lead?(): number;
 }
 
 export interface ScrollStory {
@@ -113,7 +119,8 @@ export function createScrollStory(
   const frame = () => {
     raf = 0;
     const rect = spacer.getBoundingClientRect();
-    progress = mapProgress(-rect.top, rect.height, window.innerHeight);
+    const lead = options.lead?.() ?? 0;
+    progress = mapProgress(-rect.top - lead, rect.height - lead, window.innerHeight);
     options.onProgress?.(progress);
     // Con movimiento reducido el progreso se informa, pero la escena no se anima.
     if (!reducedQuery?.matches) {

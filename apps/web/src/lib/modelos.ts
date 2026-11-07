@@ -15,7 +15,9 @@ import { isShownOnHome } from '../data/brands';
 import { equipmentScope } from '../data/equipmentScope';
 import { products } from '../data/products';
 import { imageForModel, imageForProduct, type ProductImageRecord } from '../data/productImages';
+import { buyingFaqs } from '../data/faq';
 import { productPageHref } from './catalog';
+import type { ProductStoryConfig } from './showroom/productStory';
 
 export type FamilySlug = Modelo['family'];
 
@@ -196,4 +198,21 @@ export function homeFamilyCards(all: readonly Modelo[]): HomeFamilyCard[] {
       models,
     };
   });
+}
+
+/**
+ * Aplicaciones, accesorios y preguntas de una página de modelo. Los de la
+ * historia por scroll mandan cuando traen contenido; si no, los de la ficha.
+ * Las preguntas son las del modelo, las de la historia y las de compra
+ * (`buyingFaqs`): la misma lista para la sección y para el JSON-LD.
+ */
+export function modelSections(
+  entry: Modelo,
+  story?: Pick<ProductStoryConfig, 'applications' | 'accessories' | 'faqs'>,
+): { applications: string[]; accessories: { name: string; note?: string }[]; faqs: { q: string; a: string }[] } {
+  return {
+    applications: story?.applications.length ? story.applications : entry.applications,
+    accessories: story?.accessories.length ? story.accessories : entry.accessories.map((name) => ({ name })),
+    faqs: [...entry.faqs, ...(story?.faqs ?? []), ...buyingFaqs()],
+  };
 }

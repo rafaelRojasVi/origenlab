@@ -1,0 +1,114 @@
+---
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import ModelPhoto from '../ui/ModelPhoto.astro';
+import Icon from '../ui/Icon.astro';
+import { getBrandById } from '../../lib/catalog';
+import { familyInfo, imageForEntry, keyStats, modelHref } from '../../lib/modelos';
+import { imageSourcesFor } from '../../lib/productImage';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Tarjeta de un modelo de la colección (tablero Modelo, «relacionados»).
+ *
+ * El marco es de 4/3 sobre superficie, con filete abajo. Dentro, en este orden:
+ * el póster 3D `public/products/<slug>-poster.jpg` si existe; si no, la
+ * fotografía VERIFIED del registro (`imageForEntry`); si tampoco hay, un marco
+ * neutro con el rótulo mono de la familia y ningún `<img>`.
+ *
+ * `related` (página de modelo): rótulo mono «{familia} · {primera cifra del
+ * fabricante}», nombre y «Ver modelo». `family` la usa la página de familia
+ * (Tarea 5), que la amplía con la línea del equipo.
+ */
+export interface Props {
+  entry: Modelo;
+  variant: 'related' | 'family';
+}
+
+const { entry, variant } = Astro.props;
+const family = familyInfo(entry.family);
+const brandName = getBrandById(entry.brand)?.name ?? entry.brand;
+const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`)) ? `/products/${entry.slug}-poster.jpg` : null;
+const image = imageForEntry(entry);
+const photo = !poster && imageSourcesFor(image) ? image : undefined;
+const stat = keyStats(entry, 1)[0];
+const kicker = [family.short, variant === 'related' ? stat?.value : brandName].filter(Boolean).join(' · ');
+---
+
+<a href={modelHref(entry)} class="mc" data-variant={variant}>
+  <div class="mc__frame">
+    {poster && <img src={poster} width="1200" height="900" alt="" loading="lazy" decoding="async" />}
+    {photo && <ModelPhoto image={photo} brandName={brandName} size="row" />}
+    {!poster && !photo && <span class="t-label mc__ph">{family.short}</span>}
+  </div>
+  <div class="mc__body">
+    <p class="t-label" translate="no">{kicker}</p>
+    <h3 class="mc__name" translate="no">{entry.name}</h3>
+    <slot />
+    <span class="btn-tertiary mc__go" aria-hidden="true">
+      <span class="lbl">Ver modelo</span>
+      <Icon name="arrow-right" size={16} class="arrow" />
+    </span>
+  </div>
+</a>
+
+<style is:global>
+  .mc {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+    transition:
+      transform var(--ease-ui),
+      border-color var(--ease-ui);
+  }
+  .mc:hover {
+    transform: translateY(-2px);
+    border-color: var(--color-ink-600);
+  }
+  .mc:hover .lbl {
+    background-size: 100% 2px, 100% 1px;
+  }
+  .mc__frame {
+    position: relative;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 4 / 3;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .mc__frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .mc__frame .model-photo {
+    width: 100%;
+    height: 100%;
+  }
+  .mc__frame .model-photo__frame {
+    height: 100%;
+    aspect-ratio: auto !important;
+    background: transparent;
+  }
+  .mc__ph {
+    padding: 0.375rem 0.625rem;
+    border: 1px dashed var(--color-hairline-strong);
+    border-radius: 0.5rem;
+  }
+  .mc__body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 1.25rem;
+  }
+  .mc__name {
+    font-size: 1.375rem;
+    line-height: 1.25;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+</style>

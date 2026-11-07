@@ -171,7 +171,11 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
       },
     };
   } else {
+    // Con primera pantalla (`[data-first-screen]`, el texto de entrada de la página de modelo) el recorrido
+    // de la historia empieza donde ella termina.
+    const first = root.querySelector<HTMLElement>('[data-first-screen]');
     runner = createScrollStory(spacer, scene, beats, {
+      lead: () => first?.offsetHeight ?? 0,
       onProgress: (progress) => mark(activeBeat(progress, beats)?.beat.id ?? ''),
     });
   }

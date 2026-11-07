@@ -1,82 +1,69 @@
 ---
-import SectionIndex from '../ui/SectionIndex.astro';
-import { contact } from '../../data/contact';
 import { publicClaim } from '../../data/claims';
-import type { Brand } from '../../data/brands';
 
 /**
- * §6 de la página de modelo: cómo se compra, antes de la banda de cierre.
+ * Franja «Cómo trabajamos» de la página de modelo: las afirmaciones aprobadas
+ * del registro (`claims.ts`), una por columna, con filete de tinta y numeral
+ * mono, sin texto de apoyo. Una afirmación sin aprobar no se dibuja; sin
+ * ninguna, la franja entera se omite. «Pago», «garantía» y el pilar de
+ * distribuidor no están aquí: no son afirmaciones aprobadas.
  *
- * Texto llano, sin cifras: una cifra sólo entra por `publicClaim()`. Por eso
- * el plazo de respuesta usa la promesa de un día hábil si el negocio la
- * aprueba en `claims.ts` y, mientras tanto, la redacción cualitativa aprobada.
- * Los porcentajes del pago no están en el registro y no se escriben.
- *
- * «Distribuidor en Chile de …» sólo aparece con `brand.commercialScopeConfirmed`:
- * para las demás marcas no hay confirmación escrita de en qué calidad se
- * trabaja la línea, y el pilar se omite.
+ * `index` se acepta por compatibilidad con las páginas que aún lo pasan; la
+ * franja ya no lleva índice de sección.
  */
 interface Props {
-  brand?: Brand;
   index?: number;
 }
 
-const { brand, index } = Astro.props;
-const payment = publicClaim('pago-50-50');
-const response = publicClaim('respuesta-inicial-un-dia-habil') ?? publicClaim('respuesta-agil');
-
-const pillars = [
-  brand?.commercialScopeConfirmed && {
-    title: `Distribuidor en Chile de ${brand.name}`,
-    body: 'Configuración, accesorios y condiciones se confirman al cotizar.',
-  },
-  response && { title: response, body: 'Cotización formal por escrito, con alternativas cuando las hay.' },
-  { title: 'Puesta en marcha y capacitación online con fábrica', body: 'Se coordinan con la entrega del equipo.' },
-  { title: 'Despacho a todo Chile', body: `Desde ${contact.city}, a cualquier región.` },
-  payment
-    ? { title: payment, body: 'Se indica por escrito en cada cotización.' }
-    : { title: 'Condiciones de pago en la cotización', body: 'Se indican por escrito en cada cotización.' },
-  { title: 'Mercado Público y Compra Ágil', body: 'Cotizamos también para licitaciones y compras públicas.' },
-].filter((pillar): pillar is { title: string; body: string } => Boolean(pillar));
+const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despacho-todo-chile', 'puesta-en-marcha-con-fabrica']
+  .map(publicClaim)
+  .filter((text): text is string => Boolean(text));
 ---
 
-<section class="shell section rule-top" aria-labelledby="confianza-title">
-  {index !== undefined && <SectionIndex index={index} label="Cómo trabajamos" />}
-  <h2 id="confianza-title" class="t-h2">Cómo se compra con OrigenLab</h2>
-  <ul class="trust">
-    {
-      pillars.map((pillar) => (
-        <li class="rule-top">
-          <p class="trust__title">{pillar.title}</p>
-          <p class="t-small trust__body">{pillar.body}</p>
-        </li>
-      ))
-    }
-  </ul>
-</section>
+{
+  items.length > 0 && (
+    <section class="msec msec--alt" aria-labelledby="confianza-title">
+      <div class="shell rv">
+        <h2 id="confianza-title" class="t-label">Cómo trabajamos</h2>
+        <ul class="trust">
+          {items.map((text, i) => (
+            <li>
+              <span class="t-label">{String(i + 1).padStart(2, '0')}</span>
+              <b>{text}</b>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  )
+}
 
-<style>
+<style is:global>
   .trust {
     list-style: none;
-    margin: 2rem 0 0;
+    margin: 2.5rem 0 0;
     padding: 0;
-    display: grid;
-    gap: 0 2.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
   }
   .trust li {
-    padding-block: 1rem;
+    flex: 1 1 9.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding-top: 1rem;
+    border-top: 2px solid var(--color-ink-950);
   }
-  .trust__title {
+  .trust b {
+    font-size: 1rem;
     font-weight: 600;
+    line-height: 1.35;
     color: var(--color-ink-950);
   }
-  .trust__body {
-    margin-top: 0.25rem;
-    color: var(--color-ink-600);
-  }
-  @media (min-width: 768px) {
-    .trust {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+  @media (max-width: 639.98px) {
+    .trust li {
+      flex-basis: 44%;
     }
   }
 </style>

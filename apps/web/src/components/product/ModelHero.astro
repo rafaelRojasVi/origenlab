@@ -1,31 +1,29 @@
 ---
-import Breadcrumbs from '../ui/Breadcrumbs.astro';
-import KeyFacts from '../ui/KeyFacts.astro';
+import Button from '../ui/Button.astro';
 import ModelPhoto from '../ui/ModelPhoto.astro';
-import Icon from '../ui/Icon.astro';
 import Showroom from '../home/Showroom.astro';
-import { company } from '../../data/company';
+import ModelHeroCopy from './ModelHeroCopy.astro';
 import { ctaLabels } from '../../lib/ctaLabels';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
-import { familyHref, imageForEntry, keyStats, type FamilyInfo } from '../../lib/modelos';
+import { imageForEntry, type FamilyInfo } from '../../lib/modelos';
 import type { Brand } from '../../data/brands';
 import type { Modelo } from '../../content.config';
 
 /**
- * §1 de la página de modelo: ruta, supratítulo (familia · marca), el nombre
- * como H1, la frase del equipo, tres cifras del fabricante, las dos acciones
- * y la línea de valor del titular.
+ * Marco de la página de modelo: primera pantalla, el resto en el slot y la
+ * barra fija de cotización.
  *
- * `media` decide qué acompaña al texto:
- *   `story`    nada: la historia por scroll (`ProductStory`) viene justo
- *              debajo y su lienzo es el hero visual
+ * `media` decide qué acompaña al texto de la primera pantalla (`ModelHeroCopy`):
+ *   `story`    nada aquí: la página monta `ProductStory` en el slot y le pasa el
+ *              texto en su slot `intro`; el escenario 3D es la primera pantalla
  *   `showroom` la sala 3D del equipo (`home/Showroom`), sin historia
  *   `photo`    la fotografía VERIFIED del registro
+ * En los tres casos el bloque de entrada lleva `data-first-screen`.
  *
- * El resto de la página va en el slot. Al final de ese contenido, antes de la
- * banda de cierre que pone la página, va la barra fija de cotización:
- * `position: sticky` al pie de la pantalla mientras se lee la página, y se
- * apoya en su sitio al llegar a la banda. Sin JavaScript.
+ * La barra fija (`[data-sticky-cta]`) está al final del slot, `position: sticky`
+ * al pie. Con JavaScript queda escondida (`inert`, fuera de la pantalla) hasta
+ * que `[data-first-screen]` sale de cuadro, y vuelve a esconderse si regresa;
+ * sin JavaScript se ve como siempre.
  */
 interface Props {
   entry: Modelo;
@@ -38,63 +36,36 @@ interface Props {
 const { entry, brand, family, media, quoteHref } = Astro.props;
 const brandName = brand?.name ?? entry.brand;
 const whatsappHref = buildWhatsAppQuoteUrl({ productName: entry.name, brandName });
-const stats = keyStats(entry);
 const photo = imageForEntry(entry);
 ---
 
 <div class="model-page">
-  <section class="shell model-hero" aria-labelledby="modelo-titulo">
-    <Breadcrumbs
-      items={[
-        { label: 'Productos', href: '/productos/' },
-        { label: family.short, href: familyHref(family.slug) },
-        { label: entry.name },
-      ]}
-    />
-    <div class:list={['model-hero__grid', media !== 'story' && 'model-hero__grid--media']}>
-      <div>
-        <p class="t-label model-hero__eyebrow">{family.short} · <span translate="no">{brandName}</span></p>
-        <h1 id="modelo-titulo" class="t-display mt-3" translate="no">{entry.name}</h1>
-        <p class="t-lead mt-5">{entry.lead}</p>
-        <KeyFacts facts={stats} class="mt-8" aria-label="Datos del fabricante" />
-        <div class="model-hero__actions">
-          <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</a>
-          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry.slug}>
-            <Icon name="whatsapp" size={18} />
-            {ctaLabels.escribirWhatsapp}
-            <span class="sr-only">{entry.name} (abre WhatsApp en una pestaña nueva)</span>
-          </a>
+  {
+    media !== 'story' && (
+      <section class="shell mh-sec" data-first-screen aria-labelledby="modelo-titulo">
+        <ModelHeroCopy entry={entry} brand={brand} family={family} quoteHref={quoteHref} />
+        <div class="mh-sec__media">
+          {media === 'showroom' && entry.showroom_id && <Showroom id={entry.showroom_id} />}
+          {media === 'photo' && <ModelPhoto image={photo} brandName={brandName} size="hero" priority captioned ratio="4 / 5" />}
         </div>
-        <p class="t-small model-hero__value">{company.valueLine}</p>
-      </div>
-      {
-        media === 'showroom' && entry.showroom_id && (
-          <div class="model-hero__media">
-            <Showroom id={entry.showroom_id} />
-          </div>
-        )
-      }
-      {
-        media === 'photo' && (
-          <div class="model-hero__media">
-            <ModelPhoto image={photo} brandName={brandName} size="hero" priority captioned ratio="4 / 5" />
-          </div>
-        )
-      }
-    </div>
-  </section>
+      </section>
+    )
+  }
 
   <slot />
 
   <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${entry.name}`}>
     <div class="shell cta-bar__inner">
-      <p class="cta-bar__name t-data" translate="no">{brandName} {entry.name}</p>
-      <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</a>
-      <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry.slug}>
-        <Icon name="whatsapp" size={18} />
-        {ctaLabels.whatsappCorto}
-        <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
-      </a>
+      <p class="cta-bar__name" translate="no">
+        <b>{entry.name}</b>
+        <span class="t-label">{brandName} · {family.short}</span>
+      </p>
+      <div class="cta-bar__act">
+        <Button href={quoteHref} size="sm" track="cotizacion_click" modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</Button>
+        <Button href={whatsappHref} size="sm" variant="whatsapp" external class="cta-bar__wa" track="whatsapp_click" modelo={entry.slug}>
+          <span class="cta-bar__wa-t">{ctaLabels.whatsappCorto}</span>
+        </Button>
+      </div>
     </div>
   </aside>
 </div>
@@ -102,40 +73,70 @@ const photo = imageForEntry(entry);
 <script>
   /**
    * Medición propia (`lib/stats.ts`): un solo escucha de clics para toda la
-   * página de modelo: los botones del hero, los de la barra fija, los de la
-   * banda de cierre (`ClosingQuoteBand`) y los enlaces a la ficha del fabricante.
+   * página de modelo: los botones de la primera pantalla, los de la barra fija,
+   * los de la banda de cierre (`ClosingQuoteBand`) y los enlaces a la ficha del
+   * fabricante. Después, la barra fija: aparece cuando la primera pantalla sale
+   * de cuadro.
    */
   import { installTrackClicks } from '../../lib/stats';
 
   installTrackClicks();
+
+  const bar = document.querySelector<HTMLElement>('[data-sticky-cta]');
+  const first = document.querySelector('[data-first-screen]');
+  if (bar && first && 'IntersectionObserver' in window) {
+    const hide = (hidden: boolean) => {
+      bar.inert = hidden;
+      bar.toggleAttribute('data-hidden', hidden);
+    };
+    hide(true);
+    document.documentElement.dataset.barReady = '';
+    new IntersectionObserver(([entry]) => hide(entry.isIntersecting)).observe(first);
+  }
 </script>
 
-<style>
-  .model-hero {
-    padding-block: 2rem 3rem;
+<style is:global>
+  .model-page {
+    --hd-h: 56px;
   }
-  .model-hero__grid {
+  @media (min-width: 1024px) {
+    .model-page {
+      --hd-h: 72px;
+    }
+  }
+  /* Secciones de la página de modelo (las dos páginas que usan este marco): aire, franja alterna y titular. */
+  .model-page .msec {
+    padding-block: clamp(5rem, 9vw, 7rem);
+  }
+  .model-page .msec--alt {
+    background: var(--color-surface);
+    border-block: 1px solid var(--color-hairline);
+  }
+  .model-page .mh2 {
+    margin-top: 0.75rem;
+    font-size: clamp(2rem, 4vw, 3rem);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+  }
+  .mh-sec {
     display: grid;
-    gap: 2.5rem;
-    margin-top: 1.5rem;
-    max-width: 48rem;
+    gap: 2rem;
+    min-height: calc(100svh - var(--hd-h));
   }
-  .model-hero__eyebrow {
-    color: var(--color-ink-600);
+  .mh-sec__media {
+    align-self: center;
+    max-width: 32rem;
   }
-  .model-hero__actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 1rem 2rem;
-    margin-top: 2rem;
-  }
-  .model-hero__value {
-    margin-top: 1.5rem;
-    color: var(--color-ink-600);
-  }
-  .model-hero__media {
-    max-width: 26rem;
+  @media (min-width: 760px) {
+    .mh-sec {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      column-gap: 3rem;
+    }
+    .mh-sec__media {
+      max-width: none;
+      padding-block: 2rem;
+    }
   }
 
   .cta-bar {
@@ -144,54 +145,73 @@ const photo = imageForEntry(entry);
     z-index: 20;
     background-color: var(--color-paper);
     border-top: 1px solid var(--color-hairline);
+    box-shadow: 0 -8px 24px rgb(20 22 23 / 0.06);
   }
   .cta-bar__inner {
     display: flex;
     align-items: center;
-    gap: 0.5rem 1rem;
-    padding-block: 0.625rem;
+    justify-content: space-between;
+    gap: 1rem;
+    height: 3.5rem;
   }
   .cta-bar__name {
     display: none;
-    margin-right: auto;
-    color: var(--color-ink-800);
+    align-items: baseline;
+    gap: 0.875rem;
+    min-width: 0;
   }
-  .cta-bar .btn {
-    min-height: 2.75rem;
-    padding-inline: 1rem;
+  .cta-bar__name b {
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-950);
   }
-  .cta-bar .btn-primary {
+  .cta-bar__act {
+    display: flex;
+    gap: 0.625rem;
+    flex: 1;
+    justify-content: flex-end;
+  }
+  .cta-bar__act > .btn-primary {
     flex: 1 1 auto;
   }
+  /* Con JavaScript la barra espera fuera de pantalla hasta salir de la primera. */
+  html[data-bar-ready] .cta-bar[data-hidden] {
+    transform: translateY(100%);
+    box-shadow: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html[data-bar-ready] .cta-bar {
+      transition: transform 200ms ease-out;
+    }
+  }
   /* Lo enfocado con el teclado no queda escondido detrás de la barra. */
-  :global(:root:has([data-sticky-cta])) {
+  :root:has([data-sticky-cta]) {
     scroll-padding-bottom: 5rem;
   }
-
-  @media (min-width: 760px) {
-    .cta-bar__name {
-      display: block;
+  @media (max-width: 639.98px) {
+    .cta-bar__act > .cta-bar__wa {
+      width: var(--btn-h-sm);
+      padding: 0;
     }
-    .cta-bar .btn-primary {
-      flex: none;
-    }
-    /* El escenario fijo de la historia termina sobre la barra, no debajo. */
-    .model-page :global(.story__stage) {
-      height: calc(100vh - 8rem);
+    .cta-bar__wa-t {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   }
-  @media (min-width: 768px) {
-    .model-hero {
-      padding-block: 3rem 4.5rem;
+  @media (min-width: 640px) {
+    .cta-bar__name {
+      display: flex;
     }
-    .model-hero__grid--media {
-      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-      gap: 4rem;
-      max-width: none;
-      align-items: start;
+    .cta-bar__act {
+      flex: none;
     }
-    .model-hero__media {
-      max-width: none;
+    .cta-bar__act > .btn-primary {
+      flex: none;
     }
   }
 </style>
