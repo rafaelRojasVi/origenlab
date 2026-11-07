@@ -396,6 +396,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   });
 }
 
+import { handleStatsRequest, type StatsEnv } from "./stats";
 import { handleWebFormRequest } from "./web_form";
 
 export default {
@@ -403,6 +404,10 @@ export default {
     const url = new URL(request.url);
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/web/")) {
       return handleWebFormRequest(request, env as any);
+    }
+    // Public first-party analytics: its own two-request allowlist, no dashboard session.
+    if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/stats/")) {
+      return handleStatsRequest(request, env as StatsEnv);
     }
     return handleRequest(request, env);
   },

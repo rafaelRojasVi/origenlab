@@ -186,6 +186,25 @@ paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
   list (`QUOTE_PREVIEW_POST_PATHS`) and guard (`quotePreviewRefusal`): allowed `Origin`, no
   cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 256 KiB (`QUOTE_COMMAND_MAX_BYTES`) — and no `Idempotency-Key`.
 
+## Public stats route (`origenlab.cl/api/stats/*`)
+
+First-party analytics for the public site (`src/stats.ts`), a separate route family from the dashboard
+allowlist (like `/api/web/*`): no session, no operator identity, no CORS. Exactly two requests exist and
+everything else under the prefix is 404:
+
+- `POST /api/stats/event` — body `{name, props:{modelo?}}`, at most 2 KB, `Origin: https://origenlab.cl`,
+  JSON or `text/plain` (what `sendBeacon` sends). `name` must be one of `cotizacion_click`, `whatsapp_click`,
+  `pdf_download`, `3d_interact`, `form_submit`; `modelo` matches `[A-Za-z0-9._-]{1,64}`. Other props are dropped.
+- `GET /api/stats/script.js` — only when `STATS_ORIGIN` is set; 404 otherwise.
+
+`STATS_ORIGIN` (a `[vars]` entry) picks the mode. Set to `https://host`, the validated event and the script
+are proxied to that self-hosted analytics origin (Umami or Plausible CE; `STATS_EVENT_PATH` and
+`STATS_SCRIPT_PATH` adapt the upstream paths) with a fresh header set: never the browser's cookies or
+`Authorization`, never the API key or Access credentials. Empty, the Worker counts events in the `STATS_KV`
+namespace (`daily:{YYYY-MM-DD}:{name}:{modelo}`, 90-day TTL), answers 204 and exposes nothing readable.
+A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
+60 s. Nothing logs an IP, User-Agent or body.
+
 ## Response hardening
 
 The Worker is deliberately stricter than a generic pass-through proxy:

@@ -4,6 +4,8 @@ compatibility_date = "2025-04-01"
 
 [vars]
 ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
+# Empty = built-in counter mode; set to the analytics origin (https://host) to proxy. See the stats block below.
+STATS_ORIGIN = ""
 
 [[routes]]
 pattern = "dashboard.origenlab.cl/api*"
@@ -20,3 +22,26 @@ zone_name = "origenlab.cl"
 name = "WEB_FORM_RATE_LIMIT"
 namespace_id = "1001"
 simple = { limit = 5, period = 60 }
+# First-party analytics for the public site: POST /api/stats/event and GET /api/stats/script.js
+# (src/stats.ts). Two modes, chosen by STATS_ORIGIN:
+#   unset/empty -> the Worker counts the five events itself in STATS_KV (daily counters);
+#   set         -> events and script.js are proxied to that self-hosted analytics origin
+#                  (https://host only: no path, no credentials).
+# Optional vars when proxying (defaults are Plausible CE; Umami is /api/send and /script.js):
+#   STATS_EVENT_PATH  = "/api/event"
+#   STATS_SCRIPT_PATH = "/js/script.js"
+[[routes]]
+pattern = "origenlab.cl/api/stats/*"
+zone_name = "origenlab.cl"
+
+# 60 events per IP per 60 s: analytics fires several times per page view, unlike the quote form.
+[[ratelimits]]
+name = "STATS_RATELIMIT"
+namespace_id = "1002"
+simple = { limit = 60, period = 60 }
+
+# Counter fallback only (STATS_ORIGIN empty). OWNER: create it first, then uncomment and paste the id:
+#   npx wrangler kv namespace create STATS_KV
+# [[kv_namespaces]]
+# binding = "STATS_KV"
+# id = "<paste the namespace id>"
