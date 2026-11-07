@@ -18,9 +18,9 @@
  * y la bisagra de la tapa está atrás (z = −176,5). La cámara general mira desde +z.
  *
  * Animación (`level` de 0 a 1):
- *   0,08 – 0,5   la tapa se abre (bisagra trasera, hasta 96°)
- *   > 0,36       con `setPower(true)` las varillas se ponen al rojo; al cerrar la
- *                tapa el calor se ve por la rendija de la unión
+ *   > 0,08       la tapa se abre (bisagra trasera, hasta 96°) y SE MANTIENE abierta
+ *                mientras el equipo está en marcha; al apagar, se cierra
+ *   abierta + `setPower(true)`   las varillas se ponen al rojo
  *   > 0          la humedad de la pantalla baja; vuelve a su valor inicial en reposo
  * El ángulo de la tapa se lee en `lidAngle` (radianes) y se fuerza con `setLidAngle`.
  */
@@ -221,9 +221,6 @@ export function build(): Mb32Model {
   const startKeyMat = keep(new THREE.MeshStandardMaterial({ color: 0x2f6f48, roughness: 0.5 }));
   const knobMat = keep(new THREE.MeshStandardMaterial({ color: 0x1f2326, roughness: 0.4, metalness: 0.35 }));
   const knobMarkMat = keep(new THREE.MeshBasicMaterial({ color: 0xf2f2f0 }));
-  const seamMat = keep(
-    new THREE.MeshBasicMaterial({ color: 0xff7a2a, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }),
-  );
 
   // ── Estado ──────────────────────────────────────────────────────────────────
   let powered = false;
@@ -234,7 +231,8 @@ export function build(): Mb32Model {
   let lidAngle = 0;
   let lidOverride: number | null = null;
   let elapsed = 0;
-  let lastRedraw = -1;
+  let lastRedraw = 0;
+  let dirty = false; // la pantalla cambió y hay que repintarla
 
   // ── Cuerpo: perfil lateral con la cámara a la altura FLOOR y la consola delante ──
   const bodyOutline: P[] = [
@@ -279,9 +277,6 @@ export function build(): Mb32Model {
     const barrel = add(lifted, new THREE.CylinderGeometry(7, 7, 38, 20), trimMat, sx * 62, FLOOR + 3, -HALF_D + 8.5);
     barrel.rotation.z = Math.PI / 2;
   }
-
-  // Rendija luminosa entre la tapa cerrada y la consola: por ahí se ve el calor.
-  const seam = add(lifted, new THREE.BoxGeometry(W - 24, 3, 3.2), seamMat, 0, FLOOR + 2, (-HALF_D + LID_D + SLOPE_REAR.x) / 2);
 
   // Pies de goma.
   for (const sx of [-1, 1]) {
@@ -371,7 +366,7 @@ export function build(): Mb32Model {
     const shown = readout !== null ? Math.min(99.99, Math.max(0, readout)) : moisture;
     const text = screenOn ? shown.toFixed(2).padStart(5, ' ') : '88.88';
     let cx = lx + 14;
-    const dw = 56;
+    const dw = 46;
     const dh = 100;
     for (const ch of text) {
       if (ch === '.') {
@@ -379,8 +374,8 @@ export function build(): Mb32Model {
         g.fillRect(cx - 5, ly + 14 + dh - 10, 10, 10);
         cx += 11;
       } else {
-        drawSegmentDigit(g, ch, cx, ly + 14, dw, dh, 11, ink, ghost);
-        cx += dw + 12;
+        drawSegmentDigit(g, ch, cx, ly + 14, dw, dh, 10, ink, ghost);
+        cx += dw + 8;
       }
     }
     g.textBaseline = 'alphabetic';
@@ -389,7 +384,7 @@ export function build(): Mb32Model {
     g.font = `800 34px ${SANS}`;
     g.fillText('%MC', lx + lw - 12, ly + 52);
     if (screenOn) {
-      g.font = `700 22px ${SANS}`;
+      g.font = `700 18px ${SANS}`;
       g.fillText('MOISTURE', lx + lw - 12, ly + 82);
     }
     // Segunda línea: peso, y temperatura y tiempo al pie.
@@ -499,31 +494,32 @@ export function build(): Mb32Model {
 
     setPower(on: boolean) {
       powered = on;
-      if (on) screenOn = true;
+      if (on && !screenOn) {
+        screenOn = true;
+        dirty = true;
+      }
     },
 
     setReadout(percent: number | null) {
       readout = percent;
-      lastRedraw = -1;
+      dirty = true;
     },
 
     update(dt: number, t: number, level: number) {
       // Tapa: se abre mientras el nivel está entre 0,08 y 0,5 y se cierra después.
       if (lidOverride === null) {
-        const want = level > 0.08 && level < 0.5 ? LID_OPEN : 0;
+        const want = level > 0.08 ? LID_OPEN : 0;
         lidAngle += (want - lidAngle) * Math.min(1, dt * 3.5);
         if (Math.abs(want - lidAngle) < 0.002) lidAngle = want;
         lid.rotation.x = -lidAngle;
       }
 
       // Calefactor: se pone al rojo al encender y a partir de la mitad del recorrido.
-      const heatWant = powered && level > 0.36 ? 1 : 0;
+      const heatWant = powered && lidAngle > LID_OPEN * 0.6 ? 1 : 0;
       heat += (heatWant - heat) * Math.min(1, dt * (heatWant ? 2.2 : 1.1));
       rodMat.emissiveIntensity = heat * 2.6;
       rodMat.color.setRGB(0.17 + heat * 0.55, 0.15 + heat * 0.1, 0.13);
       reflectorMat.emissiveIntensity = heat * 0.22;
-      // Rendija: sólo se ve con la tapa casi cerrada.
-      seamMat.opacity = heat * Math.max(0, 1 - lidAngle / 0.25) * 0.9;
 
       // Humedad: baja mientras haya nivel; en reposo vuelve al valor inicial.
       if (level > 0.001) {
@@ -542,10 +538,13 @@ export function build(): Mb32Model {
       knob.rotation.z = 0.5 + (powered ? Math.sin(t * 0.8) * 0.35 * level : 0);
 
       // Pantalla.
-      const wasOn = screenOn;
-      if (screenOn && !powered && level < 0.02) screenOn = false;
-      if (screenOn !== wasOn || t - lastRedraw > 1 / 15 || lastRedraw < 0) {
+      if (screenOn && !powered && level < 0.02) {
+        screenOn = false;
+        dirty = true;
+      }
+      if (dirty || (screenOn && t - lastRedraw > 1 / 15)) {
         lastRedraw = t;
+        dirty = false;
         panelTex.redraw();
       }
       panelMat.emissiveIntensity = screenOn ? 0.3 : 0;
