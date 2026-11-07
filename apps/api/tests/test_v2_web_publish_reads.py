@@ -122,6 +122,16 @@ def test_unreadable_sheet_content_is_502(monkeypatch, content) -> None:
     assert resp.json()["detail"]["code"] == "read_failed"
 
 
+def test_deeply_nested_sheet_file_is_502_not_500(monkeypatch) -> None:
+    # Balanced, so it is valid JSON that only the parser's recursion limit rejects.
+    nested = b"[" * 50_000 + b"]" * 50_000
+    monkeypatch.setattr(web_publish, "github_read_file",
+                        lambda config, path: {"content": nested, "sha": "b" * 40, "html_url": HTML_URL})
+    resp = _client().get(SHEET_URL, headers=HEADERS)
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "read_failed"
+
+
 @pytest.mark.parametrize("bad", ["Modelo-X", "a..b", "a_b", "x" * 61])
 def test_bad_model_id_is_422(monkeypatch, bad) -> None:
     monkeypatch.setattr(web_publish, "github_read_file", lambda config, path: pytest.fail("must not call GitHub"))
@@ -204,7 +214,9 @@ def test_status_is_cached_for_10_seconds(monkeypatch) -> None:
     assert len(calls) == 2
 
 
-def test_status_failure_is_502_and_not_cached(monkeypatch) -> None:
+def test_status_failure_is_502_and_cached_for_5_seconds(monkeypatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(web_publish, "_clock", lambda: now[0])
     calls = []
 
     def boom(config):
@@ -215,8 +227,31 @@ def test_status_failure_is_502_and_not_cached(monkeypatch) -> None:
     client = _client()
     resp = client.get(STATUS_URL, headers=HEADERS)
     assert resp.status_code == 502 and resp.json()["detail"]["code"] == "status_failed"
+    now[0] += 4.0
+    again = client.get(STATUS_URL, headers=HEADERS)
+    assert again.status_code == 502 and again.json() == resp.json()
+    assert len(calls) == 1
+    now[0] += 1.5
     client.get(STATUS_URL, headers=HEADERS)
     assert len(calls) == 2
+
+
+def test_status_recovers_after_a_cached_failure(monkeypatch) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(web_publish, "_clock", lambda: now[0])
+    outcomes = [_github.GithubError("status_failed", "x", 500), _run("queued")]
+
+    def fetch(config):
+        out = outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    monkeypatch.setattr(web_publish, "github_latest_deploy_run", fetch)
+    client = _client()
+    assert client.get(STATUS_URL, headers=HEADERS).status_code == 502
+    now[0] += 6.0
+    assert client.get(STATUS_URL, headers=HEADERS).json()["status"] == "queued"
 
 
 # ------------------------------------------------------------------------------- _github helpers

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Path as PathParam, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.concurrency import run_in_threadpool
 from jsonschema import Draft7Validator
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -42,6 +43,8 @@ SCHEMA_RELATIVE = Path("apps/web/src/content/modelos.schema.json")
 CONTENT_DIR = "apps/web/src/content/modelos"
 RATE_WINDOW_SECONDS = 60.0
 STATUS_CACHE_SECONDS = 10.0
+# A failed read is remembered briefly too, so a slow or failing GitHub is asked once, not once per poller.
+STATUS_FAILURE_SECONDS = 5.0
 MAX_ERRORS = 20
 # A real sheet is a few KB. The cap is applied to the raw body, streamed, before any parsing.
 MAX_BODY_BYTES = 256 * 1024
@@ -71,7 +74,8 @@ _clock = time.monotonic
 _last_publish: dict[str, float] = {}
 _lock = threading.Lock()
 _status_lock = threading.Lock()
-_status_cache: tuple[float, dict[str, Any]] | None = None
+# (taken_at, answer, failure): exactly one of answer/failure is set.
+_status_cache: tuple[float, dict[str, Any] | None, dict[str, Any] | None] | None = None
 
 
 def reset_rate_guard() -> None:
@@ -179,9 +183,12 @@ def _parse_body(raw: bytes) -> PublishModelSheetRequest:
     try:
         return PublishModelSheetRequest.model_validate(data)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=422, detail=exc.errors(include_url=False, include_input=False, include_context=False),
-        ) from None
+        # The same shape FastAPI gives a body it parsed itself, so the app's envelope renders it alike.
+        errors = [
+            {**e, "loc": ("body", *e["loc"])}
+            for e in exc.errors(include_url=False, include_input=False, include_context=False)
+        ]
+        raise RequestValidationError(errors) from None
 
 
 @web_publish_router.post(
@@ -257,7 +264,7 @@ def read_model_sheet(model_id: ModelId, operator: Deciding, request: Request) ->
         raise HTTPException(status_code=404, detail={"code": "sheet_not_found", "message": "no published sheet"})
     try:
         sheet = json.loads(record["content"].decode("utf-8"))
-    except ValueError:  # includes UnicodeDecodeError
+    except (ValueError, RecursionError):  # ValueError includes UnicodeDecodeError
         sheet = None
     if not isinstance(sheet, dict):
         raise HTTPException(
@@ -296,17 +303,25 @@ def get_publish_status(model_id: ModelId, operator: Deciding, request: Request) 
     """State of the latest deploy run. `model_id` is accepted for symmetry with the other routes and
     for future filtering; today the latest `web-deploy.yml` dispatch is returned whichever model it
     was for (a dispatch carries no model). One GitHub call per 10 s per process, however many
-    editors poll; failures are not cached."""
+    editors poll; a failure is remembered for 5 s, so pollers queued behind a slow call get the
+    same 502 at once instead of each waiting out their own."""
     global _status_cache
     config = _config(request)
     with _status_lock:
         now = _clock()
-        if _status_cache is not None and now - _status_cache[0] < STATUS_CACHE_SECONDS:
-            return _status_cache[1]
+        if _status_cache is not None:
+            taken_at, answer, failure = _status_cache
+            if now - taken_at < (STATUS_CACHE_SECONDS if answer is not None else STATUS_FAILURE_SECONDS):
+                if answer is not None:
+                    return answer
+                raise HTTPException(status_code=502, detail=dict(failure or {}))
         try:
             answer = _map_run(github_latest_deploy_run(config))
         except GithubError as exc:
             logger.warning("web publish status failed: code=%s status=%s", exc.code, exc.status)
-            raise HTTPException(status_code=502, detail={"code": exc.code, "message": str(exc)}) from None
-        _status_cache = (now, answer)
+            failure = {"code": exc.code, "message": str(exc)}
+            # Stamped after the call: a 20 s timeout must not leave an already-expired entry.
+            _status_cache = (_clock(), None, failure)
+            raise HTTPException(status_code=502, detail=dict(failure)) from None
+        _status_cache = (now, answer, None)
         return answer

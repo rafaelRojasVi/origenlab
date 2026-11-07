@@ -411,8 +411,11 @@ def test_body_that_is_not_json_is_422(calls) -> None:
 
 
 def test_deeply_nested_body_is_422_not_500(calls) -> None:
-    resp = _client().post(PATH, content=b"[" * 100_000, headers={**HEADERS, "Content-Type": "application/json"})
+    # Balanced, so it is valid JSON and only the parser's recursion limit stops it (`[`*N is just malformed).
+    nested = b"[" * 50_000 + b"]" * 50_000
+    resp = _client().post(PATH, content=nested, headers={**HEADERS, "Content-Type": "application/json"})
     _assert_refused(resp, calls)
+    assert resp.json()["detail"]["code"] == "body_invalid"
 
 
 @pytest.mark.parametrize("field", ["specs", "accessories", "related", "faqs"])
@@ -480,3 +483,17 @@ def test_transport_does_not_follow_redirects() -> None:
     handler = next(h for h in _github._OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler))
     req = urllib.request.Request("https://api.github.com/x")
     assert handler.redirect_request(req, None, 302, "Found", {}, "https://evil.invalid/") is None
+
+
+def test_pydantic_body_error_keeps_the_app_validation_envelope(calls) -> None:
+    from origenlab_api.errors import register_exception_handlers
+
+    client = _client()
+    register_exception_handlers(client.app)
+    resp = client.post(PATH, json={"model_id": "Bad_Id", "sheet": {}}, headers=HEADERS)
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["error"]["code"] == "validation_error", body
+    errors = body["error"]["details"]["validation_errors"]
+    assert errors and errors[0]["loc"] == ["body", "model_id"]
+    assert calls["put"] == [] and calls["dispatch"] == []
