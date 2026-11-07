@@ -27,9 +27,11 @@ interface Props {
   /** Contexto para prellenar el mensaje de WhatsApp. */
   productName?: string;
   brandName?: string;
+  /** Destino del botón; las páginas de modelo llevan el modelo (`/contacto/?producto=<slug>`). */
+  quoteHref?: string;
 }
 
-const { index, title, body, productName, brandName } = Astro.props;
+const { index, title, body, productName, brandName, quoteHref = site.quoteHref } = Astro.props;
 const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
 ---
 
@@ -46,7 +48,7 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
         <p class="t-body band__body">{body}</p>
       </div>
       <div class="band__actions">
-        <a href={site.quoteHref} class="btn btn-invert">{ctaLabels.solicitarCotizacion}</a>
+        <a href={quoteHref} class="btn btn-invert">{ctaLabels.solicitarCotizacion}</a>
         <ul class="band__channels">
           <li>
             <a href={whatsappHref} target="_blank" rel="noopener noreferrer">

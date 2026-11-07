@@ -1,0 +1,134 @@
+---
+import SectionIndex from '../ui/SectionIndex.astro';
+import ModelPhoto from '../ui/ModelPhoto.astro';
+import Icon from '../ui/Icon.astro';
+import { getBrandById } from '../../lib/catalog';
+import { imageForEntry, keyStats, modelHref } from '../../lib/modelos';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Lista de modelos de la colección, en filas: fotografía VERIFIED, marca,
+ * nombre y la primera cifra del fabricante (o dos, con `full`, más la frase
+ * del equipo). Toda la fila es el enlace a la página del modelo.
+ *
+ * §5 de la página de modelo («También de la misma familia») y lista principal
+ * de la página de familia (`full`). Sin modelos no dibuja nada.
+ */
+interface Props {
+  models: readonly Modelo[];
+  title: string;
+  lead?: string;
+  index?: number;
+  full?: boolean;
+  /** Ancla del encabezado: una página puede montar más de una lista. */
+  id?: string;
+}
+
+const { models, title, lead, index, full = false, id = 'relacionados-title' } = Astro.props;
+const rows = models.map((model) => ({
+  model,
+  href: modelHref(model),
+  brandName: getBrandById(model.brand)?.name ?? model.brand,
+  image: imageForEntry(model),
+  stats: keyStats(model, full ? 2 : 1),
+}));
+---
+
+{
+  rows.length > 0 && (
+    <section class="shell section rule-top" aria-labelledby={id}>
+      {index !== undefined && <SectionIndex index={index} label={full ? 'Modelos' : 'Modelos relacionados'} />}
+      <h2 id={id} class="t-h2">{title}</h2>
+      {lead && <p class="t-lead mt-5">{lead}</p>}
+      <ul class="related mt-10">
+        {rows.map((row) => (
+          <li>
+            <a href={row.href} class="related__link">
+              <div class="related__media">
+                <ModelPhoto image={row.image} brandName={row.brandName} size="thumb" />
+              </div>
+              <div>
+                <p class="t-label related__brand" translate="no">{row.brandName}</p>
+                <h3 class="related__name" translate="no">{row.model.name}</h3>
+                {full && <p class="t-small related__lead">{row.model.lead}</p>}
+                <dl class="related__facts">
+                  {row.stats.map((stat) => (
+                    <div>
+                      <dt>{stat.label}</dt>
+                      <dd class="t-data">{stat.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+              <span class="related__go" aria-hidden="true">
+                <Icon name="arrow-right" size={20} />
+              </span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+<style>
+  .related {
+    list-style: none;
+    padding: 0;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .related li {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .related__link {
+    display: grid;
+    grid-template-columns: 5rem minmax(0, 1fr) 1.25rem;
+    gap: 1rem;
+    align-items: center;
+    padding-block: 1.25rem;
+    transition: background-color 150ms;
+  }
+  .related__link:hover {
+    background-color: var(--color-surface);
+  }
+  .related__brand {
+    color: var(--color-ink-500);
+  }
+  .related__name {
+    margin-top: 0.125rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .related__lead {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 60ch;
+  }
+  .related__facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 2rem;
+    margin: 0.5rem 0 0;
+    font-size: 0.875rem;
+  }
+  .related__facts dt {
+    color: var(--color-ink-500);
+  }
+  .related__facts dd {
+    margin: 0;
+    color: var(--color-ink-800);
+  }
+  .related__go {
+    color: var(--color-ink-500);
+  }
+  .related__link:hover .related__go {
+    color: var(--color-teal-800);
+  }
+  @media (min-width: 768px) {
+    .related__link {
+      grid-template-columns: 7rem minmax(0, 1fr) 2rem;
+      gap: 2rem;
+    }
+  }
+</style>

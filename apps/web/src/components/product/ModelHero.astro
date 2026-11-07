@@ -1,0 +1,186 @@
+---
+import Breadcrumbs from '../ui/Breadcrumbs.astro';
+import KeyFacts from '../ui/KeyFacts.astro';
+import ModelPhoto from '../ui/ModelPhoto.astro';
+import Icon from '../ui/Icon.astro';
+import Showroom from '../home/Showroom.astro';
+import { company } from '../../data/company';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { familyHref, imageForEntry, keyStats, type FamilyInfo } from '../../lib/modelos';
+import type { Brand } from '../../data/brands';
+import type { Modelo } from '../../content.config';
+
+/**
+ * §1 de la página de modelo: ruta, supratítulo (familia · marca), el nombre
+ * como H1, la frase del equipo, tres cifras del fabricante, las dos acciones
+ * y la línea de valor del titular.
+ *
+ * `media` decide qué acompaña al texto:
+ *   `story`    nada: la historia por scroll (`ProductStory`) viene justo
+ *              debajo y su lienzo es el hero visual
+ *   `showroom` la sala 3D del equipo (`home/Showroom`), sin historia
+ *   `photo`    la fotografía VERIFIED del registro
+ *
+ * El resto de la página va en el slot. Al final de ese contenido, antes de la
+ * banda de cierre que pone la página, va la barra fija de cotización:
+ * `position: sticky` al pie de la pantalla mientras se lee la página, y se
+ * apoya en su sitio al llegar a la banda. Sin JavaScript.
+ */
+interface Props {
+  entry: Modelo;
+  brand: Brand | undefined;
+  family: FamilyInfo;
+  media: 'story' | 'showroom' | 'photo';
+  quoteHref: string;
+}
+
+const { entry, brand, family, media, quoteHref } = Astro.props;
+const brandName = brand?.name ?? entry.brand;
+const whatsappHref = buildWhatsAppQuoteUrl({ productName: entry.name, brandName });
+const stats = keyStats(entry);
+const photo = imageForEntry(entry);
+---
+
+<div class="model-page">
+  <section class="shell model-hero" aria-labelledby="modelo-titulo">
+    <Breadcrumbs
+      items={[
+        { label: 'Productos', href: '/productos/' },
+        { label: family.short, href: familyHref(family.slug) },
+        { label: entry.name },
+      ]}
+    />
+    <div class:list={['model-hero__grid', media !== 'story' && 'model-hero__grid--media']}>
+      <div>
+        <p class="t-label model-hero__eyebrow">{family.short} · <span translate="no">{brandName}</span></p>
+        <h1 id="modelo-titulo" class="t-display mt-3" translate="no">{entry.name}</h1>
+        <p class="t-lead mt-5">{entry.lead}</p>
+        <KeyFacts facts={stats} class="mt-8" aria-label="Datos del fabricante" />
+        <div class="model-hero__actions">
+          <a href={quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+          <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
+            <Icon name="whatsapp" size={18} />
+            {ctaLabels.whatsapp}
+            <span class="sr-only">{entry.name} (abre WhatsApp en una pestaña nueva)</span>
+          </a>
+        </div>
+        <p class="t-small model-hero__value">{company.valueLine}</p>
+      </div>
+      {
+        media === 'showroom' && entry.showroom_id && (
+          <div class="model-hero__media">
+            <Showroom id={entry.showroom_id} />
+          </div>
+        )
+      }
+      {
+        media === 'photo' && (
+          <div class="model-hero__media">
+            <ModelPhoto image={photo} brandName={brandName} size="hero" priority captioned ratio="4 / 5" />
+          </div>
+        )
+      }
+    </div>
+  </section>
+
+  <slot />
+
+  <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${entry.name}`}>
+    <div class="shell cta-bar__inner">
+      <p class="cta-bar__name t-data" translate="no">{brandName} {entry.name}</p>
+      <a href={quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+      <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer">
+        <Icon name="whatsapp" size={18} />
+        WhatsApp
+        <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
+      </a>
+    </div>
+  </aside>
+</div>
+
+<style>
+  .model-hero {
+    padding-block: 2rem 3rem;
+  }
+  .model-hero__grid {
+    display: grid;
+    gap: 2.5rem;
+    margin-top: 1.5rem;
+    max-width: 48rem;
+  }
+  .model-hero__eyebrow {
+    color: var(--color-ink-600);
+  }
+  .model-hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem 2rem;
+    margin-top: 2rem;
+  }
+  .model-hero__value {
+    margin-top: 1.5rem;
+    color: var(--color-ink-600);
+  }
+  .model-hero__media {
+    max-width: 26rem;
+  }
+
+  .cta-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    background-color: var(--color-paper);
+    border-top: 1px solid var(--color-hairline);
+  }
+  .cta-bar__inner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    padding-block: 0.625rem;
+  }
+  .cta-bar__name {
+    display: none;
+    margin-right: auto;
+    color: var(--color-ink-800);
+  }
+  .cta-bar .btn {
+    min-height: 2.75rem;
+    padding-inline: 1rem;
+  }
+  .cta-bar .btn-primary {
+    flex: 1 1 auto;
+  }
+  /* Lo enfocado con el teclado no queda escondido detrás de la barra. */
+  :global(:root:has([data-sticky-cta])) {
+    scroll-padding-bottom: 5rem;
+  }
+
+  @media (min-width: 760px) {
+    .cta-bar__name {
+      display: block;
+    }
+    .cta-bar .btn-primary {
+      flex: none;
+    }
+    /* El escenario fijo de la historia termina sobre la barra, no debajo. */
+    .model-page :global(.story__stage) {
+      height: calc(100vh - 8rem);
+    }
+  }
+  @media (min-width: 768px) {
+    .model-hero {
+      padding-block: 3rem 4.5rem;
+    }
+    .model-hero__grid--media {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+      gap: 4rem;
+      max-width: none;
+      align-items: start;
+    }
+    .model-hero__media {
+      max-width: none;
+    }
+  }
+</style>

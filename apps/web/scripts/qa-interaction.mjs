@@ -533,14 +533,11 @@ console.log('\nFormulario de cotización (/contacto/, 375 px)');
  * la ficha; el 3D se pide al acercarse, en el nivel de calidad que el equipo
  * aguante (`canvas[data-tier]`), y con movimiento reducido no se pide.
  *
- * Se prueba en la sala interna `/sala-lab/historia/` (existe desde 3B) y en la
- * ruta pública del modelo, que crea la tarea 4A: mientras falte, esa ruta queda
- * como pendiente y no falla; cuando exista, corre igual que la interna.
+ * Se prueba en la página pública del modelo. La sala interna
+ * `/sala-lab/historia/` sirvió de banco de pruebas hasta que existió esta ruta
+ * (tarea 4A) y ya no existe.
  */
-const STORY_PAGES = [
-  { path: '/sala-lab/historia/', pending: null },
-  { path: '/productos/sonicacion/hielscher-up400st/', pending: '4A' },
-];
+const STORY_PAGES = [{ path: '/productos/sonicacion/hielscher-up400st/', pending: null }];
 const webglCounter = () => {
   window.__webgl = 0;
   const original = HTMLCanvasElement.prototype.getContext;
@@ -693,6 +690,94 @@ for (const story of STORY_PAGES) {
       const shown = await page.locator('[data-story] [data-beat]').evaluateAll((els) => els.filter((el) => getComputedStyle(el).display !== 'none').length);
       check(shown === 1, `ProductStory: en móvil se lee un tramo a la vez (${shown})`);
     }
+    await context.close();
+  }
+}
+
+/* -- 7. Páginas de modelo y de familia ------------------------------------ */
+
+/**
+ * Las páginas de modelo salen de la colección `modelos` (una por archivo) y
+ * las de familia las listan. Los datos estructurados declaran el equipo sin
+ * oferta (no se publica precio), y las preguntas frecuentes sólo cuando la
+ * ficha las trae. La barra fija de cotización lleva el modelo al formulario.
+ */
+const MODEL_PATH = '/productos/sonicacion/hielscher-up400st/';
+const FAMILY_PATH = '/productos/sonicacion/';
+const ldBlocks = (html) =>
+  [...html.matchAll(/<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)].flatMap((match) => {
+    try {
+      const data = JSON.parse(match[1]);
+      return Array.isArray(data) ? data : [data];
+    } catch {
+      return [{ '@type': 'JSON inválido' }];
+    }
+  });
+console.log(`\nPágina de modelo ${MODEL_PATH}`);
+{
+  const built = join(dist, MODEL_PATH, 'index.html');
+  const html = existsSync(built) ? readFileSync(built, 'utf8') : '';
+  const blocks = ldBlocks(html);
+  const product = blocks.find((block) => block['@type'] === 'Product');
+  check(
+    Boolean(
+      product &&
+        product.name &&
+        product.description &&
+        product.brand?.name &&
+        product.manufacturer?.url &&
+        product.url === `https://origenlab.cl${MODEL_PATH}` &&
+        product.image &&
+        product.additionalProperty?.length > 0,
+    ),
+    'Model page: JSON-LD Product present',
+  );
+  check(Boolean(product) && !('offers' in product), 'Model page: el Product no declara offers (no se publica precio)');
+  check(!blocks.some((block) => block['@type'] === 'JSON inválido'), 'Model page: todo bloque JSON-LD es JSON válido');
+  // El menú del sitio también es un <details>: se cuenta la sección de preguntas.
+  const faqShown = />\s*Preguntas frecuentes\s*</.test(html);
+  check(
+    blocks.some((block) => block['@type'] === 'FAQPage') === faqShown,
+    `Model page: FAQPage sólo con preguntas visibles (sección ${faqShown ? 'presente' : 'ausente'})`,
+  );
+}
+console.log(`\nPágina de familia ${FAMILY_PATH}`);
+{
+  const built = join(dist, FAMILY_PATH, 'index.html');
+  const html = existsSync(built) ? readFileSync(built, 'utf8') : '';
+  check(html.includes(`href="${MODEL_PATH}"`), 'Family page lists its models');
+}
+if (existsSync(join(dist, MODEL_PATH, 'index.html'))) {
+  console.log(`\nBarra fija de cotización ${MODEL_PATH} (375 px)`);
+  {
+    const context = await browser.newContext({ viewport: { width: 375, height: 812 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    await page.goto(`${base}${MODEL_PATH}`, { waitUntil: 'load' });
+    const bar = page.locator('[data-sticky-cta]');
+    const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
+    check(
+      (await quote.getAttribute('href')) === '/contacto/?producto=hielscher-up400st',
+      `Sticky CTA: «Solicitar cotización» lleva el modelo (${await quote.getAttribute('href')})`,
+    );
+    const wa = await bar.locator('a[href^="https://wa.me/"]').getAttribute('href');
+    check(Boolean(wa) && decodeURIComponent(wa).includes('UP400St'), 'Sticky CTA: WhatsApp con el modelo en el mensaje');
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight / 3));
+    await page.waitForTimeout(200);
+    const pinned = await bar.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      return box.bottom <= innerHeight + 1 && box.top >= innerHeight - 160;
+    });
+    check(pinned, 'Sticky CTA: la barra queda al pie de la pantalla al desplazarse');
+    await quote.focus();
+    const focus = await page.evaluate(() => {
+      const el = document.activeElement;
+      const style = getComputedStyle(el);
+      const box = el.getBoundingClientRect();
+      return { ring: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2, inView: box.top >= 0 && box.bottom <= innerHeight };
+    });
+    check(focus.ring && focus.inView, 'Sticky CTA: el foco de teclado se ve en la barra');
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check(overflow <= 0, `Model page: sin desplazamiento horizontal a 375 px (${overflow} px de más)`);
     await context.close();
   }
 }

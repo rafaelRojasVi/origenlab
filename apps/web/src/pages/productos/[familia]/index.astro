@@ -1,0 +1,94 @@
+---
+import { getCollection } from 'astro:content';
+import Layout from '../../../layouts/Layout.astro';
+import PageIntro from '../../../components/ui/PageIntro.astro';
+import SectionIndex from '../../../components/ui/SectionIndex.astro';
+import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
+import Icon from '../../../components/ui/Icon.astro';
+import RelatedModels from '../../../components/product/RelatedModels.astro';
+import { site } from '../../../config/site';
+import { getBrandsByFamilyId } from '../../../lib/catalog';
+import { byBrandAndName, familyInfo, hasCollectionPages, modelHref, type FamilySlug } from '../../../lib/modelos';
+import type { Modelo } from '../../../content.config';
+
+/**
+ * Página de familia: una por familia con modelos en la colección, en
+ * `/productos/{family}/`. Lista sus modelos (cada uno con su página) y las
+ * marcas que los fabrican. Centrifugación tiene su página propia en
+ * `/productos/centrifugas/` y no se genera aquí (ver `lib/modelos.ts`).
+ */
+export async function getStaticPaths() {
+  const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+  const families = [...new Set(all.map((entry) => entry.family))].filter(hasCollectionPages);
+  return families.map((slug) => ({
+    params: { familia: slug },
+    props: { slug, models: all.filter((entry) => entry.family === slug).sort(byBrandAndName) },
+  }));
+}
+
+const { slug, models } = Astro.props as { slug: FamilySlug; models: Modelo[] };
+const family = familyInfo(slug);
+const brands = getBrandsByFamilyId(family.scopeId);
+const brandNames = brands.map((brand) => brand.name).join(' y ');
+
+const itemList = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: family.name,
+  itemListElement: models.map((model, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: `${brands.find((brand) => brand.id === model.brand)?.name ?? model.brand} ${model.name}`,
+    url: `${site.baseUrl}${modelHref(model)}`,
+  })),
+};
+
+const fullDescription = `${family.purpose} Modelos de ${brandNames} con las cifras del fabricante y cotización en Chile a través de OrigenLab.`;
+const description =
+  fullDescription.length <= 158 ? fullDescription : `${fullDescription.slice(0, 157).replace(/\s+\S*$/, '')}…`;
+---
+
+<Layout title={family.name} description={description} jsonLd={[itemList]}>
+  <div class="shell">
+    <PageIntro
+      title={family.name}
+      lead={family.purpose}
+      crumbs={[{ label: 'Productos', href: '/productos/' }, { label: family.short }]}
+    />
+  </div>
+
+  <RelatedModels
+    models={models}
+    title="Modelos de la familia"
+    lead={`${family.question} Cada ficha trae las cifras del fabricante con su fuente.`}
+    index={1}
+    full
+    id="modelos-title"
+  />
+
+  {
+    brands.length > 0 && (
+      <section class="shell section rule-top" aria-labelledby="marcas-title">
+        <SectionIndex index={2} label="Marcas" />
+        <h2 id="marcas-title" class="t-h2">Quién los fabrica</h2>
+        <ul class="link-row mt-8">
+          {brands.map((brand) => (
+            <li>
+              <a href={`/marcas/${brand.slug}/`} class="link-arrow">
+                <span translate="no">{brand.name}</span>
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )
+  }
+
+  <ClosingQuoteBand
+    index={brands.length > 0 ? 3 : 2}
+    title={`Cotice equipos de ${family.short.toLowerCase()} para su laboratorio`}
+    body="Cuéntenos la muestra, el volumen por lote y su institución. Con eso proponemos el modelo y los accesorios, con las condiciones por escrito."
+    brandName={brands.length === 1 ? brands[0].name : undefined}
+  />
+</Layout>
