@@ -46,7 +46,7 @@ const SCRIPT_PATH = "/api/stats/script.js";
 const DEFAULT_UPSTREAM_EVENT_PATH = "/api/event"; // Plausible CE; Umami is "/api/send"
 const DEFAULT_UPSTREAM_SCRIPT_PATH = "/js/script.js"; // Plausible CE; Umami is "/script.js"
 const COUNTER_TTL_SECONDS = 60 * 60 * 24 * 90;
-const PAGINA_RE = /^\/[a-z0-9/-]{0,80}$/;
+const PAGINA_RE = /^(?!.*\/\/)\/[a-z0-9/-]{0,80}$/;
 const MODELO_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const UPSTREAM_PATH_RE = /^\/[A-Za-z0-9._\-/]*$/;
 
@@ -193,13 +193,11 @@ async function bump(kv: KVNamespace, key: string): Promise<void> {
 async function incrementCounter(kv: KVNamespace, event: StatsEvent, env: StatsEnv): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   if (event.name === "visita" && event.origen !== undefined && event.pagina !== undefined) {
-    // Origin-only total (works with an empty page list) plus origin x page. Both segments are bounded:
+    // ONE write per visit (KV's free plan allows about 1,000 writes a day). Both segments are bounded:
     // origen is a closed set of six, pagina is STATS_PAGINAS or "otra", so at most
-    // 6 x (STATS_PAGINAS size + 1) + 6 keys per day.
-    const base = `daily:${today}:visita:${event.origen}`;
+    // 6 x (STATS_PAGINAS size + 1) keys per day. A per-source total is the sum over its pages at read time.
     const pagina = allowedPaginas(env.STATS_PAGINAS).has(event.pagina) ? event.pagina : OTHER_PAGINA;
-    await bump(kv, base);
-    await bump(kv, `${base}:${pagina}`);
+    await bump(kv, `daily:${today}:visita:${event.origen}:${pagina}`);
     return;
   }
   const known = allowedModelos(env.STATS_MODELOS);

@@ -12,7 +12,7 @@ STATS_ORIGIN = ""
 STATS_MODELOS = ""
 # Counter mode only: comma-separated page paths (lowercase, e.g. "/,/catalogo,/contacto") that a `visita`
 # counter may key on. Exact match, no trailing-slash folding. Any other page counts as "otra"; empty =
-# every page counts as "otra" (the per-source totals still work). Keys per day: 6 x (pages + 1) + 6.
+# every page counts as "otra" (the per-source totals still work). Keys per day: 6 x (pages + 1).
 STATS_PAGINAS = ""
 
 [[routes]]

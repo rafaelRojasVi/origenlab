@@ -247,6 +247,10 @@ describe("stats visita event", () => {
     ["pagina uppercase", { origen: "google", pagina: "/Catalogo" }],
     ["pagina without leading slash", { origen: "google", pagina: "catalogo" }],
     ["pagina with colon", { origen: "google", pagina: "/a:b" }],
+    ["pagina with a double slash", { origen: "google", pagina: "/a//b" }],
+    ["pagina starting with a double slash", { origen: "google", pagina: "//evil" }],
+    ["pagina with an encoded slash", { origen: "google", pagina: "/a%2fb" }],
+    ["pagina with dot segments", { origen: "google", pagina: "/a/../b" }],
     ["pagina with dot", { origen: "google", pagina: "/a.html" }],
     ["pagina empty", { origen: "google", pagina: "" }],
     ["pagina a full URL", { origen: "google", pagina: "https://origenlab.cl/" }],
@@ -579,15 +583,15 @@ describe("stats visita counter", () => {
   const today = () => new Date().toISOString().slice(0, 10);
   const visita = (origen: string, pagina: string) => eventRequest({ name: "visita", props: { origen, pagina } });
 
-  it("counts an allowlisted page under its own key and always under the origin-only key", async () => {
-    const { kv, store } = makeKv();
+  it("counts an allowlisted page under its own key with a single KV write per visit", async () => {
+    const { kv, store, put } = makeKv();
     const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/, /catalogo ,/contacto" };
     await handleStatsRequest(visita("google", "/catalogo"), env);
     await handleStatsRequest(visita("google", "/catalogo"), env);
     await handleStatsRequest(visita("google", "/"), env);
+    expect(put).toHaveBeenCalledTimes(3);
     expect([...store.entries()].sort()).toEqual(
       [
-        [`daily:${today()}:visita:google`, "3"],
         [`daily:${today()}:visita:google:/catalogo`, "2"],
         [`daily:${today()}:visita:google:/`, "1"],
       ].sort(),
@@ -602,7 +606,6 @@ describe("stats visita counter", () => {
     }
     expect([...store.entries()].sort()).toEqual(
       [
-        [`daily:${today()}:visita:linkedin`, "3"],
         [`daily:${today()}:visita:linkedin:otra`, "3"],
       ].sort(),
     );
@@ -616,7 +619,7 @@ describe("stats visita counter", () => {
     expect(store.has(`daily:${today()}:visita:directo:/catalogo/`)).toBe(false);
   });
 
-  it("collapses every page to \"otra\" when STATS_PAGINAS is empty or unset, keeping the origin total", async () => {
+  it("collapses every page to \"otra\" when STATS_PAGINAS is empty or unset", async () => {
     for (const paginas of [undefined, "", " , "]) {
       const { kv, store } = makeKv();
       const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: paginas };
@@ -624,7 +627,6 @@ describe("stats visita counter", () => {
       await handleStatsRequest(visita("whatsapp", "/catalogo"), env);
       expect([...store.entries()].sort()).toEqual(
         [
-          [`daily:${today()}:visita:whatsapp`, "2"],
           [`daily:${today()}:visita:whatsapp:otra`, "2"],
         ].sort(),
       );
@@ -635,12 +637,10 @@ describe("stats visita counter", () => {
     const { kv, store } = makeKv();
     const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/Catalogo,catalogo,/a?b,/ok" };
     await handleStatsRequest(visita("google", "/ok"), env);
-    expect([...store.keys()].sort()).toEqual(
-      [`daily:${today()}:visita:google`, `daily:${today()}:visita:google:/ok`].sort(),
-    );
+    expect([...store.keys()]).toEqual([`daily:${today()}:visita:google:/ok`]);
   });
 
-  it("keeps the keys per day within 6 origins x (allowlist + 1) + 6, whatever the client sends", async () => {
+  it("keeps the keys per day within 6 origins x (allowlist + 1), whatever the client sends", async () => {
     const { kv, store } = makeKv();
     const allowlist = ["/", "/catalogo", "/contacto", "/nosotros"];
     const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: allowlist.join(",") };
@@ -648,8 +648,8 @@ describe("stats visita counter", () => {
     for (const origen of STATS_ORIGENES) {
       for (const pagina of pages) await handleStatsRequest(visita(origen, pagina), env);
     }
-    const maximum = STATS_ORIGENES.size * (allowlist.length + 1) + STATS_ORIGENES.size;
-    expect(maximum).toBe(36);
+    const maximum = STATS_ORIGENES.size * (allowlist.length + 1);
+    expect(maximum).toBe(30);
     expect(store.size).toBe(maximum); // every combination was hit, none beyond the bound
     expect([...store.keys()].every((key) => key.startsWith(`daily:${today()}:visita:`))).toBe(true);
   });
