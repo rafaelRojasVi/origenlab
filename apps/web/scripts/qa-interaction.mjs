@@ -829,6 +829,8 @@ console.log('\nEnlaces hacia las páginas de familia y de modelo');
     index.length === 6 && families.every((href) => index.includes(href)),
     `/productos/: el índice lleva a las seis páginas de familia (${index.join(', ')})`,
   );
+  // Una cifra visible sólo entra por publicClaim(): el índice no cuenta modelos.
+  check(!/scope-index__count/.test(read('/productos/')), '/productos/: el índice no publica conteos de modelos');
 
   const brandSlugs = Object.fromEntries(
     [...readFileSync(join(root, 'src/data/brands.ts'), 'utf8').matchAll(/\n {4}id: '([\w-]+)',[\s\S]*?\n {4}slug: '([\w-]+)'/g)]

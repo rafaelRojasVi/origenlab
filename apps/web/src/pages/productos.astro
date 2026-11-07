@@ -19,8 +19,6 @@ import { applicationsForFamily } from '../data/applications';
 import { imageForModel } from '../data/productImages';
 import ModelPhoto from '../components/ui/ModelPhoto.astro';
 import { site } from '../config/site';
-import { getCollection } from 'astro:content';
-import type { Modelo } from '../content.config';
 import { familyForScope, familyHref } from '../lib/modelos';
 import {
   getBrandById,
@@ -62,9 +60,6 @@ import {
  * la consulta de cotización. Si una fila perdiera la fotografía no reservaría
  * hueco: se compondría a texto, y el diagrama de la familia seguiría arriba.
  */
-/** Modelos de la colección por familia: los que lista la página de cada una. */
-const collection = (await getCollection('modelos')).map((item) => item.data as Modelo);
-
 const families = familiesInProductOrder().map((scope) => {
   const slug = familyForScope(scope.id);
   // Una familia puede tener más de un fabricante: pesaje y humedad tiene dos
@@ -83,7 +78,6 @@ const families = familiesInProductOrder().map((scope) => {
     })),
     tasks: applicationsForFamily(scope.id),
     page: slug ? familyHref(slug) : `#${scope.id}`,
-    pageCount: collection.filter((entry) => entry.family === slug).length,
   };
 });
 ---
@@ -106,14 +100,13 @@ const families = familiesInProductOrder().map((scope) => {
       <h2 id="familias-title" class="t-h2">Las seis familias, y qué publica cada una</h2>
       <p class="t-body scope-head__body">
         No es una secuencia de trabajo: son capacidades independientes. El índice dice de una vez
-        qué hace cada familia, qué fabricante está detrás y cuántos modelos tiene su página, y lleva
-        a ella. Debajo, cada familia con la documentación de sus modelos.
+        qué hace cada familia y qué fabricante está detrás, y lleva a su página. Debajo, cada familia con la documentación de sus modelos.
       </p>
     </div>
 
     <ul class="scope-index" aria-label="Índice de las seis familias de equipo">
       {
-        families.map(({ scope, familyBrands, page, pageCount }) => (
+        families.map(({ scope, familyBrands, page }) => (
           <li class="scope-index__row">
             <a href={page} class="scope-index__link">
               <span class="scope-index__name">
@@ -124,9 +117,6 @@ const families = familiesInProductOrder().map((scope) => {
               </span>
               <span class="scope-index__brand t-data">
                 {familyBrands.map((brand) => brand.name).join(' · ')}
-              </span>
-              <span class="scope-index__count t-data">
-                {pageCount === 1 ? '1 modelo' : `${pageCount} modelos`}
               </span>
               <Icon name="arrow-right" size={16} class="scope-index__go" />
             </a>
@@ -323,13 +313,9 @@ const families = familiesInProductOrder().map((scope) => {
     font-size: 0.8125rem;
     color: var(--color-teal-800);
   }
-  .scope-index__count {
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
-  }
   .scope-index__go {
     grid-column: 2;
-    grid-row: 1 / span 3;
+    grid-row: 1 / span 2;
     align-self: center;
     justify-self: end;
     color: var(--color-ink-500);
@@ -456,16 +442,13 @@ const families = familiesInProductOrder().map((scope) => {
       align-items: baseline;
     }
     .scope-index__link {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 9rem 1.5rem;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 1.5rem;
       gap: 1.5rem;
       padding-block: 1.0625rem;
     }
     .scope-index__go {
-      grid-column: 4;
+      grid-column: 3;
       grid-row: auto;
-    }
-    .scope-index__count {
-      text-align: right;
     }
     .ref {
       grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
