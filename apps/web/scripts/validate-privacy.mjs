@@ -154,7 +154,7 @@ for (const file of scripts) {
 
 /* -- 6. La medición propia es de primera mano ------------------------------
  *
- * `src/lib/stats.ts` envía cinco eventos con `navigator.sendBeacon` a una ruta
+ * `src/lib/stats.ts` envía seis nombres de evento (cinco acciones y la `visita`) con `navigator.sendBeacon` a una ruta
  * del propio dominio (`/api/stats/event`). La medición sólo es compatible con
  * lo que dicen `/privacidad/` y `/cookies/` si ese archivo no guarda nada en el
  * navegador y no habla con nadie más: aquí se busca el archivo construido que
@@ -175,7 +175,12 @@ for (const file of statsFiles) {
   const hosts = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)].map((m) => m[2]).filter((h) => !h.endsWith('origenlab.cl'));
   assert(hosts.length === 0, `${rel}: la medición no nombra dominios ajenos`);
   assert(/sendBeacon/.test(body), `${rel}: la medición usa sendBeacon`);
+  // El sexto nombre es `visita`: origen y página, nunca el referente entero ni la query.
+  assert(body.includes('visita'), `${rel}: el sexto nombre de evento, visita, está en la lista`);
+  assert(!/stringify\([^)]*(referrer|search|href)/i.test(body), `${rel}: la carga útil no incluye el referente ni la query`);
 }
+const statsSource = readFileSync(join(root, 'src/lib/stats.ts'), 'utf8');
+assert(/JSON\.stringify\(payload\)/.test(statsSource) && !/payload[^;]*(referrer|location\.search|location\.href)/.test(statsSource), 'stats.ts: el referente sólo entra por el clasificador, nunca a la carga útil');
 
 if (failed) {
   console.error('\nvalidate:privacy FALLÓ');

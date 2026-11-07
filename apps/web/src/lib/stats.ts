@@ -1,5 +1,5 @@
 /**
- * Medición propia: cinco eventos, sin cookies, sin almacenamiento, sin terceros.
+ * Medición propia: cinco acciones y la visita, sin cookies, sin almacenamiento, sin terceros.
  *
  * El navegador envía el evento a una ruta del propio dominio con
  * `navigator.sendBeacon`; la recibe el Worker de Cloudflare que atiende
@@ -50,4 +50,42 @@ export function installTrackClicks(): void {
     const name = link?.dataset.track;
     if (link && name && CLICK_EVENTS.includes(name)) trackEvent(name as StatsEventName, { modelo: link.dataset.modelo });
   });
+}
+
+const PAGINA = /^(?!.*\/\/)\/[a-z0-9/-]{0,80}$/;
+let visitSent = false;
+
+/** Origen de la visita: sólo una de seis palabras; el referente entero y la query nunca salen del navegador. */
+function classifyOrigin(): string {
+  const q = new URLSearchParams(location.search);
+  const src = q.get('utm_source');
+  const med = q.get('utm_medium');
+  if (src === 'gbp' || med === 'gbp') return 'perfil-google';
+  if (src === 'whatsapp') return 'whatsapp';
+  let host = '';
+  try {
+    host = document.referrer ? new URL(document.referrer).hostname.toLowerCase() : '';
+  } catch {
+    host = '';
+  }
+  if (!host || host === location.hostname) return 'directo';
+  if (/(^|\.)google\.[a-z.]{2,6}$/.test(host)) return 'google';
+  if (host.includes('linkedin.')) return 'linkedin';
+  if (host === 'wa.me' || host === 'l.wa.me' || /(^|\.)whatsapp\.com$/.test(host)) return 'whatsapp';
+  return 'otro';
+}
+
+/** Una `visita` por carga de página; la navegación interna cuenta como `directo`. */
+export function trackVisit(): void {
+  if (visitSent) return;
+  visitSent = true;
+  try {
+    if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
+    const pagina = location.pathname.toLowerCase();
+    if (!PAGINA.test(pagina)) return;
+    const payload = { name: 'visita', props: { origen: classifyOrigin(), pagina } };
+    navigator.sendBeacon(ENDPOINT, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+  } catch {
+    // Medir nunca debe romper la página.
+  }
 }

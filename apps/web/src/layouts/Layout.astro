@@ -41,6 +41,10 @@ const effectiveNoindex = noindex || robots === 'noindex';
       <slot />
     </main>
     <SiteFooter />
+    <script>
+      import { trackVisit } from '../lib/stats';
+      trackVisit();
+    </script>
 
     <style is:global>
       .skip-link {
