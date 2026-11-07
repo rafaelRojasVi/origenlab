@@ -104,8 +104,9 @@ const photo = imageForEntry(entry);
    * Medición propia (`lib/stats.ts`): un solo escucha de clics para toda la
    * página de modelo. Lo que se mide lleva `data-track="<evento>"` y, si
    * corresponde, `data-modelo="<slug>"`: los dos botones del hero, los de la
-   * barra fija y los enlaces a la ficha del fabricante (en `ProductStory` y en
-   * la página de modelo). Sin cookies ni almacenamiento.
+   * barra fija, los de la banda de cierre (`ClosingQuoteBand`) y los enlaces a la
+   * ficha del fabricante (en `ProductStory` y en la página de modelo). El escucha
+   * está en `document`, así que alcanza a todos. Sin cookies ni almacenamiento.
    */
   import { trackEvent, type StatsEventName } from '../../lib/stats';
 

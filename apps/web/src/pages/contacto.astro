@@ -1,4 +1,5 @@
 ---
+import { getCollection } from 'astro:content';
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
@@ -9,6 +10,9 @@ import { faqItems } from '../data/faq';
 import { buildQuoteMailtoWithTemplate, buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import { ctaLabels } from '../lib/ctaLabels';
 import { faqJsonLd } from '../lib/jsonld';
+
+// Slugs de modelo conocidos: `form_submit` sólo lleva `modelo` si `?producto=` es uno de ellos.
+const modeloSlugs = (await getCollection('modelos')).map((item) => item.data.slug);
 
 const mailtoHref = buildQuoteMailtoWithTemplate();
 const whatsappHref = buildWhatsAppQuoteUrl();
@@ -76,7 +80,7 @@ const steps = [
           </p>
         </div>
 
-        <form id="solicitud-form" method="post" action="/api/web/solicitud" class="sol-form">
+        <form id="solicitud-form" data-modelos={modeloSlugs.join(' ')} method="post" action="/api/web/solicitud" class="sol-form">
           <input type="hidden" name="render_at" id="solicitud-render-at" />
           <input type="hidden" name="submission_id" id="solicitud-submission-id" />
           <div class="sol-trap-wrap">
@@ -452,13 +456,16 @@ form.addEventListener('submit',function(ev){
   /**
    * Medición propia (`lib/stats.ts`): el guion en línea de arriba avisa con un
    * evento del documento cuando la API aceptó la solicitud; aquí se envía
-   * `form_submit` con el modelo de `?producto=` si lo hay. No se envía nada más
-   * del formulario.
+   * `form_submit`. `modelo` va sólo si `?producto=` es el slug de un modelo
+   * conocido (`data-modelos` del formulario); si no, se omite. No se envía nada
+   * más del formulario.
    */
   import { trackEvent } from '../lib/stats';
 
   document.addEventListener('origenlab:form-submit', (event) => {
-    trackEvent('form_submit', { modelo: (event as CustomEvent<{ modelo?: string }>).detail?.modelo });
+    const known = (document.getElementById('solicitud-form')?.dataset.modelos ?? '').split(' ');
+    const modelo = (event as CustomEvent<{ modelo?: string }>).detail?.modelo ?? '';
+    trackEvent('form_submit', { modelo: modelo && known.includes(modelo) ? modelo : null });
   });
 </script>
 

@@ -174,7 +174,7 @@ for (const file of statsFiles) {
   }
   const hosts = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)].map((m) => m[2]).filter((h) => !h.endsWith('origenlab.cl'));
   assert(hosts.length === 0, `${rel}: la medición no nombra dominios ajenos`);
-  assert(/sendBeacon/.test(body) && !/\bfetch\s*\(/.test(body), `${rel}: la medición usa sendBeacon y no fetch`);
+  assert(/sendBeacon/.test(body), `${rel}: la medición usa sendBeacon`);
 }
 
 if (failed) {

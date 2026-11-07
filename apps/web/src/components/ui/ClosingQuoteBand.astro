@@ -35,6 +35,11 @@ interface Props {
    * pasa a la lista de canales. Sigue habiendo un solo botón.
    */
   primary?: 'quote' | 'whatsapp';
+  /**
+   * Slug del modelo en las páginas de modelo. Sólo ahí el escucha de clics de
+   * `ModelHero` (medición propia, `lib/stats.ts`) cuenta los botones de la banda.
+   */
+  modelo?: string;
 }
 
 const {
@@ -45,6 +50,7 @@ const {
   brandName,
   quoteHref = site.quoteHref,
   primary = 'quote',
+  modelo,
 } = Astro.props;
 const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
 ---
@@ -63,23 +69,23 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
       </div>
       <div class="band__actions">
         {primary === 'whatsapp' ? (
-          <a href={whatsappHref} class="btn btn-invert" target="_blank" rel="noopener noreferrer">
+          <a href={whatsappHref} class="btn btn-invert" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={modelo}>
             <Icon name="whatsapp" size={18} />
             {ctaLabels.whatsapp}
             <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
           </a>
         ) : (
-          <a href={quoteHref} class="btn btn-invert">{ctaLabels.solicitarCotizacion}</a>
+          <a href={quoteHref} class="btn btn-invert" data-track="cotizacion_click" data-modelo={modelo}>{ctaLabels.solicitarCotizacion}</a>
         )}
         <ul class="band__channels">
           <li>
             {primary === 'whatsapp' ? (
-              <a href={quoteHref}>
+              <a href={quoteHref} data-track="cotizacion_click" data-modelo={modelo}>
                 <Icon name="arrow-right" size={18} />
                 {ctaLabels.solicitarCotizacion}
               </a>
             ) : (
-              <a href={whatsappHref} target="_blank" rel="noopener noreferrer">
+              <a href={whatsappHref} target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={modelo}>
                 <Icon name="whatsapp" size={18} />
                 WhatsApp
                 <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
