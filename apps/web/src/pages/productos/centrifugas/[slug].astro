@@ -50,6 +50,8 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName: product.name, brandNam
  * lugar de la fotografía del hero. Sin historia, la página no cambia.
  */
 const entry = (await getCollection('modelos')).map((item) => item.data as Modelo).find((item) => item.slug === product.id);
+/* Los CTA llevan el modelo al formulario cuando la ficha existe en la colección. */
+const quoteHref = entry ? `/contacto/?producto=${entry.slug}` : site.quoteHref;
 const stories = import.meta.glob<{ story: ProductStoryConfig }>('../../../lib/showroom/stories/*.ts', { eager: true });
 const story = entry?.showroom_id
   ? Object.entries(stories).find(([path]) => path.endsWith(`/${entry.showroom_id}.ts`))?.[1].story
@@ -129,7 +131,7 @@ const metaDescription = (
       <KeyFacts facts={facts} class="product-hero__facts" />
 
       <div class="product-hero__actions">
-        <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
+        <a href={quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
         <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
           <Icon name="whatsapp" size={18} />
           Cotizar por WhatsApp
@@ -220,7 +222,7 @@ const metaDescription = (
       <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${product.name}`}>
         <div class="shell cta-bar__inner">
           <p class="cta-bar__name t-data" translate="no">{brand?.name} {product.name}</p>
-          <a href={site.quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry?.slug}>{ctaLabels.solicitarCotizacion}</a>
+          <a href={quoteHref} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry?.slug}>{ctaLabels.solicitarCotizacion}</a>
           <a href={whatsappHref} class="btn btn-secondary" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={entry?.slug}>
             <Icon name="whatsapp" size={18} />
             WhatsApp
@@ -239,6 +241,7 @@ const metaDescription = (
     productName={product.name}
     brandName={brand?.name}
     modelo={story ? entry?.slug : undefined}
+    quoteHref={quoteHref}
   />
 </Layout>
 

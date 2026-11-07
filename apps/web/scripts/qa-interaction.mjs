@@ -1065,6 +1065,7 @@ console.log('\nConsentimiento (/contacto/)');
   const bar = page.locator('[data-sticky-cta]');
   const quote = bar.locator('a', { hasText: 'Solicitar cotización' });
   check((await quote.getAttribute('data-track')) === 'cotizacion_click', 'Ficha heredada: «Solicitar cotización» de la barra lleva data-track');
+  check((await quote.getAttribute('href')) === '/contacto/?producto=ortoalresa-digicen-22-r', 'Ficha heredada: «Solicitar cotización» de la barra lleva el modelo al formulario');
   check((await quote.getAttribute('data-modelo')) === 'ortoalresa-digicen-22-r', 'Ficha heredada: la barra lleva data-modelo del equipo');
   const waLink = bar.locator('a[href^="https://wa.me/"]');
   check((await waLink.getAttribute('data-track')) === 'whatsapp_click', 'Ficha heredada: WhatsApp de la barra lleva data-track');

@@ -53,8 +53,10 @@ test-dashboard:
 test-proxy:
 	cd apps/dashboard-proxy && npm run validate && npm run typecheck
 
+# Everything `npm run validate` runs except qa:contrast and qa:interaction, which need a Chromium
+# that web.yml does not install (web-deploy.yml installs it and runs the full validate on push to main).
 test-web:
-	cd apps/web && npm run check && npm run validate:catalog && npm run build && npm run validate:dist
+	cd apps/web && npm run check && npm run test:scroll-story && npm run test:models && npm run validate:content && npm run build && npm run validate:catalog && npm run validate:images && npm run validate:dist && npm run validate:privacy
 
 # The database-free half of the Supabase CI job. The other half resets a local Supabase stack
 # (`supabase db reset`), which would wipe a developer's local data, so it runs only in CI. So does

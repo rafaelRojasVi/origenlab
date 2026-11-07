@@ -380,6 +380,9 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
   const lowEnd = (nav.deviceMemory !== undefined && nav.deviceMemory < 4) || nav.connection?.saveData === true;
 
   const use3d = !reduced && !lowEnd && 'WebGLRenderingContext' in window;
+  // Mismo criterio de nivel que `ProductStory`: teléfono o equipo modesto, nivel medio.
+  const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
+  const tier: 'high' | 'medium' = innerWidth < 760 || modest ? 'medium' : 'high';
   const lazy = innerWidth < 760 || (nav.hardwareConcurrency ?? 8) <= 4;
   const settled = use3d && lazy ? new Promise<void>((resolve) => whenSettled(resolve)) : Promise.resolve();
 
@@ -389,6 +392,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     const part = (selector: string, id: string) => figure.querySelector<HTMLElement>(`${selector}[data-entry="${id}"]`);
     let active = figure.dataset.active ?? '';
     let room: Showroom | null = null;
+    let gone = false;
     let ready = false;
     let loading = 0;
 
@@ -476,8 +480,9 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
       try {
         await document.fonts.ready;
         const [{ createShowroom }, module] = await Promise.all([import('../../lib/showroom/scene'), load()]);
+        if (gone) return;
         canvas.hidden = false;
-        room = createShowroom(canvas, module.build());
+        room = createShowroom(canvas, module.build({ lite: tier === 'medium' }), { tier });
         room.onFrame(onFrame);
       } catch (error) {
         canvas.hidden = true;
@@ -497,7 +502,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
       try {
         const [module] = await Promise.all([modelLoaders[id](), new Promise((done) => setTimeout(done, 350))]);
         if (ticket !== loading) return;
-        room.setModel(module.build());
+        room.setModel(module.build({ lite: tier === 'medium' }));
       } catch (error) {
         console.warn(`Sala 3D «${id}» no disponible.`, error);
         active = previous;
@@ -520,6 +525,12 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
       );
       near.observe(figure);
     }
+    // Al salir de la página se libera el WebGL (como en `ProductStory`).
+    addEventListener('pagehide', () => {
+      gone = true;
+      room?.dispose();
+      room = null;
+    });
   }
 
   for (const figure of document.querySelectorAll<HTMLElement>('[data-showroom]')) setup(figure);

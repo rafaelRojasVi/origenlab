@@ -584,6 +584,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     // falla y queda la imagen.
     const webgl = () => 'WebGL2RenderingContext' in window;
     const id = root.dataset.story ?? '';
+    let gone = false;
     const boot = () => {
       if (tier === 'low' || !near || !settled || story || loading) return;
       loading = true;
@@ -595,7 +596,11 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
         .then(([{ mountStory }, model, { story: config }]) =>
           mountStory(root, model, config, { tier: tier as 'high' | 'medium', still: reduced || posterMode, probe: !forced && !onDemand, onLow: () => fallBack(true) }),
         )
-        .then((mounted) => (story = mounted))
+        .then((mounted) => {
+          // Si la página se fue mientras cargaba, se libera en vez de guardarla.
+          if (gone) mounted.dispose();
+          else story = mounted;
+        })
         .catch((error) => {
           console.warn('Historia 3D no disponible; queda la imagen.', error);
           fallBack(false);
@@ -635,9 +640,14 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     ).observe(root);
     // Al salir de la página se libera el WebGL; si vuelve desde la caché, se rehace.
     addEventListener('pagehide', () => {
+      gone = true;
       story?.dispose();
       story = null;
     });
-    addEventListener('pageshow', (event) => event.persisted && boot());
+    addEventListener('pageshow', (event) => {
+      if (!event.persisted) return;
+      gone = false;
+      boot();
+    });
   }
 </script>

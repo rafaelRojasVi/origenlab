@@ -126,8 +126,13 @@ for (const file of pages) {
   const ogImage = html.match(/property="og:image" content="([^"]+)"/)?.[1];
   const modelSlug = rel.match(/^productos\/[^/]+\/([^/]+)\/index\.html$/)?.[1];
   const posterSlug = modelSlug && rel.startsWith('productos/centrifugas/') ? `ortoalresa-${modelSlug}` : modelSlug;
-  const ogOk = ogImage === sitePng || (posterSlug !== undefined && ogImage === `https://origenlab.cl/products/${posterSlug}-poster.jpg` && existsSync(join(dist, 'products', `${posterSlug}-poster.jpg`)));
-  assert(ogOk, at(`og:image debe ser el PNG del sitio${posterSlug ? ` o /products/${posterSlug}-poster.jpg` : ''} (${ogImage})`));
+  // Sin póster, la página de modelo usa su fotografía verificada: un WebP derivado bajo /products/ que exista en dist.
+  const photoPath = ogImage?.match(/^https:\/\/origenlab\.cl(\/products\/[A-Za-z0-9._\/-]+-\d+\.webp)$/)?.[1];
+  const ogOk =
+    ogImage === sitePng ||
+    (posterSlug !== undefined && ogImage === `https://origenlab.cl/products/${posterSlug}-poster.jpg` && existsSync(join(dist, 'products', `${posterSlug}-poster.jpg`))) ||
+    (modelSlug !== undefined && photoPath !== undefined && !photoPath.includes('..') && existsSync(join(dist, photoPath)));
+  assert(ogOk, at(`og:image debe ser el PNG del sitio${posterSlug ? `, /products/${posterSlug}-poster.jpg o la foto WebP de /products/` : ''} (${ogImage})`));
   const description = html.match(/<meta name="description" content="([^"]*)"/)?.[1] ?? '';
   assert(description.length > 50, at('descripción demasiado corta'));
   assert(description.length <= 165, at(`descripción de ${description.length} caracteres (máx. 165)`));
