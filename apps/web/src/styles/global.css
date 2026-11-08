@@ -3,8 +3,9 @@
 
 /* ============================================================================
    OrigenLab Website — design tokens: «Blanco con color» (2026-11-08)
-   One light world: white page, ink text, one teal accent, soft teal/aqua light
-   behind the machines and a pastel tint per product family. No grey or dark
+   One light world: white page, ink text, one teal accent, white cards lifted
+   by a soft teal shadow. Machines sit on plain white (no glow behind them) and
+   no product family gets its own backdrop. No grey or dark
    surface anywhere (company owner's rule); the ONE exception is the site
    footer (`--color-footer`, owner ruling 2026-11-08). Shadows are teal-tinted,
    never black. See docs/design/DESIGN_SYSTEM.md. Components must not invent
@@ -68,12 +69,12 @@
   --color-hairline: #e5eeeb; /* decorative dividers (not control edges) */
   --color-hairline-strong: #cfdeda; /* decorativo: subrayados; no es borde de control */
 
-  /* Ink. ≥ 4.5:1 on paper, surface, pressed and every family tint. */
+  /* Ink. ≥ 4.5:1 on paper, surface, pressed and the teal washes. */
   --color-ink-950: #0d1918; /* headings (18:1 on white) */
   --color-ink-900: #172524;
   --color-ink-800: #263432; /* body text (13:1) */
-  --color-ink-600: #465755; /* secondary text (7.6:1 white, ≥ 6.4:1 on tints) */
-  --color-ink-500: #5a6b68; /* tertiary text (5.6:1 white, ≥ 4.7:1 on tints) */
+  --color-ink-600: #465755; /* secondary text (7.6:1 white, ≥ 6.4:1 on surface/band) */
+  --color-ink-500: #5a6b68; /* tertiary text (5.6:1 white, ≥ 4.7:1 on surface/band) */
   --color-ink-disabled: #8a9997;
 
   /* Ink on the dark footer (`--color-footer`), the only dark surface. */
@@ -86,7 +87,7 @@
   /* Accent: one teal. 700 is the action colour, 800 links, 500 highlights
      (never text: 2.5:1 on white). */
   --color-teal-800: #115e59; /* links (7.6:1 white) */
-  --color-teal-700: #0f766e; /* buttons, labels, focus ring (5.5:1 white, ≥ 4.6:1 tints) */
+  --color-teal-700: #0f766e; /* buttons, labels, focus ring (5.5:1 white, ≥ 4.6:1 surface/band) */
   --color-teal-600: #0d9488; /* the headline period (3.7:1, large text) */
   --color-teal-500: #14b8a6; /* dots, LEDs */
   --color-teal-100: #ccfbf1; /* selection fill */
@@ -111,7 +112,7 @@
   /* Text that must stay readable on any light surface. */
   --color-fg: #0d1918;
   --color-fg-muted: #465755;
-  /* Control edges (secondary buttons, inputs): ≥ 3.5:1 on white and tints. */
+  /* Control edges (secondary buttons, inputs): ≥ 3.5:1 on white and the teal washes. */
   --color-edge: #6d7e7b;
   /* Closing band and other teal washes (light). Text on them is ink. */
   --color-band: #dcf6f0;
@@ -121,10 +122,10 @@
   --color-accent-hover: #115e59;
   --color-accent-active: #134e4a;
   --color-on-accent: #ffffff;
-  /* 3D studio: what posters and strips are baked on (= paper). Put on a tint
-     with `.pz` (brightness lift + multiply) and the floor takes the tint. */
+  /* 3D studio: what posters and strips are baked on (= paper). `.pz`
+     (brightness lift + multiply) blends them into any light surface. */
   --color-studio: #ffffff;
-  /* Hero light: teal and aqua glows with a white pool under the machine. */
+  /* Washes for `.surface-band` only (never behind a machine). */
   --color-glow-teal: #c4f1e6;
   --color-glow-aqua: #c9ecfb;
   --color-glow-mint: #e4faf5;
@@ -221,7 +222,7 @@
   /* `.pz`: a poster or turntable strip baked on the white studio, placed on any
      light surface. The brightness lift pushes the studio white (and JPEG noise)
      to pure white; multiply then lets the floor take the colour underneath
-     (white, a family tint, a glow). The surface must be in the same stacking
+     (white, the pale surface, a band). The surface must be in the same stacking
      context: never put a transformed or isolated wrapper between them. */
   .pz {
     filter: brightness(1.037);

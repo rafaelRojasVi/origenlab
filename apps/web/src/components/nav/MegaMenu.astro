@@ -54,12 +54,18 @@ const families = rankFamilies(
   (slug) => familyHref(slug).split('/')[2] ?? slug,
 );
 
+/** Las tareas, como en `/aplicaciones/`: por la familia de su primer equipo (dispersión al final). */
+const familySegment = (familyId: string) => {
+  const slug = familyForScope(familyId);
+  return slug ? (familyHref(slug).split('/')[2] ?? '') : '';
+};
+
 const groups: Group[] =
   menu === 'productos'
     ? families.map(familyGroup)
     : menu === 'marcas'
       ? rankBrands(brands).map((brand) => ({ label: brand.name, href: `/marcas/${brand.slug}/`, models: brandEntries(brand.id, all) }))
-      : applications.map((application) => ({
+      : rankFamilies(applications, (application) => familySegment(application.familyIds[0] ?? '')).map((application) => ({
           label: application.name,
           href: `/aplicaciones/#${application.slug}`,
           models: rankEntries(

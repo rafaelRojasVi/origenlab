@@ -194,7 +194,7 @@ export const brands: Brand[] = [
     metaDescription:
       'Centrífugas Ortoalresa disponibles para cotización a través de OrigenLab: cinco modelos de catálogo con ficha técnica del fabricante.',
     summary:
-      'Ortoalresa, fabricante europeo de centrífugas de laboratorio, ofrece equipos para aplicaciones generales y necesidades específicas de laboratorio. Es la única familia del catálogo con fotografía de producto y ficha completa publicadas en este sitio.',
+      'Ortoalresa, fabricante europeo de centrífugas de laboratorio, ofrece equipos para aplicaciones generales y necesidades específicas de laboratorio. Cada modelo se cotiza con la ficha técnica del fabricante.',
     applicationAreas: [
       'Preparación de muestras',
       'Microtubos y tubos cónicos',

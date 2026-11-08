@@ -670,8 +670,8 @@ export function build(options: BuildOptions = {}): BuiltModel {
       transductor: { target: transducerView, direction: new THREE.Vector3(0.35, 0.12, 1), distance: 520 },
       sonotrodo: { target: tip, direction: new THREE.Vector3(0.3, 0.15, 1), distance: 430 },
     },
-    frameTop: T_Y + T_LEN + 150,
-    frameMargin: 1.3,
+    frameTop: T_Y + T_LEN + 100,
+    frameMargin: 1.5,
     yaw: -0.12,
     setPower(on) {
       powered = on;

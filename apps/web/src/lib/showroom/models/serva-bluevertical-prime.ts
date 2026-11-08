@@ -879,6 +879,7 @@ export function build(): BuiltModel {
     },
     // frameTop: el pico del arco de los cables queda en ~187 mm.
     frameTop: TH + 50,
+    frameMargin: 1.75,
     yaw: 0.30,
     setPower(on: boolean) {
       powered = on;

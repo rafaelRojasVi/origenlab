@@ -825,7 +825,7 @@ export function build(): BuiltModel {
       },
     },
     frameTop: H + 14,
-    frameMargin: 1.32, // el hero ancho (7fr) no deja la base ni el soporte pegados al borde
+    frameMargin: 1.45, // el hero ancho (7fr) no deja la base ni el soporte pegados al borde
     yaw: 0.38,
     setPower(on: boolean) {
       powered = on;

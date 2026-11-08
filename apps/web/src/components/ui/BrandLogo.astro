@@ -6,9 +6,8 @@ import type { Brand } from '../../data/brands';
  * porque dependen del lockup de cada fabricante, no del contexto de uso.
  *
  * Los siete archivos de `public/brands/` son una sola tinta grafito sobre
- * transparencia (`npm run build:brand-logos`). En el sitio claro se dibujan
- * con su tinta original (`tone="ink"`, por omisión). `tone="light"` los lleva a
- * claro con un filtro, sólo para una superficie oscura (hoy, ninguna pública).
+ * transparencia (`npm run build:brand-logos`). El sitio es claro: se dibujan
+ * siempre con su tinta original.
  */
 interface Props {
   brand: Brand;
@@ -21,13 +20,11 @@ interface Props {
    * logotipo aún sin cargar aparecería en blanco al llegar a cuadro.
    */
   loading?: 'lazy' | 'eager';
-  /** `ink` (por omisión) sobre blanco; `light` sobre una superficie oscura. */
-  tone?: 'light' | 'ink';
   class?: string;
   [key: string]: unknown;
 }
 
-const { brand, scale = 1, loading = 'lazy', tone = 'ink', class: className = '', ...rest } = Astro.props;
+const { brand, scale = 1, loading = 'lazy', class: className = '', ...rest } = Astro.props;
 const height = Math.round((brand.logoDisplayHeight ?? 30) * scale);
 const ratio = (brand.logoWidth ?? 1) / (brand.logoHeight ?? 1);
 const width = Math.round(height * ratio);
@@ -43,7 +40,7 @@ const width = Math.round(height * ratio);
       loading={loading}
       decoding="async"
       style={`height:${height}px;width:auto`}
-      class:list={['brand-logo', tone === 'light' && 'brand-logo--light', className]}
+      class:list={['brand-logo', className]}
       {...rest}
     />
   )
@@ -54,11 +51,5 @@ const width = Math.round(height * ratio);
     display: block;
     max-width: 100%;
     object-fit: contain;
-  }
-  /* Tinta grafito → clara (≈ `--color-fg`): negro y luego invertido al 93 %.
-     `--brand-logo-filter` permite a la base retocar el tratamiento en un solo
-     sitio si cambia el fondo. */
-  .brand-logo--light {
-    filter: var(--brand-logo-filter, brightness(0) invert(0.93));
   }
 </style>

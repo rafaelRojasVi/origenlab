@@ -11,8 +11,7 @@ import MegaMenu from './nav/MegaMenu.astro';
  * Cabecera fija. 72 px arriba, 56 px con scroll (sólo CSS donde existe
  * `animation-timeline: scroll()`; si no, un observador alterna `data-scrolled`).
  * Una sola apariencia («Blanco con color»): vidrio blanco con desenfoque y un
- * filete teal pálido, sobre la portada y sobre el resto. `tone` se acepta por
- * compatibilidad y ya no cambia el color. El panel de los menús es una hoja
+ * filete teal pálido, sobre la portada y sobre el resto. El panel de los menús es una hoja
  * blanca que baja sobre la página, con sombra teal.
  *
  * Menús desplegables (dueño, 2026-11-08): Productos, Aplicaciones y Marcas
@@ -24,11 +23,6 @@ import MegaMenu from './nav/MegaMenu.astro';
  * `:hover` / `:focus-within` y todo son enlaces. En el teléfono el menú
  * despliega los mismos modelos en acordeones (`<details>`, sin script).
  */
-interface Props {
-  tone?: 'paper' | 'ink';
-}
-
-const { tone = 'paper' } = Astro.props;
 const path = Astro.url.pathname;
 const whatsappUrl = buildWhatsAppQuoteUrl();
 /** Destinos del menú con panel de modelos. */
@@ -45,7 +39,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
 }
 ---
 
-<header class:list={['site-header', `site-header--${tone}`]}>
+<header class="site-header">
   <noscript><style>.site-menu__btn{display:none}</style></noscript>
   <div class="site-header__bar shell">
     <a href="/" class="site-header__home" aria-label="OrigenLab, ir al inicio">

@@ -696,9 +696,10 @@ export function build(): DigicenModel {
       rotor: { target: rotorAnchor, direction: new THREE.Vector3(-0.25, 1.15, 0.85), distance: 760 },
       lateral: { target: bodyAnchor, direction: new THREE.Vector3(-1, 0.32, 0.42), distance: 900 },
     },
-    // La vista general encuadra el equipo con la tapa abierta (reposo), punta incluida (~710 mm).
-    frameTop: 740,
-    frameMargin: 1.3,
+    // La vista general encuadra el equipo con la tapa abierta (reposo), patas incluidas; el
+    // tope bajo la punta de la tapa (~710 mm) baja el centro para que las patas no toquen el borde.
+    frameTop: 620,
+    frameMargin: 1.8,
     yaw: 0.56,
 
     setPower(on: boolean) {

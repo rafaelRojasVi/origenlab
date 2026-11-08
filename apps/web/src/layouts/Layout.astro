@@ -37,7 +37,7 @@ const effectiveNoindex = noindex || robots === 'noindex';
   <body>
     <a href="#contenido" class="skip-link">Ir al contenido</a>
     <div data-hd-sentinel aria-hidden="true"></div>
-    <SiteHeader tone={isHome ? 'ink' : 'paper'} />
+    <SiteHeader />
     <main id="contenido" tabindex="-1">
       <slot />
     </main>

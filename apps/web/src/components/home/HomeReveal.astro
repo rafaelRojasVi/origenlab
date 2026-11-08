@@ -9,8 +9,8 @@ import type { Modelo } from '../../content.config';
 
 /**
  * Revelado de un equipo (maqueta «Blanco con color»): el nombre del modelo en
- * tipografía gigante, pálida, detrás del póster 3D, sobre un lavado aqua → menta
- * con un charco de luz blanca bajo el equipo. El póster se funde con `.pz`
+ * tipografía gigante, pálida, detrás del póster 3D, sobre el blanco del papel: sin
+ * lavado ni resplandor detrás del equipo, sólo su sombra suave. El póster se funde con `.pz`
  * (brillo + multiply) directamente sobre la sección: ningún envoltorio
  * transformado entre medio. El texto gigante es decorativo (`aria-hidden`); el
  * nombre real va en el `alt`, la línea y el botón a la ficha.
@@ -31,7 +31,6 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
     <section class="reveal" aria-labelledby="reveal-title">
       <div class="reveal__in">
         <p class="reveal__giant" aria-hidden="true" data-decorative translate="no">{entry.name}</p>
-        <span class="reveal__pool" aria-hidden="true" />
         <img class="reveal__poster pz" src={files.poster} width="1200" height="900" alt={`${brand} ${entry.name}, modelo 3D`} loading="lazy" decoding="async" />
         <div class="shell reveal__copy">
           <p id="reveal-title">
@@ -50,9 +49,7 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
     position: relative;
     overflow: hidden;
     margin-top: clamp(5rem, 10vw, 8rem);
-    background:
-      radial-gradient(70% 90% at 50% 100%, #d4f1fb 0%, rgb(212 241 251 / 0) 70%),
-      linear-gradient(180deg, #f2fbf9 0%, #e3f6f4 100%);
+    background: var(--color-paper);
   }
   .reveal__in {
     position: relative;
@@ -73,16 +70,6 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-  }
-  .reveal__pool {
-    position: absolute;
-    left: 50%;
-    top: 9.375rem;
-    width: 47.5rem;
-    height: 38.75rem;
-    translate: -50% 0;
-    border-radius: 50%;
-    background: radial-gradient(closest-side, #fff 62%, rgb(255 255 255 / 0) 100%);
   }
   .reveal__poster {
     position: absolute;
@@ -125,11 +112,6 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
     .reveal__poster {
       width: 31.25rem;
       top: 3.5rem;
-    }
-    .reveal__pool {
-      width: 23.75rem;
-      height: 20rem;
-      top: 7.5rem;
     }
     .reveal__copy {
       position: relative;

@@ -628,7 +628,7 @@ export function build(options: BuildOptions = {}): BuiltModel {
       agarre: { target: bodyAnchor, direction: new THREE.Vector3(0.45, 0.2, 1), distance: 660 },
     },
     frameTop: 372,
-    frameMargin: 1.3,
+    frameMargin: 1.5,
     yaw: 0.78,
     setPower(on) {
       powered = on;
