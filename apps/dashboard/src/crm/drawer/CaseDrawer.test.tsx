@@ -292,6 +292,41 @@ describe("CaseDrawer", () => {
     });
   });
 
+  describe("footer «Siguiente paso» · Task 8 follow-ups", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a reminder our later email already met is not the next step; the case's next action is", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+      stub();
+      const met = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-03T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer(
+        "sales",
+        card({ open_tasks: [met], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
+      );
+      const footer = within(dialog).getByTestId("case-drawer-footer");
+      expect(footer).toHaveTextContent("Siguiente paso: Hacer seguimiento de 01318-26");
+      expect(footer).not.toHaveTextContent("Seguimiento 01318-26 ·");
+    });
+
+    it("a pending reminder is the next step, with its day", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+      stub();
+      const met = { task_id: "t1", title: "Seguimiento antiguo", due_at: "2026-11-03T12:00:00Z", version: 1, owner: null };
+      const next = { task_id: "t2", title: "Seguimiento 01318-26", due_at: "2026-11-12T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer(
+        "sales",
+        card({ open_tasks: [met, next], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
+      );
+      const footer = within(dialog).getByTestId("case-drawer-footer");
+      expect(footer).toHaveTextContent(/Siguiente paso: Seguimiento 01318-26 · jue/);
+      expect(footer).not.toHaveTextContent("Seguimiento antiguo");
+    });
+  });
+
   it("reads the contact's phones only once Contacto is opened, and keeps them", async () => {
     const paths = stub();
     const dialog = renderDrawer("sales");

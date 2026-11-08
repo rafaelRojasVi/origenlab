@@ -442,6 +442,22 @@ describe("Tablero · board rules (Task 8)", () => {
     ]);
   });
 
+  it("a draft-only Enviada card (nothing delivered yet) sits under «0–7 días», not «8–21 días»", () => {
+    const draft = card({}, "2026-09-01T12:00:00Z");
+    draft.latest_revision = rev("2026-09-01T12:00:00Z", { status: "draft", sent_at: null, origin: "authored" });
+    draft.quotes[0].revisions = [draft.latest_revision];
+    const older = card({}, "2026-09-24T12:00:00Z"); // 12 days
+    render(<Board cards={[older, draft]} onOpen={() => undefined} now={NOW} />);
+    const column = screen.getByTestId("board-column-enviada");
+    const order = within(column).getAllByTestId(/^board-(band|card)-/).map((e) => e.getAttribute("data-testid"));
+    expect(order).toEqual([
+      "board-band-d0_7",
+      `board-card-${draft.opportunity_id}`,
+      "board-band-d8_21",
+      `board-card-${older.opportunity_id}`,
+    ]);
+  });
+
   it("no Enviada dividers when sorted by name", () => {
     render(<Board cards={[card({}, "2026-10-03T12:00:00Z"), card({}, "2026-09-24T12:00:00Z")]} onOpen={() => undefined} sort="name" now={NOW} />);
     expect(within(screen.getByTestId("board-column-enviada")).queryAllByTestId(/^board-band-/)).toHaveLength(0);

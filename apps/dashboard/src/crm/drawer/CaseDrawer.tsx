@@ -164,7 +164,8 @@ function CaseDrawerBody({
   const [contactSeen, setContactSeen] = useState(false);
   if (tab === "contacto" && !contactSeen) setContactSeen(true);
   const reply = replyUrl(card);
-  const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
+  // The same reminder the chip reads: a pending one only (one our later email already met is done).
+  const reminder = pendingFollowUpTasks(card)[0] ?? null;
   const nextStep = reminder
     ? `${reminder.title} · ${shortDay(reminder.due_at)}`
     : card.next_action.source === "task" && card.next_action.due_at

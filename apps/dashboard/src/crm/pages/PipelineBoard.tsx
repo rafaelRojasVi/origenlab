@@ -124,9 +124,14 @@ export function cardMoney(card: OpportunityCardData): { text: string; cn: string
   };
 }
 
-/** «Enviada»'s band for a card. Past day 21 and not silent (the client answered) it sits under «8–21 días». */
+/**
+ * «Enviada»'s band for a card. A draft nobody sent yet is fresh work: «0–7 días». Past day 21 and
+ * not silent (the client answered) it sits under «8–21 días».
+ */
 function enviadaBandOf(card: OpportunityCardData, at: Date): EnviadaBandKey {
-  return enviadaBand(card, at) ?? "d8_21";
+  const band = enviadaBand(card, at);
+  if (band) return band;
+  return isDelivered(card.latest_revision) ? "d8_21" : "d0_7";
 }
 
 /**
