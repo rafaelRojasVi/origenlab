@@ -341,8 +341,8 @@ describe("Hoy · orden", () => {
   it("puts today's work above the exchange rate and the quote number", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // The first section heading (Andino is at the 3-day threshold, so «Seguimientos de hoy» shows).
-    const heading = await screen.findByRole("heading", { level: 2, name: "Seguimientos de hoy" });
+    // The first section heading (Andino is at the 3-day threshold, so «Llamar» shows).
+    const heading = await screen.findByRole("heading", { level: 2, name: "Llamar" });
     const usd = await screen.findByTestId("fx-USD");
     const quotes = await screen.findByTestId("quote-number-box");
     expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

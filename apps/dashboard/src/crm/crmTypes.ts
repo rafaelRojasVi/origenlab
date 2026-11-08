@@ -292,6 +292,12 @@ export interface OpportunityCardData {
    * Absent from an older API.
    */
   last_note?: { created_at: string; body: string; author: string | null } | null;
+  /**
+   * The newest active «Llamada» note on the case that reached the client (outcome `contesto` or
+   * `reunion`): a follow-up touch like an email of ours (owner ruling 2026-11-08). Not yet sent
+   * by the API; absent, only emails count.
+   */
+  last_call?: { at: string; outcome: string } | null;
   /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
   next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
 }

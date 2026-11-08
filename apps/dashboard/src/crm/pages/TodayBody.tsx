@@ -46,7 +46,10 @@ import type { OpportunityCardData } from "../crmTypes";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
   buildParaTiQueue,
+  filterQueue,
+  followUpStep,
   followUpsDue,
+  HOME_FILTER_KINDS,
   historicalCount,
   organizationsToConfirm,
   tenderClosingLines,
@@ -59,9 +62,10 @@ import {
   type QueueItem,
   type ReplyQueueItem,
   type TaskQueueItem,
+  useHomeFilter,
 } from "../today";
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
-import { Badge, Button, FormField, Modal, TextInput, fmtDate, toast } from "../ui";
+import { Badge, Button, FormField, Modal, Segmented, TextInput, fmtDate, toast } from "../ui";
 import type { ResourceState } from "../useResource";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
@@ -71,6 +75,9 @@ import { AutomaticActionsPanel, newsRows, type AutomaticAction } from "./Automat
 import type { ForwardedRequest } from "./ForwardedRequestsPanel";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+
+/** «Mi cola» (the profile's own view) or «Todo el equipo»; session-only, never stored. */
+export type TodayScope = "mine" | "team";
 
 const WEEK_MS = 7 * 86_400_000;
 
@@ -102,6 +109,8 @@ export function TodayBody({
   people,
   tendersClosing,
   aside,
+  scope: scopeProp,
+  onScopeChange,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
@@ -118,29 +127,46 @@ export function TodayBody({
   tendersClosing?: { id: string; title: string }[];
   /** The main column's last panel: the quote number and the rates. */
   aside?: ReactNode;
+  /** «Mi cola» / «Todo el equipo» when the page holds it (so its header counts follow); else local. */
+  scope?: TodayScope;
+  onScopeChange?: (scope: TodayScope) => void;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const { session } = useAuthSession();
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
 
-  const queue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
+  // Each profile starts on its own queue (`profile.home_filter`); «Todo el equipo» shows everything.
+  const homeFilter = useHomeFilter();
+  const [localScope, setLocalScope] = useState<TodayScope>("mine");
+  const scope = scopeProp ?? localScope;
+  const setScope = (next: TodayScope) => {
+    setLocalScope(next);
+    onScopeChange?.(next);
+  };
+  const view = scope === "team" ? "todo" : homeFilter;
+
+  const fullQueue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
+  const queue = useMemo(() => filterQueue(fullQueue, view), [fullQueue, view]);
+  const showDecidir = HOME_FILTER_KINDS[view].has("decidir");
 
   // Forwarded requests — fetched separately, appended to the end of the queue.
   const [fwdState, reloadFwd] = useResource(useCallback(() =>
     fetchJsonGet<{ items: ForwardedRequest[] }>(operatorApiUrl("/v2/workspace/forwarded-requests")), []));
   const [fwdGone, setFwdGone] = useState<Set<string>>(new Set());
-  const forwards: ForwardedRequest[] = fwdState.kind === "ready" && Array.isArray(fwdState.data?.items)
+  const allForwards: ForwardedRequest[] = fwdState.kind === "ready" && Array.isArray(fwdState.data?.items)
     ? fwdState.data.items.filter((f) => !fwdGone.has(f.id))
     : [];
+  const forwards = showDecidir ? allForwards : [];
   // The header's «N para ti» counts them too, so it matches the list.
   useEffect(() => { onForwardCount?.(forwards.length); }, [forwards.length, onForwardCount]);
 
   // Housekeeping counts (local — no extra fetch needed).
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);
   const historical = historicalCount(items, at);
-  const blocked = useMemo(() => items.filter((i) => i.status === "blocked" && !queue.some((q) => q.opportunity_id === i.opportunity_id)), [items, queue]);
+  const blocked = useMemo(() => items.filter((i) => i.status === "blocked" && !fullQueue.some((q) => q.opportunity_id === i.opportunity_id)), [items, fullQueue]);
   const peopleCount = people?.kind === "ready" ? people.data.total : 0;
-  const housekeepingCount = orgs.length + historical + blocked.length + peopleCount;
+  // Housekeeping is the whole team's: only the «todo» view offers it.
+  const housekeepingCount = view === "todo" ? orgs.length + historical + blocked.length + peopleCount : 0;
 
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
@@ -161,6 +187,21 @@ export function TodayBody({
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
+
+          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue ─── */}
+          {homeFilter !== "todo" ? (
+            <div data-testid="today-scope">
+              <Segmented<TodayScope>
+                label="Qué cola ver"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  { value: "mine", label: me ? `Mi cola · ${me}` : "Mi cola" },
+                  { value: "team", label: "Todo el equipo" },
+                ]}
+              />
+            </div>
+          ) : null}
 
           {/* ─── «Para ti» queue ─── */}
           <ParaTiSection
@@ -254,7 +295,7 @@ function TenderClosingSection({ lines, navigate }: { lines: { id: string; text: 
 const CHIP: Record<string, { label: string; cls: string }> = {
   reply:   { label: "Responder",  cls: "bg-warn-bg text-warn" },
   task:    { label: "Tarea",      cls: "bg-bad-bg text-bad" },
-  followup:{ label: "Seguimiento",cls: "bg-good-bg text-good" },
+  followup:{ label: "Llamar",     cls: "bg-good-bg text-good" },
   forward: { label: "Decidir",    cls: "bg-info-bg text-info" },
 };
 
@@ -418,7 +459,7 @@ function CotizarQueueRow({
 }
 
 /**
- * Three sections (Cotizar / Responder / Seguimientos de hoy), then tasks and forwarded requests.
+ * Five sections in the order Cotizar · Responder · Llamar (the follow-ups) · Tareas · Decidir.
  * Each section has a heading, hint and count; rows are oldest-wait-first within every section.
  * A `data-testid="today-para-ti"` wrapper is kept so existing tests can still find the area.
  */
@@ -493,11 +534,11 @@ function ParaTiSection({
         </QueueSection>
       )}
 
-      {/* ─── Seguimientos de hoy ─── */}
+      {/* ─── Llamar: the follow-ups due today ─── */}
       {followItems.length > 0 && (
         <QueueSection
-          title="Seguimientos de hoy"
-          hint="cotización enviada, sin respuesta · ritmo 3 · 14 · 30 días"
+          title="Llamar"
+          hint="cotización enviada, sin respuesta · seguimiento N de 3 · ritmo 3 · 14 · 30 días"
           count={followItems.length}
         >
           {followItems.map((item, i) => (
@@ -1005,7 +1046,10 @@ function FollowUpQueueRow({
         >
           {name}
         </button>
-        <p className="truncate text-[12px] text-ink-muted">{what}</p>
+        <p className="truncate text-[12px] text-ink-muted">
+          <span className="font-semibold text-ink" data-testid="today-followup-step">Seguimiento {followUpStep(f)} de 3</span>
+          {what ? ` · ${what}` : null}
+        </p>
         {note || f.task ? (
           <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note">
             {f.task ? (
@@ -1019,14 +1063,18 @@ function FollowUpQueueRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: «Escribir» — open the Gmail thread */}
+        {/* Primary: «Registrar llamada» — until calls are logged from Hoy (Task 8) it opens the case. */}
+        <Button variant="primary" onClick={() => navigate("oportunidades", f.card.opportunity_id)}>
+          Registrar llamada
+        </Button>
+        {/* Secondary: «Escribir» — open the Gmail thread («mejor por correo») */}
         <a
           href={write}
           target="_blank"
           rel="noopener noreferrer"
           title={thread ? "Abre el hilo de la cotización en Gmail" : "Abre un correo nuevo en Gmail"}
           aria-label={thread ? "Escribir en Gmail" : "Nuevo correo en Gmail"}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
         >
           <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" /></svg>
           Escribir

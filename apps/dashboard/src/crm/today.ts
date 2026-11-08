@@ -20,9 +20,14 @@
  *   («Retomar: …», a call), overdue first.
  * - **Instituciones por confirmar**: the machine-proposed institutions of open cases.
  */
+import type { HomeFilter } from "../api/authClient";
+import { useAuthSession } from "../context/AuthSessionContext";
 import { conversation, lastTouch } from "./caseDisplay";
+import type { CallOutcome } from "./callOutcome";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
+
+export type { HomeFilter } from "../api/authClient";
 
 /** Hoy's only tender signal: one line per tender (open, not yet awarded) that closes tomorrow. */
 export function tenderClosingLines<T extends { id: string; title: string }>(closing: readonly T[] | undefined): { id: string; text: string }[] {
@@ -173,7 +178,7 @@ export interface FollowUp {
   /** Days since OrigenLab's last touch: the quote, or a later email it sent. */
   days: number;
   rhythm: Rhythm;
-  /** The last touch was a follow-up email, not the quote itself. */
+  /** The last touch was a follow-up email (or a call that reached the client), not the quote itself. */
   byEmail: boolean;
   /** The «Seguimiento …» task due today that put the case here, if one did. */
   task: DueTask | null;
@@ -187,10 +192,12 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     // OrigenLab's last touch after the quote: an email on the thread — a note is a reminder, not a
     // touch. One clock with the board's status line (`lastTouch`).
     const touch = lastTouch(card);
-    const email = touch.by === "us" ? touch.at : null;
+    // A call that reached the client is a touch too (owner ruling 2026-11-08): last contact is the
+    // later of our last email and that call.
+    const email = later(touch.by === "us" ? touch.at : null, callTouch(card));
     // The client's closing reply («gracias, te aviso», mail rule R18) restarts the rhythm, but only an
-    // email of ours marks a follow-up task done.
-    const clock = touch.by === "settled" ? touch.at : email;
+    // email (or a call) of ours marks a follow-up task done.
+    const clock = touch.by === "settled" ? later(touch.at, email) : email;
     // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
     // to press «Hecho» — the email the sync captures is the proof.
     const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
@@ -219,6 +226,29 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     out.push({ card, days, rhythm, byEmail, task });
   }
   return out.sort((a, b) => b.days - a.days);
+}
+
+/** Outcomes of a call that count as a follow-up touch: the client was reached. */
+export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion"]);
+
+/** When OrigenLab last reached the client by phone after the quote went out, or null. */
+function callTouch(card: OpportunityCardData): string | null {
+  const call = card.last_call;
+  const sent = card.latest_revision?.sent_at ?? null;
+  if (!call?.at || !CALL_TOUCH_OUTCOMES.has(call.outcome) || Number.isNaN(Date.parse(call.at))) return null;
+  if (sent && Date.parse(call.at) <= Date.parse(sent)) return null;
+  return call.at;
+}
+
+function later(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+/** «Seguimiento N de 3»: the rhythm step a follow-up is on (1 from day 3, 2 from 14, 3 from 30). */
+export function followUpStep(f: FollowUp): 1 | 2 | 3 {
+  return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3;
 }
 
 function startOfLocalDay(t: number): number {
@@ -263,12 +293,12 @@ export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()
  * Counts for «Hoy»'s hero header: cotizar, responder and seguimientos (the three main sections).
  * `hechas` is tracked in the page's own state and not computed here.
  */
-export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null): {
+export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null, filter: HomeFilter = "todo"): {
   cotizar: number;
   responder: number;
   seguimientos: number;
 } {
-  const queue = buildParaTiQueue(items, now, me);
+  const queue = filterQueue(buildParaTiQueue(items, now, me), filter);
   return {
     cotizar: queue.filter((q) => q.kind === "cotizar").length,
     responder: queue.filter((q) => q.kind === "reply").length,
@@ -329,7 +359,8 @@ export function awaitsQuote(card: OpportunityCardData): boolean {
 
 /**
  * ONE merged list of what the operator needs to act on today, deduplicated by `opportunity_id`.
- * Priority per case: cotizar > reply > overdue task > due task > follow-up due today.
+ * Priority per case: cotizar > reply > overdue task > due task > follow-up due today; shown in the
+ * order Cotizar · Responder · Llamar (follow-ups) · Tareas.
  * Order (owner, 2026-10-15): oldest wait first in every section — the case that has been
  * waiting the longest is at the top within its section.
  * Forwarded requests are excluded: they have no case yet and are appended in `TodayBody`.
@@ -386,7 +417,9 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f, waitMs: f.days * DAY_MS });
   }
 
-  const RANK: Record<QueueItem["kind"], number> = { cotizar: 0, reply: 1, task: 2, followup: 3 };
+  // Display order (owner, 2026-11-08): Cotizar · Responder · Llamar · Tareas; forwarded requests
+  // («Decidir») come last in `TodayBody`. The dedupe priority above does not change.
+  const RANK: Record<QueueItem["kind"], number> = { cotizar: 0, reply: 1, followup: 2, task: 3 };
   // Within every section: oldest wait first (largest waitMs first).
   return [...queue.values()].sort((a, b) =>
     RANK[a.kind] - RANK[b.kind] || b.waitMs - a.waitMs);
@@ -395,4 +428,26 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
 /** Count for «N para ti» in the header; `forwards` are the forwarded requests still waiting. */
 export function paraTiCount(items: OpportunityCardData[], now: Date, me: string | null, forwards = 0): number {
   return buildParaTiQueue(items, now, me).length + forwards;
+}
+
+/* ─────────────────────────────────────────────────────── per-profile view ── */
+
+/** The sections each «Hoy» view shows; «decidir» is the forwarded requests. */
+export const HOME_FILTER_KINDS: Record<HomeFilter, ReadonlySet<QueueItem["kind"] | "decidir">> = {
+  todo: new Set(["cotizar", "reply", "followup", "task", "decidir"]),
+  llamadas: new Set(["followup", "task"]),
+  cotizar: new Set(["cotizar", "reply", "task", "decidir"]),
+};
+
+/** The queue as a profile's view shows it: only the sections that view holds, order kept. */
+export function filterQueue(q: QueueItem[], f: HomeFilter): QueueItem[] {
+  const kinds = HOME_FILTER_KINDS[f] ?? HOME_FILTER_KINDS.todo;
+  return q.filter((item) => kinds.has(item.kind));
+}
+
+/** The view the signed-in profile opens «Hoy» on; no profile, none set or an unknown one is «todo». */
+export function useHomeFilter(): HomeFilter {
+  const { session } = useAuthSession();
+  const f = session.kind === "signed_in" ? session.profile?.homeFilter : null;
+  return f && Object.prototype.hasOwnProperty.call(HOME_FILTER_KINDS, f) ? f : "todo";
 }

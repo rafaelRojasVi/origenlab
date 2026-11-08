@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthSessionState } from "../../api/authClient";
+import type { AuthSessionState, HomeFilter } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { followUpsDue, organizationsToConfirm, overdueTasks, repliesToAnswer, tasksDue } from "../today";
@@ -774,5 +774,67 @@ describe("«Licitación cierra mañana»", () => {
     renderTenders(undefined, [card({ title: "Licitación 1234567-12-LE26 — Compra" })]);
     await screen.findByText("No hay nada que hacer ahora mismo.");
     expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
+  });
+});
+
+describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
+  // «Ana» is an invented profile whose Hoy opens on her calls.
+  function profileSession(homeFilter: HomeFilter | null): AuthSessionState {
+    const base = session("sales");
+    if (base.kind !== "signed_in") throw new Error("unreachable");
+    return { ...base, profile: { id: "p-ana", displayName: "Ana", roleLabel: "Ventas", homeFilter } };
+  }
+  function renderAs(s: AuthSessionState, items: OpportunityCardData[]) {
+    stub();
+    const navigate = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
+        <TodayBody items={items} navigate={navigate} onChanged={() => undefined} now={NOW} />
+      </AuthSessionContext.Provider>,
+    );
+    return navigate;
+  }
+  const solicitud = () =>
+    card({
+      stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [],
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: "Solicitud de equipo", url: null } },
+    });
+
+  it("a llamadas profile (fixture «Ana») shows «Mi cola · Ana» by default and «Todo el equipo» reveals the cotizar row", () => {
+    const pedido = solicitud();
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    renderAs(profileSession("llamadas"), [pedido, silent14]);
+    expect(screen.getByRole("button", { name: "Mi cola · Ana" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId(`today-followup-${silent14.opportunity_id}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`today-cotizar-${pedido.opportunity_id}`)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Todo el equipo" }));
+    expect(screen.getByTestId(`today-cotizar-${pedido.opportunity_id}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("a todo profile sees no «Mi cola» switch", () => {
+    renderAs(profileSession(null), [card({}, "2026-09-22T15:00:00Z")]);
+    expect(screen.queryByRole("button", { name: /Mi cola/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Todo el equipo" })).toBeNull();
+  });
+
+  it("follow-up row reads «Llamar» and «Seguimiento 2 de 3»", () => {
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const navigate = renderAs(profileSession("llamadas"), [silent14]);
+    expect(screen.getByRole("heading", { level: 2, name: "Llamar" })).toBeInTheDocument();
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    expect(row).toHaveTextContent("Seguimiento 2 de 3");
+    // Until calls are logged from Hoy, «Registrar llamada» opens the case.
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
+    expect(navigate).toHaveBeenCalledWith("oportunidades", silent14.opportunity_id);
+  });
+
+  it("«N cosas por ordenar» only for todo", () => {
+    const proposed = () => card({ organization: { organization_id: "o-x", name: "Sociedad Ficticia", confirmation: "machine_proposed", version: 1 } });
+    renderAs(profileSession("todo"), [proposed()]);
+    expect(screen.getByTestId("today-housekeeping")).toHaveTextContent("cosa por ordenar");
+    cleanup();
+    renderAs(profileSession("llamadas"), [proposed()]);
+    expect(screen.queryByTestId("today-housekeeping")).toBeNull();
   });
 });
