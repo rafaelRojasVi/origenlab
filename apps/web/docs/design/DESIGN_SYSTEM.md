@@ -16,16 +16,17 @@ negocio todavía debe aportar están en [`CONTENT_NEEDED.md`](CONTENT_NEEDED.md)
 
 ## 1. Idea
 
-**Blanco con color: equipo real sobre blanco, luz teal/aqua detrás, un tinte
-pastel por familia, un solo acento teal.**
+**Blanco con color: equipo real sobre blanco puro, tarjetas blancas con sombra
+teal suave, un solo acento teal.**
 
 El 2026-11-08 la dueña de la empresa vetó el negro y el gris («nada sobre negro
 ni gris»); entre tres maquetas claras, los dueños eligieron «Blanco con color».
-La página es blanca; la marca aparece como luz suave teal → aqua detrás de la
-primera pantalla y en la banda de cierre; cada familia de equipo tiene un fondo
-pastel en sus tarjetas y miniaturas, y un charco de luz blanca bajo cada equipo
-conserva sus blancos reales. La jerarquía la sostiene la tipografía grande
-(800, muy apretada, punto final teal).
+La página es blanca y los equipos se ven sobre blanco puro, sólo con su sombra
+suave: **sin resplandores de color detrás de ningún equipo** y **sin tintes
+pastel por familia** (ambos se probaron el 2026-11-08 y el dueño los descartó:
+«se ve tacky», «quita el color de fondo»). El color de marca vive en el acento
+teal (botones, enlaces, punto final) y en la banda de cierre. La jerarquía la
+sostiene la tipografía grande (800, muy apretada, punto final teal).
 
 Consecuencias prácticas:
 
@@ -34,8 +35,7 @@ Consecuencias prácticas:
    el actual»). Las sombras van teñidas de teal, nunca negras.
 2. **Pósteres, tiras de giro y fotos de fabricante se funden, sin caja**: están
    sobre blanco y se ponen con `.pz` (`filter: brightness(1.037)` +
-   `mix-blend-mode: multiply`), así su blanco toma el color de lo que hay
-   detrás (blanco, tinte, resplandor). Nunca dentro de un envoltorio
+   `mix-blend-mode: multiply`), así su blanco se funde con el papel. Nunca dentro de un envoltorio
    transformado o aislado entre la imagen y su fondo.
 3. **Una sola tarjeta de modelo**: `components/ui/LitCard.astro`. Nunca
    tarjetas dentro de tarjetas; lo demás se agrupa con filetes y espacio.
@@ -58,15 +58,15 @@ que introduce un color, un radio o una sombra propia está fuera del sistema.
 | `surface` | `#EFFAF8` | Tinte teal pálido: secciones alternas, cuadros de datos |
 | `pressed` | `#E2F3EF` | Hover/activo |
 | `hairline` / `hairline-strong` | `#E5EEEB` / `#CFDEDA` | Filetes decorativos (**nunca** borde de control) |
-| `edge` | `#6D7E7B` | Borde de controles: botón secundario, campos (≥ 3,5:1 sobre blanco y tintes) |
+| `edge` | `#6D7E7B` | Borde de controles: botón secundario, campos, botón «Pausar» de la franja (≥ 3,5:1 sobre blanco) |
 | `ink-950` | `#0D1918` | Titulares (18:1) |
 | `ink-800` | `#263432` | Texto corrido (13:1) |
-| `ink-600` | `#465755` | Texto secundario (7,6:1; ≥ 6,4:1 sobre tintes) |
-| `ink-500` | `#5A6B68` | Texto terciario (5,6:1; ≥ 4,7:1 sobre tintes) |
+| `ink-600` | `#465755` | Texto secundario (7,6:1) |
+| `ink-500` | `#5A6B68` | Texto terciario (5,6:1) |
 | `teal-700` / `accent` | `#0F766E` | Botón primario (texto blanco, 5,5:1), etiquetas, anillo de foco |
 | `teal-800` / `accent-hover` | `#115E59` | Enlaces (7,6:1), hover del primario |
 | `teal-500` | `#14B8A6` | El punto final de los titulares, puntos, LED (nunca texto) |
-| `glow-teal` / `glow-aqua` / `glow-mint` | `#C4F1E6` / `#C9ECFB` / `#E4FAF5` | Resplandor de la primera pantalla y de las cabeceras de página |
+| `glow-teal` / `glow-aqua` | `#C4F1E6` / `#C9ECFB` | Sólo los radiales de la banda de cierre (`.surface-band`); nunca detrás de un equipo |
 | `band` | `#DCF6F0` | Banda de cierre (con radiales aqua y menta, `.surface-band`) |
 | `quote` | `#F4F9FE` | Sección de la cotización (`.surface-quote`) |
 | `studio` | `#FFFFFF` | Fondo sobre el que se hornean pósteres y tiras (`scene.ts`) |
@@ -91,21 +91,20 @@ imágenes de equipos.
 Reglas: un solo acento en todo el sitio; el color nunca es el único portador de
 significado; los filetes no transportan información.
 
-#### Tintes y tintas de familia
+#### Tintas de familia
 
-| Familia | Fondo (`tint-*`) | Tinta (`family-*`, ≥ 5,6:1 sobre blanco) |
-|---|---|---|
-| Sonicación | `#E6F0FD` | `#1D4F7C` |
-| Humedad (analizadores MB) | `#DFF5F2` | (la de pesaje) |
-| Pesaje | `#FDF0D5` | `#7D5310` |
-| Centrifugación | `#ECE9FB` | `#5B3F96` |
-| Dispersión | `#E3F3FB` | `#1F5F7A` |
-| Osmometría | `#FDF6D8` | `#6D5A0E` |
-| Electroforesis | `#E9EFFD` | `#2F4A8F` |
+| Familia | Tinta (`family-*`, ≥ 5,6:1 sobre blanco) |
+|---|---|
+| Sonicación | `#1D4F7C` |
+| Pesaje y humedad | `#7D5310` |
+| Centrifugación | `#5B3F96` |
+| Dispersión | `#1F5F7A` |
+| Osmometría | `#6D5A0E` |
+| Electroforesis | `#2F4A8F` |
 
-El fondo pastel va detrás del equipo en `LitCard`, en las miniaturas del
-mega-menú y en la franja de familias de la portada (`familyTint()` en
-`lib/modelos.ts`). No son un segundo acento: son una escala de identificación.
+Las tintas sólo marcan texto y filetes de una familia (numerales, rótulos,
+accesorios). **No hay fondos por familia**: los tokens `tint-*` y `familyTint()`
+se retiraron el 2026-11-08 y no deben volver.
 
 **No existe el verde WhatsApp.** El canal se identifica por el glifo, no por un
 segundo verde que compita con la marca.
@@ -269,16 +268,11 @@ estas resuelve el problema.
 | `ui/SectionIndex` | Índice numerado de sección |
 | `ui/PageIntro` | Migas, H1 y frase de contexto de toda página interior |
 | `ui/Breadcrumbs` | Ruta + `BreadcrumbList` en JSON-LD |
-| `ui/ModelRow` | Fila de modelo compacta: sólo la lista de relacionadas de las fichas de centrífuga (el catálogo usa `LitCard`) |
-| `ui/ModelList` | Contenedor de filas de modelo (filete superior y reinicio de lista) |
 | `ui/ApplicationList` | Las tres líneas comerciales como lista numerada |
-| `ui/ProductFigure` | Fotografía de equipo en caja cuadrada sobre papel, con `<picture>` AVIF/WebP |
 | `ui/ModelPhoto` | Fotografía de un modelo o familia desde `productImages.ts`; sólo dibuja filas `VERIFIED`, `object-fit: contain`, rótulo con modelo y fabricante, y rotula las imágenes de familia como representativas |
-| `ui/KeyFacts` | Tres o cuatro cifras de cabecera en mono |
 | `ui/SpecGroups` | Ficha técnica agrupada en listas de definición |
 | `ui/CompareTable` | Comparativa compacta de una familia bajo sus tarjetas: una fila por modelo (orden comercial), 3–4 cifras del fabricante; bloques por modelo bajo 768 px |
 | `ui/BrandLogo` | Logotipo a tinta única con altura óptica por marca. `loading="eager"` sólo en el riel |
-| `ui/ModelSheet` | Ficha de un modelo que el sitio describe y enlaza pero no aloja: qué hace, usos, criterios y fuente |
 | `ui/ClosingQuoteBand` | Banda de cierre invertida, única por página; `primary="whatsapp"` pone WhatsApp en el botón y el formulario entre los canales |
 | `ui/Notice` | Aviso comercial, uno por página |
 | `ui/ExternalLink` | Enlace externo, anunciado y marcado |
@@ -288,18 +282,19 @@ estas resuelve el problema.
 | `ui/Button` | Botón del sistema, `<a>` con `href` y `<button>` sin él (ver más abajo) |
 | `home/HomeHero` | Portada A: titular B en `.t-d1`, dos acciones y la sala 3D |
 | `home/Showroom` | El equipo en 3D (Hielscher UP400St, medidas del plano oficial) sobre la fotografía oficial como respaldo; se gira, se enciende y se recorre por vistas |
-| `home/HomeBrands` | Riel de las siete marcas (OHAUS incluida), una altura, gris, con control de pausa |
+| `home/HomeBrands` | Las siete marcas, en orden `rankBrands`, una altura |
 | `home/HomeFamilies` | Las seis familias, desde `homeFamilyCards` |
 | `home/FamilyMotif` | Diagrama de qué le hace el equipo a la muestra, para las familias sin fotografía |
-| `home/HomeIndustries` | Entradas por sector hacia las páginas de familia y compras públicas |
 | `home/HomeSteps` | Cómo comprar en pasos (`buyingSteps()`); la reusan la portada y `/como-comprar/` |
 | `home/HomeNotes` | Notas de aplicación; sólo se dibuja si existen (hoy ninguna) |
-| `product/ModelCard` | Tarjeta `related` de la ficha; se retira cuando la ficha use `LitCard` |
 | `product/FamilyModels` | Rejilla de `LitCard` del catálogo (`/productos/`, familias, centrífugas, `/categorias/`), orden `rankModels`, 2/3/4 columnas; fotos de fondo gris sobre panel blanco |
 | `product/SpecTable` | Ficha técnica de modelo en tabla que se desplaza dentro de su caja |
 | `product/ModelHero`, `ModelHeroCopy` | Primera pantalla de modelo: 3D (`[data-first-screen]`) y copia; barra fija `[data-sticky-cta]` tras ella |
-| `product/TrustStrip`, `ModelFaq`, `RelatedModels`, `AccessoryCards` | Secciones de la ficha |
+| `product/TrustStrip`, `ModelFaq`, `AccessoryCards` | Secciones de la ficha (las relacionadas son `LitCard`) |
 | `product/FamilyConsult` | «¿No sabe cuál?»: la `ClosingQuoteBand` de las páginas de familia |
+| `ui/LitCard` | La única tarjeta de modelo: blanca, filete `hairline`, `shadow-card`; póster o tira de giro (`Turntable`) o foto de fabricante; nombre, un dato, «Ver ficha» y «Cotizar» |
+| `ui/RegisteredStrip` | «Proveedor inscrito en»: nombres y logos aprobados en `claims.ts`, marquesina CSS con botón «Pausar»; quieta con movimiento reducido |
+| `ui/IndustryTiles` | Las industrias en tejas de texto con «Ver equipos →»; portada y `/aplicaciones/` |
 | `ui/StepList` | Procedimiento vertical con filete continuo; por defecto los cuatro pasos de compra |
 
 Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
@@ -364,12 +359,13 @@ en blanco al llegar.
 
 ## 6. Lo que el sistema no admite
 
-- Tarjetas fuera de las de modelo (`LitCard`, `ModelCard`): en
+- Tarjetas fuera de la de modelo (`LitCard`): en
   todo lo demás se agrupa con filetes y espacio. Nunca fichas dentro de fichas ni
   una rejilla de tres tarjetas iguales.
-- Un segundo verde, un degradado, una sombra o un segundo radio. Las seis tintas
-  de familia no son un segundo acento: sólo `family-sonicacion` sigue en uso, en
-  los marcadores de la sala 3D del hero.
+- Un segundo verde, un degradado, una sombra o un segundo radio. Las tintas de
+  familia no son un segundo acento ni un fondo.
+- Fondos de color por familia o resplandores detrás de un equipo (retirados por
+  el dueño el 2026-11-08).
 - Versalitas con tracking fuera del rol `.t-label`.
 - Repetir el aviso de disponibilidad en cada fila.
 - Cualquier script, tipografía o imagen servida desde un tercero.

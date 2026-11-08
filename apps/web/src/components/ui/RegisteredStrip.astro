@@ -9,7 +9,8 @@ import { registrationLogos } from '../../data/registrations';
  *
  * - Marquesina CSS sin script: dos copias de la lista (la segunda oculta al
  *   lector) que se desplazan media pista y vuelven sin salto. Se detiene al
- *   pasar el cursor o con el foco del teclado (la franja es enfocable).
+ *   pasar el cursor o con el foco del teclado (la franja es enfocable), y con
+ *   el botón «Pausar» (en pantallas táctiles no hay cursor; WCAG 2.2.2).
  * - Con movimiento reducido: una fila quieta que se ajusta, sin la copia.
  * - `heading`: la portada lleva título y la frase del registro; en
  *   /como-comprar/ la frase ya está encima y sólo van los logos.
@@ -45,9 +46,23 @@ const logos = registrationLogos.filter((logo) => approved.has(logo.name));
           ))}
         </div>
       </div>
+      <button type="button" class="reg__toggle" aria-pressed="false" data-reg-toggle>
+        <span class="reg__toggle-pause">Pausar</span>
+        <span class="reg__toggle-play">Reanudar</span>
+      </button>
     </div>
   )
 }
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-reg-toggle]')) {
+    button.addEventListener('click', () => {
+      const paused = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-pressed', String(paused));
+      button.closest('.reg')?.toggleAttribute('data-paused', paused);
+    });
+  }
+</script>
 
 <style>
   .reg__head {
@@ -93,8 +108,37 @@ const logos = registrationLogos.filter((logo) => approved.has(logo.name));
     .reg__track {
       animation: reg-scroll 48s linear infinite;
     }
-    .reg__view:is(:hover, :focus-within) .reg__track {
+    .reg__view:is(:hover, :focus-within) .reg__track,
+    .reg[data-paused] .reg__track {
       animation-play-state: paused;
+    }
+  }
+  .reg__toggle {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin: 0.5rem auto 0;
+    padding: 0 1.125rem;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-btn);
+    background: var(--color-paper);
+    color: var(--color-ink-800);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .reg__toggle:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+  .reg__toggle[aria-pressed='true'] .reg__toggle-pause,
+  .reg__toggle[aria-pressed='false'] .reg__toggle-play {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reg__toggle {
+      display: none;
     }
   }
   @media (prefers-reduced-motion: reduce) {

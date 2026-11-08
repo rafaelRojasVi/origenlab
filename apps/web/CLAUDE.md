@@ -102,7 +102,7 @@ peticiones reales que los destinos siguen respondiendo.
 
 **Ninguna fotografía de fabricante se publica sin fila `VERIFIED` en
 `src/data/productImages.ts`.** Es el único camino por el que una imagen de
-equipo llega a una plantilla (`ModelPhoto`, `ProductFigure`, `ModelRow`), y
+equipo llega a una plantilla (`ModelPhoto`, `LightBox`, `LitCard`), y
 `validate:images` comprueba la fila contra el catálogo, los archivos de
 `public/products/` y el HTML construido: fila por imagen local, ningún host
 remoto, marca y modelo del catálogo, dimensiones y alt, ninguna fila sin
