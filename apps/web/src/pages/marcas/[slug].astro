@@ -8,7 +8,7 @@ import ExternalLink from '../../components/ui/ExternalLink.astro';
 import Notice from '../../components/ui/Notice.astro';
 import Icon from '../../components/ui/Icon.astro';
 import FamilyMotif from '../../components/home/FamilyMotif.astro';
-import BrandModelCard from '../../components/brand/BrandModelCard.astro';
+import LitCard from '../../components/ui/LitCard.astro';
 import { getBrandBySlug, getEditorialBrands } from '../../lib/catalog';
 import { familyDocsFor, modelsForBrand } from '../../data/brandModels';
 import { scopeById } from '../../data/equipmentScope';
@@ -48,11 +48,10 @@ import { brandEntries, has3d } from '../../lib/brandShowcase';
  * del negocio: sin ella la página dice qué fabrica el fabricante y que
  * OrigenLab cotiza la línea, nunca en qué calidad.
  *
- * Showroom oscuro (2026-11-08): la página abre con quién fabrica (datos de
- * `brands.ts`) y luego cada modelo de la colección `modelos` es una tarjeta
- * iluminada (`BrandModelCard`: el modelo 3D que gira o la fotografía en la
- * caja de luz, dos cifras de la ficha, «Ver ficha» y «Cotizar»). El detalle de
- * cada modelo (usos, especificaciones, fuente) vive en su ficha.
+ * Sitio claro (2026-11-08): la página abre con quién fabrica (datos de
+ * `brands.ts`) y luego cada modelo de la colección `modelos` es una `LitCard`
+ * (el modelo 3D que gira o la foto del fabricante sobre el tinte de su familia,
+ * un dato de la ficha, «Ver ficha» y «Cotizar») que lleva directo a la ficha.
  */
 export function getStaticPaths() {
   return getEditorialBrands().map((brand) => ({ params: { slug: brand.slug } }));
@@ -334,10 +333,10 @@ const equipmentSectionLabel =
     <!-- Cada modelo, una tarjeta iluminada: 3D que gira o fotografía en la caja de luz. -->
     {
       entries.length > 0 && (
-        <ul class="model-grid" data-count={Math.min(entries.length, 5)}>
+        <ul class="model-grid" style={`--n: ${Math.min(entries.length, 5)}`}>
           {entries.map((entry) => (
             <li>
-              <BrandModelCard entry={entry} brandName={brand.name} variant="card" />
+              <LitCard entry={entry} />
             </li>
           ))}
         </ul>
@@ -435,10 +434,7 @@ const equipmentSectionLabel =
 </Layout>
 
 <style>
-  /* Foco de escenario detrás de la cabecera; el logotipo, claro y grande. */
-  .brand-stage {
-    background: radial-gradient(55% 100% at 78% 0%, var(--color-glow), transparent 70%);
-  }
+  /* El logotipo de la marca, en su tinta, grande junto al titular. */
   .brand-stage__logo :global(.brand-logo) {
     max-height: 4.5rem;
   }
@@ -586,25 +582,15 @@ const equipmentSectionLabel =
   .model-grid > li > :global(*) {
     flex: 1;
   }
-  @media (min-width: 640px) {
-    .model-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+  .model-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem 0.875rem;
   }
-  /* Escritorio: rejilla de seis columnas para que ninguna fila quede coja.
-     Tres por fila por omisión; con cuatro, dos filas de dos tarjetas grandes;
-     con cinco, dos grandes arriba y tres debajo. */
+  /* Escritorio: una sola fila con todos los modelos de la marca (3 a 5). */
   @media (min-width: 1024px) {
     .model-grid {
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 1.75rem;
-    }
-    .model-grid > li {
-      grid-column: span 2;
-    }
-    .model-grid:is([data-count='2'], [data-count='4']) > li,
-    .model-grid[data-count='5'] > li:nth-child(-n + 2) {
-      grid-column: span 3;
+      grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr));
+      gap: 2.5rem 1.375rem;
     }
   }
 

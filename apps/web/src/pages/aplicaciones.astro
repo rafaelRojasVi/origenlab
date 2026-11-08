@@ -7,7 +7,7 @@ import ApplicationList from '../components/ui/ApplicationList.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
-import LitModel from '../components/home/LitModel.astro';
+import LitCard from '../components/ui/LitCard.astro';
 import { applications } from '../data/applications';
 import { company } from '../data/company';
 import { ctaLabels } from '../lib/ctaLabels';
@@ -20,8 +20,8 @@ import type { Modelo } from '../content.config';
  * Aplicaciones, por tarea (dueño, 2026-11-08: «llévame directo a la ficha»).
  *
  * Cada tarea es un bloque: una línea que dice qué se intenta hacer con la
- * muestra y, debajo, los modelos que la resuelven como tarjetas iluminadas
- * que llevan directo a su ficha (sin pasar por la página de familia). Lo que
+ * muestra y, debajo, los modelos que la resuelven como `LitCard` (sobre el
+ * tinte de su familia) que llevan directo a su ficha (sin pasar por la página de familia). Lo que
  * conviene traer a la conversación queda plegado bajo cada bloque.
  *
  * Orden comercial de `lib/ranking.ts`: las tareas por su familia principal
@@ -83,7 +83,7 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
             <ul class="task__models" aria-label={`Equipos para ${application.name.toLowerCase()}`}>
               {models.map((entry) => (
                 <li>
-                  <LitModel entry={entry} />
+                  <LitCard entry={entry} kicker="brand" heading="h4" />
                 </li>
               ))}
             </ul>
@@ -147,8 +147,8 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
   }
   .task {
     display: grid;
-    gap: 1.5rem;
-    padding-block: 2.5rem;
+    gap: 2rem;
+    padding-block: clamp(3rem, 6vw, 4.5rem);
     border-top: 1px solid var(--color-hairline);
     scroll-margin-top: 5rem;
   }
@@ -158,9 +158,10 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
   }
   .task__name {
     margin-top: 0.5rem;
-    font-size: clamp(1.375rem, 1.2rem + 0.8vw, 1.75rem);
-    line-height: 1.1;
-    letter-spacing: -0.018em;
+    font-size: clamp(1.75rem, 1.3rem + 1.8vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
     color: var(--color-ink-950);
   }
   .task__task {
@@ -172,8 +173,8 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
   }
   .task__models {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem 0.875rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -250,6 +251,10 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
   }
 
   @media (min-width: 768px) {
+    .task__models {
+      grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+      gap: 2.5rem 1.375rem;
+    }
     .tasks-head {
       grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
       gap: 3rem;

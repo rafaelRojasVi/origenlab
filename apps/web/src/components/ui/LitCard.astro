@@ -1,0 +1,226 @@
+---
+import Turntable from './Turntable.astro';
+import LightBox from './LightBox.astro';
+import { getBrandById } from '../../lib/catalog';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { familyInfo, familyTint, imageForEntry, keyStats, modelHref } from '../../lib/modelos';
+import { stageFrame, turntableFor } from '../../lib/turntable';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Tarjeta de modelo canónica del sitio claro («Blanco con color»). Una sola para
+ * portada, marcas, aplicaciones, catálogo, familias y relacionados.
+ *
+ * - Escenario redondeado con el tinte pastel de la familia (`familyTint`) y un
+ *   charco de luz blanca bajo el equipo. Con 3D, `Turntable` (póster + tira de
+ *   giro), encuadrado por `stageFrame()` para que el equipo quede grande y
+ *   centrado; sin 3D, la foto blanca del fabricante «parada» sobre el tinte
+ *   (`LightBox`). Ninguna caja blanca: los dos se funden por multiply.
+ * - Debajo: «Familia, Marca», el nombre, una línea de dato del fabricante
+ *   (`keyStats`, nunca una cifra comercial) y «Ver ficha» + «Cotizar» (el
+ *   formulario recibe el modelo: `/contacto/?producto=<slug>`).
+ * - Toda la tarjeta lleva a la ficha (regla del dueño): el nombre es un enlace
+ *   estirado sobre la tarjeta; «Cotizar» queda encima. Dos paradas de teclado:
+ *   la ficha y cotizar. La tarjeta es el anfitrión del giro (`data-tt-host`):
+ *   gira al pasar el mouse y al enfocar cualquiera de sus enlaces, con el dedo
+ *   al arrastrar, y da una vuelta al entrar en pantalla en un teléfono. Con
+ *   movimiento reducido, quieta.
+ * - `variant="tile"`: sin dato ni acciones (índices compactos: `/marcas/`).
+ */
+interface Props {
+  entry: Modelo;
+  /** `card` (por omisión) o `tile`: escenario, nombre y dato, sin acciones. */
+  variant?: 'card' | 'tile';
+  /** Proporción del escenario. `4 / 5` (referencia) o `4 / 3` (filas bajas). */
+  ratio?: '4 / 5' | '4 / 3' | '1 / 1';
+  /** `eager` sólo en la primera pantalla. */
+  loading?: 'lazy' | 'eager';
+  /** Nivel del nombre en el esquema de la página. */
+  heading?: 'h2' | 'h3' | 'h4';
+  /** Línea superior: familia y marca (por omisión), sólo marca o nada. */
+  kicker?: 'family' | 'brand' | 'none';
+  class?: string;
+}
+
+const { entry, variant = 'card', ratio = '4 / 5', loading = 'lazy', heading = 'h3', kicker = 'family', class: className = '' } = Astro.props;
+const brandName = getBrandById(entry.brand)?.name ?? entry.brand;
+const href = modelHref(entry);
+const spins = turntableFor(entry.slug) !== null;
+const image = spins ? undefined : imageForEntry(entry);
+const stat = keyStats(entry, 1)[0];
+const [w, h] = ratio.split(' / ').map(Number);
+const frame = spins ? stageFrame(entry.slug, w / h) : undefined;
+const top = kicker === 'family' ? `${familyInfo(entry.family).short}, ${brandName}` : kicker === 'brand' ? brandName : '';
+const Heading = heading;
+---
+
+<article class:list={['lc', `lc--${variant}`, className]} data-tt-host style={`--lc-tint: ${familyTint(entry)}; --lc-ratio: ${ratio}`}>
+  <div class="lc__stage">
+    {
+      spins ? (
+        <Turntable slug={entry.slug} alt={`${entry.name} de ${brandName}, modelo 3D`} loading={loading} class="lc__tt" style={frame} />
+      ) : (
+        <LightBox image={image} brandName={brandName} size="card" ratio="1 / 1" class="lc__photo" />
+      )
+    }
+  </div>
+  <div class="lc__txt">
+    {top && <p class="lc__top" translate="no">{top}</p>}
+    <Heading class="lc__name" translate="no"><a href={href} class="lc__link">{entry.name}</a></Heading>
+    {variant === 'card' && stat && <p class="lc__fact">{stat.label}: {stat.value}</p>}
+    {
+      variant === 'card' && (
+        <p class="lc__row">
+          <span class="lc__go" aria-hidden="true">{ctaLabels.viewProductDetail} ›</span>
+          <a href={`/contacto/?producto=${entry.slug}`} class="lc__quote" data-track="cotizacion_click" data-modelo={entry.slug}>
+            {ctaLabels.cotizar} ›<span class="sr-only"> {entry.name}</span>
+          </a>
+        </p>
+      )
+    }
+  </div>
+</article>
+
+<style>
+  .lc {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  /* Escenario: tinte de familia + charco de luz blanca; es el contexto donde el
+     póster y la foto se funden (multiply). Se eleva al pasar el mouse. */
+  .lc__stage {
+    position: relative;
+    aspect-ratio: var(--lc-ratio);
+    overflow: hidden;
+    border-radius: var(--radius-card);
+    background: var(--lc-tint, var(--color-tint));
+    transition:
+      transform 600ms var(--ease-out),
+      box-shadow 600ms var(--ease-out);
+  }
+  .lc__stage::before {
+    content: '';
+    position: absolute;
+    inset: 14% 6% 10%;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, #fff 35%, rgb(255 255 255 / 0) 100%);
+  }
+  .lc__stage :global(.lc__tt) {
+    position: absolute;
+    border-radius: 0;
+    transform-origin: 50% 62%;
+    transition: transform 800ms var(--ease-out);
+  }
+  .lc__stage :global(.lc__photo),
+  .lc__stage :global(.lc__photo .lightbox__plinth) {
+    position: absolute;
+    inset: 0;
+    aspect-ratio: auto !important;
+  }
+  .lc__stage :global(.lc__photo img) {
+    padding: 12%;
+    transition: transform 800ms var(--ease-out);
+  }
+  .lc__txt {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: 1.25rem 0.25rem 0;
+  }
+  .lc__top {
+    font-size: 0.84375rem;
+    font-weight: 500;
+    color: var(--color-ink-500);
+  }
+  .lc__name {
+    margin-top: 0.25rem;
+    font-size: clamp(1.1875rem, 1.6vw, 1.5rem);
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+    color: var(--color-ink-950);
+  }
+  /* Enlace estirado: toda la tarjeta lleva a la ficha. */
+  .lc__link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: var(--radius-card);
+  }
+  .lc__link:focus-visible {
+    outline: none;
+  }
+  .lc__link:focus-visible::after {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 4px;
+  }
+  .lc__fact {
+    margin-top: 0.375rem;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: var(--color-ink-600);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .lc__row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 1.25rem;
+    margin-top: auto;
+    padding-top: 0.75rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+  .lc__go {
+    color: var(--color-teal-700);
+  }
+  .lc__quote {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    color: var(--color-ink-950);
+    border-radius: var(--radius-edge);
+  }
+  .lc__quote:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .lc--tile .lc__name {
+    font-size: 1.0625rem;
+  }
+  .lc--tile .lc__txt {
+    padding-top: 0.875rem;
+  }
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .lc:hover .lc__stage,
+    .lc:focus-within .lc__stage {
+      transform: translateY(-6px);
+      box-shadow: var(--shadow-lift);
+    }
+    .lc:hover .lc__stage :global(.lc__tt),
+    .lc:hover .lc__stage :global(.lc__photo img) {
+      transform: scale(1.05);
+    }
+    .lc:hover .lc__go {
+      text-decoration: underline;
+      text-underline-offset: 4px;
+    }
+  }
+  @media (max-width: 639.98px) {
+    .lc__stage {
+      border-radius: 1.25rem;
+    }
+    .lc__row {
+      gap: 0 0.875rem;
+      font-size: 0.875rem;
+    }
+  }
+</style>

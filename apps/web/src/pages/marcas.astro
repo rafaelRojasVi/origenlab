@@ -5,7 +5,7 @@ import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../components/ui/BrandLogo.astro';
 import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
-import BrandModelCard from '../components/brand/BrandModelCard.astro';
+import LitCard from '../components/ui/LitCard.astro';
 import { brands, brandsWallHeading } from '../data/brands';
 import { scopeById } from '../data/equipmentScope';
 import { getCollection } from 'astro:content';
@@ -17,10 +17,10 @@ import { publicClaim } from '../data/claims';
 /**
  * Índice de marcas: una tarjeta por fabricante, las siete con el mismo peso.
  *
- * Cada tarjeta lleva el logotipo en claro sobre el grafito (nunca una caja
- * blanca), qué fabrica la marca en una línea, su familia de equipo, cuántos
- * modelos tienen ficha aquí y tres modelos iluminados: primero los que giran en
- * 3D, luego los que se presentan en la caja de luz. Tres y no más, para que
+ * Cada fila (sobre blanco, separadas por un filete) lleva el logotipo en su
+ * tinta, qué fabrica la marca en una línea, su familia de equipo, cuántos
+ * modelos tienen ficha aquí y tres modelos como `LitCard` compactas sobre el
+ * tinte de su familia: primero los que giran en 3D. Tres y no más, para que
  * ninguna marca pese más que otra por tener más modelos. Los modelos y los
  * conteos salen de la colección `modelos`; la línea y la familia, de
  * `brands.ts` y `equipmentScope.ts`.
@@ -49,23 +49,21 @@ const cards = rankBrands(brands).map((brand) => {
   title="Marcas"
   description="Marcas con las que trabaja OrigenLab: Hielscher, Ortoalresa, IKA, Adam Equipment, OHAUS, Löser y SERVA. Catálogo, documentación y cotización."
 >
-  <div class="brands-stage">
-    <div class="shell">
-      <PageIntro
-        title="Marcas"
-        lead="Siete fabricantes, cada uno con su familia de equipo y sus modelos documentados desde la fuente oficial. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
-        crumbs={[{ label: 'Marcas' }]}
-      />
-    </div>
+  <div class="shell">
+    <PageIntro
+      title="Marcas"
+      lead="Siete fabricantes, cada uno con su familia de equipo y sus modelos documentados desde la fuente oficial. La disponibilidad, la documentación técnica y las condiciones se confirman al cotizar."
+      crumbs={[{ label: 'Marcas' }]}
+    />
   </div>
 
   <section class="shell brands-sec" aria-labelledby="marcas-title">
-    <h2 id="marcas-title" class="t-label brands-sec__title">{heading}</h2>
+    <h2 id="marcas-title" class="brands-sec__title">{heading}</h2>
     <ul class="brand-cards">
       {
         cards.map(({ brand, family, count, spinning, featured }, index) => (
           <li>
-            <article class="brand-card card-lit" aria-labelledby={`marca-${brand.slug}`}>
+            <article class="brand-card" aria-labelledby={`marca-${brand.slug}`}>
               <div class="brand-card__info">
                 <a href={`/marcas/${brand.slug}/`} class="brand-card__logo" tabindex="-1" aria-hidden="true">
                   <BrandLogo brand={brand} scale={1.35} alt="" loading={index < 2 ? 'eager' : 'lazy'} />
@@ -98,7 +96,7 @@ const cards = rankBrands(brands).map((brand) => {
               <ul class="brand-card__models" aria-label={`Modelos de ${brand.name}`}>
                 {featured.map((entry) => (
                   <li>
-                    <BrandModelCard entry={entry} brandName={brand.name} variant="tile" loading={index === 0 ? 'eager' : 'lazy'} />
+                    <LitCard entry={entry} variant="tile" ratio="1 / 1" kicker="none" heading="h4" loading={index === 0 ? 'eager' : 'lazy'} />
                   </li>
                 ))}
               </ul>
@@ -123,27 +121,28 @@ const cards = rankBrands(brands).map((brand) => {
 </Layout>
 
 <style>
-  /* Foco de escenario detrás de la cabecera: la luz del lanzamiento. */
-  .brands-stage {
-    background: radial-gradient(60% 100% at 70% 0%, var(--color-glow), transparent 70%);
-  }
   .brands-sec {
-    padding-bottom: clamp(4rem, 8vw, 6rem);
+    padding-bottom: clamp(2rem, 4vw, 3rem);
   }
   .brands-sec__title {
-    margin-bottom: 1.25rem;
+    margin-bottom: 0.5rem;
+    font-size: clamp(1.5rem, 2.4vw, 1.875rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
   }
   .brand-cards {
     display: grid;
-    gap: 1.5rem;
     margin: 0;
     padding: 0;
     list-style: none;
   }
+  .brand-cards > li + li {
+    border-top: 1px solid var(--color-hairline);
+  }
   .brand-card {
     display: grid;
     gap: 2rem;
-    padding: 1.5rem 1.25rem;
+    padding-block: clamp(2.5rem, 5vw, 4rem);
   }
   .brand-card__info {
     display: flex;
@@ -158,39 +157,36 @@ const cards = rankBrands(brands).map((brand) => {
     margin-bottom: 1.25rem;
   }
   .brand-card__name {
-    font-size: 1.375rem;
-    font-weight: 700;
-    letter-spacing: -0.015em;
+    font-size: clamp(1.75rem, 3vw, 2.5rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.05;
     color: var(--color-ink-950);
   }
   .brand-card__name a:hover {
     color: var(--color-teal-800);
   }
   .brand-card__legal {
-    margin-top: 0.25rem;
+    margin-top: 0.375rem;
     font-size: 0.875rem;
     color: var(--color-ink-500);
   }
   .brand-card__summary {
-    margin-top: 0.75rem;
-    font-size: 0.9375rem;
+    margin-top: 0.875rem;
+    font-size: 1rem;
     line-height: 1.55;
-    color: var(--color-ink-800);
-    max-width: 44ch;
+    color: var(--color-ink-600);
+    max-width: 40ch;
   }
   .brand-card__facts {
-    display: grid;
-    gap: 0.75rem;
-    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 2rem;
     margin: 1.25rem 0 0;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-hairline);
   }
   .brand-card__facts dt {
-    font-family: var(--font-mono);
     font-size: 0.8125rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: 500;
     color: var(--color-ink-500);
   }
   .brand-card__facts dd {
@@ -210,7 +206,7 @@ const cards = rankBrands(brands).map((brand) => {
   .brand-card__models {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1.25rem 0.875rem;
+    gap: 1.5rem 0.875rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -219,14 +215,10 @@ const cards = rankBrands(brands).map((brand) => {
   .brand-card__models > li:first-child {
     grid-column: 1 / -1;
   }
-
   @media (min-width: 768px) {
-    .brand-card {
-      padding: 2rem;
-    }
     .brand-card__models {
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1.25rem;
+      gap: 1.375rem;
     }
     .brand-card__models > li:first-child {
       grid-column: auto;
@@ -234,10 +226,9 @@ const cards = rankBrands(brands).map((brand) => {
   }
   @media (min-width: 1024px) {
     .brand-card {
-      grid-template-columns: minmax(0, 19rem) minmax(0, 1fr);
-      gap: 3rem;
+      grid-template-columns: minmax(0, 20rem) minmax(0, 1fr);
+      gap: 4rem;
       align-items: center;
-      padding: 2rem 2rem 2rem 2.5rem;
     }
   }
 </style>

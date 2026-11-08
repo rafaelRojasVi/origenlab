@@ -299,3 +299,14 @@ export function familyOrder(models: readonly Modelo[], slug: FamilySlug): Modelo
   const rank = new Map(scale?.points.map((point, i) => [point.slug, i]));
   return [...models].sort((a, b) => (rank.get(a.slug) ?? 99) - (rank.get(b.slug) ?? 99) || byBrandAndName(a, b));
 }
+
+/**
+ * Fondo pastel de la familia (`--color-tint-*`, «Blanco con color») para el
+ * escenario de una tarjeta o una miniatura del menú. Pesaje y humedad comparten
+ * familia, pero los analizadores de humedad (la línea MB de OHAUS) llevan el
+ * aqua de humedad y las balanzas el ámbar de pesaje.
+ */
+export function familyTint(entry: Pick<Modelo, 'family' | 'name'>): string {
+  if (entry.family === 'pesaje-humedad') return /^MB\d/.test(entry.name) ? 'var(--color-tint-humedad)' : 'var(--color-tint-pesaje)';
+  return `var(--color-tint-${entry.family})`;
+}

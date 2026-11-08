@@ -21,8 +21,8 @@ const hasAside = Astro.slots.has('aside');
   {crumbs && <Breadcrumbs items={crumbs} />}
   <div class:list={['page-intro__body', hasAside && 'page-intro__body--split']}>
     <div>
-      <h1 class="t-d3">{title}</h1>
-      {lead && <p class="t-lead mt-5">{lead}</p>}
+      <h1 class="page-intro__title">{title}</h1>
+      {lead && <p class="lede page-intro__lead">{lead}</p>}
     </div>
     {hasAside && (
       <div class="page-intro__aside">
@@ -34,10 +34,41 @@ const hasAside = Astro.slots.has('aside');
 </header>
 
 <style>
-  /* Migas en mono 13, titular t-d3, frase t-lead y 48 px de aire debajo. */
+  /* Migas, titular grande del sitio claro (800, apretado) y la frase. Un
+     resplandor teal/aqua suave detrás, como la primera pantalla de la portada. */
   .page-intro {
+    position: relative;
+    isolation: isolate;
     padding-top: 2rem;
-    padding-bottom: 3rem;
+    padding-bottom: 3.5rem;
+  }
+  .page-intro::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: -4rem;
+    right: -10%;
+    width: min(56rem, 90vw);
+    height: 30rem;
+    border-radius: 50%;
+    background:
+      radial-gradient(closest-side at 38% 50%, var(--color-glow-teal) 0%, transparent 100%),
+      radial-gradient(closest-side at 64% 46%, var(--color-glow-aqua) 0%, transparent 100%);
+    opacity: 0.7;
+    pointer-events: none;
+  }
+  .page-intro__title {
+    max-width: 16ch;
+    font-size: clamp(2.75rem, 6vw, 5rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.05em;
+    color: var(--color-ink-950);
+    overflow-wrap: anywhere;
+  }
+  .page-intro__lead {
+    margin-top: 1.25rem;
+    max-width: 52ch;
   }
   .page-intro__body {
     margin-top: 1.5rem;

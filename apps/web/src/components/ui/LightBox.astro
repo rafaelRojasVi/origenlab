@@ -3,23 +3,19 @@ import type { ProductImageRecord } from '../../data/productImages';
 import { imageSourcesFor } from '../../lib/productImage';
 
 /**
- * Caja de luz: la fotografía de fabricante (fondo blanco) sobre un plinto claro
- * con degradé radial (`--color-lightbox-hi` → `--color-lightbox-lo`) dentro de
- * la tarjeta o sección oscura, como un equipo iluminado en una vitrina. Es el
- * único lugar claro del sitio y la única forma de mostrar una foto de fondo
- * blanco sobre el showroom oscuro (para los modelos con escena 3D se usa
- * `Turntable`).
+ * Fotografía de fabricante (fondo blanco) puesta sobre la superficie clara que
+ * tenga detrás, sin caja: la foto lleva `.pz` (brillo + multiply), así su blanco
+ * desaparece en el blanco de la página o en el tinte de la familia y el equipo
+ * queda «parado» sobre él. Para los modelos con escena 3D se usa `Turntable`.
  *
- * - No recorta fondos: la foto se funde con el plinto por `mix-blend-mode:
- *   multiply` (el blanco del fabricante desaparece, el equipo queda).
+ * - No recorta fondos ni dibuja plinto: el fondo es del contenedor (no le ponga
+ *   un envoltorio transformado o aislado entre medio, o el blanco reaparece).
  * - Mismo contrato que `ModelPhoto`: recibe una fila de `productImages.ts`, no
  *   dibuja nada si la fila no está `VERIFIED`, lleva `data-image-id` /
  *   `data-image-scope` en el `<figure>` y rotula la imagen representativa de
  *   familia (`validate:images` lo exige).
  * - Caja de proporción fija (`ratio`), así que no hay salto de diseño mientras
  *   carga; la imagen nunca se amplía por encima de su tamaño real.
- * - El plinto tiene su propio radio; no le ponga borde ni sombra encima: el
- *   contenedor oscuro es el marco.
  */
 interface Props {
   image: ProductImageRecord | undefined;
@@ -83,14 +79,8 @@ const captionText = sources
   }
   .lightbox__plinth {
     position: relative;
-    isolation: isolate;
     overflow: hidden;
-    border-radius: calc(var(--radius-card) - 0.25rem);
-    background:
-      radial-gradient(70% 55% at 50% 38%, var(--color-lightbox-hi) 0%, var(--color-lightbox-hi) 40%, transparent 100%),
-      linear-gradient(var(--color-lightbox-hi), var(--color-lightbox-lo));
-    /* El canto inferior del plinto: una sombra interior apenas visible. */
-    box-shadow: inset 0 -28px 40px -32px rgb(0 0 0 / 0.35);
+    border-radius: inherit;
   }
   .lightbox__plinth picture {
     display: contents;
@@ -103,6 +93,7 @@ const captionText = sources
     height: 100%;
     padding: 7%;
     object-fit: contain;
+    filter: brightness(1.03);
     mix-blend-mode: multiply;
   }
   .lightbox__caption {
