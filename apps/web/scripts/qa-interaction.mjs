@@ -304,7 +304,7 @@ console.log('\nCabecera (1440 px)');
     check(bg === 'rgba(13, 15, 16, 0.74)', `en la portada la cabecera es grafito translúcido (${bg})`);
     const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content);
     check(theme === '#141617', `en la portada theme-color es #141617 (${theme})`);
-    const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav a')].map((a) => a.textContent.trim()));
+    const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav > ul > li > a')].map((a) => a.textContent.trim()));
     check(
       nav.join('|') === 'Productos|Aplicaciones|Marcas|Cómo comprar|Nosotros',
       `la navegación es ${nav.join(' · ')}`,
