@@ -7,7 +7,7 @@ import Showroom from '../home/Showroom.astro';
 import ModelHeroCopy from './ModelHeroCopy.astro';
 import { ctaLabels } from '../../lib/ctaLabels';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
-import { familyTint, imageForEntry, type FamilyInfo } from '../../lib/modelos';
+import { imageForEntry, type FamilyInfo } from '../../lib/modelos';
 import type { Brand } from '../../data/brands';
 import type { Modelo } from '../../content.config';
 
@@ -26,7 +26,7 @@ import type { Modelo } from '../../content.config';
  *              sobre el tinte) va sobre un panel blanco liso.
  * En los tres casos el bloque de entrada lleva `data-first-screen`.
  *
- * `--fam` (tinta de la familia) y `--tint` (su pastel) quedan en `.model-page`
+ * `--fam` (tinta de la familia) queda en `.model-page`
  * para las secciones de la ficha: filetes, numerales, notas del 3D.
  *
  * La barra fija (`[data-sticky-cta]`) está al final del slot, `position: sticky`
@@ -61,7 +61,7 @@ async function whiteBackground(path: string | null | undefined): Promise<boolean
 const plain = media === 'photo' && !(await whiteBackground(photo?.masterPath));
 ---
 
-<div class="model-page" style={`--fam: ${fam}; --tint: ${familyTint(entry)}`}>
+<div class="model-page" style={`--fam: ${fam}`}>
   {
     media !== 'story' && (
       <section class="shell mh-sec" data-first-screen aria-labelledby="modelo-titulo">
@@ -197,11 +197,13 @@ const plain = media === 'photo' && !(await whiteBackground(photo?.masterPath));
   .mh-sec__media {
     align-self: center;
   }
-  /* Sin 3D: la foto grande sobre el tinte de la familia, con su charco de luz. */
+  /* Sin 3D: la foto grande en una tarjeta blanca con sombra suave (sin tintes por familia, dueño 2026-11-08). */
   .mh-stage {
     position: relative;
     border-radius: var(--radius-scene);
-    background: radial-gradient(52% 46% at 50% 58%, #fff 30%, transparent 100%) var(--tint);
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
+    box-shadow: var(--shadow-card);
   }
   .mh-stage--plain {
     background: var(--color-paper);

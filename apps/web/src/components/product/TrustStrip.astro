@@ -4,8 +4,8 @@ import { publicClaim } from '../../data/claims';
 /**
  * «Cómo trabajamos» en la página de modelo: las afirmaciones aprobadas del
  * registro (`claims.ts`), con el soporte primero y a la vista (plan comercial
- * 11-07: puesta en marcha y capacitación). A la izquierda, sobre el tinte de
- * la familia (`--tint` de `ModelHero`), la del soporte en grande; a la
+ * 11-07: puesta en marcha y capacitación). A la izquierda, sobre el teal pálido
+ * de la superficie, la del soporte en grande; a la
  * derecha, las demás en filas con numeral. Una afirmación sin aprobar no se
  * dibuja; sin ninguna, la sección entera se omite. «Pago», «garantía» y el
  * pilar de distribuidor no están aquí: no son afirmaciones aprobadas.
@@ -48,7 +48,7 @@ const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despa
   .mtrust__lead {
     padding: clamp(1.75rem, 4vw, 3rem);
     border-radius: var(--radius-band);
-    background: radial-gradient(70% 90% at 85% 100%, #fff 0%, transparent 70%) var(--tint, var(--color-surface));
+    background: radial-gradient(70% 90% at 85% 100%, #fff 0%, transparent 70%) var(--color-surface);
   }
   .mtrust__support {
     margin-top: 1.5rem;

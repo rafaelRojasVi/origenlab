@@ -11,7 +11,7 @@ import { familiesInProductOrder } from '../data/equipmentScope';
 import { company } from '../data/company';
 import { getBrandsByFamilyId } from '../lib/catalog';
 import { rankFamilies } from '../lib/ranking';
-import { familyForScope, familyHref, familyInfo, familyTint } from '../lib/modelos';
+import { familyForScope, familyHref, familyInfo } from '../lib/modelos';
 import type { Modelo } from '../content.config';
 
 /**
@@ -53,7 +53,7 @@ const families = rankFamilies(
         {
           families.map(({ scope, info, models }) => (
             <li>
-              <a href={`#${scope.id}`} style={`--t: ${familyTint(models[0])}`}>
+              <a href={`#${scope.id}`}>
                 {info.short}
               </a>
             </li>
@@ -124,7 +124,8 @@ const families = rankFamilies(
     min-height: 2.75rem;
     padding: 0 1.125rem;
     border-radius: var(--radius-btn);
-    background: var(--t);
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
     font-size: 0.9375rem;
     font-weight: 600;
     color: var(--color-ink-950);
