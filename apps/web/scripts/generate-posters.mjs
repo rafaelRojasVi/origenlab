@@ -6,7 +6,10 @@
  * catálogo (`components/ui/Turntable.astro`): `public/products/<slug>-turntable.webp`,
  * 24 cuadros de 560x420 en una sola fila (una vuelta completa, 15° por cuadro,
  * el cuadro 0 es el ángulo del póster), ≤ 120 kB (baja la calidad WebP y, si no
- * basta, el tamaño del cuadro). Los dos sobre el estudio oscuro (`scene.ts`).
+ * basta, el tamaño del cuadro). Y su miniatura para el mega-menú
+ * (`public/products/<slug>-thumb.webp`, 240x180, el equipo recortado del blanco
+ * con aire alrededor). Todo sobre el estudio blanco (`scene.ts`): en la página se
+ * funden con cualquier fondo claro con `.pz` (brillo + multiply).
  *
  * Sirve `dist/` en un puerto libre, abre
  * `/productos/<familia>/<slug>/?poster=1` (centrifugación: su ficha en
@@ -20,7 +23,9 @@
  * salta con un aviso y no detiene a los demás. Cada póster pesa ≤ 150 kB (baja
  * la calidad JPEG desde 82 hasta cumplirlo).
  *
- * Ejecutar: npm run build && npm run posters [slug ...] [--no-turntable]   (sin slugs, todos; no forma parte de `validate`:
+ * Ejecutar: npm run build && npm run posters [slug ...] [--no-turntable] [--thumbs-only]
+ *   (sin slugs, todos; `--thumbs-only` rehace sólo las miniaturas desde los pósteres
+ *   ya generados, sin navegador; no forma parte de `validate`:
  * necesita un navegador con WebGL). Después, `npm run build` otra vez para que
  * las páginas incluyan los pósteres nuevos.
  */
@@ -44,6 +49,67 @@ const STRIP_SIZES = [
   [480, 360],
 ];
 const onlyPosters = process.argv.includes('--no-turntable');
+const thumbsOnly = process.argv.includes('--thumbs-only');
+/*
+ * Encuadre de cada modelo (`src/data/posterFraming.json`): la caja que ocupa el
+ * equipo dentro del cuadro 4:3, unida sobre los 24 cuadros de la tira (el equipo
+ * más ancho de perfil cabe en todos), en fracciones del cuadro. `ui/LitCard.astro`
+ * la usa para centrar y agrandar el equipo en su escenario sin cortarlo.
+ * Umbral alto: la sombra suave del piso no cuenta como equipo.
+ */
+const framingFile = join(root, 'src', 'data', 'posterFraming.json');
+async function boxOf(input) {
+  const { info } = await sharp(input).trim({ background: '#ffffff', threshold: 40 }).toBuffer({ resolveWithObject: true });
+  return { x: -info.trimOffsetLeft, y: -info.trimOffsetTop, w: info.width, h: info.height };
+}
+async function writeFraming() {
+  const framing = existsSync(framingFile) ? JSON.parse(readFileSync(framingFile, 'utf8')) : {};
+  for (const entry of models) {
+    const poster = join(outDir, `${entry.slug}-poster.jpg`);
+    if (!existsSync(poster)) continue;
+    const strip = join(outDir, `${entry.slug}-turntable.webp`);
+    const boxes = [];
+    let fw = 1200;
+    let fh = 900;
+    if (existsSync(strip)) {
+      const meta = await sharp(strip).metadata();
+      fw = meta.width / STRIP_FRAMES;
+      fh = meta.height;
+      for (let i = 0; i < STRIP_FRAMES; i++) boxes.push(await boxOf(await sharp(strip).extract({ left: i * fw, top: 0, width: fw, height: fh }).png().toBuffer()));
+    } else boxes.push(await boxOf(poster));
+    const x0 = Math.min(...boxes.map((b) => b.x));
+    const y0 = Math.min(...boxes.map((b) => b.y));
+    const x1 = Math.max(...boxes.map((b) => b.x + b.w));
+    const y1 = Math.max(...boxes.map((b) => b.y + b.h));
+    const r = (v) => Math.round(v * 1000) / 1000;
+    framing[entry.slug] = { x: r(x0 / fw), y: r(y0 / fh), w: r((x1 - x0) / fw), h: r((y1 - y0) / fh) };
+  }
+  writeFileSync(framingFile, `${JSON.stringify(framing, null, 2)}\n`);
+  console.log(`  ok src/data/posterFraming.json (${Object.keys(framing).length} modelos)`);
+}
+
+/* Miniatura del mega-menú: 4:3, el equipo recortado del blanco con un margen. */
+const THUMB = [240, 180];
+async function writeThumb(slug) {
+  const poster = join(outDir, `${slug}-poster.jpg`);
+  const trimmed = await sharp(poster).trim({ background: '#ffffff', threshold: 18 }).toBuffer({ resolveWithObject: true });
+  const { width, height } = trimmed.info;
+  // Caja 4:3 que contiene el recorte con 14 % de aire; fondo blanco del estudio.
+  const boxW = Math.max(width, (height * 4) / 3) * 1.28;
+  const boxH = (boxW * 3) / 4;
+  const padX = Math.round((boxW - width) / 2);
+  const padY = Math.round((boxH - height) / 2);
+  // sharp aplica `resize` antes que `extend` en una misma cadena: dos pasos.
+  const framed = await sharp(trimmed.data)
+    .extend({ left: padX, right: padX, top: padY, bottom: padY, background: '#ffffff' })
+    .toBuffer();
+  const buffer = await sharp(framed)
+    .resize(THUMB[0], THUMB[1], { fit: 'cover' })
+    .webp({ quality: 78 })
+    .toBuffer();
+  writeFileSync(join(outDir, `${slug}-thumb.webp`), buffer);
+  return buffer.length;
+}
 const slugArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
 if (!existsSync(join(root, 'dist'))) {
@@ -58,6 +124,14 @@ const models = readdirSync(modelsDir)
   .filter((entry) => slugArgs.length === 0 || slugArgs.includes(entry.slug));
 if (models.length === 0) {
   console.log('Ningún modelo declara showroom_id: nada que generar.');
+  process.exit(0);
+}
+if (thumbsOnly) {
+  for (const entry of models) {
+    if (!existsSync(join(outDir, `${entry.slug}-poster.jpg`))) continue;
+    console.log(`  ok ${entry.slug}-thumb.webp (${Math.round((await writeThumb(entry.slug)) / 1024)} kB)`);
+  }
+  await writeFraming();
   process.exit(0);
 }
 
@@ -181,6 +255,7 @@ try {
       writeFileSync(file, buffer);
       made.push(entry.slug);
       console.log(`  ok ${label} → public/products/${entry.slug}-poster.jpg (${Math.round(buffer.length / 1024)} kB)`);
+      console.log(`  ok ${label} → public/products/${entry.slug}-thumb.webp (${Math.round((await writeThumb(entry.slug)) / 1024)} kB)`);
       if (buffer.length > MAX_BYTES) {
         console.error(`   x ${entry.slug}: pesa más de ${MAX_BYTES / 1000} kB incluso con calidad 42`);
         failed++;
@@ -208,7 +283,7 @@ try {
         let used;
         search: for (const [w, h] of STRIP_SIZES) {
           const tiles = await Promise.all(frames.map((frame) => sharp(frame).resize(w, h).toBuffer()));
-          const sheet = sharp({ create: { width: w * STRIP_FRAMES, height: h, channels: 3, background: '#0d0f10' } }).composite(
+          const sheet = sharp({ create: { width: w * STRIP_FRAMES, height: h, channels: 3, background: '#ffffff' } }).composite(
             tiles.map((input, i) => ({ input, left: i * w, top: 0 })),
           );
           const raw = await sheet.png().toBuffer();
@@ -232,6 +307,7 @@ try {
       await context.close();
     }
   }
+  await writeFraming();
   console.log(`\n${made.length} póster(es) generado(s) de ${models.length} modelo(s) con showroom_id.`);
 } catch (error) {
   console.error(error.message);

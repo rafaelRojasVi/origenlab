@@ -156,6 +156,8 @@ const POSTER_MAX_BYTES = 150_000;
 const STRIP = /-turntable\.webp$/;
 const STRIP_FRAMES = 24;
 const STRIP_MAX_BYTES = 120_000;
+// Miniatura del mega-menú (240x180 WebP), junto a su póster.
+const THUMB = /-thumb\.webp$/;
 
 if (existsSync(productsDir)) {
   for (const brandDir of readdirSync(productsDir)) {
@@ -171,8 +173,13 @@ if (existsSync(productsDir)) {
         assert(Number.isInteger(frame) && frame * 3 === meta.height * 4, `/products/${brandDir}: la tira mide ${meta.width}x${meta.height}, no ${STRIP_FRAMES} cuadros 4:3 en una fila`);
         assert(statSync(dir).size <= STRIP_MAX_BYTES, `/products/${brandDir}: la tira pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 120 kB)`);
         assert(existsSync(join(productsDir, brandDir.replace(STRIP, '-poster.jpg'))), `/products/${brandDir}: tira de giro sin su póster`);
+      } else if (THUMB.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        assert(meta.width === 240 && meta.height === 180, `/products/${brandDir}: la miniatura mide ${meta.width}x${meta.height}, no 240x180`);
+        assert(statSync(dir).size <= 20_000, `/products/${brandDir}: la miniatura pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 20 kB)`);
+        assert(existsSync(join(productsDir, brandDir.replace(THUMB, '-poster.jpg'))), `/products/${brandDir}: miniatura sin su póster`);
       } else {
-        assert(false, `/products/${brandDir}: archivo suelto que no es un póster ni una tira de giro generados`);
+        assert(false, `/products/${brandDir}: archivo suelto que no es un póster, una tira de giro ni una miniatura generados`);
       }
       continue;
     }

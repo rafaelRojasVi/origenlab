@@ -6,13 +6,14 @@
  * sitio no paga three.js. Con movimiento reducido no se carga nunca; la portada
  * deja la fotografía oficial.
  *
- * Estudio oscuro (showroom): el fondo del lienzo sigue transparente y el grafito
- * lo pone el CSS (`--color-studio`, igual a `paper`), de modo que la escena se
- * asienta sobre el mismo fondo que la página. La escena sólo añade el piso: un
- * charco de luz suave bajo el equipo (el foco de un lanzamiento de producto) y
- * la sombra de contacto, más densa que sobre papel para que se lea sobre grafito.
- * Un contraluz más fuerte separa la silueta del fondo. Sólo cambian luz y
- * piso: la geometría y los materiales de cada equipo (`models/*.ts`) no se tocan.
+ * Estudio blanco («Blanco con color»): el fondo del lienzo es transparente y el
+ * blanco lo pone el CSS (`--color-studio`, igual a `paper`), de modo que la
+ * escena se asienta sobre el mismo fondo que la página y los pósteres se hornean
+ * sobre blanco. El piso sólo lleva una sombra de contacto suave y teñida de teal
+ * (nunca negra): un mapa de sombras desde una luz cenital que no ilumina (la
+ * sombra queda bajo el equipo, no una sombra dura proyectada hacia un lado) y una
+ * mancha difusa alrededor. La luz principal no cambia, así los colores reales de
+ * cada equipo se conservan. La geometría y los materiales (`models/*.ts`) no se tocan.
  */
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -126,33 +127,37 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
 
   const key = new THREE.DirectionalLight(0xffffff, 2.4);
   key.position.set(-4, 9, 6);
-  key.castShadow = true;
-  key.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
-  Object.assign(key.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5 });
-  key.shadow.radius = 6;
-  key.shadow.bias = -0.0004;
   scene.add(key);
+  // Sombra de contacto: luz cenital de intensidad 0 que sólo proyecta la sombra
+  // (`ShadowMaterial` la lee sin importar la intensidad). Cae bajo el equipo.
+  const shade = new THREE.DirectionalLight(0xffffff, 0);
+  shade.position.set(0.5, 10, 0.8);
+  shade.castShadow = true;
+  shade.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
+  Object.assign(shade.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5 });
+  shade.shadow.bias = -0.0004;
+  scene.add(shade);
   const fill = new THREE.DirectionalLight(0xdfe8ff, 0.7);
   fill.position.set(6, 3, 4);
   scene.add(fill);
-  // Contraluz: sobre grafito separa la silueta del fondo (sobre papel bastaba 1,2).
-  const rim = new THREE.DirectionalLight(0xeaf6ff, 2.2);
+  const rim = new THREE.DirectionalLight(0xffffff, 1.2);
   rim.position.set(2, 5, -7);
   scene.add(rim);
 
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.5 }));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ color: 0x0d3b36, opacity: 0.16 }));
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // Sin mapa de sombras, una mancha de contacto dibujada asienta el equipo.
+  // Mancha difusa teñida de teal: con mapa de sombras es el halo alrededor de la
+  // sombra de contacto; sin él (niveles medio y bajo) es la única que asienta el equipo.
   const blobCanvas = document.createElement('canvas');
   blobCanvas.width = blobCanvas.height = 128;
   const g = blobCanvas.getContext('2d')!;
   const fade = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  fade.addColorStop(0, 'rgba(0,0,0,.62)');
-  fade.addColorStop(0.55, 'rgba(0,0,0,.3)');
-  fade.addColorStop(1, 'rgba(0,0,0,0)');
+  fade.addColorStop(0, 'rgba(13,59,54,.30)');
+  fade.addColorStop(0.55, 'rgba(13,59,54,.12)');
+  fade.addColorStop(1, 'rgba(13,59,54,0)');
   g.fillStyle = fade;
   g.fillRect(0, 0, 128, 128);
   const blobTexture = new THREE.CanvasTexture(blobCanvas);
@@ -164,32 +169,10 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   blob.position.y = 0.002;
   scene.add(blob);
 
-  // Piso del estudio: un charco de luz que se apaga hacia los bordes, bajo la
-  // sombra. Sin mapa de tonos: es un velo claro sobre el grafito del CSS, no
-  // una superficie iluminada, y así se ve igual en los dos niveles.
-  const poolCanvas = document.createElement('canvas');
-  poolCanvas.width = poolCanvas.height = 256;
-  const pg = poolCanvas.getContext('2d')!;
-  const glow = pg.createRadialGradient(128, 128, 0, 128, 128, 128);
-  glow.addColorStop(0, 'rgba(236,240,238,.16)');
-  glow.addColorStop(0.45, 'rgba(236,240,238,.07)');
-  glow.addColorStop(1, 'rgba(236,240,238,0)');
-  pg.fillStyle = glow;
-  pg.fillRect(0, 0, 256, 256);
-  const poolTexture = new THREE.CanvasTexture(poolCanvas);
-  poolTexture.colorSpace = THREE.SRGBColorSpace;
-  const pool = new THREE.Mesh(
-    new THREE.PlaneGeometry(1, 1),
-    new THREE.MeshBasicMaterial({ map: poolTexture, transparent: true, depthWrite: false, toneMapped: false }),
-  );
-  pool.rotation.x = -Math.PI / 2;
-  pool.position.y = -0.002;
-  pool.renderOrder = -1;
-  scene.add(pool);
   const applyTier = () => {
-    key.castShadow = tier === 'high';
+    shade.castShadow = tier === 'high';
     ground.visible = tier === 'high';
-    blob.visible = tier !== 'high';
+    (blob.material as THREE.MeshBasicMaterial).opacity = tier === 'high' ? 0.6 : 1;
     renderer.setPixelRatio(pixelRatio());
   };
   applyTier();
@@ -226,9 +209,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     framed.getSize(framedSize);
     anchorNames = Object.keys(next.anchors);
     const foot = new THREE.Box3().setFromObject(next.root).getSize(new THREE.Vector3());
-    blob.scale.set(foot.x * 1.25, foot.z * 1.25, 1);
-    const reach = Math.max(foot.x, foot.z, foot.y * 0.6) * 3.2;
-    pool.scale.set(reach, reach, 1);
+    blob.scale.set(foot.x * 1.5, foot.z * 1.5, 1);
   };
   mount(initial);
 
@@ -272,9 +253,9 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     if (nowSmall !== small) {
       small = nowSmall;
       renderer.setPixelRatio(pixelRatio());
-      key.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
-      key.shadow.map?.dispose();
-      key.shadow.map = null;
+      shade.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
+      shade.shadow.map?.dispose();
+      shade.shadow.map = null;
     }
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
@@ -458,10 +439,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
       blob.geometry.dispose();
       (blob.material as THREE.Material).dispose();
       blobTexture.dispose();
-      pool.geometry.dispose();
-      (pool.material as THREE.Material).dispose();
-      poolTexture.dispose();
-      key.shadow.dispose();
+      shade.shadow.dispose();
       renderer.dispose();
       if (discard) renderer.forceContextLoss();
     },
