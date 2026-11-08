@@ -3,11 +3,12 @@ import BrandLogo from '../ui/BrandLogo.astro';
 import { brandRailOrder } from '../../data/brands';
 import { publicClaim } from '../../data/claims';
 import { getBrandById } from '../../lib/catalog';
+import { rankBrands } from '../../lib/ranking';
 
 /**
  * Marcas (tablero HomeA): una fila fija de logotipos entre dos filetes, en el
- * orden de la lista cerrada (`brandRailOrder`, sin las marcas ocultas en la
- * portada). Sin marquesina ni control de pausa: no se mueve, y en teléfono se
+ * orden comercial (`rankBrands`: IKA al final) de la lista cerrada
+ * (`brandRailOrder`, sin las marcas ocultas en la portada). Sin marquesina ni control de pausa: no se mueve, y en teléfono se
  * desplaza con el dedo. El logotipo va con alt vacío porque el enlace ya lleva
  * el nombre de la marca. El riel no lleva animación propia: sólo el contenedor
  * se revela una vez al entrar en cuadro.
@@ -18,9 +19,9 @@ import { getBrandById } from '../../lib/catalog';
  */
 const heading = publicClaim('directo-con-el-fabricante');
 const count = publicClaim('marcas-con-las-que-trabajamos');
-const rail = brandRailOrder
-  .map((id) => getBrandById(id))
-  .filter((brand): brand is NonNullable<typeof brand> => brand !== undefined);
+const rail = rankBrands(
+  brandRailOrder.map((id) => getBrandById(id)).filter((brand): brand is NonNullable<typeof brand> => brand !== undefined),
+);
 ---
 
 <section class="shell home-sec" id="marcas" aria-labelledby={heading ? 'marcas-title' : undefined} aria-label={heading ? undefined : 'Marcas'} data-home-brands>

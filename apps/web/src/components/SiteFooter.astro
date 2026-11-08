@@ -5,6 +5,7 @@ import { APPROVED_BRAND_IDS } from '../data/brands';
 import { equipmentScope } from '../data/equipmentScope';
 import { legalRoutes } from '../data/legal';
 import { getBrandById } from '../lib/catalog';
+import { rankBrands, rankFamilies } from '../lib/ranking';
 import { familyForScope, familyHref, familyInfo } from '../lib/modelos';
 import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import SiteLogo from './SiteLogo.astro';
@@ -23,14 +24,19 @@ import SiteLogo from './SiteLogo.astro';
 const year = new Date().getFullYear();
 const whatsappHref = buildWhatsAppQuoteUrl();
 
-const families = equipmentScope.flatMap((scope) => {
-  const slug = familyForScope(scope.id);
-  return slug ? [{ name: familyInfo(slug).short, href: familyHref(slug) }] : [];
-});
-const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
-  const brand = getBrandById(id);
-  return brand ? [{ name: brand.name, href: `/marcas/${brand.slug}/` }] : [];
-});
+const families = rankFamilies(
+  equipmentScope.flatMap((scope) => {
+    const slug = familyForScope(scope.id);
+    return slug ? [{ name: familyInfo(slug).short, href: familyHref(slug) }] : [];
+  }),
+  (family) => family.href.split('/')[2] ?? '',
+);
+const brandLinks = rankBrands(
+  APPROVED_BRAND_IDS.flatMap((id) => {
+    const brand = getBrandById(id);
+    return brand ? [brand] : [];
+  }),
+).map((brand) => ({ name: brand.name, href: `/marcas/${brand.slug}/` }));
 ---
 
 <footer class="site-footer">
