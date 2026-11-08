@@ -2,7 +2,6 @@
 import Layout from '../layouts/Layout.astro';
 import HomeHero from '../components/home/HomeHero.astro';
 import HomeFamilies from '../components/home/HomeFamilies.astro';
-import HomeIndustries from '../components/home/HomeIndustries.astro';
 import HomeSteps from '../components/home/HomeSteps.astro';
 import HomeBrands from '../components/home/HomeBrands.astro';
 import HomeNotes from '../components/home/HomeNotes.astro';
@@ -10,6 +9,7 @@ import HomeReveal from '../components/home/HomeReveal.astro';
 import QuoteTeaser from '../components/home/QuoteTeaser.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import RegisteredStrip from '../components/ui/RegisteredStrip.astro';
+import IndustryTiles from '../components/ui/IndustryTiles.astro';
 import { site } from '../config/site';
 import { publicClaim } from '../data/claims';
 import { websiteJsonLd } from '../lib/jsonld';
@@ -22,7 +22,7 @@ import { websiteJsonLd } from '../lib/jsonld';
  *   blanco    primera pantalla: titular centrado, acciones y sala 3D sobre un resplandor
  *   blanco    elija el equipo: fila de modelos y las seis familias
  *   blanco    proveedor inscrito en: franja de logotipos aprobados
- *   blanco    industrias, en una fila
+ *   blanco    industrias, seis tiles de texto hacia las aplicaciones
  *   aqua      revelado: el nombre gigante detrás del equipo
  *   blanco    marcas, rejilla de logotipos
  *   azul      cómo comprar en cuatro pasos y la hoja de cotización de ejemplo
@@ -54,7 +54,12 @@ const bandBody = sameDay
   <section class="shell home-sec home-reg rv" aria-labelledby="inscrito-title">
     <RegisteredStrip heading />
   </section>
-  <HomeIndustries />
+  <section class="shell home-sec home-ind" id="industrias" aria-labelledby="industrias-title">
+    <div class="home-head rv">
+      <h2 id="industrias-title" class="t-label">Industrias</h2>
+    </div>
+    <div class="rv"><IndustryTiles /></div>
+  </section>
   <HomeReveal />
   <HomeBrands />
   <HomeSteps tone="raised">
@@ -67,3 +72,13 @@ const bandBody = sameDay
     primary="quote"
   />
 </Layout>
+
+<style>
+  .home-ind {
+    padding-bottom: clamp(5rem, 10vw, 9rem);
+  }
+  /* Es una etiqueta, no un titular de sección: sin el aire de `.home-head`. */
+  .home-ind .home-head {
+    margin-bottom: 1.5rem;
+  }
+</style>
