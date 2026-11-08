@@ -4,7 +4,8 @@
  * Cada una lleva a la familia de equipo que más suele traer ese sector (el
  * primer enlace de la antigua sección «A quién atendemos»); el sector público
  * lleva a cómo se cotiza por Mercado Público. Describe el trabajo, no a quién se
- * le ha vendido: sin logotipos de cliente, nombres, testimonios ni conteos.
+ * le ha vendido: sin testimonios ni conteos. Los únicos nombres y logos son los
+ * aprobados de la franja «Proveedor inscrito en» (`registrations.ts`).
  */
 import { familyHref } from '../lib/modelos';
 

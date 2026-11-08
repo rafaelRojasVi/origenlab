@@ -35,7 +35,8 @@ const { buildWhatsAppQuoteMessage, buildWhatsAppQuoteUrl } = await import('../sr
 const { buyingSteps } = await import('../src/data/consultation.ts');
 const { buyingFaqs } = await import('../src/data/faq.ts');
 const { company } = await import('../src/data/company.ts');
-const { claims, publicClaim } = await import('../src/data/claims.ts');
+const { claims, publicClaim, publicClaimNames } = await import('../src/data/claims.ts');
+const { registrationLogos } = await import('../src/data/registrations.ts');
 const { withheldClaimTexts, publishesClaimText, hiddenCopySurfaces } = await import('./lib/claim-variants.mjs');
 
 let failed = 0;
@@ -193,6 +194,22 @@ test('registro: estado de las afirmaciones nuevas', () => {
     'Proveedor inscrito en universidades, laboratorios farmacéuticos y empresas agroindustriales · Acreditado en ChileProveedores',
   );
   assert.doesNotMatch(publicClaim('proveedor-inscrito'), /\d/);
+});
+// Nombres y logos aprobados por la dueña el 2026-11-08: exactamente esta lista,
+// en el registro y en la franja. Cualquier otro nombre necesita su permiso escrito.
+const APPROVED_REGISTRATION_NAMES = [
+  'Laboratorios Saval',
+  'Universidad Santo Tomás',
+  'ChileProveedores (Mercado Público)',
+  'Corteva Agriscience',
+  'Golden Omega',
+  'Universidad de Concepción',
+];
+test('registro: «proveedor inscrito» nombra sólo la lista aprobada', () => {
+  assert.deepEqual([...publicClaimNames('proveedor-inscrito')], APPROVED_REGISTRATION_NAMES);
+  assert.deepEqual(registrationLogos.map((logo) => logo.name), APPROVED_REGISTRATION_NAMES);
+  assert.ok(claims.filter((claim) => claim.names?.length).every((claim) => claim.id === 'proveedor-inscrito'));
+  for (const logo of registrationLogos) assert.match(logo.src, /^\/clientes\/[a-z-]+\.(svg|png)$/);
 });
 test('registro: «garantía del fabricante» no es una afirmación', () => {
   assert.equal(claims.some((claim) => /garant/i.test(claim.text) || /garant/i.test(claim.id)), false);

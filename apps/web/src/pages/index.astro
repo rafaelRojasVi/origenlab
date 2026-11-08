@@ -9,6 +9,7 @@ import HomeNotes from '../components/home/HomeNotes.astro';
 import HomeReveal from '../components/home/HomeReveal.astro';
 import QuoteTeaser from '../components/home/QuoteTeaser.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import RegisteredStrip from '../components/ui/RegisteredStrip.astro';
 import { site } from '../config/site';
 import { publicClaim } from '../data/claims';
 import { websiteJsonLd } from '../lib/jsonld';
@@ -20,6 +21,7 @@ import { websiteJsonLd } from '../lib/jsonld';
  *
  *   blanco    primera pantalla: titular centrado, acciones y sala 3D sobre un resplandor
  *   blanco    elija el equipo: fila de modelos y las seis familias
+ *   blanco    proveedor inscrito en: franja de logotipos aprobados
  *   blanco    industrias, en una fila
  *   aqua      revelado: el nombre gigante detrás del equipo
  *   blanco    marcas, rejilla de logotipos
@@ -49,6 +51,9 @@ const bandBody = sameDay
 >
   <HomeHero headlineB={headlineB} />
   <HomeFamilies headlineB={headlineB} />
+  <section class="shell home-sec home-reg rv" aria-labelledby="inscrito-title">
+    <RegisteredStrip heading />
+  </section>
   <HomeIndustries />
   <HomeReveal />
   <HomeBrands />

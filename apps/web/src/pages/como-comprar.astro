@@ -13,6 +13,7 @@ import { contact } from '../data/contact';
 import { publicClaim } from '../data/claims';
 import { site } from '../config/site';
 import { faqJsonLd } from '../lib/jsonld';
+import RegisteredStrip from '../components/ui/RegisteredStrip.astro';
 
 /**
  * Cómo se compra: los cuatro pasos de `buyingSteps()` (los mismos de la
@@ -41,7 +42,8 @@ const trust = [
   .filter((text): text is string => Boolean(text));
 
 // Junto a la vía de Mercado Público: dónde estamos inscritos como proveedor, por tipo
-// de institución y sin nombres. Si el registro la retira, el párrafo desaparece.
+// de institución, y debajo los logos aprobados (`RegisteredStrip`). Si el registro
+// la retira, el párrafo y los logos desaparecen.
 const registered = publicClaim('proveedor-inscrito');
 
 const faqs = buyingFaqs();
@@ -131,6 +133,7 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
           accesorios y puesta en marcha.
         </p>
         {registered && <p class="t-body guide__body guide__registered">{registered}.</p>}
+        <RegisteredStrip />
         <p class="t-body guide__body">
           En una compra pública, la forma de pago y los plazos son los que fijan las bases o la orden
           de compra, no los pasos de esta página. La asesoría técnica previa es la misma.

@@ -50,6 +50,11 @@ export interface Claim {
    * que una paráfrasis no la publique por la puerta de atrás.
    */
   variants?: readonly string[];
+  /**
+   * Instituciones que la afirmación puede nombrar, cuando la dueña aprobó
+   * nombres y logotipos por escrito. Sólo salen por `publicClaimNames`.
+   */
+  names?: readonly string[];
 }
 
 export const claims: readonly Claim[] = [
@@ -224,14 +229,22 @@ export const claims: readonly Claim[] = [
     text: 'Proveedor inscrito en universidades, laboratorios farmacéuticos y empresas agroindustriales · Acreditado en ChileProveedores',
     value: null,
     source:
-      'origenlab-v2-migration/insights-20261107/study/gaps/proveedor-registrations.md (privado, fuera del repositorio): confirmaciones de portal de proveedores y órdenes de compra del buzón de negocio, y la acreditación vigente en el Registro Oficial de ChileProveedores',
+      'origenlab-v2-migration/insights-20261107/study/gaps/proveedor-registrations.md (privado, fuera del repositorio): confirmaciones de portal de proveedores y órdenes de compra del buzón de negocio, y la acreditación vigente en el Registro Oficial de ChileProveedores. Lista de nombres: study/gaps/proveedor-registrations.md (privado)',
     measuredOn: '2026-11-08',
     approvedBy: 'dueño, 2026-11-08',
     approvedOn: '2026-11-08',
     status: 'approved',
     visibility: 'public',
+    names: [
+      'Laboratorios Saval',
+      'Universidad Santo Tomás',
+      'ChileProveedores (Mercado Público)',
+      'Corteva Agriscience',
+      'Golden Omega',
+      'Universidad de Concepción',
+    ],
     note:
-      'Sólo tipos de institución, nunca nombres: ninguna institución se nombra en el sitio sin su permiso escrito. Sin conteo, para que la frase no quede desactualizada. Si la acreditación en ChileProveedores vence sin renovarse, retirar o reescribir esta afirmación.',
+      'La frase va por tipo de institución y sin conteo, para que no quede desactualizada. Nombres y logos aprobados por la dueña 2026-11-08: sólo los de `names` (franja de `data/registrations.ts`); ninguna otra institución se nombra sin permiso escrito. Si la acreditación en ChileProveedores vence sin renovarse, o una institución pide salir, retirar su nombre o reescribir esta afirmación.',
   },
   {
     id: 'respuesta-inicial-un-dia-habil',
@@ -342,6 +355,14 @@ export function publicClaim(id: string): string | undefined {
   if (claim.visibility !== 'public') return undefined;
   if (!claim.text || !claim.source || !claim.approvedOn) return undefined;
   return claim.text;
+}
+
+/**
+ * Nombres aprobados de una afirmación pública (`names`), o `[]`. Misma puerta
+ * que `publicClaim`: si la afirmación no puede rendirse, tampoco sus nombres.
+ */
+export function publicClaimNames(id: string): readonly string[] {
+  return publicClaim(id) ? (findClaim(id)?.names ?? []) : [];
 }
 
 /** Afirmaciones que el sitio decidió no publicar, para auditoría del registro. */
