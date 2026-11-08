@@ -389,6 +389,12 @@ def current_session(request: Request) -> JSONResponse:
                      "detail": SESSION_REFUSED_DETAIL, **options},
         )
     profile_session = operator.auth_method in ("google_profile", "dev_profile")
+    # The «Hoy» view this profile opens on (roster-set; DOMAIN.md §7 #39). Profile sessions only.
+    home_filter: str | None = None
+    if profile_session:
+        profile_login = getattr(request.app.state, "v2_profile_login", None)
+        if profile_login is not None:
+            home_filter = profile_login.profiles.home_filter(operator.operator_id)
     return JSONResponse(content={
         "authenticated": True,
         "state": "signed_in",
@@ -400,7 +406,8 @@ def current_session(request: Request) -> JSONResponse:
             "role": operator.role,
         },
         "profile": ({"id": operator.operator_id, "display_name": operator.display_name,
-                     "role_label": ROLE_LABELS.get(operator.role, "Perfil")}
+                     "role_label": ROLE_LABELS.get(operator.role, "Perfil"),
+                     "home_filter": home_filter}
                     if profile_session else None),
         "can_switch_profile": profile_session,
         # Whether the 29 CRM authoring commands are mounted. Off, every one of them is a 404,
