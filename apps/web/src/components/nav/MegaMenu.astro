@@ -4,13 +4,10 @@ import type { Modelo } from '../../content.config';
 import { brands } from '../../data/brands';
 import { applications } from '../../data/applications';
 import { equipmentScope } from '../../data/equipmentScope';
-import { familyForScope, familyHref, familyInfo, familyTint, imageForEntry, modelHref } from '../../lib/modelos';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { familyForScope, familyHref, familyInfo, familyTint, modelHref } from '../../lib/modelos';
 import { brandEntries, rankEntries } from '../../lib/brandShowcase';
 import { rankBrands, rankFamilies } from '../../lib/ranking';
-import { turntableFor } from '../../lib/turntable';
-import { imageSourcesFor } from '../../lib/productImage';
+import { modelThumb as thumb } from '../../lib/modelThumb';
 
 /**
  * Contenido de un menú desplegable de la cabecera: columnas de grupos, cada
@@ -73,21 +70,6 @@ const groups: Group[] =
           ),
         }));
 
-const thumb = (entry: Modelo) => {
-  const files = turntableFor(entry.slug);
-  const small = `/products/${entry.slug}-thumb.webp`;
-  if (files && existsSync(join(process.cwd(), 'public', small))) return { kind: '3d', src: small, srcset: undefined, width: 240, height: 180 };
-  if (files) return { kind: '3d', src: files.poster, srcset: undefined, width: 1200, height: 900 };
-  const sources = imageSourcesFor(imageForEntry(entry));
-  if (!sources) return null;
-  return {
-    kind: 'photo',
-    src: sources.src,
-    srcset: sources.webpSrcset.split(', ')[0],
-    width: sources.width,
-    height: sources.height,
-  };
-};
 const brandName = (entry: Modelo) => brands.find((brand) => brand.id === entry.brand)?.name ?? '';
 ---
 
