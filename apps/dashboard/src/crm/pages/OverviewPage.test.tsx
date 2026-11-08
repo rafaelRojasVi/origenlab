@@ -237,7 +237,14 @@ describe("Resumen", () => {
   });
 
   it("puts a decided case in the 3 · 14 · 30 rhythm, linking to its case and email, and counts the historical ones apart", async () => {
-    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    const ANDINO = "11111111-1111-4111-8111-111111111111";
+    respond({
+      "/v2/workspace/fx": FX,
+      "/v2/workspace/pipeline": PIPELINE,
+      [`/v2/cockpit/opportunities/${ANDINO}/timeline`]: { opportunity_id: ANDINO, entries: [] },
+      [`/v2/workspace/opportunities/${ANDINO}/notes`]: { opportunity_id: ANDINO, notes: [] },
+      [`/v2/workspace/opportunities/${ANDINO}/threads`]: { opportunity_id: ANDINO, threads: [] },
+    });
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
     expect(await screen.findByTestId("hero-header")).toHaveTextContent("HOY");
@@ -251,8 +258,11 @@ describe("Resumen", () => {
       "href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/gm1",
     );
+    // The case opens in its drawer, over Hoy.
     fireEvent.click(within(row).getByRole("button", { name: "Laboratorio Andino" }));
-    expect(navigate).toHaveBeenCalledWith("oportunidades", "11111111-1111-4111-8111-111111111111");
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Laboratorio Andino");
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
     // Valle is historical (undecided) → in housekeeping, not in the queue.
     expect(within(paraTi).queryByText("Universidad del Valle")).not.toBeInTheDocument();
     expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);

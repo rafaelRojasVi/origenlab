@@ -23,7 +23,7 @@
  * Writes go through the same commands as the drawer (`caseCommands.ts`, `crmAuthoringApi.ts`),
  * gated the same way; a viewer sees the lists without the buttons.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { addNote, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
@@ -69,12 +69,27 @@ import { Badge, Button, FormField, Modal, Segmented, TextInput, fmtDate, toast }
 import type { ResourceState } from "../useResource";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
+import { CaseDrawer } from "../drawer/CaseDrawer";
+import type { Mode } from "./CaseActions";
 import { CaseMoveForm } from "./CaseMove";
 import { MailReaderDrawer, useMayReadMail } from "./MailMessage";
 import { AutomaticActionsPanel, newsRows, type AutomaticAction } from "./AutomaticActionsPanel";
 import type { ForwardedRequest } from "./ForwardedRequestsPanel";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+
+/** Open a case's drawer over Hoy, optionally on one of its forms (a call, «Resolver»). */
+type OpenCase = (id: string, mode?: Exclude<Mode, null>) => void;
+const OpenCaseContext = createContext<OpenCase | null>(null);
+
+/** Hoy's drawer when the row sits inside `TodayBody`; else the case page, as before. */
+function useOpenCase(navigate: Navigate): OpenCase {
+  const inPlace = useContext(OpenCaseContext);
+  return useCallback<OpenCase>(
+    (id, mode) => (inPlace ? inPlace(id, mode) : navigate("oportunidades", id)),
+    [inPlace, navigate],
+  );
+}
 
 /** «Mi cola» (the profile's own view) or «Todo el equipo»; session-only, never stored. */
 export type TodayScope = "mine" | "team";
@@ -172,6 +187,21 @@ export function TodayBody({
   const mayAuthor = useMayAuthorCrm();
   const [closing, setClosing] = useState<OpportunityCardData | null>(null);
 
+  // A case opens in its drawer over Hoy (no trip to the Pipeline): a row's «Abrir caso», its name,
+  // «Resolver», «Registrar llamada». An id Hoy does not hold yet (a case just created from a
+  // forwarded request) still goes to the case page.
+  const [drawer, setDrawer] = useState<{ id: string; mode: Exclude<Mode, null> | null } | null>(null);
+  const drawerCard = drawer ? (items.find((c) => c.opportunity_id === drawer.id) ?? null) : null;
+  const openCase = useCallback<OpenCase>((id, mode) => {
+    if (items.some((c) => c.opportunity_id === id)) setDrawer({ id, mode: mode ?? null });
+    else navigate("oportunidades", id);
+  }, [items, navigate]);
+  const inPlace = useCallback<Navigate>((...args) => {
+    const [s, id] = args;
+    if (s === "oportunidades" && id) openCase(id);
+    else navigate(...args);
+  }, [openCase, navigate]);
+
   // «Gone» IDs — items that left the queue in this render session (leave animation).
   const [goneIds, setGoneIds] = useState<Set<string>>(new Set());
   const clearItem = useCallback((id: string) => {
@@ -188,6 +218,7 @@ export function TodayBody({
   const nextFollowUps = useMemo(() => (showPreview ? followUpsDue(items, at).slice(0, 3) : []), [items, at, showPreview]);
 
   return (
+    <OpenCaseContext.Provider value={openCase}>
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
@@ -213,7 +244,7 @@ export function TodayBody({
             queue={queue}
             forwards={forwards}
             goneIds={goneIds}
-            navigate={navigate}
+            navigate={inPlace}
             mayDecide={mayDecide}
             mayAuthor={mayAuthor}
             onChanged={() => { onChanged(); reloadFwd(); }}
@@ -225,19 +256,19 @@ export function TodayBody({
           />
 
           {/* ─── «Licitación cierra mañana» — Hoy's one tender signal ─── */}
-          {tenderLines.length > 0 ? <TenderClosingSection lines={tenderLines} navigate={navigate} /> : null}
+          {tenderLines.length > 0 ? <TenderClosingSection lines={tenderLines} navigate={inPlace} /> : null}
 
           {/* ─── Empty state ─── */}
           {totalQueue === 0 && (
-            <EmptyState followUps={nextFollowUps} navigate={navigate} />
+            <EmptyState followUps={nextFollowUps} navigate={inPlace} />
           )}
 
           {/* ─── «Hecho automáticamente» — one collapsible line ─── */}
-          <SystemSummaryLine navigate={navigate} onChanged={onChanged} />
+          <SystemSummaryLine navigate={inPlace} onChanged={onChanged} />
 
           {/* ─── Housekeeping link → Operaciones ─── */}
           {housekeepingCount > 0 ? (
-            <HousekeepingLink count={housekeepingCount} navigate={navigate} />
+            <HousekeepingLink count={housekeepingCount} navigate={inPlace} />
           ) : null}
 
         </div>
@@ -266,7 +297,15 @@ export function TodayBody({
           />
         </Modal>
       ) : null}
+      <CaseDrawer
+        card={drawerCard}
+        onClose={() => setDrawer(null)}
+        onChanged={onChanged}
+        refreshing={refreshing}
+        initial={drawer?.mode ? { mode: drawer.mode } : null}
+      />
     </div>
+    </OpenCaseContext.Provider>
   );
 }
 
@@ -615,6 +654,7 @@ function ReplyQueueRow({
   onClearItem: () => void;
   now: Date;
 }) {
+  const openCase = useOpenCase(navigate);
   const { card } = reply;
   const { leaving, gone, leave, restore } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip" | "handled">(null);
@@ -742,7 +782,7 @@ function ReplyQueueRow({
       <div className="flex shrink-0 gap-2">
         {/* Primary button */}
         {blocking ? (
-          <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Resolver</Button>
+          <Button variant="primary" onClick={() => openCase(card.opportunity_id, "resolve")}>Resolver</Button>
         ) : reply.url && mayRead && messageId ? (
           <Button variant="primary" onClick={() => setReading(true)}>Responder</Button>
         ) : reply.url ? (
@@ -965,6 +1005,7 @@ function FollowUpQueueRow({
   onClose: (c: OpportunityCardData) => void;
   now: Date;
 }) {
+  const openCase = useOpenCase(navigate);
   const f = followUp;
   const { leaving, gone, leave, restore } = useLeave(f);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1068,10 +1109,10 @@ function FollowUpQueueRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: «Registrar llamada» — until calls are logged from Hoy (Task 8) it opens the case.
+        {/* Primary: «Registrar llamada» — the case's drawer over Hoy, on the call form.
             A viewer gets no action buttons. */}
         {mayDecide ? (
-          <Button variant="primary" onClick={() => navigate("oportunidades", f.card.opportunity_id)}>
+          <Button variant="primary" onClick={() => openCase(f.card.opportunity_id, "call")}>
             Registrar llamada
           </Button>
         ) : null}

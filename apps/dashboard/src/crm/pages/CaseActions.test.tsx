@@ -1374,7 +1374,8 @@ describe("Tablero drag and drop", () => {
 
   it("asks for the reason when a card is dropped on «Perdida», then records it", async () => {
     const calls = stubApi({
-      pipelines: [page([card()]), page([card({ stage: "abandoned", version: 6, closed_at: "2026-10-05T00:00:00Z" })])],
+      // Closed yesterday: a loss stays on the board for 7 days.
+      pipelines: [page([card()]), page([card({ stage: "abandoned", version: 6, closed_at: new Date(Date.now() - 86_400_000).toISOString() })])],
       onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "abababab-0001") }),
     });
     const b = await board(session("sales"));

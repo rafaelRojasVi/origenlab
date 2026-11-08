@@ -714,12 +714,15 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
 
   it("a viewer keeps the old behaviour: the case opens, nothing is created", async () => {
     const c = solicitud();
-    const calls = stub();
+    stubDrawer();
     const navigate = renderWith([c], "viewer");
     const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
-    expect(navigate).toHaveBeenCalledWith("oportunidades", c.opportunity_id);
-    expect(calls.filter((x) => x.path.startsWith("/v2/commands/"))).toEqual([]);
+    // The case opens in its drawer, over Hoy.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+    const posts = (vi.mocked(fetch).mock.calls as [RequestInfo | URL, RequestInit?][]).filter(([, init]) => init?.method === "POST");
+    expect(posts).toEqual([]);
   });
 
   it("a refusal is said in a toast and nothing opens", async () => {
@@ -824,9 +827,9 @@ describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Llamar" })).toBeInTheDocument();
     const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
     expect(row).toHaveTextContent("Seguimiento 2 de 3");
-    // Until calls are logged from Hoy, «Registrar llamada» opens the case.
-    fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
-    expect(navigate).toHaveBeenCalledWith("oportunidades", silent14.opportunity_id);
+    // «Registrar llamada» opens the case's drawer over Hoy (see «Hoy opens the case drawer in place»).
+    expect(within(row).getByRole("button", { name: "Registrar llamada" })).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("«N cosas por ordenar» only for todo", () => {
@@ -878,5 +881,54 @@ describe("Task 4 review fixes", () => {
     cleanup();
     renderBody(as("sales", "cotizar"), [soon]);
     expect(screen.getByTestId("today-empty")).not.toHaveTextContent("Próximos seguimientos");
+  });
+});
+
+/** Serves what the case drawer reads: an empty timeline, notes and threads. */
+function stubDrawer() {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const path = new URL(url, "http://localhost").pathname;
+    const body = path.endsWith("/timeline")
+      ? { opportunity_id: "x", entries: [] }
+      : path.endsWith("/notes") ? { notes: [] } : path.endsWith("/threads") ? { threads: [] } : { items: [], total: 0 };
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  }));
+}
+
+describe("Hoy opens the case drawer in place (Task 8)", () => {
+  function renderNav(items: OpportunityCardData[]) {
+    const navigate = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <TodayBody items={items} navigate={navigate} onChanged={() => undefined} now={NOW} />
+        <Toaster />
+      </AuthSessionContext.Provider>,
+    );
+    return navigate;
+  }
+
+  it("«Abrir caso» opens the drawer without leaving Hoy", async () => {
+    stubDrawer();
+    window.location.hash = "#/hoy";
+    const c = card({ open_tasks: [task("hoy-1", "2026-10-06T20:00:00Z")] });
+    const navigate = renderNav([c]);
+    const row = screen.getByTestId("today-task-hoy-1");
+    fireEvent.click(within(row).getByRole("button", { name: "Abrir caso" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Instituto Ficticio");
+    expect(window.location.hash).toBe("#/hoy");
+    expect(navigate).not.toHaveBeenCalled();
+    window.location.hash = "";
+  });
+
+  it("«Registrar llamada» opens the drawer on the call form", async () => {
+    stubDrawer();
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const navigate = renderNav([silent14]);
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTestId("log-call")).toBeVisible();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

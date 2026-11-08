@@ -45,7 +45,7 @@ import { useResource } from "../useResource";
 import { splitAddress } from "../address";
 
 type StatusFilter = "all" | "blocked" | "pending" | "ok";
-type View = "cards" | "board";
+type View = "board" | "cards" | "cerradas";
 
 export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: string | null }) {
   const [state, reload, refreshing, patch] = useResource(fetchPipeline);
@@ -57,8 +57,8 @@ export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: 
   return (
     <div className="space-y-3">
       <PageHeader
-        title="Oportunidades"
-        subtitle="Casos comerciales del CRM con sus cotizaciones, revisiones, documentos y evidencia de Gmail y Drive."
+        title="Pipeline"
+        subtitle="Cada caso en su estado: lo que espera seguimiento, lo que está por cerrarse y lo ganado."
       />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
         {(data) => (
@@ -258,8 +258,9 @@ function Pipeline({
             value={view}
             onChange={setView}
             options={[
-              { value: "cards", label: "Tarjetas" },
               { value: "board", label: "Tablero" },
+              { value: "cards", label: "Tarjetas" },
+              { value: "cerradas", label: "Cerradas" },
             ]}
           />
         </div>
@@ -291,8 +292,17 @@ function Pipeline({
         <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado u origen, o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
         <CardGrid cards={visible} onOpen={(id) => open(id)} />
+      ) : view === "cerradas" ? (
+        // «Cerradas» by month comes in its own piece (losses older than a week leave the board).
+        <EmptyState title="Cerradas">Las pérdidas de más de 7 días se agrupan aquí por mes. Las ganadas siguen en el tablero.</EmptyState>
       ) : (
-        <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} sort={sort} />
+        <Board
+          cards={visible}
+          onOpen={(id) => open(id)}
+          onMove={mayDecide ? onMove : undefined}
+          onLose={(card) => setMoving({ id: card.opportunity_id, to: "perdida" })}
+          sort={sort}
+        />
       )}
 
       <CaseDrawer
