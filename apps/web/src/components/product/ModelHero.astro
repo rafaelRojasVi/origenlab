@@ -173,8 +173,10 @@ const plain = media === 'photo' && !(await whiteBackground(photo?.masterPath));
     margin-top: 3rem;
   }
   .model-quote-link {
-    display: inline-block;
-    margin-top: 1.25rem;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin-top: 0.75rem;
     font-weight: 600;
     color: var(--color-teal-800);
     text-decoration: underline;
