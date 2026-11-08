@@ -6,7 +6,7 @@
  *   screen    la pantalla táctil y su biblioteca de métodos
  *   lid       la tapa se abre: el plato con la muestra
  *   heat      en marcha: la lámpara halógena calienta
- *   dry       la humedad baja en la pantalla hasta el resultado
+ *   dry       el %MC sube en la pantalla hasta el resultado
  *   close     vuelta al reposo y «Solicitar cotización»
  *
  * Las cifras no se escriben aquí: `{Etiqueta}` es el valor de la ficha con
@@ -91,8 +91,8 @@ export const story: ProductStoryConfig = {
       progressStart: 0.64,
       progressEnd: 0.84,
       cameraView: 'pantalla',
-      textHeadline: 'La humedad baja hasta el resultado',
-      textBody: 'La muestra pierde masa al secarse y la pantalla da la humedad con {Legibilidad}.',
+      textHeadline: 'La humedad, por pérdida de masa',
+      textBody: 'La muestra pierde masa al secarse y el %MC sube hasta el resultado, con {Legibilidad}.',
       animationHook: (scene, t) => pose(scene, { power: true, yaw: 0, dry: 0.12 + 0.88 * smoothstep(Math.min(1, t * 1.25)) }),
     },
     {

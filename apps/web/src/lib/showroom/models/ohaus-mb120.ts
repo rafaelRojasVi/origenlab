@@ -29,7 +29,8 @@
  * La tapa gira sobre una bisagra trasera y la gobierna la marcha: con el equipo
  * en marcha (`setPower(true)`) se abre y se queda abierta; al detenerlo se
  * cierra. La lámpara sólo brilla con la tapa abierta y el equipo en marcha. En
- * marcha, la pantalla recorre un secado; en reposo muestra el último resultado.
+ * marcha, la pantalla recorre un secado (el %MC sube desde 0,00 hasta el
+ * resultado, como en el equipo real); en reposo muestra el último resultado.
  * Una historia puede tomar el mando:
  *
  *   model.setLidAngle(1.2);            // radianes, 0 … LID_MAX; `null` vuelve al modo automático
@@ -56,8 +57,7 @@ const LID_MAX = 1.66; // ~95°
 const PAN_Z = -40;
 const FOOT_X = 91;
 const FOOT_Z = 158;
-/** La cifra de la pantalla al empezar un secado y al terminarlo (el resultado de la foto), en %MC. */
-const START_MC = 18.4;
+/** Resultado de la foto, en %MC: la cifra a la que llega cada secado. */
 const RESULT_MC = 10.05;
 const DRY_S = 9; // segundos de un secado automático a plena marcha
 
@@ -129,7 +129,7 @@ export function build(): BuiltModel & { setLidAngle(angle: number | null): void 
     new THREE.MeshPhysicalMaterial({ color: 0xf1f1ee, roughness: 0.42, metalness: 0, clearcoat: 0.35, clearcoatRoughness: 0.35 }),
   );
   const grey = keep(new THREE.MeshPhysicalMaterial({ color: 0x949ba3, roughness: 0.55, clearcoat: 0.1, clearcoatRoughness: 0.5 }));
-  const red = keep(new THREE.MeshStandardMaterial({ color: 0xd8261c, roughness: 0.62 }));
+  const red = keep(new THREE.MeshStandardMaterial({ color: 0xc4141c, roughness: 0.6 }));
   const dark = keep(new THREE.MeshStandardMaterial({ color: 0x2b2e31, roughness: 0.5 }));
   const handleMat = keep(new THREE.MeshPhysicalMaterial({ color: 0x55595d, roughness: 0.45, clearcoat: 0.3 }));
   const smoked = keep(
@@ -178,8 +178,8 @@ export function build(): BuiltModel & { setLidAngle(angle: number | null): void 
   root.add(greyShell);
 
   /* ── patas: zapata roja y el ensanche gris que baja a ella ── */
-  const footGeo = keep(lathe([[0, 0], [15.5, 0], [17.2, 1.6], [17.2, 10.4], [15.8, 12], [0, 12]], 40));
-  const flareGeo = keep(lathe([[0, 11.5], [16, 11.5], [14, 14], [10.5, 19], [8, 26], [0, 26]], 40));
+  const footGeo = keep(lathe([[0, 0], [17.5, 0], [19.4, 1.8], [19.4, 11.4], [17.8, 13], [0, 13]], 40));
+  const flareGeo = keep(lathe([[0, 12.5], [17, 12.5], [14.5, 15], [10.5, 20], [8, 26], [0, 26]], 40));
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       const foot = new THREE.Mesh(footGeo, red);
@@ -314,8 +314,11 @@ export function build(): BuiltModel & { setLidAngle(angle: number | null): void 
   let progress = 0; // avance del secado 0 … 1
   let phase: 'rest' | 'drying' | 'done' = 'rest';
   let readout: number | null = null;
-  /** La cifra baja con el secado, rápido al principio, hasta el resultado. */
-  const mcAt = (p: number) => RESULT_MC + (START_MC - RESULT_MC) * ((Math.exp(-4 * p) - Math.exp(-4)) / (1 - Math.exp(-4)));
+  /**
+   * %MC = masa perdida respecto de la inicial: como en el equipo real, sube con
+   * el secado desde 0,00, rápido al principio, hasta el resultado.
+   */
+  const mcAt = (p: number) => (RESULT_MC * (1 - Math.exp(-4 * p))) / (1 - Math.exp(-4));
   const drawScreen: Draw = (g, w, h) => {
     const s = w / 570;
     const W = 570;
