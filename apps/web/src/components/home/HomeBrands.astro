@@ -12,28 +12,33 @@ import { getBrandById } from '../../lib/catalog';
  * el nombre de la marca. El riel no lleva animación propia: sólo el contenedor
  * se revela una vez al entrar en cuadro.
  *
- * Showroom oscuro: los logotipos se dibujan claros sobre el grafito
- * (`BrandLogo` tono `light`, sin caja blanca), atenuados en reposo y a plena
- * luz al pasar el mouse o enfocar.
+ * Sitio claro: los logotipos en su tinta, en una rejilla de celdas iguales
+ * separadas por filetes (maqueta «Blanco con color»), con el titular en dos
+ * tonos: la cifra de marcas y «directo con el fabricante», ambos del registro.
  */
 const heading = publicClaim('directo-con-el-fabricante');
+const count = publicClaim('marcas-con-las-que-trabajamos');
 const rail = brandRailOrder
   .map((id) => getBrandById(id))
   .filter((brand): brand is NonNullable<typeof brand> => brand !== undefined);
 ---
 
 <section class="shell home-sec" id="marcas" aria-labelledby={heading ? 'marcas-title' : undefined} aria-label={heading ? undefined : 'Marcas'} data-home-brands>
-  <div class="home-head rv">
-    <p class="t-label">Marcas</p>
-    {heading && <h2 id="marcas-title" class="home-h2">{heading}</h2>}
-  </div>
+  {
+    heading && (
+      <h2 id="marcas-title" class="brands__h rv">
+        {count && <>{count}. </>}
+        <span>{heading}.</span>
+      </h2>
+    )
+  }
   <div class="rv">
-    <ul class="home-rail">
+    <ul class="home-rail" style={`--n: ${rail.length}`}>
       {
         rail.map((brand) => (
           <li>
             <a href={`/marcas/${brand.slug}/`}>
-              <BrandLogo brand={brand} scale={1.25} alt="" class="home-rail__logo" />
+              <BrandLogo brand={brand} scale={1.15} alt="" class="home-rail__logo" />
               <span class="home-rail__name sr-only">{brand.name}</span>
             </a>
           </li>
@@ -44,38 +49,64 @@ const rail = brandRailOrder
 </section>
 
 <style>
+  .brands__h {
+    max-width: 30ch;
+    margin-bottom: 3rem;
+    font-size: clamp(1.5rem, 2.4vw, 1.875rem);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+  }
+  .brands__h span {
+    color: var(--color-ink-500);
+  }
   .home-rail {
-    /* Contiene los nombres `sr-only` (absolutos): sin esto escapan del desplazamiento. */
+    /* Contiene los nombres `sr-only` (absolutos). */
     position: relative;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 2rem;
+    display: grid;
+    grid-template-columns: repeat(var(--n, 7), minmax(0, 1fr));
     margin: 0;
-    padding: 2.25rem 0;
+    padding: 0;
     list-style: none;
     border-block: 1px solid var(--color-hairline);
-    overflow-x: auto;
-    scrollbar-width: none;
   }
-  .home-rail::-webkit-scrollbar {
-    display: none;
-  }
-  .home-rail li {
-    flex: none;
+  .home-rail li + li {
+    border-left: 1px solid var(--color-hairline);
   }
   .home-rail a {
-    display: flex;
-    align-items: center;
-    min-height: 2.75rem;
-    min-width: 2.75rem;
+    display: grid;
+    place-items: center;
+    height: 8.25rem;
+    padding: 0 1rem;
   }
   .home-rail :global(.home-rail__logo) {
-    opacity: 0.68;
-    transition: opacity 150ms ease-out;
+    max-width: 100%;
+    transition: transform 400ms var(--ease-out);
   }
-  .home-rail a:hover :global(.home-rail__logo),
-  .home-rail a:focus-visible :global(.home-rail__logo) {
-    opacity: 1;
+  @media (prefers-reduced-motion: no-preference) {
+    .home-rail a:hover :global(.home-rail__logo) {
+      transform: scale(1.06);
+    }
+  }
+  @media (max-width: 899.98px) {
+    .home-rail {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .home-rail li {
+      border-bottom: 1px solid var(--color-hairline);
+    }
+    .home-rail li + li {
+      border-left: 0;
+    }
+    .home-rail li:nth-child(2n) {
+      border-left: 1px solid var(--color-hairline);
+    }
+    .home-rail li:last-child:nth-child(odd) {
+      grid-column: span 2;
+      border-bottom: 0;
+    }
+    .home-rail a {
+      height: 5.75rem;
+    }
   }
 </style>

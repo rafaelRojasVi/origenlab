@@ -80,10 +80,11 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
     claims={false}
   />
 
-  <section id="cotizacion" class="shell home-sec quote-sec" aria-labelledby="cotizacion-title">
+  <section id="cotizacion" class="home-sec quote-sec surface-quote" aria-labelledby="cotizacion-title">
+    <div class="shell">
     <div class="home-head quote-sec__head">
       <p class="t-label">Su cotización</p>
-      <h2 id="cotizacion-title" class="t-h2">Así se ve su cotización</h2>
+      <h2 id="cotizacion-title" class="home-h2">Así se ve su cotización<i class="dot">.</i></h2>
       <p class="t-body guide__body guide__body--flush">
         Cada cotización se arma para su institución y su laboratorio: el modelo exacto con su
         descripción, los montos con IVA a la vista y las condiciones por escrito, firmada por una
@@ -91,6 +92,7 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
       </p>
     </div>
     <QuoteShowcase />
+    </div>
   </section>
 
   <section class="shell home-sec" aria-labelledby="asesoria-title">
@@ -204,6 +206,11 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
   }
   .guide__link {
     margin-top: 2rem;
+  }
+  /* La hoja, papel con sombra teal, sobre el azul pálido de la sección. */
+  .quote-sec {
+    margin-top: clamp(4rem, 8vw, 6rem);
+    padding-bottom: clamp(5rem, 10vw, 8rem);
   }
   .quote-sec__head {
     align-items: center;

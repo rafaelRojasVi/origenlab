@@ -1,0 +1,142 @@
+---
+import { getCollection } from 'astro:content';
+import Button from '../ui/Button.astro';
+import { publicClaim } from '../../data/claims';
+import { getBrandById } from '../../lib/catalog';
+import { modelHref } from '../../lib/modelos';
+import { turntableFor } from '../../lib/turntable';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Revelado de un equipo (maqueta «Blanco con color»): el nombre del modelo en
+ * tipografía gigante, pálida, detrás del póster 3D, sobre un lavado aqua → menta
+ * con un charco de luz blanca bajo el equipo. El póster se funde con `.pz`
+ * (brillo + multiply) directamente sobre la sección: ningún envoltorio
+ * transformado entre medio. El texto gigante es decorativo (`aria-hidden`); el
+ * nombre real va en el `alt`, la línea y el botón a la ficha.
+ *
+ * La línea sale de la ficha (`headline`) y, si está aprobada, de la promesa
+ * «cotización el mismo día hábil» del registro de afirmaciones.
+ */
+const FEATURE = 'ortoalresa-digicen-22-r';
+const entry = (await getCollection('modelos')).map((item) => item.data as Modelo).find((item) => item.slug === FEATURE);
+const files = entry ? turntableFor(entry.slug) : null;
+const brand = entry ? (getBrandById(entry.brand)?.name ?? entry.brand) : '';
+const kind = entry ? (entry.headline.split(':')[1]?.trim() ?? entry.name) : '';
+const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
+---
+
+{
+  entry && files && (
+    <section class="reveal" aria-labelledby="reveal-title">
+      <div class="reveal__in">
+        <p class="reveal__giant" aria-hidden="true" translate="no">{entry.name}</p>
+        <span class="reveal__pool" aria-hidden="true" />
+        <img class="reveal__poster pz" src={files.poster} width="1200" height="900" alt={`${brand} ${entry.name}, modelo 3D`} loading="lazy" decoding="async" />
+        <div class="shell reveal__copy">
+          <p id="reveal-title">
+            <b>{kind.charAt(0).toUpperCase() + kind.slice(1)} {brand}.</b>
+            {sameDay && ' Cotizada el mismo día hábil.'}
+          </p>
+          <Button href={modelHref(entry)} variant="secondary" arrow={false}>Ver {entry.name}</Button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+<style>
+  .reveal {
+    position: relative;
+    overflow: hidden;
+    margin-top: clamp(5rem, 10vw, 8rem);
+    background:
+      radial-gradient(70% 90% at 50% 100%, #d4f1fb 0%, rgb(212 241 251 / 0) 70%),
+      linear-gradient(180deg, #f2fbf9 0%, #e3f6f4 100%);
+  }
+  .reveal__in {
+    position: relative;
+    height: 51.25rem;
+  }
+  .reveal__giant {
+    position: absolute;
+    inset: 6.875rem 0 auto;
+    margin: 0;
+    font-size: clamp(5.625rem, 17vw, 15.625rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.065em;
+    text-align: center;
+    white-space: nowrap;
+    color: #bfe9df;
+    background: linear-gradient(90deg, #b9ece0, #c3e6f7);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .reveal__pool {
+    position: absolute;
+    left: 50%;
+    top: 9.375rem;
+    width: 47.5rem;
+    height: 38.75rem;
+    translate: -50% 0;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, #fff 62%, rgb(255 255 255 / 0) 100%);
+  }
+  .reveal__poster {
+    position: absolute;
+    left: 50%;
+    top: 0.625rem;
+    width: 61.25rem;
+    max-width: none;
+    translate: -52% 0;
+  }
+  .reveal__copy {
+    position: absolute;
+    inset: auto 0 4.5rem;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1.875rem;
+  }
+  .reveal__copy p {
+    max-width: 24ch;
+    font-size: clamp(1.125rem, 1.6vw, 1.375rem);
+    line-height: 1.4;
+    color: var(--color-ink-600);
+  }
+  .reveal__copy b {
+    color: var(--color-ink-950);
+    font-weight: 700;
+  }
+  .reveal__copy :global(.btn) {
+    background-color: rgb(255 255 255 / 0.5);
+  }
+  @media (max-width: 899.98px) {
+    .reveal__in {
+      height: auto;
+      padding-bottom: 3.5rem;
+    }
+    .reveal__giant {
+      top: 4.375rem;
+      font-size: 3.875rem;
+    }
+    .reveal__poster {
+      width: 31.25rem;
+      top: 3.5rem;
+    }
+    .reveal__pool {
+      width: 23.75rem;
+      height: 20rem;
+      top: 7.5rem;
+    }
+    .reveal__copy {
+      position: relative;
+      inset: auto;
+      flex-direction: column;
+      align-items: flex-start;
+      padding-top: 26.25rem;
+    }
+  }
+</style>

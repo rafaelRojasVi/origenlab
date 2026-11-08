@@ -4,7 +4,9 @@ import type { Modelo } from '../../content.config';
 import { brands } from '../../data/brands';
 import { applications } from '../../data/applications';
 import { equipmentScope } from '../../data/equipmentScope';
-import { familyForScope, familyHref, familyInfo, imageForEntry, modelHref } from '../../lib/modelos';
+import { familyForScope, familyHref, familyInfo, familyTint, imageForEntry, modelHref } from '../../lib/modelos';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { brandEntries, rankEntries } from '../../lib/brandShowcase';
 import { rankBrands, rankFamilies } from '../../lib/ranking';
 import { turntableFor } from '../../lib/turntable';
@@ -23,10 +25,11 @@ import { imageSourcesFor } from '../../lib/productImage';
  *
  * Familias, marcas y modelos van en el orden comercial de `ranking.ts`
  * (ficha 3D primero, IKA al final). Todo sale de la colección `modelos` y de los datos de marca y aplicación;
- * aquí no hay listas de modelos escritas a mano. Miniatura: el póster 3D sobre
- * el estudio oscuro o la fotografía verificada (derivado de 480 px) sobre el
- * plinto claro. `loading="lazy"` dentro de un panel oculto: no se descarga
- * nada hasta que el panel se abre.
+ * aquí no hay listas de modelos escritas a mano. Miniatura sobre el tinte de la
+ * familia (`familyTint`): la miniatura 3D de 240 px (`<slug>-thumb.webp`, de
+ * `npm run posters`; si falta, el póster) o la fotografía verificada (derivado
+ * de 480 px), las dos fundidas por multiply. `loading="lazy"` dentro de un
+ * panel oculto: no se descarga nada hasta que el panel se abre.
  */
 interface Props {
   menu: 'productos' | 'marcas' | 'aplicaciones';
@@ -72,6 +75,8 @@ const groups: Group[] =
 
 const thumb = (entry: Modelo) => {
   const files = turntableFor(entry.slug);
+  const small = `/products/${entry.slug}-thumb.webp`;
+  if (files && existsSync(join(process.cwd(), 'public', small))) return { kind: '3d', src: small, srcset: undefined, width: 240, height: 180 };
   if (files) return { kind: '3d', src: files.poster, srcset: undefined, width: 1200, height: 900 };
   const sources = imageSourcesFor(imageForEntry(entry));
   if (!sources) return null;
@@ -99,12 +104,12 @@ const brandName = (entry: Modelo) => brands.find((brand) => brand.id === entry.b
             return (
               <li>
                 <a href={modelHref(entry)} class="mm-model">
-                  <span class="mm-thumb" data-kind={t?.kind}>
+                  <span class="mm-thumb" data-kind={t?.kind} style={`--tint: ${familyTint(entry)}`}>
                     {t && (
                       <img
                         src={t.src}
                         srcset={t.srcset}
-                        sizes={t.srcset ? '56px' : undefined}
+                        sizes={t.srcset ? '72px' : undefined}
                         width={t.width}
                         height={t.height}
                         alt=""
@@ -142,19 +147,18 @@ const brandName = (entry: Modelo) => brands.find((brand) => brand.id === entry.b
     display: block;
     padding-bottom: 0.625rem;
     margin-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-hairline-strong);
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--color-teal-700);
+    border-bottom: 1px solid var(--color-hairline);
+    font-size: 1.0625rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--color-ink-950);
   }
   .mm-group__head:hover {
-    color: var(--color-teal-800);
+    color: var(--color-teal-700);
   }
   .mm-group__list {
     display: grid;
-    gap: 0.125rem;
+    gap: 0.25rem;
     margin: 0;
     padding: 0;
     list-style: none;
@@ -162,39 +166,48 @@ const brandName = (entry: Modelo) => brands.find((brand) => brand.id === entry.b
   .mm-model {
     display: flex;
     align-items: center;
-    gap: 0.625rem;
+    gap: 0.75rem;
     min-height: 2.75rem;
     padding: 0.25rem;
     margin-inline: -0.25rem;
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
     transition: background-color 150ms;
   }
   .mm-model:hover {
-    background-color: var(--color-pressed);
+    background-color: var(--color-surface);
   }
+  /* Miniatura sobre el tinte de la familia, con su charco de luz blanca. */
   .mm-thumb {
     position: relative;
     flex: none;
-    width: 3.5rem;
+    width: 4.5rem;
     aspect-ratio: 4 / 3;
     overflow: hidden;
-    isolation: isolate;
-    border-radius: 0.375rem;
-    background: var(--color-studio);
-    outline: 1px solid var(--color-hairline);
+    border-radius: 0.75rem;
+    background: var(--tint, var(--color-tint));
   }
-  .mm-thumb[data-kind='photo'] {
-    background: radial-gradient(70% 60% at 50% 40%, var(--color-lightbox-hi), var(--color-lightbox-lo));
+  .mm-thumb::before {
+    content: '';
+    position: absolute;
+    inset: 8% 14%;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, #fff 30%, rgb(255 255 255 / 0) 100%);
   }
   .mm-thumb img {
+    position: relative;
     width: 100%;
     height: 100%;
     object-fit: cover;
+    filter: brightness(1.037);
+    mix-blend-mode: multiply;
+    transition: transform 600ms var(--ease-out);
   }
   .mm-thumb[data-kind='photo'] img {
     padding: 8%;
     object-fit: contain;
-    mix-blend-mode: multiply;
+  }
+  .mm-model:hover .mm-thumb img {
+    transform: scale(1.06);
   }
   .mm-model__text {
     display: grid;

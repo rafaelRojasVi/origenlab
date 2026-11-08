@@ -8,6 +8,8 @@ import { company } from '../data/company';
 import { contact } from '../data/contact';
 import { brands } from '../data/brands';
 import BrandLogo from '../components/ui/BrandLogo.astro';
+// Plan comercial (2026-11-08): compradores de industria antes que la academia.
+const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test(a)) - Number(/universidad/i.test(b)));
 ---
 
 <Layout
@@ -47,7 +49,7 @@ import BrandLogo from '../components/ui/BrandLogo.astro';
       <div class="split__body">
         <p class="t-body">{company.homeIntro}</p>
         <ul class="audience">
-          {company.audience.map((item) => <li>{item}</li>)}
+          {audience.map((item) => <li>{item}</li>)}
         </ul>
       </div>
     </div>

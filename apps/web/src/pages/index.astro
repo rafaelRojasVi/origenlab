@@ -6,6 +6,7 @@ import HomeIndustries from '../components/home/HomeIndustries.astro';
 import HomeSteps from '../components/home/HomeSteps.astro';
 import HomeBrands from '../components/home/HomeBrands.astro';
 import HomeNotes from '../components/home/HomeNotes.astro';
+import HomeReveal from '../components/home/HomeReveal.astro';
 import QuoteTeaser from '../components/home/QuoteTeaser.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import { site } from '../config/site';
@@ -13,17 +14,18 @@ import { publicClaim } from '../data/claims';
 import { websiteJsonLd } from '../lib/jsonld';
 
 /**
- * Portada (tablero HomeA).
+ * Portada («Blanco con color», maqueta elegida por los dueños 2026-11-08).
  *
- * Ritmo de la página:
+ * Ritmo de la página (todo claro; el único oscuro es el pie):
  *
- *   tinta     primera pantalla: titular, acciones y sala 3D, bajo la cabecera de tinta
- *   papel     familias: seis tarjetas con sus modelos, desde la colección
- *   papel     industrias, en una fila
- *   elevada   cómo comprar en cuatro pasos y el avance de la cotización de ejemplo
- *   papel     marcas, una fila fija
- *   papel     notas de aplicación, sólo si la colección tiene notas
- *   tinta     banda de cierre
+ *   blanco    primera pantalla: titular centrado, acciones y sala 3D sobre un resplandor
+ *   blanco    elija el equipo: fila de modelos, las seis familias y un equipo en foto
+ *   blanco    industrias, en una fila
+ *   aqua      revelado: el nombre gigante detrás del equipo
+ *   blanco    marcas, rejilla de logotipos
+ *   azul      cómo comprar en cuatro pasos y la hoja de cotización de ejemplo
+ *   blanco    notas de aplicación, sólo si la colección tiene notas
+ *   teal      banda de cierre (clara), antes del pie oscuro
  *
  * El titular B (cotización el mismo día, directo con el fabricante) sólo sale
  * si la promesa está aprobada en `claims.ts`. Con él en la primera pantalla, el
@@ -48,10 +50,11 @@ const bandBody = sameDay
   <HomeHero headlineB={headlineB} />
   <HomeFamilies headlineB={headlineB} />
   <HomeIndustries />
+  <HomeReveal />
+  <HomeBrands />
   <HomeSteps tone="raised">
     <QuoteTeaser />
   </HomeSteps>
-  <HomeBrands />
   <HomeNotes />
   <ClosingQuoteBand
     title="Cuéntenos qué necesita hacer con la muestra."

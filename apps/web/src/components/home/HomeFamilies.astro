@@ -1,186 +1,189 @@
 ---
 import { getCollection } from 'astro:content';
 import Icon from '../ui/Icon.astro';
-import Turntable from '../ui/Turntable.astro';
+import LitCard from '../ui/LitCard.astro';
 import LightBox from '../ui/LightBox.astro';
 import { publicClaim } from '../../data/claims';
 import { isShownOnHome } from '../../data/brands';
 import { getBrandById } from '../../lib/catalog';
-import { homeFamilyCards, imageForEntry, modelHref } from '../../lib/modelos';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { familyInfo, homeFamilyCards, imageForEntry, modelHref } from '../../lib/modelos';
 import { rankFamilies, rankModels } from '../../lib/ranking';
 import { turntableFor } from '../../lib/turntable';
 import type { Modelo } from '../../content.config';
 
 /**
- * Las seis familias como tarjetas grandes iluminadas (tablero HomeA, showroom
- * oscuro). Cada tarjeta muestra el primer modelo de la familia en el estudio
- * oscuro (póster que gira al pasar el mouse; foto en caja de luz si no hay 3D),
- * dice qué hace el laboratorio con la muestra (el verbo, enlace a la familia) y
- * nombra hasta dos modelos de la colección `modelos`, cada uno enlazado directo
- * a su ficha (regla del dueño: ningún modelo pasa por una página intermedia).
+ * «Elija el equipo» (portada, «Blanco con color»), en tres tiempos:
  *
- * Orden comercial de `lib/ranking.ts`: familias por `rankFamilies` (sonicación
- * primero, dispersión al final), modelos por `rankModels` (3D primero).
+ * 1. Fila de modelos: el primer modelo de cada una de las cuatro primeras
+ *    familias en el orden comercial (`rankFamilies` / `rankModels`: 3D primero),
+ *    cada uno una `LitCard` sobre el tinte de su familia, directo a la ficha.
+ * 2. Las seis familias en una franja compacta: el verbo (enlace a la familia,
+ *    `.home-family-card`) y los dos primeros modelos de la colección, cada uno
+ *    enlazado a su ficha (regla del dueño).
+ * 3. Un equipo sin 3D, con la foto blanca del fabricante «parada» sobre la
+ *    página (sin caja): la Ranger Count 3000, como en la maqueta elegida.
  *
- * La etiqueta de cifras sale del registro de afirmaciones: si alguien retira la
- * aprobación, esa parte desaparece sola. Con el titular B en la primera
- * pantalla, el titular «Equipos para cada etapa de su muestra» baja aquí.
+ * La etiqueta de cifras sale del registro de afirmaciones. Con el titular B en
+ * la primera pantalla, este bloque lleva «Elija el equipo. Nosotros lo cotizamos.»
  */
 interface Props {
   headlineB: boolean;
 }
 const { headlineB } = Astro.props;
 
+/** El equipo con foto de fabricante que se presenta solo (maqueta «Blanco con color»). */
+const FEATURE_PHOTO = 'ohaus-ranger-count-3000';
+
 const label = [publicClaim('familias-de-equipo'), publicClaim('marcas-con-las-que-trabajamos')]
   .filter(Boolean)
   .join(' · ');
 const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
 const ranked = rankModels(all.map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry);
-const cards = rankFamilies(homeFamilyCards(all), (card) => card.href.split('/')[2] ?? '').map((card, index) => {
-  const models = ranked.filter((entry) => entry.family === card.slug && isShownOnHome(entry.brand)).slice(0, 2);
-  const lead = models[0];
-  return {
-    ...card,
-    numeral: String(index + 1).padStart(2, '0'),
-    models,
-    lead,
-    leadBrand: lead ? (getBrandById(lead.brand)?.name ?? lead.brand) : '',
-    has3d: lead ? turntableFor(lead.slug) !== null : false,
-  };
-});
+const families = rankFamilies(homeFamilyCards(all), (card) => card.href.split('/')[2] ?? '').map((card) => ({
+  ...card,
+  models: ranked.filter((entry) => entry.family === card.slug && isShownOnHome(entry.brand)).slice(0, 2),
+}));
+const row = families
+  .map((family) => family.models.find((entry) => turntableFor(entry.slug)) ?? family.models[0])
+  .filter((entry): entry is Modelo => Boolean(entry))
+  .slice(0, 4);
+const photo = all.find((entry) => entry.slug === FEATURE_PHOTO && isShownOnHome(entry.brand));
+const photoImage = photo ? imageForEntry(photo) : undefined;
+const photoBrand = photo ? (getBrandById(photo.brand)?.name ?? photo.brand) : '';
+const photoLine = photo ? (photo.lead.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? photo.lead) : '';
 ---
 
 <section class="shell home-sec" id="familias" aria-labelledby="familias-title">
   <div class="home-head rv">
     {label && <p class="t-label">{label}</p>}
     <h2 id="familias-title" class="home-h2">
-      {headlineB ? 'Equipos para cada etapa de su muestra' : 'Qué hace su laboratorio con la muestra'}
+      {
+        headlineB ? (
+          <>
+            Elija el equipo<i class="dot">.</i>
+            <br />
+            Nosotros lo cotizamos<i class="dot">.</i>
+          </>
+        ) : (
+          'Qué hace su laboratorio con la muestra'
+        )
+      }
     </h2>
+    <p class="lede">Directo del fabricante, con la ficha técnica en cada cotización.</p>
   </div>
-  <ul class="fam">
+
+  <ul class="row rv">
     {
-      cards.map((card) => (
-        <li class="card-lit fam__tile rv">
-          {card.lead && (
-            <a class="fam__media" href={modelHref(card.lead)}>
-              {card.has3d ? (
-                <Turntable slug={card.lead.slug} alt={`${card.lead.name} de ${card.leadBrand}, modelo 3D`} />
-              ) : (
-                <LightBox image={imageForEntry(card.lead)} brandName={card.leadBrand} size="card" />
-              )}
-            </a>
-          )}
-          <div class="fam__body">
-            <span class="t-label fam__top">
-              <b><i aria-hidden="true" style={`background-color:var(${card.colorVar})`} />{card.short}</b>
-              <span aria-hidden="true">{card.numeral}</span>
-            </span>
-            <h3 class="fam__verb">
-              <a class="home-family-card" href={card.href}>
-                {card.verb}
-                <Icon name="arrow-right" size={20} class="arrow" />
-              </a>
-            </h3>
-            <p class="fam__line">{card.cardLine}</p>
-            <p class="t-data fam__models">
-              {card.models.map((entry, index) => (
-                <>
-                  {index > 0 && <span aria-hidden="true"> · </span>}
-                  <a href={modelHref(entry)} translate="no">{entry.name}</a>
-                </>
-              ))}
-            </p>
-          </div>
+      row.map((entry) => (
+        <li>
+          <LitCard entry={entry} />
         </li>
       ))
     }
   </ul>
+
+  <ul class="fam rv" aria-label="Familias de equipo">
+    {
+      families.map((family) => (
+        <li style={`--fam-ink: var(${family.colorVar})`}>
+          <h3 class="fam__verb">
+            <a class="home-family-card" href={family.href}>
+              <i aria-hidden="true" />
+              {family.verb}
+              <Icon name="arrow-right" size={16} class="arrow" />
+            </a>
+          </h3>
+          <p class="fam__models">
+            {family.models.map((entry, index) => (
+              <>
+                {index > 0 && <span aria-hidden="true"> · </span>}
+                <a href={modelHref(entry)} translate="no">{entry.name}</a>
+              </>
+            ))}
+          </p>
+        </li>
+      ))
+    }
+  </ul>
+
+  {
+    photo && photoImage && (
+      <article class="onwhite rv">
+        <div class="onwhite__txt">
+          <p class="onwhite__fam">{familyInfo(photo.family).short}, {photoBrand}</p>
+          <h3 class="onwhite__name" translate="no">
+            <a href={modelHref(photo)} class="onwhite__link">{photo.name}</a>
+          </h3>
+          <p class="onwhite__line">{photoLine}</p>
+          <p class="onwhite__row">
+            <span class="onwhite__go" aria-hidden="true">{ctaLabels.viewProductDetail} ›</span>
+            <a href={`/contacto/?producto=${photo.slug}`} class="onwhite__quote" data-track="cotizacion_click" data-modelo={photo.slug}>
+              {ctaLabels.cotizar} ›<span class="sr-only"> {photo.name}</span>
+            </a>
+          </p>
+        </div>
+        <LightBox image={photoImage} brandName={photoBrand} size="hero" ratio="4 / 3" class="onwhite__fig" />
+      </article>
+    )
+  }
 </section>
 
 <style>
-  .fam {
+  .row {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1.25rem;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1.375rem;
     margin: 0;
     padding: 0;
     list-style: none;
   }
-  @media (max-width: 1023.98px) {
-    .fam {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-  @media (max-width: 639.98px) {
-    .fam {
-      grid-template-columns: 1fr;
-    }
-  }
-  .fam__tile {
+  .row > li {
     display: flex;
-    flex-direction: column;
-    overflow: hidden;
   }
-  /* El equipo en su vitrina: el estudio del póster llena el ancho de la tarjeta. */
-  .fam__media {
-    display: block;
-    padding: 0.5rem 0.5rem 0;
-  }
-  .fam__media :global(.tt),
-  .fam__media :global(.lightbox__plinth) {
-    border-radius: calc(var(--radius-card) - 0.375rem);
-  }
-  .fam__media :global(.lightbox) {
-    margin: 0;
-  }
-  .fam__media :global(figcaption) {
-    display: none;
-  }
-  .fam__media:focus-visible {
-    outline: 2px solid var(--color-teal-700);
-    outline-offset: -2px;
-    border-radius: var(--radius-card);
-  }
-  .fam__body {
-    display: flex;
+  .row > li > :global(*) {
     flex: 1;
-    flex-direction: column;
-    padding: 1.25rem 1.5rem 1.5rem;
   }
-  .fam__top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    color: var(--color-ink-600);
+  @media (max-width: 899.98px) {
+    .row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2rem 0.875rem;
+    }
   }
-  .fam__top b {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 500;
+
+  /* Las seis familias: una franja de verbos, cada uno con su punto de tinte. */
+  .fam {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0 1.5rem;
+    margin: clamp(3.5rem, 6vw, 5rem) 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid var(--color-hairline);
   }
-  .fam__top i {
-    display: block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
+  .fam > li {
+    padding-top: 1.25rem;
   }
   .fam__verb {
-    margin-top: 0.875rem;
-    font-size: clamp(1.75rem, 1.4rem + 1vw, 2.125rem);
+    font-size: 1.125rem;
     font-weight: 700;
-    line-height: 1.05;
     letter-spacing: -0.02em;
   }
   .home-family-card {
     display: inline-flex;
     align-items: center;
-    min-height: 2.75rem;
     gap: 0.5rem;
-    color: var(--color-fg);
+    min-height: 2.75rem;
+    color: var(--color-ink-950);
+  }
+  .home-family-card i {
+    flex: none;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--fam-ink) 70%, #fff);
   }
   .home-family-card :global(.arrow) {
-    flex: none;
     color: var(--color-teal-700);
     transition: transform var(--ease-ui);
   }
@@ -189,36 +192,125 @@ const cards = rankFamilies(homeFamilyCards(all), (card) => card.href.split('/')[
   }
   @media (prefers-reduced-motion: no-preference) {
     .home-family-card:hover :global(.arrow) {
-      transform: translateX(4px);
+      transform: translateX(3px);
     }
   }
-  .fam__line {
-    margin-top: 0.625rem;
-    color: var(--color-ink-600);
-    font-size: 1rem;
-    line-height: 1.5;
-    margin-bottom: 1.25rem;
-  }
   .fam__models {
-    margin-top: auto;
-    padding-top: 0.25rem;
-    border-top: 1px solid var(--color-hairline);
+    font-size: 0.875rem;
     color: var(--color-ink-500);
-    font-size: 0.8125rem;
-    letter-spacing: 0.02em;
     line-height: 1.4;
   }
   .fam__models a {
     display: inline-flex;
     align-items: center;
-    min-width: 2.75rem;
     min-height: 2.75rem;
     color: var(--color-teal-800);
-    text-decoration: underline;
-    text-decoration-color: var(--color-hairline-strong);
-    text-underline-offset: 0.25em;
   }
   .fam__models a:hover {
-    text-decoration-color: currentColor;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  @media (max-width: 1023.98px) {
+    .fam {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 639.98px) {
+    .fam {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 1rem;
+    }
+  }
+
+  /* Foto del fabricante sobre la página, sin caja. */
+  .onwhite {
+    position: relative;
+    display: grid;
+    grid-template-columns: 5fr 7fr;
+    align-items: center;
+    gap: 2.5rem;
+    margin-top: clamp(4rem, 7vw, 6rem);
+    padding-top: clamp(2.25rem, 4vw, 3.5rem);
+    border-top: 1px solid var(--color-hairline);
+  }
+  .onwhite__fam {
+    margin-bottom: 0.625rem;
+    font-size: 0.84375rem;
+    font-weight: 500;
+    color: var(--color-ink-500);
+  }
+  .onwhite__name {
+    font-size: clamp(2rem, 3.4vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  .onwhite__link::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+  .onwhite__link:focus-visible {
+    outline: none;
+  }
+  .onwhite__link:focus-visible::after {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 4px;
+    border-radius: var(--radius-card);
+  }
+  .onwhite__line {
+    margin-top: 1rem;
+    max-width: 34ch;
+    font-size: 1.125rem;
+    line-height: 1.55;
+    color: var(--color-ink-600);
+  }
+  .onwhite__row {
+    display: flex;
+    gap: 1.25rem;
+    align-items: center;
+    margin-top: 1.5rem;
+    font-weight: 600;
+  }
+  .onwhite__go {
+    color: var(--color-teal-700);
+  }
+  .onwhite__quote {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    color: var(--color-ink-950);
+  }
+  .onwhite__quote:hover,
+  .onwhite:hover .onwhite__go {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .onwhite :global(.onwhite__fig) {
+    width: min(35rem, 100%);
+    justify-self: center;
+  }
+  .onwhite :global(.onwhite__fig img) {
+    transition: transform 800ms var(--ease-out);
+  }
+  .onwhite :global(figcaption) {
+    display: none;
+  }
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
+    .onwhite:hover :global(.onwhite__fig img) {
+      transform: translateY(-8px) scale(1.02);
+    }
+  }
+  @media (max-width: 899.98px) {
+    .onwhite {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.5rem;
+    }
+    .onwhite :global(.onwhite__fig) {
+      order: -1;
+    }
   }
 </style>

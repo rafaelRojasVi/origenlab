@@ -9,8 +9,8 @@ import { qrRows } from './quoteQr';
  * «Así se ve su cotización» (dueño, 2026-11-08): réplica HTML/CSS de la
  * cotización imprimible del Cotizador (`QuotePrintView` + `quotePrint.css`, la
  * versión con QR de WhatsApp), con datos ficticios, que se arma sola al entrar
- * en pantalla. Es el único papel blanco del sitio: un documento, presentado
- * como una hoja iluminada sobre el showroom oscuro.
+ * en pantalla. Es un documento: papel blanco con sombra teal, sobre el azul
+ * pálido de su sección. Como la cotización real, no lleva fotos de equipos.
  *
  * - Medidas: la hoja se diseña en px de A4 a 96 ppp (794 × 1123) y se escala
  *   (`scale: var(--k)`) al ancho de su marco, por escalones de contenedor. La
@@ -385,7 +385,7 @@ const d = (s: number) => `--d:${s}s`;
     font-size: 13px;
     line-height: 1.45;
     text-align: left;
-    box-shadow: var(--shadow-card);
+    box-shadow: var(--shadow-sheet);
   }
   /* La línea teal de arriba es un pseudo-elemento para poder dibujarla. */
   .qs-sheet::before {

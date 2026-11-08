@@ -8,9 +8,10 @@ import { site } from '../../config/site';
 import { rankModels } from '../../lib/ranking';
 
 /**
- * Portada, primera pantalla (tablero HomeA): showroom oscuro. Titular, línea
- * de valor, las dos acciones de «Mensaje B» y, debajo, la sala 3D sobre el
- * estudio grafito (sin caja ni marco claro) con las tareas debajo.
+ * Portada, primera pantalla («Blanco con color»): titular centrado, línea de
+ * valor, las dos acciones de «Mensaje B» y, debajo, la sala 3D sobre un
+ * resplandor teal/aqua con un charco de luz blanca bajo el equipo (sin caja),
+ * con las tareas debajo.
  *
  * El titular B sólo sale si la promesa «cotización el mismo día hábil» está
  * aprobada en el registro de afirmaciones (`headlineB`, que decide
@@ -44,7 +45,7 @@ const title = headlineB
 
 <section class="hero" aria-labelledby="hero-title">
   <div class="shell hero__copy">
-    <p class="t-label hero__eyebrow"><i aria-hidden="true"></i>Equipos para laboratorio · todo Chile</p>
+    <p class="hero__eyebrow">Equipos para laboratorio, <b>en todo Chile</b></p>
     <h1 id="hero-title" class="hero__title">
       {
         title.map((group, index) => (
@@ -75,66 +76,106 @@ const title = headlineB
 </section>
 
 <style>
-  /* Sin `.on-ink`: los tokens tienen aquí su valor normal (fondo de página). */
   .hero {
+    position: relative;
+    overflow: hidden;
     background-color: var(--color-paper);
-    color: var(--color-fg);
-    padding: clamp(3rem, 5vw, 4.5rem) 0 clamp(4rem, 9vw, 7.5rem);
+    color: var(--color-ink-950);
+    padding: clamp(2.75rem, 4vw, 3.25rem) 0 clamp(3rem, 6vw, 5rem);
     text-align: center;
   }
+  .hero__copy {
+    position: relative;
+    z-index: 1;
+  }
   .hero__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.625rem;
+    font-size: 1rem;
+    font-weight: 600;
     color: var(--color-ink-600);
   }
-  .hero__eyebrow i {
-    display: block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background-color: var(--color-teal-700);
-    box-shadow: 0 0 0 4px var(--color-glow);
+  .hero__eyebrow b {
+    color: var(--color-teal-700);
+    font-weight: 700;
   }
   .hero__title {
-    max-width: 13.5ch;
-    margin: 1.5rem auto 0;
-    color: var(--color-fg);
-    font-size: clamp(42px, 5vw, 72px);
+    max-width: 14ch;
+    margin: 0.75rem auto 0;
+    color: var(--color-ink-950);
+    font-size: clamp(2.75rem, 6.4vw, 5.875rem);
     font-weight: 800;
-    line-height: 0.98;
-    letter-spacing: -0.03em;
+    line-height: 1;
+    letter-spacing: -0.052em;
     text-wrap: balance;
+  }
+  @media (min-width: 1024px) {
+    .hero__title {
+      max-width: 22ch;
+    }
   }
   .hero__title span {
     display: inline-block;
   }
-  /* El punto del 800 trae un hueco a la izquierda que a 72 px se lee como un espacio. */
+  /* El punto del 800 trae un hueco a la izquierda que a 90 px se lee como un espacio. */
   .hero__dot {
-    color: var(--color-teal-700);
-    margin-left: -0.09em;
+    color: var(--color-teal-500);
+    margin-left: -0.07em;
     font-style: normal;
   }
   .hero__sub {
-    max-width: 34em;
-    margin: 1.5rem auto 0;
+    max-width: 38ch;
+    margin: 1.125rem auto 0;
     color: var(--color-ink-600);
-    font-size: clamp(17px, 1.6vw, 21px);
-    line-height: 1.55;
+    font-size: clamp(1.0625rem, 1.5vw, 1.25rem);
+    line-height: 1.5;
   }
   .hero__cta {
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
     gap: 0.75rem;
-    margin-top: 2rem;
+    margin-top: 1.75rem;
   }
+  /* El resplandor vive dentro de la escena (mismo contexto que el póster, que
+     se funde por multiply): teal a la izquierda, aqua a la derecha, menta al
+     centro, y un charco blanco bajo el equipo. */
   .hero__scene {
-    margin-top: clamp(3rem, 5vw, 4rem);
+    position: relative;
+    margin-top: clamp(1.5rem, 3vw, 2.5rem);
+  }
+  /* Una sola capa pintada antes que la sala: charco blanco encima, resplandores debajo. */
+  .hero__scene::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 4%;
+    translate: -50% 0;
+    width: min(75rem, 160vw);
+    height: 41.25rem;
+    border-radius: 50%;
+    pointer-events: none;
+    background:
+      radial-gradient(17.5rem 16.25rem at 50% 46%, rgb(255 255 255 / 0.95) 40%, rgb(255 255 255 / 0) 100%),
+      radial-gradient(closest-side at 38% 50%, var(--color-glow-teal) 0%, rgb(196 241 230 / 0) 100%),
+      radial-gradient(closest-side at 64% 46%, var(--color-glow-aqua) 0%, rgb(201 236 251 / 0) 100%),
+      radial-gradient(closest-side, var(--color-glow-mint) 30%, rgb(228 250 245 / 0) 100%);
+  }
+  .hero__scene > :global(*) {
+    position: relative;
   }
   @media (max-width: 639.98px) {
+    .hero__title {
+      font-size: 2.75rem;
+    }
     .hero__cta :global(.btn) {
       width: 100%;
+    }
+    .hero__scene::before {
+      height: 27.5rem;
+      background:
+        radial-gradient(10.5rem 10rem at 50% 46%, rgb(255 255 255 / 0.95) 40%, rgb(255 255 255 / 0) 100%),
+        radial-gradient(closest-side at 38% 50%, var(--color-glow-teal) 0%, rgb(196 241 230 / 0) 100%),
+        radial-gradient(closest-side at 64% 46%, var(--color-glow-aqua) 0%, rgb(201 236 251 / 0) 100%),
+        radial-gradient(closest-side, var(--color-glow-mint) 30%, rgb(228 250 245 / 0) 100%);
     }
   }
 
@@ -157,8 +198,10 @@ const title = headlineB
     .hero__cta {
       animation: rise 400ms ease-out 300ms backwards;
     }
+    /* Sólo opacidad: una transformación aislaría la escena y el póster
+       dejaría de fundirse con el resplandor (lo hace por multiply). */
     .hero__scene {
-      animation: fadeup 800ms cubic-bezier(0.2, 0.7, 0.2, 1) 380ms backwards;
+      animation: fadein 900ms cubic-bezier(0.16, 1, 0.3, 1) 380ms backwards;
     }
     @keyframes rise {
       from {
@@ -166,10 +209,9 @@ const title = headlineB
         transform: translateY(12px);
       }
     }
-    @keyframes fadeup {
+    @keyframes fadein {
       from {
         opacity: 0;
-        transform: translateY(28px);
       }
     }
   }

@@ -10,9 +10,10 @@ import MegaMenu from './nav/MegaMenu.astro';
 /**
  * Cabecera fija. 72 px arriba, 56 px con scroll (sólo CSS donde existe
  * `animation-timeline: scroll()`; si no, un observador alterna `data-scrolled`).
- * Una sola apariencia (showroom oscuro): grafito translúcido con desenfoque,
- * sobre la portada y sobre el resto. `tone` se acepta por compatibilidad y ya
- * no cambia el color.
+ * Una sola apariencia («Blanco con color»): vidrio blanco con desenfoque y un
+ * filete teal pálido, sobre la portada y sobre el resto. `tone` se acepta por
+ * compatibilidad y ya no cambia el color. El panel de los menús es una hoja
+ * blanca que baja sobre la página, con sombra teal.
  *
  * Menús desplegables (dueño, 2026-11-08): Productos, Aplicaciones y Marcas
  * abren un panel con sus modelos, cada uno con miniatura iluminada y directo a
@@ -266,13 +267,13 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     --nav: var(--color-ink-600);
     --nav-on: var(--color-ink-950);
     --hd-line: var(--color-hairline);
-    --hd-glow: rgb(0 0 0 / 0.6);
+    --hd-glow: rgb(15 90 80 / 0.16);
     --hd-shadow: 0 1px 0 var(--hd-line), 0 12px 28px -14px var(--hd-glow);
     position: sticky;
     top: 0;
     z-index: 40;
     height: var(--hd-h);
-    /* Sin desenfoque (navegadores viejos) el fondo es grafito opaco: el texto de
+    /* Sin desenfoque (navegadores viejos) el fondo es blanco opaco: el texto de
        la cabecera nunca queda sobre el contenido que pasa por debajo. */
     background-color: var(--color-paper);
     border-bottom: 1px solid var(--hd-line);
@@ -280,8 +281,8 @@ function isActive(href: string, matches?: readonly string[]): boolean {
   @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
     .site-header {
       background-color: var(--color-header);
-      -webkit-backdrop-filter: blur(16px) saturate(140%);
-      backdrop-filter: blur(16px) saturate(140%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      backdrop-filter: blur(20px) saturate(180%);
     }
   }
   .site-header__bar {
@@ -318,7 +319,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     min-height: 2.75rem;
     padding-inline: 0.625rem;
     border-radius: var(--radius-edge);
-    font-size: 0.875rem;
+    font-size: 0.90625rem;
     font-weight: 500;
     line-height: 1;
     white-space: nowrap;
@@ -369,14 +370,12 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     left: 0;
     right: 0;
     max-height: calc(100vh - var(--hd-h));
-    padding-block: 2rem 2.5rem;
+    padding-block: 2.25rem 2.75rem;
     overflow-y: auto;
     overscroll-behavior: contain;
-    background:
-      radial-gradient(50% 120% at 15% 0%, var(--color-glow), transparent 70%),
-      var(--color-raised);
-    border-block: 1px solid var(--color-hairline);
-    box-shadow: var(--shadow-card);
+    background: var(--color-raised);
+    border-bottom: 1px solid var(--color-hairline);
+    box-shadow: 0 30px 60px -36px rgb(15 90 80 / 0.22);
   }
   [data-mm-nav]:not([data-mm-nav='js']) .mm:is(:hover, :focus-within) > .mm__panel,
   [data-mm-nav='js'] .mm[data-open] > .mm__panel {
@@ -418,7 +417,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     gap: 2rem;
     padding: 1rem 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
     background-color: var(--color-raised);
-    border-top: 1px solid var(--color-onink-hairline);
+    border-top: 1px solid var(--color-hairline);
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -426,7 +425,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     display: none;
   }
   .site-menu__panel nav > ul > li + li {
-    border-top: 1px solid var(--color-onink-hairline);
+    border-top: 1px solid var(--color-hairline);
   }
   .site-menu__panel nav > ul > li > a {
     display: flex;
@@ -435,8 +434,9 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     font-size: 1.75rem;
     font-weight: 600;
     line-height: 2.125rem;
-    letter-spacing: -0.015em;
-    color: var(--color-onink-100);
+    letter-spacing: -0.03em;
+    font-weight: 700;
+    color: var(--color-ink-950);
   }
   .site-menu__panel nav > ul > li > a[aria-current='page'] {
     color: var(--color-teal-700);
@@ -459,7 +459,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     height: 4rem;
     list-style: none;
     border-radius: var(--radius-edge);
-    color: var(--color-onink-300);
+    color: var(--color-ink-600);
     cursor: pointer;
   }
   .acc__more > summary::-webkit-details-marker {
