@@ -187,6 +187,12 @@ test('registro: estado de las afirmaciones nuevas', () => {
   assert.equal(status('pago-50-50'), 'proposed');
   assert.equal(publicClaim('pago-50-50'), undefined);
   assert.equal(publicClaim('vende-mercado-publico'), 'Vendemos por Mercado Público y participamos en licitaciones');
+  assert.equal(status('proveedor-inscrito'), 'approved');
+  assert.equal(
+    publicClaim('proveedor-inscrito'),
+    'Proveedor inscrito en universidades, laboratorios farmacéuticos y empresas agroindustriales · Acreditado en ChileProveedores',
+  );
+  assert.doesNotMatch(publicClaim('proveedor-inscrito'), /\d/);
 });
 test('registro: «garantía del fabricante» no es una afirmación', () => {
   assert.equal(claims.some((claim) => /garant/i.test(claim.text) || /garant/i.test(claim.id)), false);

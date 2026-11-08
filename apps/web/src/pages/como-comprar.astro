@@ -38,6 +38,10 @@ const trust = [
   .map((id) => publicClaim(id))
   .filter((text): text is string => Boolean(text));
 
+// Junto a la vía de Mercado Público: dónde estamos inscritos como proveedor, por tipo
+// de institución y sin nombres. Si el registro la retira, el párrafo desaparece.
+const registered = publicClaim('proveedor-inscrito');
+
 const faqs = buyingFaqs();
 // La descripción promete el plazo sólo si el registro de afirmaciones lo aprueba.
 const description = publicClaim('cotizacion-mismo-dia-habil')
@@ -109,6 +113,7 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
           Compra Ágil y preparamos la oferta con lo que piden sus bases: equipo, configuración,
           accesorios y puesta en marcha.
         </p>
+        {registered && <p class="t-body guide__body guide__registered">{registered}.</p>}
         <p class="t-body guide__body">
           En una compra pública, la forma de pago y los plazos son los que fijan las bases o la orden
           de compra, no los pasos de esta página. La asesoría técnica previa es la misma.
@@ -167,6 +172,10 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
     margin-top: 1.5rem;
     color: var(--color-ink-600);
     max-width: 60ch;
+  }
+  .guide__registered {
+    color: var(--color-ink-950);
+    font-weight: 600;
   }
   .guide__body--flush {
     margin-top: 0;

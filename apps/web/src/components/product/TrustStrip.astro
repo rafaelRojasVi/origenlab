@@ -8,7 +8,13 @@ import { publicClaim } from '../../data/claims';
  * ninguna, la franja entera se omite. «Pago», «garantía» y el pilar de
  * distribuidor no están aquí: no son afirmaciones aprobadas.
  */
-const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despacho-todo-chile', 'puesta-en-marcha-con-fabrica']
+const items = [
+  'directo-con-el-fabricante',
+  'cotizacion-mismo-dia-habil',
+  'despacho-todo-chile',
+  'puesta-en-marcha-con-fabrica',
+  'proveedor-inscrito',
+]
   .map(publicClaim)
   .filter((text): text is string => Boolean(text));
 ---

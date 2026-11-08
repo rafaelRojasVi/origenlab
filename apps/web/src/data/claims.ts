@@ -220,6 +220,20 @@ export const claims: readonly Claim[] = [
     note: 'Sin calificar: no declara orden de compra ni condiciones de pago propias de Mercado Público.',
   },
   {
+    id: 'proveedor-inscrito',
+    text: 'Proveedor inscrito en universidades, laboratorios farmacéuticos y empresas agroindustriales · Acreditado en ChileProveedores',
+    value: null,
+    source:
+      'origenlab-v2-migration/insights-20261107/study/gaps/proveedor-registrations.md (privado, fuera del repositorio): confirmaciones de portal de proveedores y órdenes de compra del buzón de negocio, y la acreditación vigente en el Registro Oficial de ChileProveedores',
+    measuredOn: '2026-11-08',
+    approvedBy: 'dueño, 2026-11-08',
+    approvedOn: '2026-11-08',
+    status: 'approved',
+    visibility: 'public',
+    note:
+      'Sólo tipos de institución, nunca nombres: ninguna institución se nombra en el sitio sin su permiso escrito. Sin conteo, para que la frase no quede desactualizada. Si la acreditación en ChileProveedores vence sin renovarse, retirar o reescribir esta afirmación.',
+  },
+  {
     id: 'respuesta-inicial-un-dia-habil',
     text: 'Respuesta inicial en 1 día hábil',
     value: 1,
