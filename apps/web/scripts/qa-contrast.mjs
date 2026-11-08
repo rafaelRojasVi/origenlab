@@ -169,6 +169,10 @@ for (const route of ROUTES) {
       if (el.closest('.sr-only') || el.classList.contains('skip-link')) continue;
       // WCAG 1.4.3 exime los componentes inactivos.
       if (el.closest(':disabled, [aria-disabled="true"]')) continue;
+      // WCAG 1.4.3 exime el texto puramente decorativo: sólo el que se declara así
+      // a la vez para el lector de pantalla (`aria-hidden`) y para esta prueba
+      // (`data-decorative`), como el nombre gigante del revelado de la portada.
+      if (el.closest('[aria-hidden="true"][data-decorative]')) continue;
 
       const fg = parse(style.color);
       if (!fg) continue;

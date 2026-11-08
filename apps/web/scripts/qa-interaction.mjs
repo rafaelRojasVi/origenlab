@@ -138,8 +138,8 @@ console.log('\nMenú móvil (375 px)');
     text: (el.textContent ?? '').replace(/\s+/g, ' ').trim(),
   }));
   check(
-    menuWa.height === 48 && menuWa.href.startsWith('https://wa.me/') && menuWa.text.startsWith('Escribir por WhatsApp'),
-    `el panel trae WhatsApp de 48 px (${menuWa.height} px, "${menuWa.text}")`,
+    menuWa.height === 50 && menuWa.href.startsWith('https://wa.me/') && menuWa.text.startsWith('Escribir por WhatsApp'),
+    `el panel trae WhatsApp de 50 px (${menuWa.height} px, "${menuWa.text}")`,
   );
 
   await page.keyboard.press('Escape');
@@ -300,8 +300,8 @@ console.log('\nCabecera (1440 px)');
     const page = await context.newPage();
     await page.goto(`${base}/`, { waitUntil: 'load' });
     const bg = await page.evaluate(() => getComputedStyle(document.querySelector('.site-header')).backgroundColor);
-    // Showroom oscuro: la misma cabecera en todas las páginas, grafito translúcido con desenfoque.
-    check(bg === 'rgba(13, 15, 16, 0.74)', `en la portada la cabecera es grafito translúcido (${bg})`);
+    // «Blanco con color»: la misma cabecera en todas las páginas, vidrio blanco con desenfoque.
+    check(bg === 'rgba(255, 255, 255, 0.82)', `en la portada la cabecera es vidrio blanco translúcido (${bg})`);
     const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content);
     check(theme === '#141617', `en la portada theme-color es #141617 (${theme})`);
     const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav > ul > li > a')].map((a) => a.textContent.trim()));
@@ -888,10 +888,10 @@ console.log('\nContacto y pie (1440 px)');
   check((await btn.innerText()).trim() === 'Pedir cotización', `Contacto: el envío dice «${(await btn.innerText()).trim()}» (Pedir cotización)`);
   check((await btn.getAttribute('type')) === 'submit', 'Contacto: el botón sigue siendo type=submit');
   const box = await btn.boundingBox();
-  check(box && Math.round(box.height) === 48, `Contacto: el botón mide 48 px (${box?.height})`);
+  check(box && Math.round(box.height) === 50, `Contacto: el botón mide 50 px, la píldora del sistema (${box?.height})`);
   check((await btn.locator('svg.arrow').count()) === 1, 'Contacto: el botón lleva la flecha');
   const radius = await page.locator('#solicitud-email').evaluate((el) => getComputedStyle(el).borderTopLeftRadius);
-  check(radius === '10px', `Contacto: el campo de correo tiene radio 10 px (${radius})`);
+  check(radius === '12px', `Contacto: el campo de correo tiene radio 12 px (--radius-field) (${radius})`);
   const heights = await page.evaluate(() =>
     ['#solicitud-email', '#solicitud-org', '#solicitud-product'].map((sel) => Math.round(document.querySelector(sel).getBoundingClientRect().height)),
   );

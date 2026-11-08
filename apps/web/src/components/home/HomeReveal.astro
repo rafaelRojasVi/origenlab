@@ -30,7 +30,7 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
   entry && files && (
     <section class="reveal" aria-labelledby="reveal-title">
       <div class="reveal__in">
-        <p class="reveal__giant" aria-hidden="true" translate="no">{entry.name}</p>
+        <p class="reveal__giant" aria-hidden="true" data-decorative translate="no">{entry.name}</p>
         <span class="reveal__pool" aria-hidden="true" />
         <img class="reveal__poster pz" src={files.poster} width="1200" height="900" alt={`${brand} ${entry.name}, modelo 3D`} loading="lazy" decoding="async" />
         <div class="shell reveal__copy">

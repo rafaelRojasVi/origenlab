@@ -264,7 +264,7 @@ if (!existsSync(dist)) {
       assert(!/^(https?:)?\/\//.test(src) || src.startsWith('https://origenlab.cl/'), at(`imagen remota: ${src}`));
       if (!src.startsWith('/products/')) continue;
       const tag = match[0];
-      if (GENERATED.test(src)) {
+      if (GENERATED.test(src) || THUMB.test(src)) {
         assert(/\bwidth="\d+"/.test(tag) && /\bheight="\d+"/.test(tag), at(`póster sin dimensiones: ${src}`));
         assert(existsSync(join(root, 'public', src)), at(`póster inexistente: ${src}`));
         continue;

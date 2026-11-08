@@ -87,7 +87,8 @@
      (never text: 2.5:1 on white). */
   --color-teal-800: #115e59; /* links (7.6:1 white) */
   --color-teal-700: #0f766e; /* buttons, labels, focus ring (5.5:1 white, ≥ 4.6:1 tints) */
-  --color-teal-500: #14b8a6; /* the headline period, dots, LEDs */
+  --color-teal-600: #0d9488; /* the headline period (3.7:1, large text) */
+  --color-teal-500: #14b8a6; /* dots, LEDs */
   --color-teal-100: #ccfbf1; /* selection fill */
   --color-teal-50: #f0fdfa; /* faint teal fill */
 
@@ -600,7 +601,7 @@
     max-width: 44ch;
   }
   .dot {
-    color: var(--color-teal-500);
+    color: var(--color-teal-600);
     font-style: normal;
     margin-left: -0.07em;
   }
