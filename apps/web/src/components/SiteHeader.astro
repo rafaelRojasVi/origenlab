@@ -5,6 +5,7 @@ import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import SiteLogo from './SiteLogo.astro';
 import Button from './ui/Button.astro';
 import Icon from './ui/Icon.astro';
+import MegaMenu from './nav/MegaMenu.astro';
 
 /**
  * Cabecera fija. 72 px arriba, 56 px con scroll (sólo CSS donde existe
@@ -12,6 +13,15 @@ import Icon from './ui/Icon.astro';
  * Una sola apariencia (showroom oscuro): grafito translúcido con desenfoque,
  * sobre la portada y sobre el resto. `tone` se acepta por compatibilidad y ya
  * no cambia el color.
+ *
+ * Menús desplegables (dueño, 2026-11-08): Productos, Aplicaciones y Marcas
+ * abren un panel con sus modelos, cada uno con miniatura iluminada y directo a
+ * su ficha (`nav/MegaMenu.astro`). La palabra sigue llevando a su índice; el
+ * botón de flecha a su lado abre el panel (Intro, Espacio o ↓; ↓ también desde
+ * la palabra), Escape lo cierra y devuelve el foco al botón, el mouse lo abre
+ * con un pequeño retardo de intención. Sin JavaScript el panel se abre con
+ * `:hover` / `:focus-within` y todo son enlaces. En el teléfono el menú
+ * despliega los mismos modelos en acordeones (`<details>`, sin script).
  */
 interface Props {
   tone?: 'paper' | 'ink';
@@ -20,6 +30,12 @@ interface Props {
 const { tone = 'paper' } = Astro.props;
 const path = Astro.url.pathname;
 const whatsappUrl = buildWhatsAppQuoteUrl();
+/** Destinos del menú con panel de modelos. */
+const MEGA: Record<string, 'productos' | 'marcas' | 'aplicaciones'> = {
+  '/productos/': 'productos',
+  '/aplicaciones/': 'aplicaciones',
+  '/marcas/': 'marcas',
+};
 
 /** Las rutas de `site.nav` llevan barra final, igual que `Astro.url.pathname`. */
 function isActive(href: string, matches?: readonly string[]): boolean {
@@ -35,19 +51,32 @@ function isActive(href: string, matches?: readonly string[]): boolean {
       <SiteLogo motion />
     </a>
 
-    <nav class="site-header__nav" aria-label="Navegación principal">
+    <nav class="site-header__nav" aria-label="Navegación principal" data-mm-nav>
       <ul>
         {
-          site.nav.map((item) => (
-            <li>
-              <a
-                href={item.href}
-                aria-current={isActive(item.href, item.matches) ? 'page' : undefined}
-              >
-                {item.label}
-              </a>
-            </li>
-          ))
+          site.nav.map((item) => {
+            const key = MEGA[item.href];
+            return (
+              <li class:list={[key && 'mm']} data-mm={key}>
+                <a href={item.href} aria-current={isActive(item.href, item.matches) ? 'page' : undefined}>
+                  {item.label}
+                </a>
+                {key && (
+                  <button type="button" class="mm__btn" aria-expanded="false" aria-controls={`mm-${key}`}>
+                    <span class="sr-only">Modelos de {item.label}</span>
+                    <Icon name="chevron-down" size={14} />
+                  </button>
+                )}
+                {key && (
+                  <div class="mm__panel" id={`mm-${key}`}>
+                    <div class="shell">
+                      <MegaMenu menu={key} variant="panel" />
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })
         }
       </ul>
     </nav>
@@ -87,20 +116,28 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     </div>
   </div>
 
-  <div class="site-menu__panel on-ink" id="site-menu" data-menu-panel hidden>
+  <div class="site-menu__panel" id="site-menu" data-menu-panel hidden>
     <nav aria-label="Navegación">
       <ul>
         {
-          site.nav.map((item) => (
-            <li>
-              <a
-                href={item.href}
-                aria-current={isActive(item.href, item.matches) ? 'page' : undefined}
-              >
-                {item.label}
-              </a>
-            </li>
-          ))
+          site.nav.map((item) => {
+            const key = MEGA[item.href];
+            return (
+              <li class:list={[key && 'acc']}>
+                <a href={item.href} aria-current={isActive(item.href, item.matches) ? 'page' : undefined}>
+                  {item.label}
+                </a>
+                {key && (
+                  <details class="acc__more">
+                    <summary aria-label={`Modelos de ${item.label}`}>
+                      <Icon name="chevron-down" size={22} />
+                    </summary>
+                    <MegaMenu menu={key} variant="accordion" />
+                  </details>
+                )}
+              </li>
+            );
+          })
         }
       </ul>
     </nav>
@@ -135,7 +172,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
       if (panel.hidden) return;
       if (e.key === 'Escape') return set(false, true);
       if (e.key !== 'Tab') return;
-      const items = [...bar.querySelectorAll<HTMLElement>('a[href], button')].filter((el) => el.offsetParent);
+      const items = [...bar.querySelectorAll<HTMLElement>('a[href], button, summary')].filter((el) => el.offsetParent);
       const edge = e.shiftKey ? items[0] : items[items.length - 1];
       if (document.activeElement === edge || !bar.contains(document.activeElement)) {
         e.preventDefault();
@@ -148,6 +185,43 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     });
     matchMedia('(min-width: 1024px)').addEventListener('change', (e) => e.matches && set(false));
     addEventListener('pagehide', () => set(false));
+  }
+
+  /* Menús desplegables de escritorio (ver la cabecera del componente). */
+  const mmNav = document.querySelector<HTMLElement>('[data-mm-nav]');
+  if (mmNav) {
+    mmNav.dataset.mmNav = 'js';
+    const mms = [...mmNav.querySelectorAll<HTMLElement>('[data-mm]')];
+    let timer = 0;
+    const open = (li: HTMLElement | null) => {
+      clearTimeout(timer);
+      for (const el of mms) {
+        el.toggleAttribute('data-open', el === li);
+        el.querySelector('button')!.setAttribute('aria-expanded', String(el === li));
+      }
+    };
+    const later = (li: HTMLElement | null, ms: number) => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => open(li), ms);
+    };
+    for (const li of mms) {
+      const btn = li.querySelector('button')!;
+      btn.addEventListener('click', () => open(li.hasAttribute('data-open') ? null : li));
+      li.addEventListener('pointerenter', (e) => e.pointerType === 'mouse' && later(li, mms.some((el) => el.hasAttribute('data-open')) ? 0 : 140));
+      li.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && later(null, 260));
+      li.addEventListener('focusout', (e) => li.contains(e.relatedTarget as Node) || (li.hasAttribute('data-open') && open(null)));
+      li.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && li.hasAttribute('data-open')) {
+          open(null);
+          btn.focus();
+        } else if (e.key === 'ArrowDown' && !(e.target as Element).closest('.mm__panel')) {
+          e.preventDefault();
+          open(li);
+          li.querySelector<HTMLElement>('.mm__panel a')?.focus();
+        }
+      });
+    }
+    document.addEventListener('click', (e) => mmNav.contains(e.target as Node) || open(null));
   }
 
   /* Sin `animation-timeline: scroll()` (o con movimiento reducido, donde esa
@@ -235,10 +309,10 @@ function isActive(href: string, matches?: readonly string[]): boolean {
   .site-header__nav {
     display: none;
   }
-  .site-header__nav ul {
+  .site-header__nav > ul {
     display: flex;
   }
-  .site-header__nav a {
+  .site-header__nav > ul > li > a {
     display: inline-flex;
     align-items: center;
     min-height: 2.75rem;
@@ -251,12 +325,62 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     color: var(--nav);
     transition: color 150ms;
   }
-  .site-header__nav a:hover,
-  .site-header__nav a[aria-current='page'] {
+  .site-header__nav > ul > li > a:hover,
+  .site-header__nav > ul > li > a[aria-current='page'] {
     color: var(--nav-on);
   }
-  .site-header__nav a[aria-current='page'] {
+  .site-header__nav > ul > li > a[aria-current='page'] {
     font-weight: 600;
+  }
+
+  /* --- Menús desplegables (escritorio) --- */
+  .site-header__nav .mm {
+    display: flex;
+    align-items: center;
+  }
+  .site-header__nav .mm > a {
+    padding-right: 0.25rem;
+  }
+  .mm__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 2.75rem;
+    margin-right: 0.25rem;
+    border-radius: var(--radius-edge);
+    color: var(--nav);
+    cursor: pointer;
+  }
+  .mm__btn:hover,
+  .mm__btn[aria-expanded='true'] {
+    color: var(--nav-on);
+  }
+  .mm__btn svg {
+    transition: transform 150ms ease-out;
+  }
+  .mm__btn[aria-expanded='true'] svg {
+    transform: rotate(180deg);
+  }
+  .mm__panel {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: calc(100vh - var(--hd-h));
+    padding-block: 2rem 2.5rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background:
+      radial-gradient(50% 120% at 15% 0%, var(--color-glow), transparent 70%),
+      var(--color-raised);
+    border-block: 1px solid var(--color-hairline);
+    box-shadow: var(--shadow-card);
+  }
+  [data-mm-nav]:not([data-mm-nav='js']) .mm:is(:hover, :focus-within) > .mm__panel,
+  [data-mm-nav='js'] .mm[data-open] > .mm__panel {
+    display: block;
   }
 
   /* --- Acciones --- */
@@ -284,7 +408,11 @@ function isActive(href: string, matches?: readonly string[]): boolean {
   /* --- Panel del menú móvil --- */
   .site-menu__panel {
     position: fixed;
-    inset: var(--hd-h) 0 0;
+    /* El desenfoque de la cabecera la convierte en bloque contenedor de este
+       panel fijo: `bottom: 0` lo dejaría de la altura de la barra. Alto explícito. */
+    inset: var(--hd-h) 0 auto;
+    height: calc(100vh - var(--hd-h));
+    height: calc(100dvh - var(--hd-h));
     display: flex;
     flex-direction: column;
     gap: 2rem;
@@ -297,10 +425,10 @@ function isActive(href: string, matches?: readonly string[]): boolean {
   .site-menu__panel[hidden] {
     display: none;
   }
-  .site-menu__panel li + li {
+  .site-menu__panel nav > ul > li + li {
     border-top: 1px solid var(--color-onink-hairline);
   }
-  .site-menu__panel nav a {
+  .site-menu__panel nav > ul > li > a {
     display: flex;
     align-items: center;
     min-height: 4rem;
@@ -310,8 +438,46 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     letter-spacing: -0.015em;
     color: var(--color-onink-100);
   }
-  .site-menu__panel nav a[aria-current='page'] {
+  .site-menu__panel nav > ul > li > a[aria-current='page'] {
     color: var(--color-teal-700);
+  }
+  /* Acordeón del teléfono: la palabra lleva al índice, la flecha despliega los modelos. */
+  .acc {
+    position: relative;
+  }
+  .site-menu__panel .acc > a {
+    padding-right: 3.5rem;
+  }
+  .acc__more > summary {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 4rem;
+    list-style: none;
+    border-radius: var(--radius-edge);
+    color: var(--color-onink-300);
+    cursor: pointer;
+  }
+  .acc__more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .acc__more > summary svg {
+    transition: transform 150ms ease-out;
+  }
+  .acc__more[open] > summary svg {
+    transform: rotate(180deg);
+  }
+  @media (min-width: 1200px) {
+    .mm-groups--panel.mm-groups--marcas {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+  }
+  .mm-groups--accordion {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
   }
   .site-menu__actions {
     display: flex;

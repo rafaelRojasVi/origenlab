@@ -304,7 +304,7 @@ console.log('\nCabecera (1440 px)');
     check(bg === 'rgba(13, 15, 16, 0.74)', `en la portada la cabecera es grafito translúcido (${bg})`);
     const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content);
     check(theme === '#141617', `en la portada theme-color es #141617 (${theme})`);
-    const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav a')].map((a) => a.textContent.trim()));
+    const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav > ul > li > a')].map((a) => a.textContent.trim()));
     check(
       nav.join('|') === 'Productos|Aplicaciones|Marcas|Cómo comprar|Nosotros',
       `la navegación es ${nav.join(' · ')}`,
@@ -560,6 +560,101 @@ console.log('\nRiel de marcas (1440 px)');
   const opacities = await brands.locator('.home-rail__logo').evaluateAll((els) => [...new Set(els.map((el) => getComputedStyle(el).opacity))]);
   check(opacities.length === 1, `los logotipos comparten el mismo tratamiento de reposo (${opacities.join(', ')})`);
 
+  await context.close();
+}
+
+/* -- 2b. Menús desplegables de la cabecera ---------------------------------- */
+/**
+ * Productos, Aplicaciones y Marcas abren un panel con sus modelos, cada uno
+ * directo a su ficha. La palabra sigue siendo un enlace a su índice; la flecha
+ * abre con Intro, ↓ abre desde la palabra y entra en el panel, Escape cierra y
+ * devuelve el foco a la flecha, el mouse abre con retardo y cierra al salir.
+ */
+console.log('\nMenús desplegables (1440 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/marcas/`, { waitUntil: 'load' });
+  const item = (key) => page.locator(`[data-mm="${key}"]`);
+  const isOpen = async (key) =>
+    (await item(key).locator('.mm__btn').getAttribute('aria-expanded')) === 'true' && (await item(key).locator('.mm__panel').isVisible());
+
+  check((await page.locator('[data-mm]').count()) === 3, 'tres menús con panel (Productos, Aplicaciones, Marcas)');
+  check(
+    JSON.stringify(await page.locator('[data-mm] > a').evaluateAll((els) => els.map((el) => el.getAttribute('href')))) ===
+      JSON.stringify(['/productos/', '/aplicaciones/', '/marcas/']),
+    'la palabra de cada menú sigue llevando a su índice',
+  );
+  check(!(await isOpen('productos')) && !(await isOpen('marcas')), 'los paneles empiezan cerrados');
+
+  const btn = item('productos').locator('.mm__btn');
+  await btn.focus();
+  await page.keyboard.press('Enter');
+  check(await isOpen('productos'), 'Intro en la flecha abre el panel de Productos');
+  const hrefs = await item('productos').locator('a.mm-model').evaluateAll((els) => els.map((el) => el.getAttribute('href') ?? ''));
+  check(
+    hrefs.length >= 20 && hrefs.every((href) => /^\/productos\/[\w-]+\/[\w-]+\/$/.test(href)),
+    `cada modelo del panel va directo a su ficha (${hrefs.length})`,
+  );
+  check(
+    await item('productos').locator('.mm-thumb img').first().evaluate((img) => img.getAttribute('loading') === 'lazy' && img.getAttribute('alt') === ''),
+    'las miniaturas son diferidas y decorativas',
+  );
+  await page.keyboard.press('Escape');
+  check(!(await isOpen('productos')), 'Escape cierra el panel');
+  check(await btn.evaluate((el) => document.activeElement === el), 'el foco vuelve a la flecha');
+
+  await item('marcas').locator('> a').focus();
+  await page.keyboard.press('ArrowDown');
+  check(await isOpen('marcas'), '↓ desde la palabra abre el panel de Marcas');
+  check(await item('marcas').locator('.mm__panel').evaluate((el) => el.contains(document.activeElement)), '↓ lleva el foco al primer enlace del panel');
+  await page.keyboard.press('Escape');
+  check(
+    !(await isOpen('marcas')) && (await item('marcas').locator('.mm__btn').evaluate((el) => document.activeElement === el)),
+    'Escape desde dentro del panel cierra y devuelve el foco',
+  );
+
+  await page.keyboard.press('Shift+Tab');
+  await item('marcas').locator('> a').focus();
+  await page.keyboard.press('ArrowDown');
+  for (let i = 0; i < 60 && (await isOpen('marcas')); i++) await page.keyboard.press('Tab');
+  check(!(await isOpen('marcas')), 'Tab al salir del panel lo cierra');
+
+  await page.hover('[data-mm="aplicaciones"] > a');
+  await page.waitForTimeout(450);
+  check(await isOpen('aplicaciones'), 'el mouse abre Aplicaciones tras el retardo de intención');
+  await page.mouse.move(720, 880);
+  await page.waitForTimeout(600);
+  check(!(await isOpen('aplicaciones')), 'al salir con el mouse el panel se cierra');
+
+  await btn.click();
+  check(await isOpen('productos'), 'el clic en la flecha abre');
+  await page.mouse.click(720, 880);
+  check(!(await isOpen('productos')), 'el clic fuera cierra');
+  await context.close();
+}
+
+/* -- 2c. Menú del teléfono: acordeones con los mismos modelos ---------------- */
+console.log('\nMenú móvil: acordeones de modelos (390 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  await page.locator('[data-menu-toggle]').click();
+  const acc = page.locator('.site-menu__panel .acc__more');
+  check((await acc.count()) === 3, 'tres acordeones en el menú del teléfono');
+  const first = acc.first();
+  check(!(await first.evaluate((el) => el.open)), 'los acordeones empiezan cerrados');
+  await first.locator('summary').click();
+  check(await first.evaluate((el) => el.open), 'la flecha despliega los modelos');
+  const model = first.locator('a.mm-model').first();
+  check(await model.isVisible(), 'los modelos del acordeón se ven');
+  const panelBox = await page.locator('.site-menu__panel').boundingBox();
+  check((panelBox?.height ?? 0) > 600, `el panel ocupa la pantalla bajo la barra (${Math.round(panelBox?.height ?? 0)} px)`);
+  const href = await model.getAttribute('href');
+  await model.click();
+  await page.waitForLoadState('load');
+  check(new URL(page.url()).pathname === href, `un modelo del acordeón abre su ficha (${new URL(page.url()).pathname})`);
   await context.close();
 }
 
@@ -1730,7 +1825,8 @@ console.log('\nOrden de tabulación (modelo, 1440 px)');
   await page.goto(`${base}/productos/sonicacion/hielscher-up400st/`, { waitUntil: 'load' });
   const labels = [];
   const ringless = [];
-  for (let i = 0; i < 14; i += 1) {
+  // 17 y no 14: Productos, Aplicaciones y Marcas suman cada una su flecha de menú.
+  for (let i = 0; i < 17; i += 1) {
     await page.keyboard.press('Tab');
     const info = await page.evaluate(() => {
       const el = document.activeElement;
@@ -1753,7 +1849,7 @@ console.log('\nOrden de tabulación (modelo, 1440 px)');
   const wa = labels.findIndex((l) => l.inHeader && /WhatsApp/i.test(l.label));
   const hero = labels.findIndex((l) => l.inFirstScreen && /Solicitar cotización|Cotizar/.test(l.label));
   check(skip === 0 && cta > skip && wa > cta && hero > wa, `foco: salto → cabecera (cotización, WhatsApp) → CTA de la primera pantalla (${skip}, ${cta}, ${wa}, ${hero})`);
-  check(ringless.length === 0, `cada uno de los primeros 14 elementos enfocados tiene anillo de 2 px (${ringless.join(', ') || 'todos'})`);
+  check(ringless.length === 0, `cada uno de los primeros 17 elementos enfocados tiene anillo de 2 px (${ringless.join(', ') || 'todos'})`);
   await context.close();
 }
 

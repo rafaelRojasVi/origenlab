@@ -11,6 +11,10 @@ import { getBrandById } from '../../lib/catalog';
  * desplaza con el dedo. El logotipo va con alt vacío porque el enlace ya lleva
  * el nombre de la marca. El riel no lleva animación propia: sólo el contenedor
  * se revela una vez al entrar en cuadro.
+ *
+ * Showroom oscuro: los logotipos se dibujan claros sobre el grafito
+ * (`BrandLogo` tono `light`, sin caja blanca), atenuados en reposo y a plena
+ * luz al pasar el mouse o enfocar.
  */
 const heading = publicClaim('directo-con-el-fabricante');
 const rail = brandRailOrder
@@ -67,7 +71,7 @@ const rail = brandRailOrder
     min-width: 2.75rem;
   }
   .home-rail :global(.home-rail__logo) {
-    opacity: 0.55;
+    opacity: 0.68;
     transition: opacity 150ms ease-out;
   }
   .home-rail a:hover :global(.home-rail__logo),

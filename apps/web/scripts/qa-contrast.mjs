@@ -34,6 +34,8 @@ const ROUTES = [
   '/marcas/',
   '/marcas/ortoalresa/',
   '/marcas/serva-electrophoresis/',
+  '/marcas/ohaus/',
+  '/marcas/hielscher/',
   '/aplicaciones/',
   '/categorias/control-de-calidad/',
   '/categorias/laboratorio-clinico/',
