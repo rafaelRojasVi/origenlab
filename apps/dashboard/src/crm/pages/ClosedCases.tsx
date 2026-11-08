@@ -88,9 +88,7 @@ export function ClosedCases({
   const months = useMemo(() => closedByMonth(cards, at === undefined ? new Date() : new Date(at)), [cards, at]);
   return (
     <div className="space-y-4">
-      <p className="text-xs text-ink-muted" data-testid="closed-note">
-        Pérdidas de más de 7 días, por mes en que se cerraron. Las ganadas siguen en el tablero.
-      </p>
+      <ClosedNote />
       {months.length === 0 ? (
         <EmptyState title="Sin casos cerrados todavía">
           Una pérdida pasa aquí 7 días después de cerrarse; hasta entonces sigue en «Perdida» del tablero.
@@ -99,6 +97,15 @@ export function ClosedCases({
         months.map((m) => <MonthTable key={m.month} month={m} onOpen={onOpen} />)
       )}
     </div>
+  );
+}
+
+/** What «Cerradas» holds — shown above the months, and above «Ninguna oportunidad coincide» when filters leave none. */
+export function ClosedNote() {
+  return (
+    <p className="text-xs text-ink-muted" data-testid="closed-note">
+      Pérdidas de más de 7 días, por mes en que se cerraron. Las ganadas siguen en el tablero.
+    </p>
   );
 }
 
@@ -141,7 +148,7 @@ function MonthTable({ month, onOpen }: { month: ClosedMonth; onOpen: (id: string
           ))}
         </ul>
       </header>
-      <table className="w-full table-fixed text-left text-[12.5px]">
+      <table aria-labelledby={headingId} className="w-full table-fixed text-left text-[12.5px]">
         <thead className="text-[11px] uppercase tracking-wide text-ink-faint">
           <tr>
             <th scope="col" className="w-auto px-3 py-1.5 font-medium sm:px-4">Institución</th>

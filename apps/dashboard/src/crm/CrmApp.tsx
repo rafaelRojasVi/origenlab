@@ -91,7 +91,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
       <div className={`mx-auto flex w-full ${wide ? "max-w-none" : "max-w-[1600px]"}`}>
         <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
-          <SubNav section={route.section} navigate={navigate} collapsed={collapsed} />
+          <SubNav section={route.section} navigate={navigate} collapsed={collapsed} menuOpen={menuOpen} />
           <div key={routeKey} className="animate-fade-in-up">
             <Suspense fallback={<Skeleton rows={6} />}>
               <Section section={route.section} id={route.id} tab={route.tab} pane={route.pane} navigate={navigate} />
@@ -192,7 +192,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
           aria-expanded={menuOpen}
           aria-controls="crm-sidenav"
           aria-label="Menú"
-          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken lg:hidden"
+          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
         >
           ☰
         </button>
@@ -383,12 +383,15 @@ function SideNav({
       <ul className="space-y-px">
         {AREAS.map((area) => {
           const current = area.key === activeArea;
-          const tabs = current ? visibleTabs(area, access) : [];
+          const areaTabs = visibleTabs(area, access);
+          const tabs = current ? areaTabs : [];
           return (
             <li key={area.key}>
               <NavLink
                 href={crmHash(AREA_HOME[area.key])}
                 current={current}
+                // An area with no tabs (Hoy) is itself the page; one with tabs marks the tab as the page.
+                page={areaTabs.length === 0}
                 collapsed={collapsed}
                 icon={NAV_ICON[area.key]}
                 title={collapsed ? area.label : undefined}
@@ -413,7 +416,7 @@ function SideNav({
                             e.preventDefault();
                             navigate(tab.sections[0]);
                           }}
-                          className={`-ml-px flex h-11 items-center rounded-r-md border-l-2 px-3 text-[13px] transition-colors lg:h-8 ${
+                          className={`-ml-px flex h-11 items-center rounded-r-md border-l-2 px-3 text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:h-8 ${
                             on ? "border-accent font-semibold text-ink" : "border-transparent text-ink-muted hover:bg-canvas-sunken hover:text-ink"
                           }`}
                         >
@@ -440,7 +443,18 @@ function SideNav({
  * the row shows only on a phone or beside the folded rail; a two-page tab (Clientes, Listas y
  * llamadas) always adds its second row of links.
  */
-function SubNav({ section, navigate, collapsed }: { section: CrmSection; navigate: (s: CrmSection) => void; collapsed: boolean }) {
+function SubNav({
+  section,
+  navigate,
+  collapsed,
+  menuOpen,
+}: {
+  section: CrmSection;
+  navigate: (s: CrmSection) => void;
+  collapsed: boolean;
+  /** The phone menu already lists these tabs under the open area: the row hides behind it. */
+  menuOpen: boolean;
+}) {
   const area = AREAS.find((a) => a.key === areaOf(section))!;
   const tabs = visibleTabs(area, useNavAccess());
   if (tabs.length === 0) return null;
@@ -450,7 +464,7 @@ function SubNav({ section, navigate, collapsed }: { section: CrmSection; navigat
     navigate(s);
   };
   return (
-    <div className="mb-4 space-y-3">
+    <div className={`mb-4 space-y-3 ${menuOpen ? "max-lg:hidden" : ""}`} data-testid="crm-subnav">
       <nav aria-label={`Pestañas de ${area.label}`} className={collapsed ? "" : "lg:hidden"}>
         <ul className="flex flex-wrap gap-x-5 border-b border-line">
           {tabs.map((tab) => {
@@ -517,6 +531,7 @@ const NAV_ICON: Record<AreaKey, ReactNode> = Object.fromEntries(
 function NavLink({
   href,
   current,
+  page = false,
   onClick,
   title,
   icon = null,
@@ -525,6 +540,8 @@ function NavLink({
 }: {
   href: string;
   current: boolean;
+  /** `aria-current="page"` rather than `"true"`: the link is the page itself, not its area. */
+  page?: boolean;
   onClick?: (e: MouseEvent<HTMLAnchorElement>) => void;
   title?: string;
   icon?: ReactNode;
@@ -535,9 +552,9 @@ function NavLink({
     <a
       href={href}
       title={title}
-      aria-current={current ? "true" : undefined}
+      aria-current={current ? (page ? "page" : "true") : undefined}
       onClick={onClick}
-      className={`flex h-11 items-center lg:h-9 gap-2 rounded-md px-2 text-[13px] transition-colors ${collapsed ? "lg:w-10 lg:justify-center lg:px-0" : ""} ${
+      className={`flex h-11 items-center lg:h-9 gap-2 rounded-md px-2 text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${collapsed ? "lg:w-10 lg:justify-center lg:px-0" : ""} ${
         current
           ? "bg-canvas-raised font-semibold text-ink shadow-[0_1px_2px_rgb(24_24_27/0.08)] ring-1 ring-line lg:bg-canvas-raised"
           : "text-ink-muted hover:bg-canvas-sunken hover:text-ink"

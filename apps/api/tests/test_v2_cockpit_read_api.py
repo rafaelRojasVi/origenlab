@@ -808,7 +808,10 @@ def test_timeline_db_payload_is_whitelisted(world, timeline_events) -> None:
 
 @needs_db
 def test_timeline_masks_for_viewer(world, timeline_events) -> None:
-    """The route keeps ContactRedactingRoute: a viewer reads 200, and nothing address-like is left."""
+    """The route keeps ContactRedactingRoute: a viewer reads 200 and an address in a payload field
+    the whitelist keeps (`close_reason`) comes back masked, not readable."""
+    import json as _json
+
     import psycopg
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -827,14 +830,42 @@ def test_timeline_masks_for_viewer(world, timeline_events) -> None:
                 status="active",
             )
 
+    # `close_reason` survives TIMELINE_PAYLOAD_KEYS, so this address reaches the route's response
+    # and only the redactor stands between it and the viewer.
+    with psycopg.connect(world["dsn"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type,"
+            " payload_version, payload, actor_kind, actor_operator_id)"
+            " select 'opportunity', %s, coalesce(max(seq), 0) + 1, 'opportunity.closed', 1, %s::jsonb,"
+            " 'operator', %s from crm.domain_event"
+            " where aggregate_kind = 'opportunity' and aggregate_id = %s",
+            (
+                world["opportunity_id"],
+                _json.dumps({"stage": "lost", "close_reason": "Compró por compras@cliente.invalid"}),
+                world["operator_id"],
+                world["opportunity_id"],
+            ),
+        )
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    raw = repo.opportunity_timeline(world["opportunity_id"])["entries"]
+    assert any(
+        (e.get("payload") or {}).get("close_reason") == "Compró por compras@cliente.invalid" for e in raw
+    ), "the address must survive the whitelist, or this test checks nothing"
+
     app = FastAPI()
     app.state.v2_identity = _ViewerPort()
-    app.state.cockpit_repository = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    app.state.cockpit_repository = repo
     app.include_router(cockpit_router)
     response = TestClient(app).get(f"/v2/cockpit/opportunities/{world['opportunity_id']}/timeline")
     assert response.status_code == 200
     assert response.headers[REDACTION_HEADER] == "contact-addresses"
-    assert "@" not in response.text
+    assert "compras@" not in response.text
+    reasons = [
+        (e.get("payload") or {}).get("close_reason") for e in response.json()["entries"]
+    ]
+    assert "Compró por ***@cliente.invalid" in reasons
     assert "Pytest Cockpit Op" in response.text
 
 

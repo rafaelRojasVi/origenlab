@@ -27,7 +27,7 @@ import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { isMaskedAddress } from "../redaction";
 import { STATUS_LABEL, stageDisplay } from "../stage";
-import { endOfDay, followUpStep, followUpsDue, isFollowUpTask, pendingFollowUpTasks } from "../today";
+import { endOfDay, followUpStep, followUpsDue, pendingFollowUpTasks } from "../today";
 import { Badge, Button, Drawer, Section, buttonClass, fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { CaseTimeline } from "./CaseTimeline";
@@ -356,7 +356,8 @@ function TabPanel({ base, tab, current, children }: { base: string; tab: DrawerT
 
 /** The case's follow-up reminder («Recordarme…») when it has one, else its next task or suggestion. */
 function NextStepLine({ card }: { card: OpportunityCardData }) {
-  const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
+  // The same pending reminder the chip and footer read: one our later email or call already met is done.
+  const reminder = pendingFollowUpTasks(card)[0] ?? null;
   const reminderNote = reminder ? (card.last_note?.body?.trim() ?? null) : null;
   // Due today or earlier: the case is on today's list now.
   const reminderDue = reminder ? Date.parse(reminder.due_at) <= endOfDay(new Date()).getTime() : false;

@@ -7,7 +7,7 @@ import { CaseDrawer } from "../drawer/CaseDrawer";
 import type { Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
-import { ClosedCases } from "./ClosedCases";
+import { ClosedCases, ClosedNote } from "./ClosedCases";
 import { DecideCases, reviewableOpenCards } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
@@ -290,7 +290,10 @@ function Pipeline({
           onClose={() => setDeciding(false)}
         />
       ) : visible.length === 0 ? (
-        <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado u origen, o la búsqueda.</EmptyState>
+        <div className="space-y-4">
+          {view === "cerradas" ? <ClosedNote /> : null}
+          <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado u origen, o la búsqueda.</EmptyState>
+        </div>
       ) : view === "cards" ? (
         <CardGrid cards={visible} onOpen={(id) => open(id)} />
       ) : view === "cerradas" ? (

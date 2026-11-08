@@ -1,9 +1,11 @@
 /**
  * Read-only client for the CRM workspace. GET only; nothing here can write.
  *
- * `/v2/workspace/*` and `/v2/cockpit/*` are **not** in the dashboard-proxy allowlist yet: they
- * work through the Vite dev proxy, and behind the production Worker they answer 403
- * `path_not_allowed`, which the pages show as "not enabled in this environment".
+ * The dashboard-proxy allowlist (`apps/dashboard-proxy/src/allowlist.ts`) names the
+ * `/v2/workspace/*` and `/v2/cockpit/*` reads one by one — never a prefix — among them
+ * `/v2/cockpit/opportunities/<uuid>/timeline` for the case drawer. A path not listed there works
+ * through the Vite dev proxy but answers 403 `path_not_allowed` behind the production Worker,
+ * which the pages show as "not enabled in this environment".
  */
 
 import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";

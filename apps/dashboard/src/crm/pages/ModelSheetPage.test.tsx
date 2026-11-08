@@ -300,13 +300,17 @@ describe("«Catálogo web»", () => {
     expect(f("Nombre del fabricante")).toHaveValue("Modelo Ficticio 300");
   });
 
+  // 50 rows render ~150 labelled inputs: label and role queries scan all of them and were slow under
+  // the parallel suite, so this test finds the buttons by their text and waits with its own budget.
   it("stops adding rows at 50", async () => {
     fetchModelSheet.mockResolvedValue({ ...READ, sheet: { ...SHEET, specs: Array.from({ length: 50 }, (_, i) => ({ label: `L${i}`, value: "v", source: "https://fabricante.example/x" })) } });
     renderPage();
-    await findF("Titular");
-    expect(screen.getByRole("button", { name: "Añadir especificación" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Añadir pregunta" })).toBeEnabled();
-  });
+    const addSpec = (await screen.findByText("Añadir especificación", {}, { timeout: 10_000 })).closest("button");
+    await waitFor(() => expect(addSpec).toBeDisabled(), { timeout: 10_000 });
+    // Disabled by the 50 rows, not by a load still in flight.
+    expect(screen.getByDisplayValue("L49")).toBeInTheDocument();
+    expect(screen.getByText("Añadir pregunta").closest("button")).toBeEnabled();
+  }, 30_000);
 
   it("discards edits back to the loaded sheet", async () => {
     renderPage();

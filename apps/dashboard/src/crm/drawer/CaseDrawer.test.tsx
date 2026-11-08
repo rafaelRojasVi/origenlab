@@ -325,6 +325,33 @@ describe("CaseDrawer", () => {
       expect(footer).toHaveTextContent(/Siguiente paso: Seguimiento 01318-26 · jue/);
       expect(footer).not.toHaveTextContent("Seguimiento antiguo");
     });
+
+    it("Resumen's reminder line skips a reminder our later email already met, like the chip and footer", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+      stub();
+      const met = { task_id: "t1", title: "Seguimiento antiguo", due_at: "2026-11-03T12:00:00Z", version: 1, owner: null };
+      const next = { task_id: "t2", title: "Seguimiento 01318-26", due_at: "2026-11-12T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer(
+        "sales",
+        card({ open_tasks: [met, next], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
+      );
+      const line = within(dialog).getByTestId("drawer-reminder");
+      expect(line).toHaveTextContent("Te lo recuerdo el");
+      expect(line).not.toHaveTextContent("Está hoy en");
+    });
+
+    it("Resumen shows no reminder line when the only reminder is already met", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+      stub();
+      const met = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-03T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer(
+        "sales",
+        card({ open_tasks: [met], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
+      );
+      expect(within(dialog).queryByTestId("drawer-reminder")).toBeNull();
+    });
   });
 
   it("reads the contact's phones only once Contacto is opened, and keeps them", async () => {

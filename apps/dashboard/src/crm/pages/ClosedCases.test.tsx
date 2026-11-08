@@ -139,6 +139,13 @@ describe("ClosedCases", () => {
     expect(screen.queryByTestId(/^closed-month-/)).toBeNull();
   });
 
+  it("each month's table is named by its month", () => {
+    const f = fixtures();
+    render(<ClosedCases cards={[f.sep, f.earlyOct]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByRole("table", { name: "octubre 2026" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "septiembre 2026" })).toBeInTheDocument();
+  });
+
   it("notes «Las ganadas siguen en el tablero.»", () => {
     render(<ClosedCases cards={[]} onOpen={() => undefined} now={NOW} />);
     expect(screen.getByTestId("closed-note")).toHaveTextContent("Las ganadas siguen en el tablero.");
@@ -191,5 +198,55 @@ describe("Pipeline «Cerradas»", () => {
     expect(screen.getByTestId("closed-month-2026-09")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId(`closed-row-${old.opportunity_id}`));
     expect(await screen.findByRole("dialog")).toHaveTextContent(old.organization?.name ?? "");
+  });
+
+  it("when the search leaves nothing, the tab still notes what Cerradas holds", async () => {
+    const old = closed("lost", "2026-09-15T15:00:00Z", "Precio", [clp("500000", "00104-26")]);
+    const items = [old];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ items, total: items.length, drive_configured: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      ),
+    );
+    render(
+      <AuthSessionContext.Provider value={{ session: session(), signOut: async () => true }}>
+        <PipelinePage />
+      </AuthSessionContext.Provider>,
+    );
+    const vista = await screen.findByRole("group", { name: "Vista" });
+    fireEvent.click(within(vista).getByRole("button", { name: "Cerradas" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar oportunidades" }), { target: { value: "zzz-ninguna" } });
+    expect(await screen.findByText("Ninguna oportunidad coincide")).toBeInTheDocument();
+    expect(screen.getByTestId("closed-note")).toHaveTextContent("Las ganadas siguen en el tablero.");
+  });
+
+  it("on the board, an empty search shows no Cerradas note", async () => {
+    const items = [closed("quoting", null, null)];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ items, total: items.length, drive_configured: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      ),
+    );
+    render(
+      <AuthSessionContext.Provider value={{ session: session(), signOut: async () => true }}>
+        <PipelinePage />
+      </AuthSessionContext.Provider>,
+    );
+    await screen.findByRole("group", { name: "Vista" });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar oportunidades" }), { target: { value: "zzz-ninguna" } });
+    expect(await screen.findByText("Ninguna oportunidad coincide")).toBeInTheDocument();
+    expect(screen.queryByTestId("closed-note")).toBeNull();
   });
 });

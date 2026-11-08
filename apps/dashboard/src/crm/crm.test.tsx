@@ -454,6 +454,37 @@ describe("dashboard shell", () => {
     expect(screen.queryByRole("navigation", { name: /^Pestañas de/ })).not.toBeInTheDocument();
   });
 
+  it("Hoy, which has no tabs, is marked as the page itself", async () => {
+    signedInAt(`#/hoy`);
+    const nav = await sideNav();
+    expect(within(nav).getByRole("link", { name: "Hoy" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("hides the tab row above the page while the phone menu is open", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    await screen.findByRole("navigation", { name: "Pestañas de Ventas" });
+    const row = screen.getByTestId("crm-subnav");
+    expect(row).not.toHaveClass("max-lg:hidden");
+    const menu = screen.getByRole("button", { name: "Menú" });
+    fireEvent.click(menu);
+    expect(menu).toHaveAttribute("aria-expanded", "true");
+    expect(row).toHaveClass("max-lg:hidden");
+    fireEvent.click(menu);
+    expect(row).not.toHaveClass("max-lg:hidden");
+  });
+
+  it("gives side-nav area and tab links a visible focus ring", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    const nav = await sideNav();
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveClass("focus-visible:ring-2", "focus-visible:ring-brand-600");
+    expect(within(nav).getByRole("link", { name: "Pipeline" })).toHaveClass("focus-visible:ring-2", "focus-visible:ring-brand-600");
+  });
+
+  it("the Pipeline page heading matches its tab", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    expect(await screen.findByRole("heading", { level: 1, name: "Pipeline" })).toBeInTheDocument();
+  });
+
   it("opens the «Datos» tab a link asks for, also when already on «Datos»", async () => {
     signedInAt(`#/ajustes/operaciones/proveedores`);
     expect(await screen.findByRole("button", { name: /^Proveedores/, pressed: true })).toBeInTheDocument();
