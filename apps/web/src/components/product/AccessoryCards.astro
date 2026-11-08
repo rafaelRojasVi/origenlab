@@ -42,18 +42,17 @@ const { items, quoteHref } = Astro.props;
     gap: 0.875rem;
     padding: 1.25rem;
     background: var(--color-paper);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-card);
-    transition:
-      transform var(--ease-ui),
-      border-color var(--ease-ui);
+    border-top: 3px solid var(--fam, var(--color-teal-700));
+    border-radius: var(--radius-field);
+    box-shadow: var(--shadow-card);
+    transition: transform var(--ease-ui), box-shadow var(--ease-ui);
   }
   .acc__card:hover {
     transform: translateY(-2px);
-    border-color: var(--color-ink-600);
+    box-shadow: var(--shadow-lift);
   }
   .acc__note {
-    color: var(--color-family-sonicacion);
+    color: var(--fam, var(--color-teal-800));
   }
   .acc__card .btn-tertiary {
     margin-top: auto;

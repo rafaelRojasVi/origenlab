@@ -1,11 +1,13 @@
 ---
+import { join } from 'node:path';
+import sharp from 'sharp';
 import Button from '../ui/Button.astro';
-import ModelPhoto from '../ui/ModelPhoto.astro';
+import LightBox from '../ui/LightBox.astro';
 import Showroom from '../home/Showroom.astro';
 import ModelHeroCopy from './ModelHeroCopy.astro';
 import { ctaLabels } from '../../lib/ctaLabels';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
-import { imageForEntry, type FamilyInfo } from '../../lib/modelos';
+import { familyTint, imageForEntry, type FamilyInfo } from '../../lib/modelos';
 import type { Brand } from '../../data/brands';
 import type { Modelo } from '../../content.config';
 
@@ -17,8 +19,15 @@ import type { Modelo } from '../../content.config';
  *   `story`    nada aquí: la página monta `ProductStory` en el slot y le pasa el
  *              texto en su slot `intro`; el escenario 3D es la primera pantalla
  *   `showroom` la sala 3D del equipo (`home/Showroom`), sin historia
- *   `photo`    la fotografía VERIFIED del registro
+ *   `photo`    la fotografía VERIFIED del registro, grande, «parada» sobre un
+ *              escenario redondeado con el tinte de la familia y un charco de
+ *              luz blanca (`LightBox`, multiply). Una foto con fondo gris (sus
+ *              esquinas no son blancas: el multiply dejaría un rectángulo gris
+ *              sobre el tinte) va sobre un panel blanco liso.
  * En los tres casos el bloque de entrada lleva `data-first-screen`.
+ *
+ * `--fam` (tinta de la familia) y `--tint` (su pastel) quedan en `.model-page`
+ * para las secciones de la ficha: filetes, numerales, notas del 3D.
  *
  * La barra fija (`[data-sticky-cta]`) está al final del slot, `position: sticky`
  * al pie. Con JavaScript queda escondida (`inert`, fuera de la pantalla) hasta
@@ -37,16 +46,29 @@ const { entry, brand, family, media, quoteHref } = Astro.props;
 const brandName = brand?.name ?? entry.brand;
 const whatsappHref = buildWhatsAppQuoteUrl({ productName: entry.name, brandName });
 const photo = imageForEntry(entry);
+const fam = `var(--color-family-${entry.family === 'pesaje-humedad' ? 'pesaje' : entry.family})`;
+
+/* ¿Fondo de foto blanco? Las cuatro esquinas de la maestra, reducida a 16 px. */
+async function whiteBackground(path: string | null | undefined): Promise<boolean> {
+  if (!path) return true;
+  try {
+    const { data } = await sharp(join(process.cwd(), 'public', path)).removeAlpha().resize(16, 16, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true });
+    return [0, 15, 240, 255].every((px) => (data[px * 3] + data[px * 3 + 1] + data[px * 3 + 2]) / 3 >= 235);
+  } catch {
+    return true;
+  }
+}
+const plain = media === 'photo' && !(await whiteBackground(photo?.masterPath));
 ---
 
-<div class="model-page">
+<div class="model-page" style={`--fam: ${fam}; --tint: ${familyTint(entry)}`}>
   {
     media !== 'story' && (
       <section class="shell mh-sec" data-first-screen aria-labelledby="modelo-titulo">
         <ModelHeroCopy entry={entry} brand={brand} family={family} quoteHref={quoteHref} />
-        <div class="mh-sec__media">
+        <div class:list={['mh-sec__media', media === 'photo' && 'mh-stage', plain && 'mh-stage--plain']}>
           {media === 'showroom' && entry.showroom_id && <Showroom id={entry.showroom_id} />}
-          {media === 'photo' && <ModelPhoto image={photo} brandName={brandName} size="hero" priority captioned ratio="4 / 5" />}
+          {media === 'photo' && <LightBox image={photo} brandName={brandName} size="hero" priority ratio="1 / 1" />}
         </div>
       </section>
     )
@@ -135,32 +157,63 @@ const photo = imageForEntry(entry);
   }
   .model-page .msec--alt {
     background: var(--color-surface);
-    border-block: 1px solid var(--color-hairline);
   }
   .model-page .mh2 {
     margin-top: 0.75rem;
-    font-size: clamp(2rem, 4vw, 3rem);
-    line-height: 1.08;
-    letter-spacing: -0.02em;
-    font-weight: 700;
+    font-size: clamp(2.125rem, 4.4vw, 3.5rem);
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+    font-weight: 800;
+  }
+  /* Relacionados (LitCard) y el enlace al ejemplo de cotización en la banda de cierre: las dos páginas de modelo. */
+  .model-rel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem 1rem;
+    margin-top: 3rem;
+  }
+  .model-quote-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin-top: 0.75rem;
+    font-weight: 600;
+    color: var(--color-teal-800);
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
+  }
+  @media (min-width: 960px) {
+    .model-rel {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1.5rem;
+    }
   }
   .mh-sec {
     display: grid;
-    gap: 2rem;
+    gap: 1rem 3rem;
     min-height: calc(100svh - var(--hd-h));
+    padding-bottom: 2rem;
   }
   .mh-sec__media {
     align-self: center;
-    max-width: 32rem;
+  }
+  /* Sin 3D: la foto grande sobre el tinte de la familia, con su charco de luz. */
+  .mh-stage {
+    position: relative;
+    border-radius: var(--radius-scene);
+    background: radial-gradient(52% 46% at 50% 58%, #fff 30%, transparent 100%) var(--tint);
+  }
+  .mh-stage--plain {
+    background: var(--color-paper);
+    box-shadow: var(--shadow-card);
   }
   @media (min-width: 760px) {
     .mh-sec {
       grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      column-gap: 3rem;
+      padding-bottom: 0;
     }
     .mh-sec__media {
-      max-width: none;
-      padding-block: 2rem;
+      margin-block: 2rem 5.5rem;
     }
   }
 
@@ -170,7 +223,7 @@ const photo = imageForEntry(entry);
     z-index: 20;
     background-color: var(--color-paper);
     border-top: 1px solid var(--color-hairline);
-    box-shadow: 0 -8px 24px rgb(20 22 23 / 0.06);
+    box-shadow: 0 -8px 24px rgb(15 90 80 / 0.08);
   }
   .cta-bar__inner {
     display: flex;

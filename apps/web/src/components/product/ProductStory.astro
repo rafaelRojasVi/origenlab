@@ -115,7 +115,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       <div class="story__photo" data-story-photo>
         {
           poster ? (
-            <img src={poster} width="1200" height="900" alt={`${name}, modelo 3D`} class="story__poster" fetchpriority={intro ? 'high' : 'auto'} loading={intro ? 'eager' : 'lazy'} decoding={intro ? 'sync' : 'async'} />
+            <img src={poster} width="1200" height="900" alt={`${name}, modelo 3D`} class="story__poster pz" fetchpriority={intro ? 'high' : 'auto'} loading={intro ? 'eager' : 'lazy'} decoding={intro ? 'sync' : 'async'} />
           ) : (
             <ModelPhoto image={photo} size="hero" priority ratio="4 / 5" />
           )
@@ -223,6 +223,22 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     position: relative;
     aspect-ratio: 4 / 3;
   }
+  /*
+   * Luz del estudio blanco («Blanco con color»): halos teal, aqua y menta con
+   * un charco blanco bajo el equipo. Dentro del escenario (sticky = su propio
+   * contexto de apilamiento), así el póster `.pz` se funde con ella.
+   */
+  .story__stage::before {
+    content: '';
+    position: absolute;
+    inset: 0 -4%;
+    background:
+      radial-gradient(30% 28% at 54% 64%, #fff 30%, transparent 100%),
+      radial-gradient(28% 36% at 34% 56%, var(--color-glow-teal), transparent 100%),
+      radial-gradient(28% 36% at 72% 50%, var(--color-glow-aqua), transparent 100%),
+      radial-gradient(closest-side at 52% 56%, var(--color-glow-mint), transparent 100%);
+    pointer-events: none;
+  }
   .story__poster {
     width: 100%;
     height: 100%;
@@ -303,13 +319,16 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   }
   .story__chips li {
     padding: 0.25rem 0.75rem;
-    border: 1px solid var(--color-hairline);
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: var(--radius-btn);
+    background: var(--color-paper);
     transition: opacity 0.4s calc(var(--i, 0) * 90ms);
   }
   [data-sonotrode='S24d7'] [data-tip='S24d7'],
   [data-sonotrode='S24d14'] [data-tip='S24d14'],
   [data-sonotrode='S24d22'] [data-tip='S24d22'] {
-    border-color: var(--color-ink-950);
+    border-color: var(--color-teal-700);
+    color: var(--color-teal-800);
   }
   .story[data-live] .story__beat:not([data-on]) [style*='--i'],
   .story-spot {
@@ -327,8 +346,10 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     width: min(13rem, 45vw);
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--color-hairline);
-    border-left: 2px solid var(--color-family-sonicacion);
+    border-left: 2px solid var(--fam, var(--color-teal-700));
+    border-radius: var(--radius-edge);
     background: var(--color-paper);
+    box-shadow: var(--shadow-card);
     font-size: 0.8125rem;
     line-height: 1.45;
     transition: opacity 0.3s;
@@ -338,7 +359,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   .story-spot::after {
     content: '';
     position: absolute;
-    background: var(--color-ink-600);
+    background: var(--fam, var(--color-teal-700));
   }
   .story-spot::after {
     width: 7px;
@@ -363,7 +384,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   }
   .story-spot[data-side='left'] {
     border-left-width: 1px;
-    border-right: 2px solid var(--color-family-sonicacion);
+    border-right: 2px solid var(--fam, var(--color-teal-700));
   }
   .story-spot[data-side='left']::before {
     left: 100%;
@@ -459,7 +480,8 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       grid-area: 1 / 2;
       position: sticky;
       top: var(--hd-h, 4rem);
-      height: calc(100svh - var(--hd-h, 4rem));
+      /* Abajo queda libre el alto de la barra fija (3,5 rem): las notas del 3D no pasan bajo ella. */
+      height: calc(100svh - var(--hd-h, 4rem) - 3.5rem);
       aspect-ratio: auto;
     }
     .story__poster {
@@ -496,7 +518,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
       inset: 0 auto auto 0;
       width: 1px;
       height: 14px;
-      background: var(--color-ink-950);
+      background: var(--color-teal-700);
     }
     @media (prefers-reduced-motion: no-preference) {
       .story__cue i::after {
