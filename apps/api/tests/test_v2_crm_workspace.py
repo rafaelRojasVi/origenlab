@@ -254,6 +254,31 @@ def test_card_carries_the_newest_note_on_the_case() -> None:
     assert compose_pipeline([_opp("o1")], [], [], [], {}, [], {})[0]["last_note"] is None
 
 
+def test_card_carries_requested_at_or_falls_back_to_created_at() -> None:
+    """Hoy's «Solicitud → cotización» clock starts when the client asked: the origin email's
+    `sent_at` when the case came from one, else when the case was opened."""
+    asked, opened = compose_pipeline(
+        [_opp("o1", requested_at="2026-10-01T09:00:00+00:00"), _opp("o2")], [], [], [], {}, [], {},
+    )
+    assert asked["requested_at"] == "2026-10-01T09:00:00+00:00"
+    assert opened["requested_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_card_carries_the_newest_answered_call() -> None:
+    """A call the client answered (contestó · reunión) is a follow-up touch on Hoy: the card
+    carries the newest one, or null."""
+    calls = [
+        {"opportunity_id": "o1", "at": "2026-11-02T14:00:00Z", "outcome": "contesto"},
+        {"opportunity_id": "o1", "at": "2026-11-05T15:30:00Z", "outcome": "reunion"},
+    ]
+    called, silent = compose_pipeline(
+        [_opp("o1"), _opp("o2")], [], [], [], {}, [], {}, last_calls=calls,
+    )
+    assert called["last_call"] == {"at": "2026-11-05T15:30:00Z", "outcome": "reunion"}
+    assert silent["last_call"] is None
+    assert compose_pipeline([_opp("o1")], [], [], [], {}, [], {})[0]["last_call"] is None
+
+
 def test_confirmed_requester_is_independent_of_organization_profile_confirmation() -> None:
     """An unconfirmed organization record does not undo a human-confirmed case role."""
     role = {

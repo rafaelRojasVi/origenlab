@@ -272,11 +272,18 @@ _SQL_PIPELINE_OPPS = f"""
            -- A case opened from a forwarded request (Solicitudes): who asked, as the worker read it.
            -- Its emails come from Labdelivery or our own mailbox, so «Asignar institución» suggests
            -- from these when no client email on the case does.
-           fr.payload->>'original_email' as forwarded_email, fr.payload->>'company' as forwarded_company
+           fr.payload->>'original_email' as forwarded_email, fr.payload->>'company' as forwarded_company,
+           -- When the client asked (Hoy's «Solicitud → cotización»): the origin email's `sent_at`
+           -- when it reads as a timestamp, else when it was captured; never after the case opened
+           -- (`least` ignores a null, so a case with no origin record keeps `created_at`).
+           least(op.created_at,
+                 case when osr.payload->>'sent_at' ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}'
+                      then (osr.payload->>'sent_at')::timestamptz else osr.acquired_at end)::text as requested_at
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
       left join evidence.source_record fr
         on fr.id = op.origin_source_record_id and fr.kind = 'forwarded_request'
+      left join evidence.source_record osr on osr.id = op.origin_source_record_id
      where {sale_cases("op")}
      order by op.updated_at desc, op.id
 """
@@ -364,6 +371,35 @@ _SQL_PIPELINE_NOTES = """
      where n.subject_kind = 'opportunity' and n.status = 'active'
        and (op.closed_at is null or op.stage = 'won')
      order by n.subject_id, n.created_at desc, n.id desc
+"""
+# Hoy's «Alcance»: the team's live calls (`crm.note`, note_kind 'llamada', on a person, an
+# institution or a case) per Santiago day and outcome, the last 35 days. An edited call is a new
+# row: only the newest revision counts, on the day of the root (when the call was first logged).
+_SQL_PIPELINE_CALLS = """
+    select to_char(coalesce(r.created_at, n.created_at) at time zone 'America/Santiago', 'YYYY-MM-DD') as day,
+           n.call_outcome as outcome, count(*)::int as count
+      from crm.note n
+      left join crm.note r on r.id = n.root_note_id
+     where n.note_kind = 'llamada' and n.status = 'active'
+       and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
+       and coalesce(r.created_at, n.created_at) >= now() - interval '35 days'
+     group by 1, 2
+     order by 1, 2
+"""
+# The newest live call on each case the client answered (contestó · reunión): a follow-up touch
+# on Hoy, like an email we sent. `at` is when the call was first logged (the root's time), so an
+# edit does not move the clock.
+_SQL_PIPELINE_LAST_CALLS = """
+    select distinct on (n.subject_id)
+           n.subject_id::text as opportunity_id,
+           to_char(coalesce(r.created_at, n.created_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+           n.call_outcome as outcome
+      from crm.note n
+      left join crm.note r on r.id = n.root_note_id
+     where n.subject_kind = 'opportunity' and n.status = 'active'
+       and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion')
+       and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
+     order by n.subject_id, coalesce(r.created_at, n.created_at) desc, n.id desc
 """
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
@@ -925,6 +961,7 @@ def compose_pipeline(
     tasks: list[Mapping[str, Any]] | None = None,
     notes: list[Mapping[str, Any]] | None = None,
     documents: list[Mapping[str, Any]] | None = None,
+    last_calls: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -966,6 +1003,13 @@ def compose_pipeline(
                 "created_at": row["created_at"], "body": row["body"],
                 "author": row.get("author_display_name"),
             }
+
+    # The newest answered call per case (`_SQL_PIPELINE_LAST_CALLS`, one row per case already).
+    call_by_opp: dict[str, dict[str, Any]] = {}
+    for row in last_calls or []:
+        current = call_by_opp.get(row["opportunity_id"])
+        if current is None or str(row["at"]) > str(current["at"]):
+            call_by_opp[row["opportunity_id"]] = {"at": row["at"], "outcome": row["outcome"]}
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -1135,6 +1179,8 @@ def compose_pipeline(
                 # The version a case command compares against («Cambiar etapa», «Marcar ganada»).
                 "version": opp.get("version"),
                 "created_at": opp.get("created_at"),
+                # When the client asked (the origin email), else when the case was opened.
+                "requested_at": opp.get("requested_at") or opp.get("created_at"),
                 "updated_at": opp.get("updated_at"),
                 "closed_at": opp.get("closed_at"),
                 "close_reason": opp.get("close_reason"),
@@ -1199,6 +1245,9 @@ def compose_pipeline(
                 # The newest active note on the case (`crm.note`), or null: «Hoy» counts one
                 # written after the client's last email as answered.
                 "last_note": note_by_opp.get(oid),
+                # The newest call the client answered (contestó · reunión), or null: a follow-up
+                # touch on «Hoy», like an email we sent.
+                "last_call": call_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
                 or suggest_next_action(opp, blocked, live_latest, last_contact=(contacts or {}).get(oid)),
             }
@@ -1491,7 +1540,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 10 data queries in 1 RTT via psycopg pipeline mode.
+            # 13 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1503,6 +1552,8 @@ class CrmWorkspaceRepository:
             cur_notes = conn.cursor()
             cur_documents = conn.cursor()
             cur_tenders = conn.cursor()
+            cur_calls = conn.cursor()
+            cur_last_calls = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1516,6 +1567,9 @@ class CrmWorkspaceRepository:
                 cur_documents.execute(_SQL_PIPELINE_DOCUMENTS)
                 # Hoy's one tender signal (spec §6.10): the tenders that close tomorrow.
                 cur_tenders.execute(TENDERS_CLOSING_SQL, {"tomorrow": tomorrow_in_santiago(datetime.now(UTC))})
+                # Hoy's «Alcance» and the follow-up touch a call makes.
+                cur_calls.execute(_SQL_PIPELINE_CALLS)
+                cur_last_calls.execute(_SQL_PIPELINE_LAST_CALLS)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1537,17 +1591,22 @@ class CrmWorkspaceRepository:
             notes = self._rows(cur_notes)
             documents = self._rows(cur_documents)
             tenders_closing = closing_rows(self._rows(cur_tenders))
+            calls = [{"day": r["day"], "outcome": r["outcome"], "count": int(r["count"])}
+                     for r in self._rows(cur_calls)]
+            last_calls = self._rows(cur_last_calls)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
             opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes,
-            documents=documents,
+            documents=documents, last_calls=last_calls,
         )
         return {
             "items": cards,
             "total": len(cards),
             "drive_configured": self.drive_configured or bool(drive),
             "tenders_closing": tenders_closing,
+            # The team's calls per Santiago day and outcome, the last 35 days (Hoy's «Alcance»).
+            "calls": calls,
         }
 
     # -- providers
