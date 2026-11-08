@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import { mayRunCaseCommands, nextStages, undeterminedQuotes, winnableRevisions } from "../caseCommands";
@@ -14,6 +14,15 @@ import { moveRefusal } from "./CaseMove";
 
 // Every value below is invented; the repository is public.
 const CASE = "11111111-1111-4111-8111-111111111111";
+
+/** Pin the wall clock (Date only; timers stay real) for one test: the board's columns read it. */
+function clockAt(iso: string) {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(iso));
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
+}
 const PERSON = "44444444-4444-4444-8444-444444444444";
 const ORG = "33333333-3333-4333-8333-333333333333";
 const QUOTE = "44444444-4444-4444-8444-444444444444";
@@ -452,16 +461,17 @@ describe("case drawer actions", () => {
   });
 
   it("closes a case as «Perdida» with one click on a reason, with the shown version", async () => {
+    // Ten days after the fixture's rev 2 went out (2026-02-10): an ordinary «Enviada» case, not a silent one.
+    clockAt("2026-02-20T12:00:00Z");
     const calls = stubApi({
-      pipelines: [page([card()]), page([card({ stage: "lost", version: 6, closed_at: "2026-10-05T00:00:00Z" })])],
+      pipelines: [page([card()]), page([card({ stage: "lost", version: 6, closed_at: "2026-02-20T11:00:00Z" })])],
       onPost: (call) =>
         call.path === "/v2/commands/advance-case-stage" ? { body: receipt("advance_case_stage", "lost", 6, "aaaaaaaa-0001") } : undefined,
     });
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
     const picker = within(dialog).getByRole("group", { name: "Nuevo estado" });
-    // Every state but the one the case is in; «Ganada» is «Marcar ganada». The fixture is silent
-    // (quoted 2026-09-25, no answer), so «Enviada» — its stage — is not offered either.
+    // Every state but the one the case is in («Enviada»); «Ganada» is «Marcar ganada».
     expect(within(picker).getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Solicitada / En estudio",
       "Conversación",
@@ -508,7 +518,27 @@ describe("case drawer actions", () => {
     expect(calls.find((c) => c.method === "POST")!.body).toMatchObject({ stage: "abandoned", close_reason: "Sin respuesta" });
   });
 
+  it("a silent case is offered the same states, and its note says it leaves «Silenciosas»", async () => {
+    // 30 days after the fixture's rev 2 went out (2026-02-10), no answer: the case sits in «Silenciosas».
+    clockAt("2026-03-12T12:00:00Z");
+    stubApi({ pipelines: [page([card()])] });
+    const dialog = await openDrawer(session("sales"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
+    const picker = within(dialog).getByRole("group", { name: "Nuevo estado" });
+    // Silenciosas fills by itself and «Enviada» is the case's own stage: neither is offered.
+    expect(within(picker).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Solicitada / En estudio",
+      "Conversación",
+      "En pausa",
+      "Perdida",
+    ]);
+    fireEvent.click(within(picker).getByRole("button", { name: "Solicitada / En estudio" }));
+    const form = within(dialog).getByRole("form", { name: "Mover a «Solicitada / En estudio»" });
+    expect(within(form).getByLabelText(/^Nota/)).toHaveValue("Movido de «Silenciosas» a «Solicitada / En estudio».");
+  });
+
   it("walks a case back from «Enviada» to «Solicitada» one stage at a time", async () => {
+    clockAt("2026-02-20T12:00:00Z");
     const versions = [6, 7, 8];
     const calls = stubApi({
       pipelines: [page([card()])],
@@ -519,8 +549,7 @@ describe("case drawer actions", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Solicitada / En estudio" }));
     const form = within(dialog).getByRole("form", { name: "Mover a «Solicitada / En estudio»" });
     expect(within(form).getByTestId("case-move-steps")).toHaveTextContent("3 pasos");
-    // The fixture's quote went out 2026-09-25 with no answer: by the wall clock it is «Silenciosas».
-    expect(within(form).getByLabelText(/^Nota/)).toHaveValue("Movido de «Silenciosas» a «Solicitada / En estudio».");
+    expect(within(form).getByLabelText(/^Nota/)).toHaveValue("Movido de «Enviada» a «Solicitada / En estudio».");
     fireEvent.click(within(form).getByRole("button", { name: "Mover" }));
     await within(dialog).findByText(/3\/3 · Estado → Solicitada: registrado/);
     const posts = calls.filter((c) => c.method === "POST");

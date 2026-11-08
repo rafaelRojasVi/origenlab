@@ -187,7 +187,46 @@ describe("Silenciosas", () => {
   });
 });
 
+describe("Silenciosas · Task 7 review fixes", () => {
+  it("client replied, we answered, 30 days → not silent", () => {
+    // The client wrote on day 5 after the quote, we answered on day 6: our email is the last touch,
+    // but the client has written since the quote.
+    const c = sent(30, {
+      last_contact: {
+        inbound: { at: ago(25), subject: "Re: cotización", url: null },
+        outbound: { at: ago(24), subject: "Re: Re: cotización", url: null },
+      },
+    });
+    expect(isSilent(c, NOW)).toBe(false);
+  });
+
+  it("a «gracias» (no_reply) followed by our follow-up stays silent: only a real reply breaks it", () => {
+    const c = sent(30, {
+      last_contact: {
+        inbound: { at: ago(25), subject: "Re: gracias", url: null, no_reply: true },
+        outbound: { at: ago(24), subject: "Seguimiento", url: null },
+      },
+    });
+    expect(isSilent(c, NOW)).toBe(true);
+  });
+
+  it("a client email from before the quote does not break the silence", () => {
+    const c = sent(30, { last_contact: { inbound: { at: ago(31), subject: "Solicitud", url: null }, outbound: { at: ago(10), subject: "Seguimiento", url: null } } });
+    expect(isSilent(c, NOW)).toBe(true);
+  });
+
+  it("quoting ago(21, 23h) → not silent", () => {
+    const c = sent(21);
+    c.latest_revision = { ...c.latest_revision!, sent_at: ago(21, 23) };
+    expect(isSilent(c, NOW)).toBe(false);
+  });
+});
+
 describe("closed cases on the board", () => {
+  it("lost ago(7) → still on board", () => {
+    expect(isOnBoard(card({ stage: "lost", closed_at: ago(7) }), NOW)).toBe(true);
+  });
+
   it("lost 8 days ago → not on board", () => {
     expect(isOnBoard(card({ stage: "lost", closed_at: ago(8) }), NOW)).toBe(false);
     expect(isOnBoard(card({ stage: "abandoned", closed_at: ago(8) }), NOW)).toBe(false);

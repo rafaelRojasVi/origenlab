@@ -193,14 +193,13 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     const touch = lastTouch(card);
     // A call that reached the client is a touch too (owner ruling 2026-11-08): last contact is the
     // later of our last email and that call.
-    const email = later(touch.by === "us" ? touch.at : null, callTouch(card));
+    const email = ourLastTouch(card);
     // The client's closing reply («gracias, te aviso», mail rule R18) restarts the rhythm, but only an
     // email (or a call) of ours marks a follow-up task done.
     const clock = touch.by === "settled" ? later(touch.at, email) : email;
     // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
     // to press «Hecho» — the email the sync captures is the proof.
-    const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
-    const pending = open.filter((t) => !(isFollowUpTask(t) && written(t)));
+    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
     const decided = open.some(isFollowUpTask);
     let task: DueTask | null = null;
@@ -234,6 +233,25 @@ function later(a: string | null, b: string | null): string | null {
   if (!a) return b;
   if (!b) return a;
   return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+/** OrigenLab's last touch after the quote that can meet a follow-up: our email, or a call that reached the client. */
+function ourLastTouch(card: OpportunityCardData): string | null {
+  const touch = lastTouch(card);
+  return later(touch.by === "us" ? touch.at : null, callTouch(card));
+}
+
+/** A «Seguimiento …» task is met once OrigenLab touched the case on or after its day. */
+function followUpMet(task: OpenTask, touch: string | null): boolean {
+  return touch !== null && Date.parse(touch) >= startOfLocalDay(Date.parse(task.due_at));
+}
+
+/** The case's «Seguimiento …» reminders still pending, earliest first: one already met is done. */
+export function pendingFollowUpTasks(card: OpportunityCardData): OpenTask[] {
+  const touch = ourLastTouch(card);
+  return (card.open_tasks ?? [])
+    .filter((t) => isFollowUpTask(t) && !followUpMet(t, touch))
+    .sort((a, b) => a.due_at.localeCompare(b.due_at));
 }
 
 /** «Seguimiento N de 3»: the rhythm step a follow-up is on (1 from day 3, 2 from 14, 3 from 30). */

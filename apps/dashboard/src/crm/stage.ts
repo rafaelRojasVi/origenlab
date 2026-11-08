@@ -94,9 +94,11 @@ function wholeDaysSince(iso: string | null | undefined, now: Date): number | nul
 /**
  * «Silenciosas»: an open `quoting` case, not paused, whose latest revision reached the client more
  * than `SILENT_AFTER_DAYS` whole days ago and the client has not engaged since — no email from them
- * (a «gracias, te aviso» counts as an answer: `lastTouch` → «settled») and no call that reached
- * them after the quote (`callTouch`: contestó or reunión). Our own follow-up emails do not break
- * the silence. A historical-import case is counted like any other.
+ * (a «gracias, te aviso» as the last touch counts as an answer: `lastTouch` → «settled»), no real
+ * reply dated after the quote even when OrigenLab answered it later (`last_contact.inbound`
+ * without `no_reply`), and no call that reached them after the quote (`callTouch`: contestó or
+ * reunión). Our own follow-up emails do not break the silence. A historical-import case is counted
+ * like any other.
  */
 export function isSilent(card: OpportunityCardData, now: Date = new Date()): boolean {
   if (card.closed_at || TERMINAL.has(card.stage) || card.stage !== "quoting") return false;
@@ -105,6 +107,10 @@ export function isSilent(card: OpportunityCardData, now: Date = new Date()): boo
   if (!isDelivered(latest)) return false;
   const by = lastTouch(card).by;
   if (by !== "us" && by !== "quote") return false;
+  // «Client replied day 5, we answered day 6»: our email is the last touch, but the client wrote
+  // after the quote — not silent, whether or not a mail rule moved the case to Conversación.
+  const inbound = card.last_contact?.inbound;
+  if (inbound && !inbound.no_reply && Date.parse(inbound.at) > Date.parse(latest?.sent_at ?? "")) return false;
   if (callTouch(card)) return false;
   const days = wholeDaysSince(latest?.sent_at, now);
   return days !== null && days > SILENT_AFTER_DAYS;

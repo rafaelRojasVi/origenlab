@@ -254,6 +254,44 @@ describe("CaseDrawer", () => {
     }
   });
 
+  describe("follow-up chip · Task 7 review fixes", () => {
+    const at = (iso: string) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(iso));
+    };
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a reminder due today reads «hoy», not its weekday", () => {
+      at("2026-11-08T15:00:00Z");
+      stub();
+      const task = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-08T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer("sales", card({ open_tasks: [task] }));
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 3 · hoy");
+    });
+
+    it("an overdue reminder reads «hoy»", () => {
+      at("2026-11-08T15:00:00Z");
+      stub();
+      const task = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-05T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer("sales", card({ open_tasks: [task] }));
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent(/· hoy$/);
+    });
+
+    it("a reminder our later email already met does not drive the chip; the next pending one does", () => {
+      at("2026-11-08T15:00:00Z");
+      stub();
+      const met = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-03T12:00:00Z", version: 1, owner: null };
+      const next = { task_id: "t2", title: "Seguimiento 01318-26", due_at: "2026-11-12T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer(
+        "sales",
+        card({ open_tasks: [met, next], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
+      );
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 3 · jueves 12");
+    });
+  });
+
   it("reads the contact's phones only once Contacto is opened, and keeps them", async () => {
     const paths = stub();
     const dialog = renderDrawer("sales");

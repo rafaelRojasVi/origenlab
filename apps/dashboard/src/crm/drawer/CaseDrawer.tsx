@@ -27,7 +27,7 @@ import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { isMaskedAddress } from "../redaction";
 import { STATUS_LABEL, stageDisplay } from "../stage";
-import { endOfDay, followUpStep, followUpsDue, isFollowUpTask } from "../today";
+import { endOfDay, followUpStep, followUpsDue, isFollowUpTask, pendingFollowUpTasks } from "../today";
 import { Badge, Button, Drawer, Section, buttonClass, fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { CaseTimeline } from "./CaseTimeline";
@@ -61,17 +61,21 @@ function weekdayDay(iso: string): string {
 }
 
 /**
- * «Seguimiento N de 3 · …» for the header: with a «Seguimiento …» reminder open, its step and its
- * day — the step the rhythm will be on that day, read from `followUpsDue` as of then; otherwise,
- * when the case is due today by the rhythm alone, «hoy». Null when neither.
+ * «Seguimiento N de 3 · …» for the header: with a «Seguimiento …» reminder still pending (one an
+ * email of ours already met is done: `pendingFollowUpTasks`), its step and its day — «hoy» when it
+ * is due today or overdue, else its weekday; the step is the one the rhythm will be on that day,
+ * read from `followUpsDue` as of then. Otherwise, when the case is due today by the rhythm alone,
+ * «hoy». Null when neither.
  */
 function followUpChip(card: OpportunityCardData, now: Date): { step: 1 | 2 | 3; day: string } | null {
-  const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
+  const reminder = pendingFollowUpTasks(card)[0] ?? null;
   const dueNow = followUpsDue([card], now)[0] ?? null;
   if (reminder) {
-    const at = Math.max(now.getTime(), Date.parse(reminder.due_at));
+    const due = Date.parse(reminder.due_at);
+    const at = Math.max(now.getTime(), due);
     const onItsDay = dueNow ?? followUpsDue([card], new Date(Number.isNaN(at) ? now.getTime() : at))[0] ?? null;
-    return { step: onItsDay ? followUpStep(onItsDay) : 1, day: weekdayDay(reminder.due_at) };
+    const today = !Number.isNaN(due) && due <= endOfDay(now).getTime();
+    return { step: onItsDay ? followUpStep(onItsDay) : 1, day: today ? "hoy" : weekdayDay(reminder.due_at) };
   }
   return dueNow ? { step: followUpStep(dueNow), day: "hoy" } : null;
 }
