@@ -1,4 +1,5 @@
-@import "tailwindcss";
+/* Utilidades sólo de lo que usa `src/` (no de scripts, docs ni correos). */
+@import "tailwindcss" source("../");
 
 /* ============================================================================
    OrigenLab Website — design tokens: «Blanco con color» (2026-11-08)
@@ -284,28 +285,6 @@
   }
 
   /* --- Type roles ---------------------------------------------------------- */
-  /* Display: 800, -0.02em. Escritorio / teléfono, interpolado entre 390 y 1280 px. */
-  .t-d1,
-  .t-d2,
-  .t-d3,
-  .t-display {
-    font-weight: 800;
-    letter-spacing: -0.04em;
-    overflow-wrap: anywhere;
-  }
-  .t-d1 {
-    font-size: clamp(3rem, 1.686rem + 5.393vw, 6rem);
-    line-height: 0.98;
-  }
-  .t-d2 {
-    font-size: clamp(2.5rem, 1.624rem + 3.596vw, 4.5rem);
-    line-height: 1;
-  }
-  .t-d3,
-  .t-display {
-    font-size: clamp(2.125rem, 1.523rem + 2.472vw, 3.5rem);
-    line-height: 1.0357;
-  }
   .t-h2 {
     font-size: clamp(2rem, 1.78rem + 0.9vw, 2.5rem);
     line-height: 1.1;
@@ -565,8 +544,7 @@
    * `.surface-reading`  sección alterna a ancho completo: el tinte teal pálido.
    * `.surface-band`     lavado teal/aqua (banda de cierre y destacados); texto tinta.
    * `.surface-quote`    el azul pálido de la sección de la cotización.
-   * `.card-lit`         panel blanco con sombra teal (formularios, paneles).
-   *                     Las tarjetas de modelo usan `ui/LitCard.astro`.
+   * Las tarjetas de modelo son `ui/LitCard.astro`.
    * ------------------------------------------------------------------------- */
   .surface-reading {
     background-color: var(--color-surface);
@@ -583,15 +561,6 @@
       radial-gradient(50% 70% at 72% 50%, #e6eefd 0%, transparent 100%),
       var(--color-quote);
   }
-  .card-lit {
-    position: relative;
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-card);
-    background: var(--color-raised);
-    box-shadow: var(--shadow-card);
-    transition: border-color var(--ease-ui), box-shadow 300ms ease-out;
-  }
-
   .prose-block p + p {
     margin-top: 1rem;
   }
