@@ -198,8 +198,8 @@ everything else under the prefix is 404:
   JSON or `text/plain` (what `sendBeacon` sends). `name` must be one of `cotizacion_click`, `whatsapp_click`,
   `pdf_download`, `3d_interact`, `form_submit` (props `{modelo?}`, `modelo` matches `[A-Za-z0-9._-]{1,64}`;
   `origen`/`pagina` are refused with 400) or `visita` (one per page view, props `{origen, pagina}`, both required,
-  no `modelo`): `origen` is one of `google`, `perfil-google`, `linkedin`, `directo`, `whatsapp`, `otro`
-  (anything else is a 400) and `pagina` matches `^/[a-z0-9/-]{0,80}$` and contains no `//` (path only: no query, fragment, dot, `%` or
+  no `modelo`): `origen` is one of `google`, `perfil-google`, `linkedin`, `directo`, `whatsapp`, `otro`, `interno`
+  (`interno`: a same-site navigation, from another origenlab.cl page; anything else is a 400) and `pagina` matches `^/[a-z0-9/-]{0,80}$` and contains no `//` (path only: no query, fragment, dot, `%` or
   uppercase). No cookies, no identifiers. Other props are dropped.
 - `GET /api/stats/script.js` — only when `STATS_ORIGIN` is set; 404 otherwise.
 
@@ -207,13 +207,41 @@ everything else under the prefix is 404:
 are proxied to that self-hosted analytics origin (`STATS_EVENT_PATH` and `STATS_SCRIPT_PATH` adapt the
 upstream paths; proxy mode needs a payload adapter — Plausible `domain`/`url`, Umami `type`/`payload.website` —
 that does not exist yet, so counter mode only for now) with a fresh header set: never the browser's cookies or
-`Authorization`, never the API key or Access credentials. Empty, the Worker counts events in the `STATS_KV`
-namespace (`daily:{YYYY-MM-DD}:{name}:{modelo}`, 90-day TTL; `modelo` is kept only if listed in `STATS_MODELOS` — real slugs such as `hielscher-up400st,hielscher-up200st,hielscher-up100h`, matched case-sensitively — else `other`), answers 204 and exposes nothing readable.
-A `visita` is counted with one KV write, under `daily:{YYYY-MM-DD}:visita:{origen}:{pagina}` (KV's free plan allows
-about 1,000 writes a day; a per-source total is the sum over its pages when read), where `pagina` is kept only if listed in
-`STATS_PAGINAS` (comma-separated paths such as `/,/catalogo,/contacto`, exact and case-sensitive, so `/catalogo`
-does not match `/catalogo/`) and is `otra` otherwise. With N listed pages that is at most 6 × (N + 1) keys
-per day. Proxy mode forwards `{name, props}` as for the other events and likewise still needs the payload adapter.
+`Authorization`, never the API key or Access credentials. Proxy mode forwards `{name, props}` as validated.
+
+Empty (counter mode), the Worker writes **one Workers Analytics Engine data point per event** to the
+`STATS_AE` binding (dataset `origenlab_web_stats`), answers 204 and exposes nothing readable:
+
+| Field | Value |
+|---|---|
+| `blob1` | event name |
+| `blob2` | `modelo`, kept only if listed in `STATS_MODELOS` (real slugs such as `hielscher-up400st,hielscher-up200st,hielscher-up100h`, matched case-sensitively), else `other`; `""` when absent or for `visita` |
+| `blob3` | `origen` (`visita` only, else `""`) |
+| `blob4` | `pagina` (`visita` only), kept only if listed in `STATS_PAGINAS` (comma-separated paths such as `/,/catalogo,/contacto`, exact and case-sensitive, so `/catalogo` does not match `/catalogo/`), else `otra`; `""` for clicks |
+| `double1` | `1` |
+| `index1` | event name |
+
+There is no read-before-write, so concurrent events never lose a count. A failed `writeDataPoint` is
+swallowed (the visitor still gets 204, a fixed log line, no event data). Without the binding the event is
+validated and answered 204 and nothing is written, so a deploy without it is safe. The dataset needs no
+setup: Cloudflare creates it on the first write.
+
+Totals come from the Analytics Engine SQL API (`POST https://api.cloudflare.com/client/v4/accounts/<account_id>/analytics_engine/sql`,
+an API token with **Account Analytics: Read**). Sum `_sample_interval`, not `count()`, because Analytics Engine
+may sample at high volume:
+
+```sql
+SELECT blob1 AS evento, blob2 AS modelo, blob3 AS origen, blob4 AS pagina,
+       SUM(_sample_interval) AS total
+FROM origenlab_web_stats
+WHERE timestamp > NOW() - INTERVAL '7' DAY
+GROUP BY evento, modelo, origen, pagina
+ORDER BY total DESC
+```
+
+The free-plan allowance (data points per day, queries, retention) is not recorded here: the owner
+confirms it in the Cloudflare dashboard before relying on it.
+
 A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
 60 s. Nothing logs an IP, User-Agent or body.
 

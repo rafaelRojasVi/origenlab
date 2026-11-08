@@ -15,17 +15,24 @@ const BASE_ENV: ProxyEnv = {
   CF_ACCESS_CLIENT_SECRET: "cf-client-secret",
 };
 
-/** An in-memory KVNamespace double: only what the counter touches. */
-function makeKv() {
-  const store = new Map<string, string>();
-  const put = vi.fn(async (key: string, value: string, _opts?: unknown) => {
-    store.set(key, value);
+/** A Workers Analytics Engine dataset double: records every data point written. */
+function makeAe() {
+  const points: AnalyticsEngineDataPoint[] = [];
+  const write = vi.fn((point?: AnalyticsEngineDataPoint) => {
+    if (point) points.push(point);
   });
-  const kv = {
-    get: vi.fn(async (key: string) => store.get(key) ?? null),
-    put,
-  } as unknown as KVNamespace;
-  return { kv, store, put };
+  const ae = { writeDataPoint: write } as unknown as AnalyticsEngineDataset;
+  return { ae, write, points };
+}
+
+/** What a `SUM(_sample_interval) … GROUP BY blob1..blob4` query would return, as "a|b|c|d" → total. */
+function tally(points: AnalyticsEngineDataPoint[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const point of points) {
+    const key = (point.blobs ?? []).join("|");
+    out.set(key, (out.get(key) ?? 0) + (point.doubles?.[0] ?? 0));
+  }
+  return out;
 }
 
 function proxyEnv(extra: Record<string, unknown> = {}) {
@@ -84,11 +91,11 @@ describe("stats paths and methods (fail closed)", () => {
     ["HEAD", SCRIPT_URL],
   ])("%s %s is 404 and never reaches upstream", async (method, url) => {
     const fetchMock = stubFetch();
-    const { kv, put } = makeKv();
-    const resp = await handleStatsRequest(eventRequest(undefined, { method, url }), proxyEnv({ STATS_KV: kv }));
+    const { ae, write } = makeAe();
+    const resp = await handleStatsRequest(eventRequest(undefined, { method, url }), proxyEnv({ STATS_AE: ae }));
     expect(resp.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 
   it("returns 404 with no body and no cookies", async () => {
@@ -177,11 +184,11 @@ describe("stats event guards", () => {
     [{ name: "constructor" }],
   ])("refuses event %j (not one of the five names) with 400", async (body) => {
     const fetchMock = stubFetch();
-    const { kv, put } = makeKv();
-    const resp = await handleStatsRequest(eventRequest(body), proxyEnv({ STATS_KV: kv }));
+    const { ae, write } = makeAe();
+    const resp = await handleStatsRequest(eventRequest(body), proxyEnv({ STATS_AE: ae }));
     expect(resp.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -203,9 +210,9 @@ describe("stats event guards", () => {
     );
   });
 
-  it("knows exactly the six visit origins", () => {
+  it("knows exactly the seven visit origins", () => {
     expect([...STATS_ORIGENES].sort()).toEqual(
-      ["directo", "google", "linkedin", "otro", "perfil-google", "whatsapp"].sort(),
+      ["directo", "google", "linkedin", "otro", "perfil-google", "whatsapp", "interno"].sort(),
     );
   });
 
@@ -213,19 +220,19 @@ describe("stats event guards", () => {
     "%s still refuses origen and pagina with 400",
     async (name) => {
       const fetchMock = stubFetch();
-      const { kv, put } = makeKv();
+      const { ae, write } = makeAe();
       for (const props of [{ origen: "google" }, { pagina: "/catalogo" }, { modelo: "UP400St", origen: "google", pagina: "/" }]) {
-        const resp = await handleStatsRequest(eventRequest({ name, props }), proxyEnv({ STATS_KV: kv }));
+        const resp = await handleStatsRequest(eventRequest({ name, props }), proxyEnv({ STATS_AE: ae }));
         expect(resp.status).toBe(400);
       }
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(put).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
     },
   );
 });
 
 describe("stats visita event", () => {
-  const ORIGENES = ["google", "perfil-google", "linkedin", "directo", "whatsapp", "otro"];
+  const ORIGENES = ["google", "perfil-google", "linkedin", "directo", "whatsapp", "otro", "interno"];
 
   it.each(ORIGENES)("accepts origen %s", async (origen) => {
     stubFetch(202);
@@ -258,11 +265,11 @@ describe("stats visita event", () => {
     ["a modelo", { origen: "google", pagina: "/", modelo: "UP400St" }],
   ])("refuses %s with 400 and stores nothing", async (_label, props) => {
     const fetchMock = stubFetch();
-    const { kv, put } = makeKv();
-    const resp = await handleStatsRequest(eventRequest({ name: "visita", props }), proxyEnv({ STATS_KV: kv }));
+    const { ae, write } = makeAe();
+    const resp = await handleStatsRequest(eventRequest({ name: "visita", props }), proxyEnv({ STATS_AE: ae }));
     expect(resp.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 
   it("accepts the root path and a path of exactly 81 characters", async () => {
@@ -289,16 +296,16 @@ describe("stats visita event", () => {
 describe("stats rate limit", () => {
   it("returns 429 when the limiter says no, before upstream or counter", async () => {
     const fetchMock = stubFetch();
-    const { kv, put } = makeKv();
+    const { ae, write } = makeAe();
     const limit = vi.fn(async (_o: { key: string }) => ({ success: false }));
     const resp = await handleStatsRequest(
       eventRequest(undefined, { headers: { "CF-Connecting-IP": "203.0.113.9" } }),
-      proxyEnv({ STATS_RATELIMIT: { limit }, STATS_KV: kv }),
+      proxyEnv({ STATS_RATELIMIT: { limit }, STATS_AE: ae }),
     );
     expect(resp.status).toBe(429);
     expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(put).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 
   it("lets the request through when the limiter allows it", async () => {
@@ -381,11 +388,11 @@ describe("stats proxy mode (STATS_ORIGIN set)", () => {
     expect(resp.status).toBe(502);
   });
 
-  it("does not touch the KV counter in proxy mode", async () => {
+  it("writes no Analytics Engine data point in proxy mode", async () => {
     stubFetch(202);
-    const { kv, put } = makeKv();
-    await handleStatsRequest(eventRequest(), proxyEnv({ STATS_KV: kv }));
-    expect(put).not.toHaveBeenCalled();
+    const { ae, write } = makeAe();
+    await handleStatsRequest(eventRequest(), proxyEnv({ STATS_AE: ae }));
+    expect(write).not.toHaveBeenCalled();
   });
 
   it("honours STATS_EVENT_PATH and tolerates a trailing slash on STATS_ORIGIN", async () => {
@@ -401,11 +408,11 @@ describe("stats proxy mode (STATS_ORIGIN set)", () => {
     "treats STATS_ORIGIN %s as a misconfiguration (500), not as fallback mode",
     async (origin) => {
       const fetchMock = stubFetch();
-      const { kv, put } = makeKv();
-      const resp = await handleStatsRequest(eventRequest(), proxyEnv({ STATS_ORIGIN: origin, STATS_KV: kv }));
+      const { ae, write } = makeAe();
+      const resp = await handleStatsRequest(eventRequest(), proxyEnv({ STATS_ORIGIN: origin, STATS_AE: ae }));
       expect(resp.status).toBe(500);
       expect(fetchMock).not.toHaveBeenCalled();
-      expect(put).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
     },
   );
 
@@ -473,92 +480,79 @@ describe("stats script.js", () => {
   });
 });
 
-describe("stats fallback counter (STATS_ORIGIN empty)", () => {
-  const today = () => new Date().toISOString().slice(0, 10);
-
-  it("increments the daily counter and answers 204 with no body", async () => {
+describe("stats counter on Analytics Engine (STATS_ORIGIN empty)", () => {
+  it("writes one data point per event and answers 204 with no body", async () => {
     const fetchMock = stubFetch();
-    const { kv, store, put } = makeKv();
-    const env = { ...BASE_ENV, STATS_ORIGIN: "", STATS_KV: kv, STATS_MODELOS: "UP400St, UP200St" };
+    const { ae, write } = makeAe();
+    const env = { ...BASE_ENV, STATS_ORIGIN: "", STATS_AE: ae, STATS_MODELOS: "UP400St, UP200St" };
 
     const first = await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "UP400St" } }), env);
     expect(first.status).toBe(204);
     expect(await first.text()).toBe("");
     await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "UP400St" } }), env);
 
-    expect(store.get(`daily:${today()}:pdf_download:UP400St`)).toBe("2");
-    expect(put).toHaveBeenLastCalledWith(
-      `daily:${today()}:pdf_download:UP400St`,
-      "2",
-      { expirationTtl: 60 * 60 * 24 * 90 },
-    );
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(write).toHaveBeenLastCalledWith({
+      blobs: ["pdf_download", "UP400St", "", ""],
+      doubles: [1],
+      indexes: ["pdf_download"],
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("keys by name and modelo, with an empty modelo when none is given", async () => {
-    const { kv, store } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_MODELOS: "UP400St,UP200St" };
+  it("never reads before writing: concurrent events each land", async () => {
+    const { ae, write, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae };
+    await Promise.all(Array.from({ length: 20 }, () => handleStatsRequest(eventRequest({ name: "form_submit" }), env)));
+    expect(write).toHaveBeenCalledTimes(20);
+    expect(tally(points).get("form_submit|||")).toBe(20);
+  });
+
+  it("records name and modelo, with an empty modelo when none is given", async () => {
+    const { ae, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_MODELOS: "UP400St,UP200St" };
     await handleStatsRequest(eventRequest({ name: "form_submit" }), env);
     await handleStatsRequest(eventRequest({ name: "form_submit", props: {} }), env);
     await handleStatsRequest(eventRequest({ name: "3d_interact", props: { modelo: "UP200St" } }), env);
-    expect([...store.entries()].sort()).toEqual(
+    expect([...tally(points).entries()].sort()).toEqual(
       [
-        [`daily:${today()}:3d_interact:UP200St`, "1"],
-        [`daily:${today()}:form_submit:`, "2"],
+        ["3d_interact|UP200St||", 1],
+        ["form_submit|||", 2],
       ].sort(),
     );
   });
 
-  it("keeps an allowlisted modelo and collapses everything else to one \"other\" key", async () => {
-    const { kv, store } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_MODELOS: "UP400St,UP200St" };
+  it("keeps an allowlisted modelo and collapses everything else to \"other\"", async () => {
+    const { ae, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_MODELOS: "UP400St,UP200St" };
     for (const modelo of ["UP400St", "rnd-9f3a1", "rnd-77c0e", "rnd-0b2d4"]) {
       await handleStatsRequest(eventRequest({ name: "whatsapp_click", props: { modelo } }), env);
     }
-    expect([...store.entries()].sort()).toEqual(
+    expect([...tally(points).entries()].sort()).toEqual(
       [
-        [`daily:${today()}:whatsapp_click:UP400St`, "1"],
-        [`daily:${today()}:whatsapp_click:other`, "3"],
+        ["whatsapp_click|UP400St||", 1],
+        ["whatsapp_click|other||", 3],
       ].sort(),
     );
   });
 
   it("collapses every modelo to \"other\" when STATS_MODELOS is empty or unset", async () => {
     for (const modelos of [undefined, "", " , "]) {
-      const { kv, store } = makeKv();
-      const env = { ...BASE_ENV, STATS_KV: kv, STATS_MODELOS: modelos };
+      const { ae, points } = makeAe();
+      const env = { ...BASE_ENV, STATS_AE: ae, STATS_MODELOS: modelos };
       await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "UP400St" } }), env);
       await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "anything-else" } }), env);
-      expect([...store.keys()]).toEqual([`daily:${today()}:pdf_download:other`]);
+      expect([...tally(points).keys()]).toEqual(["pdf_download|other||"]);
     }
   });
 
-  it("starts a new key when the UTC date rolls over", async () => {
-    vi.useFakeTimers();
-    try {
-      const { kv, store } = makeKv();
-      const env = { ...BASE_ENV, STATS_KV: kv };
-      vi.setSystemTime(new Date("2026-11-07T23:59:59Z"));
-      await handleStatsRequest(eventRequest({ name: "whatsapp_click" }), env);
-      vi.setSystemTime(new Date("2026-11-08T00:00:01Z"));
-      await handleStatsRequest(eventRequest({ name: "whatsapp_click" }), env);
-      expect(store.get("daily:2026-11-07:whatsapp_click:")).toBe("1");
-      expect(store.get("daily:2026-11-08:whatsapp_click:")).toBe("1");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("still answers 204 when the KV write fails, and logs no personal data", async () => {
+  it("still answers 204 when writeDataPoint throws, and logs no personal data", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const kv = {
-      get: vi.fn(async () => { throw new Error("kv down"); }),
-      put: vi.fn(),
-    } as unknown as KVNamespace;
+    const ae = { writeDataPoint: vi.fn(() => { throw new Error("ae down"); }) } as unknown as AnalyticsEngineDataset;
     const resp = await handleStatsRequest(
       eventRequest(undefined, { headers: { "CF-Connecting-IP": "203.0.113.9", "User-Agent": "UA/1.0" } }),
-      { ...BASE_ENV, STATS_KV: kv },
+      { ...BASE_ENV, STATS_AE: ae },
     );
     expect(resp.status).toBe(204);
     const logged = JSON.stringify([...warn.mock.calls, ...error.mock.calls]);
@@ -566,125 +560,127 @@ describe("stats fallback counter (STATS_ORIGIN empty)", () => {
     expect(logged).not.toContain("UA/1.0");
   });
 
-  it("answers 204 without storing anything when no KV is bound", async () => {
+  it("answers 204 without writing anything when no dataset is bound", async () => {
     const resp = await handleStatsRequest(eventRequest(), { ...BASE_ENV });
     expect(resp.status).toBe(204);
+    const visit = await handleStatsRequest(eventRequest({ name: "visita", props: { origen: "interno", pagina: "/" } }), { ...BASE_ENV });
+    expect(visit.status).toBe(204);
   });
 
-  it("does not store an event that failed validation", async () => {
-    const { kv, put } = makeKv();
-    const resp = await handleStatsRequest(eventRequest({ name: "pageview" }), { ...BASE_ENV, STATS_KV: kv });
+  it("does not write an event that failed validation", async () => {
+    const { ae, write } = makeAe();
+    const resp = await handleStatsRequest(eventRequest({ name: "pageview" }), { ...BASE_ENV, STATS_AE: ae });
     expect(resp.status).toBe(400);
-    expect(put).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 });
 
 describe("stats visita counter", () => {
-  const today = () => new Date().toISOString().slice(0, 10);
   const visita = (origen: string, pagina: string) => eventRequest({ name: "visita", props: { origen, pagina } });
 
-  it("counts an allowlisted page under its own key with a single KV write per visit", async () => {
-    const { kv, store, put } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/, /catalogo ,/contacto" };
+  it("writes one data point per visit with origen and an allowlisted page", async () => {
+    const { ae, write, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: "/, /catalogo ,/contacto" };
     await handleStatsRequest(visita("google", "/catalogo"), env);
     await handleStatsRequest(visita("google", "/catalogo"), env);
     await handleStatsRequest(visita("google", "/"), env);
-    expect(put).toHaveBeenCalledTimes(3);
-    expect([...store.entries()].sort()).toEqual(
+    expect(write).toHaveBeenCalledTimes(3);
+    expect(write).toHaveBeenLastCalledWith({ blobs: ["visita", "", "google", "/"], doubles: [1], indexes: ["visita"] });
+    expect([...tally(points).entries()].sort()).toEqual(
       [
-        [`daily:${today()}:visita:google:/catalogo`, "2"],
-        [`daily:${today()}:visita:google:/`, "1"],
+        ["visita||google|/catalogo", 2],
+        ["visita||google|/", 1],
       ].sort(),
     );
   });
 
-  it("collapses every page outside STATS_PAGINAS to one \"otra\" key", async () => {
-    const { kv, store } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/catalogo" };
+  it("records a same-site navigation as origen «interno»", async () => {
+    const { ae, write } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: "/contacto" };
+    const resp = await handleStatsRequest(visita("interno", "/contacto"), env);
+    expect(resp.status).toBe(204);
+    expect(write).toHaveBeenCalledWith({ blobs: ["visita", "", "interno", "/contacto"], doubles: [1], indexes: ["visita"] });
+  });
+
+  it("collapses every page outside STATS_PAGINAS to \"otra\"", async () => {
+    const { ae, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: "/catalogo" };
     for (const pagina of ["/rnd-9f3a1", "/rnd-77c0e", "/catalogo/ultrasonido"]) {
       await handleStatsRequest(visita("linkedin", pagina), env);
     }
-    expect([...store.entries()].sort()).toEqual(
-      [
-        [`daily:${today()}:visita:linkedin:otra`, "3"],
-      ].sort(),
-    );
+    expect([...tally(points).entries()]).toEqual([["visita||linkedin|otra", 3]]);
   });
 
   it("matches the page list exactly: no prefix, no trailing-slash folding", async () => {
-    const { kv, store } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/catalogo" };
+    const { ae, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: "/catalogo" };
     await handleStatsRequest(visita("directo", "/catalogo/"), env);
-    expect(store.has(`daily:${today()}:visita:directo:otra`)).toBe(true);
-    expect(store.has(`daily:${today()}:visita:directo:/catalogo/`)).toBe(false);
+    expect([...tally(points).keys()]).toEqual(["visita||directo|otra"]);
   });
 
   it("collapses every page to \"otra\" when STATS_PAGINAS is empty or unset", async () => {
     for (const paginas of [undefined, "", " , "]) {
-      const { kv, store } = makeKv();
-      const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: paginas };
+      const { ae, points } = makeAe();
+      const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: paginas };
       await handleStatsRequest(visita("whatsapp", "/"), env);
       await handleStatsRequest(visita("whatsapp", "/catalogo"), env);
-      expect([...store.entries()].sort()).toEqual(
-        [
-          [`daily:${today()}:visita:whatsapp:otra`, "2"],
-        ].sort(),
-      );
+      expect([...tally(points).entries()]).toEqual([["visita||whatsapp|otra", 2]]);
     }
   });
 
-  it("ignores malformed STATS_PAGINAS entries instead of keying on them", async () => {
-    const { kv, store } = makeKv();
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: "/Catalogo,catalogo,/a?b,/ok" };
+  it("ignores malformed STATS_PAGINAS entries instead of recording them", async () => {
+    const { ae, points } = makeAe();
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: "/Catalogo,catalogo,/a?b,/ok" };
     await handleStatsRequest(visita("google", "/ok"), env);
-    expect([...store.keys()]).toEqual([`daily:${today()}:visita:google:/ok`]);
+    expect([...tally(points).keys()]).toEqual(["visita||google|/ok"]);
   });
 
-  it("keeps the keys per day within 6 origins x (allowlist + 1), whatever the client sends", async () => {
-    const { kv, store } = makeKv();
+  it("keeps the distinct (origen, pagina) values within 7 origins x (allowlist + 1), whatever the client sends", async () => {
+    const { ae, points } = makeAe();
     const allowlist = ["/", "/catalogo", "/contacto", "/nosotros"];
-    const env = { ...BASE_ENV, STATS_KV: kv, STATS_PAGINAS: allowlist.join(",") };
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_PAGINAS: allowlist.join(",") };
     const pages = [...allowlist, ...Array.from({ length: 25 }, (_, i) => `/rnd-${i}`)];
     for (const origen of STATS_ORIGENES) {
       for (const pagina of pages) await handleStatsRequest(visita(origen, pagina), env);
     }
     const maximum = STATS_ORIGENES.size * (allowlist.length + 1);
-    expect(maximum).toBe(30);
-    expect(store.size).toBe(maximum); // every combination was hit, none beyond the bound
-    expect([...store.keys()].every((key) => key.startsWith(`daily:${today()}:visita:`))).toBe(true);
+    expect(maximum).toBe(35);
+    const groups = tally(points);
+    expect(groups.size).toBe(maximum); // every combination was hit, none beyond the bound
+    expect([...groups.keys()].every((key) => key.startsWith("visita||"))).toBe(true);
   });
 
-  it("does not touch the five old events' keys", async () => {
-    const { kv, store } = makeKv();
-    await handleStatsRequest(eventRequest({ name: "whatsapp_click" }), { ...BASE_ENV, STATS_KV: kv });
-    expect([...store.keys()]).toEqual([`daily:${today()}:whatsapp_click:`]);
+  it("leaves origen and pagina empty on the five click events", async () => {
+    const { ae, points } = makeAe();
+    await handleStatsRequest(eventRequest({ name: "whatsapp_click" }), { ...BASE_ENV, STATS_AE: ae });
+    expect(points).toEqual([{ blobs: ["whatsapp_click", "", "", ""], doubles: [1], indexes: ["whatsapp_click"] }]);
   });
 
-  it("still answers 204 when the KV write fails on a visit", async () => {
+  it("still answers 204 when the write fails on a visit", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const kv = { get: vi.fn(async () => { throw new Error("kv down"); }), put: vi.fn() } as unknown as KVNamespace;
-    const resp = await handleStatsRequest(visita("google", "/"), { ...BASE_ENV, STATS_KV: kv });
+    const ae = { writeDataPoint: vi.fn(() => { throw new Error("ae down"); }) } as unknown as AnalyticsEngineDataset;
+    const resp = await handleStatsRequest(visita("google", "/"), { ...BASE_ENV, STATS_AE: ae });
     expect(resp.status).toBe(204);
   });
 });
 
 describe("worker dispatch", () => {
   it("routes origenlab.cl/api/stats/* to the stats handler", async () => {
-    const { kv, store } = makeKv();
-    const resp = await worker.fetch(eventRequest({ name: "form_submit" }), { ...BASE_ENV, STATS_KV: kv } as ProxyEnv);
+    const { ae, write } = makeAe();
+    const resp = await worker.fetch(eventRequest({ name: "form_submit" }), { ...BASE_ENV, STATS_AE: ae } as ProxyEnv);
     expect(resp.status).toBe(204);
-    expect(store.size).toBe(1);
+    expect(write).toHaveBeenCalledTimes(1);
   });
 
   it("does not let the dashboard hostname reach the stats handler or the dashboard allowlist", async () => {
     const fetchMock = stubFetch();
-    const { kv, store } = makeKv();
+    const { ae, write } = makeAe();
     const resp = await worker.fetch(
       eventRequest({ name: "form_submit" }, { url: "https://dashboard.origenlab.cl/api/stats/event" }),
-      { ...BASE_ENV, STATS_KV: kv } as ProxyEnv,
+      { ...BASE_ENV, STATS_AE: ae } as ProxyEnv,
     );
     expect(resp.status).toBe(405); // POST not on the dashboard allowlist
-    expect(store.size).toBe(0);
+    expect(write).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -309,6 +309,26 @@ def test_timing_guard_silently_succeeds_without_sending() -> None:
     assert sender.calls == []
 
 
+def test_submission_without_render_at_is_accepted_and_sent() -> None:
+    """A no-JS form has no timing signal: the request is not refused and the mail goes out."""
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    body = _body()
+    del body["render_at"]
+    r = client.post("/v2/web/quote-request", json=body)
+    assert r.status_code == 200
+    assert r.json()["status"] == "sent"
+    assert len(sender.calls) == 1
+
+
+def test_submission_with_null_render_at_is_accepted_and_sent() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(render_at=None))
+    assert r.status_code == 200
+    assert len(sender.calls) == 1
+
+
 def test_honeypot_non_empty_silently_succeeds_without_sending() -> None:
     """Non-empty honeypot field silently succeeds without calling the sender."""
     sender = _MockSender()

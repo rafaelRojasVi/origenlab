@@ -1404,8 +1404,21 @@ A payment is recorded by `invoice.paid` (payload: `amount`, `payment_id`, `fully
 by `invoice.unpaid` (payload: `payment_id`) — no new event type.
 
 A consent row (#72) is written by the mail rules when a web quote form arrives with its consent
-checkbox (`purpose = quote_request`, `source = web_quote_form`, `text_version` the version of the
+checkbox (`purpose = quote_request`, `source = web-quote-form/v1`, `text_version` the version of the
 text shown), and later by the newsletter sign-up. It writes no domain event of its own.
+
+Two limits of that record, stated so nobody reads more into it:
+
+- **Trust.** The form's notification is a self-sent mail `From: contacto@origenlab.cl` with the
+  visitor in Reply-To and the `x-origenlab-origin` marker the triage worker saw. A consent is
+  recorded on exactly the same trust as rule R7 opening a case from that mail: an own-domain
+  sender, the marker and a Reply-To. Mail that spoofs `From: contacto@` with the marker would
+  record a consent the visitor never gave, just as it would open a case; SPF/DKIM/DMARC at the
+  mailbox are what stand between a forger and either. The row proves what the form mail said,
+  not who sent it.
+- **Person.** `person_id` is the person who held the address when the row was written, or null.
+  Rows are immutable, so merging two people does **not** repoint it; a consent belongs to its
+  address, and every lookup goes by `email` (lower-cased), never by `person_id`.
 
 Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.case_set`,
 `invoice.paid`, `invoice.unpaid`.

@@ -273,6 +273,19 @@ Recorded so it is not mistaken for completeness:
   real Gmail API credentials rather than a shadow of V1 ([`DATA.md`](DATA.md) §6).
 - **Quotes.** Blocked behind the V1 durable migration.
 
+#### First-party site statistics (`origenlab.cl/api/stats/*`)
+
+The `dashboard-proxy` Worker records the site's six events (five clicks and `visita`) as Workers
+Analytics Engine data points in the dataset `origenlab_web_stats` (binding `STATS_AE` in
+`apps/dashboard-proxy/wrangler.toml`; branch `feat/web-backend-form-consent`, not deployed). Owner
+steps: **nothing to create** — there is no KV namespace any more, and the dataset is created by
+Cloudflare on the first write after the Worker deploys. A deploy without the binding is safe: events
+are validated and answered 204, nothing is written. **Reading** totals needs a Cloudflare API token
+with **Account → Account Analytics: Read** (a separate token, never the deploy token) and the SQL API
+query in `apps/dashboard-proxy/README.md` («Public stats route»). Confirm the free-plan Analytics
+Engine allowance (data points written per day, query volume, retention) in the Cloudflare dashboard
+before relying on it; the repository does not record it.
+
 ## 2. Operator roles
 
 | Role | May |

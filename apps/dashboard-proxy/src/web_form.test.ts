@@ -203,6 +203,42 @@ describe("web form handler", () => {
     expect(resp.headers.get("Location")).toBe("https://origenlab.cl/contacto/enviado/");
   });
 
+  it("no-JS post without render_at is forwarded without it and redirects (lead kept)", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const req = makeFormRequest({
+      need: "sonicador",
+      email: "ana@ficticio.invalid",
+      org: "Instituto Ficticio",
+      render_at: "",
+    });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    expect(resp.headers.get("Location")).toBe("https://origenlab.cl/contacto/enviado/");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+    const forwarded = JSON.parse(await upstreamReq.text());
+    expect("render_at" in forwarded).toBe(false);
+    expect(forwarded.email).toBe("ana@ficticio.invalid");
+  });
+
+  it("no-JS post with no render_at field at all also redirects", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const req = makeFormRequest({ need: "sonicador", email: "ana@ficticio.invalid", org: "X" });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+    expect("render_at" in JSON.parse(await upstreamReq.text())).toBe(false);
+  });
+
+  it("no-JS post with an invalid render_at drops it instead of forwarding garbage", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const req = makeFormRequest({ email: "ana@ficticio.invalid", render_at: "not-a-time" });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+    expect("render_at" in JSON.parse(await upstreamReq.text())).toBe(false);
+  });
+
   it("does not redirect when the upstream call fails (no-JS path)", async () => {
     stubUpstreamFetch(422);
     const renderAt = String(Math.floor(Date.now() / 1000) - 10);

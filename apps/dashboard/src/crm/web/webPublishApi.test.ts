@@ -29,28 +29,28 @@ describe("fetchModelSheet", () => {
 });
 
 describe("publishModelSheet", () => {
-  it("POSTs {model_id, sheet} as JSON with the session cookie", async () => {
+  it("POSTs {model_id, sheet, base_sha} as JSON with the session cookie", async () => {
     const fn = stubFetch(200, { outcome: "dispatched", run_url: "https://github.com/x/runs/1", commit_sha: "abc" });
-    await publishModelSheet({ model_id: "up400st", sheet: { slug: "up400st" } });
+    await publishModelSheet({ model_id: "up400st", sheet: { slug: "up400st" }, base_sha: "f00" });
     const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("/v2/web/publish-model-sheet");
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");
-    expect(JSON.parse(init.body as string)).toEqual({ model_id: "up400st", sheet: { slug: "up400st" } });
+    expect(JSON.parse(init.body as string)).toEqual({ model_id: "up400st", sheet: { slug: "up400st" }, base_sha: "f00" });
   });
 
   it("throws the refusal, and publishRefusal reads it from detail, error.details or the body itself", async () => {
     stubFetch(422, { detail: { code: "sheet_invalid", message: "m", errors: [{ path: "lead", message: "too long" }] } });
-    const a = publishRefusal(await publishModelSheet({ model_id: "x", sheet: {} }).catch((e) => e));
+    const a = publishRefusal(await publishModelSheet({ model_id: "x", sheet: {}, base_sha: null }).catch((e) => e));
     expect(a).toEqual({ status: 422, code: "sheet_invalid", errors: [{ path: "lead", message: "too long" }], commitSha: null });
 
     stubFetch(422, { error: { code: "validation_error", message: "m", details: { code: "sheet_invalid", errors: [{ path: "name", message: "x" }] } } });
-    const b = publishRefusal(await publishModelSheet({ model_id: "x", sheet: {} }).catch((e) => e));
+    const b = publishRefusal(await publishModelSheet({ model_id: "x", sheet: {}, base_sha: null }).catch((e) => e));
     expect(b?.code).toBe("sheet_invalid");
     expect(b?.errors).toEqual([{ path: "name", message: "x" }]);
 
     stubFetch(502, { code: "dispatch_failed", commit_sha: "abc1234" });
-    const c = publishRefusal(await publishModelSheet({ model_id: "x", sheet: {} }).catch((e) => e));
+    const c = publishRefusal(await publishModelSheet({ model_id: "x", sheet: {}, base_sha: null }).catch((e) => e));
     expect(c).toMatchObject({ status: 502, code: "dispatch_failed", commitSha: "abc1234" });
 
     expect(publishRefusal(new Error("boom"))).toBeNull();

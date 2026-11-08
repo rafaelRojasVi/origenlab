@@ -316,24 +316,35 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
  where command_name = %s and status = 'completed'
 """
 #: Web-form messages whose consent is not recorded yet: the sender and reply-to the rules read, the
-#: worker's `web_form:v1` facts, the message's own time. Bounded: a recorded one drops out.
+#: worker's `web_form:v1` facts, the message's own time. Bounded: a recorded one drops out, and a
+#: row that can never yield a consent (no Reply-To address, or a sender outside OrigenLab's own
+#: domains — `%(own_sender)s`, the SQL side of `web_form_enquirer`, which still decides) is never
+#: selected, so such rows cannot fill the batch and stall the sweep. Newest first: a backlog never
+#: delays today's submissions.
 _WEB_FORM_CONSENT_SQL = """
 select sr.id::text, sr.payload ->> 'sender',
        (select p.address_norm from comms.message_participant p
-         where p.message_id = cm.id and p.role = 'reply_to' order by p.address_norm limit 1),
+         where p.message_id = cm.id and p.role = 'reply_to' and p.address_norm like '%%_@_%%'
+         order by p.address_norm limit 1),
        wf.value, sr.payload ->> 'sent_at'
   from evidence.source_record sr
   join comms.message cm on cm.provider_message_id = sr.payload ->> 'gmail_message_id'
   join evidence.assertion wf on wf.source_record_id = sr.id and wf.kind = 'message_triage'
                             and wf.value_norm = 'web_form:v1' and wf.value ->> 'consent_version' is not null
  where sr.kind = 'gmail_message' and not sr.is_quarantined and sr.review_status <> 'rejected'
+   and lower(sr.payload ->> 'sender') ~ %(own_sender)s
+   and exists (select 1 from comms.message_participant p
+                where p.message_id = cm.id and p.role = 'reply_to' and p.address_norm like '%%_@_%%')
    and exists (select 1 from evidence.assertion a
                 where a.source_record_id = sr.id and a.kind = 'message_triage'
                   and a.value_norm ~ '^triage:v[0-9]+$' and a.value -> 'reasons' ? 'header:x-origenlab-origin')
    and not exists (select 1 from crm.consent c where c.source_record_id = sr.id and c.purpose = 'quote_request')
- order by sr.id
- limit %s
+ order by sr.created_at desc, sr.id desc
+ limit %(limit)s
 """
+#: An address on one of OrigenLab's own domains somewhere in the From (a superset of what
+#: `web_form_enquirer` accepts; it only has to exclude rows that could never pass).
+_OWN_SENDER_RE = "@(" + "|".join(d.replace(".", "\\.") for d in sorted(OWN_DOMAINS)) + ")([>,;[:space:]]|$)"
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
 AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18", "R19"})
@@ -678,7 +689,7 @@ class MailRulesRepository(V2CaseCommandRepository):
         of the visitor's submission, not of a case. Idempotent (`consent_idempotent_idx`), no
         receipt, no case side effect. Returns how many rows were written."""
         with self._write() as cur:
-            cur.execute(_WEB_FORM_CONSENT_SQL, (limit,))
+            cur.execute(_WEB_FORM_CONSENT_SQL, {"own_sender": _OWN_SENDER_RE, "limit": limit})
             pending = cur.fetchall()
             written = 0
             for record_id, sender, reply_to, facts, sent_at in pending:
@@ -690,9 +701,16 @@ class MailRulesRepository(V2CaseCommandRepository):
                     accepted_at = datetime.fromisoformat(str(stamp)) if stamp else None
                 except ValueError:
                     accepted_at = None
-                written += self.write_web_form_consent(
-                    cur, email=reply_to, text_version=str(facts["consent_version"]),
-                    accepted_at=accepted_at, source_record_id=record_id)
+                # One savepoint per row: a row the table refuses is skipped (and logged), it does
+                # not roll back the consents already written in this batch.
+                try:
+                    with cur.connection.transaction():
+                        written += self.write_web_form_consent(
+                            cur, email=reply_to, text_version=str(facts.get("consent_version", "")),
+                            accepted_at=accepted_at, source_record_id=record_id)
+                except Exception as exc:  # noqa: BLE001 - any refusal of one row is that row's alone
+                    logger.warning("web-form consent not recorded: source_record=%s error=%s",
+                                   record_id, type(exc).__name__)
             return written
 
     def apply(self, operator: OperatorIdentity, pairs: list[dict[str, str]]) -> dict[str, Any]:

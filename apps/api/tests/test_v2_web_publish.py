@@ -81,7 +81,6 @@ def calls(monkeypatch):
 
     monkeypatch.setattr(web_publish, "github_put_file", put)
     monkeypatch.setattr(web_publish, "github_dispatch_workflow", dispatch)
-    monkeypatch.setattr(web_publish, "github_file_sha", lambda config, path: None)
     return log
 
 
@@ -118,10 +117,81 @@ def test_valid_sheet_is_committed_and_deploy_dispatched(calls) -> None:
     assert TOKEN not in resp.text
 
 
-def test_existing_file_sha_is_passed_for_an_update(calls, monkeypatch) -> None:
-    monkeypatch.setattr(web_publish, "github_file_sha", lambda config, path: "abc123")
+def test_loaded_base_sha_is_passed_for_an_update(calls) -> None:
+    base = "a" * 40
+    resp = _client().post(
+        PATH, json={"model_id": "modelo-ficticio-100", "sheet": _valid_sheet(), "base_sha": base},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
+    assert calls["put"][0]["sha"] == base
+
+
+def test_receipt_carries_the_new_file_sha_for_the_next_publish(calls) -> None:
+    body = _post(_client(), _valid_sheet()).json()
+    assert body["sha"] == web_publish.git_blob_sha(calls["put"][0]["content"])
+
+
+def test_git_blob_sha_matches_git() -> None:
+    # `printf 'hello\n' | git hash-object --stdin`
+    assert web_publish.git_blob_sha(b"hello\n") == "ce013625030ba8dba906f756967f9e9ca394464a"
+
+
+def test_new_sheet_without_base_sha_creates(calls) -> None:
     assert _post(_client(), _valid_sheet()).status_code == 200
-    assert calls["put"][0]["sha"] == "abc123"
+    assert calls["put"][0]["sha"] is None
+
+
+def test_sha_is_never_re_read_before_the_write(calls) -> None:
+    """The lost-update guard: the publish uses the sha the editor loaded, not a fresh one."""
+    assert not hasattr(web_publish, "github_file_sha")
+    resp = _client().post(
+        PATH, json={"model_id": "modelo-ficticio-100", "sheet": _valid_sheet(), "base_sha": None},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    assert calls["put"][0]["sha"] is None
+
+
+def test_malformed_base_sha_is_422(calls) -> None:
+    resp = _client().post(
+        PATH, json={"model_id": "modelo-ficticio-100", "sheet": _valid_sheet(), "base_sha": "../x"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 422
+    assert calls["put"] == []
+
+
+def test_stale_base_sha_reaches_the_operator_as_commit_conflict(calls, monkeypatch) -> None:
+    """Someone edited the file after the editor loaded it: GitHub refuses the old sha."""
+    t = _FakeTransport((409, b'{"message":"is at 1111 but expected 2222"}'))
+    monkeypatch.setattr(
+        web_publish, "github_put_file",
+        lambda config, path, content, message, sha: _github.github_put_file(
+            config, path, content, message, sha, transport=t),
+    )
+    resp = _client().post(
+        PATH, json={"model_id": "modelo-ficticio-100", "sheet": _valid_sheet(), "base_sha": "b" * 40},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "commit_conflict"
+    assert json.loads(t.requests[0]["body"])["sha"] == "b" * 40
+    assert calls["dispatch"] == []
+
+
+def test_create_over_an_existing_file_is_commit_conflict(calls, monkeypatch) -> None:
+    """base_sha null but the file exists (created meanwhile): GitHub 422 → conflict, not overwrite."""
+    t = _FakeTransport((422, b'{"message":"Invalid request. \\"sha\\" wasn\'t supplied."}'))
+    monkeypatch.setattr(
+        web_publish, "github_put_file",
+        lambda config, path, content, message, sha: _github.github_put_file(
+            config, path, content, message, sha, transport=t),
+    )
+    resp = _post(_client(), _valid_sheet())
+    assert resp.status_code == 502
+    assert resp.json()["detail"]["code"] == "commit_conflict"
+    assert "sha" not in json.loads(t.requests[0]["body"])
 
 
 # ------------------------------------------------------------------ validation (nothing is written)
@@ -442,8 +512,9 @@ def test_http_client_exception_from_github_is_502(calls, monkeypatch) -> None:
         raise http.client.IncompleteRead(b"par")
 
     monkeypatch.setattr(
-        web_publish, "github_file_sha",
-        lambda config, path: _github.github_file_sha(config, path, transport=raising),
+        web_publish, "github_put_file",
+        lambda config, path, content, message, sha: _github.github_put_file(
+            config, path, content, message, sha, transport=raising),
     )
     resp = _post(_client(), _valid_sheet())
     assert resp.status_code == 502

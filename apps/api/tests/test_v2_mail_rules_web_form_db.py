@@ -166,3 +166,67 @@ def test_the_repository_methods_lower_case_the_address_and_are_idempotent(db, wo
     rows = _all(db, "select email from crm.consent where source_record_id = %s and email like 'ana.mayus%%'", record)
     assert rows == [(address.lower(),)]
     assert _interests(db, case_id) == [("MB32", "confirmed")]
+
+
+# ------------------------------------------------------------------ the consent sweep
+
+def _foreign_sender(db, record) -> None:
+    with _owner(db) as conn:
+        conn.execute("update evidence.source_record set payload = payload || '{\"sender\": \"x@elsewhere.invalid\"}' "
+                     "where id = %s", (record,))
+
+
+def _drop_reply_to(db, record) -> None:
+    with _owner(db) as conn:
+        conn.execute(
+            "delete from comms.message_participant p using comms.message cm, evidence.source_record sr "
+            "where p.message_id = cm.id and p.role = 'reply_to' and sr.id = %s "
+            "and cm.provider_message_id = sr.payload ->> 'gmail_message_id'", (record,))
+
+
+def test_rows_that_can_never_yield_a_consent_do_not_fill_the_batch(db, world) -> None:
+    """Newer dead rows (foreign sender, no Reply-To) are excluded in SQL: a batch of one still
+    reaches the real submission behind them."""
+    _repo(db).record_web_form_consents(limit=10_000)  # clear whatever earlier tests left pending
+    good, visitor = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    for _ in range(3):
+        dead, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+        _foreign_sender(db, dead)
+    no_reply, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    _drop_reply_to(db, no_reply)
+    assert _repo(db).record_web_form_consents(limit=1) == 1
+    assert [c[0] for c in _consents(db, good)] == [visitor]
+
+
+def test_the_sweep_takes_the_newest_submission_first(db, world) -> None:
+    _repo(db).record_web_form_consents(limit=10_000)
+    older, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    newer, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    assert _repo(db).record_web_form_consents(limit=1) == 1
+    assert len(_consents(db, newer)) == 1
+    assert _consents(db, older) == []
+    assert _repo(db).record_web_form_consents(limit=1) == 1
+    assert len(_consents(db, older)) == 1
+
+
+def test_one_failing_row_does_not_roll_back_the_batch(db, world, monkeypatch) -> None:
+    _repo(db).record_web_form_consents(limit=10_000)
+    first, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    bad, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    last, _v = _form(db, world, consent_version=VERSION, accepted_at=STAMP)
+    repo = _repo(db)
+    real = repo.write_web_form_consent
+
+    def flaky(cur, **kw):
+        if kw["source_record_id"] == bad:
+            cur.execute("select 1 / 0")  # aborts the transaction, as a refused insert would
+        return real(cur, **kw)
+
+    monkeypatch.setattr(repo, "write_web_form_consent", flaky)
+    assert repo.record_web_form_consents() == 2
+    assert len(_consents(db, first)) == 1
+    assert len(_consents(db, last)) == 1
+    assert _consents(db, bad) == []
+    monkeypatch.undo()
+    assert _repo(db).record_web_form_consents() == 1  # retried on the next sweep
+    assert len(_consents(db, bad)) == 1

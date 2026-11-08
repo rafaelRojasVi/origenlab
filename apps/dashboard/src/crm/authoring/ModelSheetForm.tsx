@@ -32,6 +32,7 @@ function publishFailure(err: unknown): { text: string; errors: SchemaError[] } {
   if (r.code === "sheet_invalid") return { text: "No se publicó: la ficha no cumple el esquema. Revisa los campos marcados.", errors: normalizeErrors(r.errors) };
   if (r.code === "slug_mismatch") return { text: "No se publicó: el identificador de la ficha no coincide con el del modelo.", errors: [] };
   if (r.status === 429 || r.code === "publish_rate_limited") return { text: "Demasiadas publicaciones seguidas. Espera un momento y vuelve a intentar.", errors: [] };
+  if (r.code === "commit_conflict") return { text: "La ficha cambió en GitHub; vuelve a cargar y publica de nuevo.", errors: [] };
   if (r.code === "commit_failed") return { text: "GitHub no guardó la ficha. No se publicó nada; vuelve a intentar.", errors: [] };
   if (r.code === "dispatch_failed") {
     const saved = r.commitSha ? ` (cambio ${r.commitSha.slice(0, 7)})` : "";
@@ -105,6 +106,8 @@ export function ModelSheetForm({ modelId, read }: { modelId: string; read: Model
   const [baseline, setBaseline] = useState<ModelSheet>(initial.sheet);
   const [baselineErrors, setBaselineErrors] = useState<SchemaError[]>(() => (read && !read.valid ? normalizeErrors(read.errors) : []));
   const [errors, setErrors] = useState<SchemaError[]>(baselineErrors);
+  // The sha the next publish is based on: the loaded file's, then the one this page just published.
+  const baseSha = useRef<string | null>(read?.sha ?? null);
   const sending = useRef(false);
   const summary = useRef<HTMLDivElement>(null);
   const [failures, setFailures] = useState(0);
@@ -127,7 +130,8 @@ export function ModelSheetForm({ modelId, read }: { modelId: string; read: Model
     setBusy(true);
     setFailure(null);
     try {
-      const receipt = await publishModelSheet({ model_id: modelId, sheet: toPayload(draft) });
+      const receipt = await publishModelSheet({ model_id: modelId, sheet: toPayload(draft), base_sha: baseSha.current });
+      if (receipt.sha) baseSha.current = receipt.sha;
       setErrors([]);
       setBaseline(draft);
       setBaselineErrors([]);

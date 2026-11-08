@@ -70,7 +70,9 @@ class WebQuoteFormRequest(BaseModel):
     product: str | None = None
     #: Version of the consent text the visitor accepted, e.g. «consent-v1-2026-11».
     consent_version: str | None = None
-    render_at: float
+    #: Seconds since the epoch when the page rendered. ``None`` = no timing signal (the
+    #: form was sent without JavaScript); such a submission is not refused.
+    render_at: float | None = None
     #: Honeypot field — must be absent or empty from real browsers.
     hp: str = ""
 
@@ -263,9 +265,10 @@ def post_web_quote_request(body: WebQuoteFormRequest, request: Request) -> Any:
     Returns 429 when a rate cap is exceeded.
     """
     # --- bot guards (fail-open: pretend to send, reveal nothing) ---
-    elapsed = time.time() - body.render_at
-    if elapsed < _BOT_TIMING_THRESHOLD_SECONDS:
-        return {"status": "sent"}
+    if body.render_at is not None:
+        elapsed = time.time() - body.render_at
+        if elapsed < _BOT_TIMING_THRESHOLD_SECONDS:
+            return {"status": "sent"}
 
     if body.hp:
         return {"status": "sent"}

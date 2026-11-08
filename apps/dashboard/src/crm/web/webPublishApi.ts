@@ -51,9 +51,19 @@ export interface PublishReceipt {
   outcome: "dispatched";
   run_url: string;
   commit_sha: string;
+  /** The published file's sha: the `base_sha` of the next publish from the same page. */
+  sha?: string;
 }
 
-export async function publishModelSheet(body: { model_id: string; sheet: Record<string, unknown> }): Promise<PublishReceipt> {
+export interface PublishRequest {
+  model_id: string;
+  sheet: Record<string, unknown>;
+  /** The sha of the file the editor loaded (`null` for a new sheet): GitHub refuses the write if the
+   * file changed since, so a concurrent edit is never silently overwritten (`commit_conflict`). */
+  base_sha: string | null;
+}
+
+export async function publishModelSheet(body: PublishRequest): Promise<PublishReceipt> {
   const res = await fetch(operatorApiUrl(WEB_PUBLISH_PATH), {
     method: "POST",
     credentials: "include",
@@ -70,7 +80,7 @@ export async function publishModelSheet(body: { model_id: string; sheet: Record<
 
 export interface PublishRefusal {
   status: number;
-  /** `sheet_invalid`, `slug_mismatch`, `publish_rate_limited`, `commit_failed`, `dispatch_failed`, … */
+  /** `sheet_invalid`, `slug_mismatch`, `publish_rate_limited`, `commit_conflict`, `commit_failed`, `dispatch_failed`, … */
   code: string;
   errors: SchemaError[];
   commitSha: string | null;

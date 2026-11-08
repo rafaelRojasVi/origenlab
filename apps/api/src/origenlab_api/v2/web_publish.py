@@ -13,10 +13,13 @@ Same role gate as the CRM authoring writers: an active `sales` or `admin` operat
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import logging
 import threading
 import time
+from concurrent.futures import Future
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -30,7 +33,6 @@ from origenlab_api.v2._github import (
     GithubError,
     GithubPublishConfig,
     github_dispatch_workflow,
-    github_file_sha,
     github_latest_deploy_run,
     github_put_file,
     github_read_file,
@@ -73,9 +75,13 @@ _VALIDATOR = Draft7Validator(MODEL_SCHEMA)
 _clock = time.monotonic
 _last_publish: dict[str, float] = {}
 _lock = threading.Lock()
+# Guards `_status_cache` and `_status_inflight` only; it is never held across the GitHub call.
 _status_lock = threading.Lock()
 # (taken_at, answer, failure): exactly one of answer/failure is set.
 _status_cache: tuple[float, dict[str, Any] | None, dict[str, Any] | None] | None = None
+# Single flight: the one GitHub read in progress. Every poller that arrives meanwhile awaits this
+# same future (no thread is held while waiting) and gets the same (answer, failure).
+_status_inflight: Future | None = None
 
 
 def reset_rate_guard() -> None:
@@ -84,15 +90,20 @@ def reset_rate_guard() -> None:
 
 
 def reset_status_cache() -> None:
-    global _status_cache
+    global _status_cache, _status_inflight
     with _status_lock:
         _status_cache = None
+        _status_inflight = None
 
 
 class PublishModelSheetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model_id: Annotated[str, Field(pattern=r"^[a-z0-9-]+$", max_length=60)]
     sheet: dict[str, Any]
+    #: The blob sha of the file the editor loaded (`GET /model-sheet` → `sha`); `None` for a new
+    #: sheet. It is sent to GitHub as-is, so an edit made in between is refused (`commit_conflict`)
+    #: instead of silently overwritten. Never re-read here: that would defeat the check.
+    base_sha: Annotated[str | None, Field(pattern=r"^[0-9a-f]{40,64}$")] = None
 
 
 def _schema_errors(sheet: dict[str, Any]) -> list[dict[str, str]]:
@@ -107,6 +118,12 @@ def _schema_errors(sheet: dict[str, Any]) -> list[dict[str, str]]:
             found.append({"path": name, "message": f"at most {cap} items are allowed ({len(value)} given)"})
     found.sort(key=lambda e: e["path"])
     return found[:MAX_ERRORS]
+
+
+def git_blob_sha(content: bytes) -> str:
+    """The sha GitHub gives a file with these bytes (a git blob object id), so the editor can publish
+    again from the same page without reloading: the next publish sends it as `base_sha`."""
+    return hashlib.sha1(b"blob %d\0" % len(content) + content, usedforsecurity=False).hexdigest()
 
 
 def _claim(model_id: str) -> None:
@@ -225,8 +242,7 @@ def _publish(config: GithubPublishConfig, operator: Any, body: PublishModelSheet
     commit_sha: str | None = None
     try:
         try:
-            sha = github_file_sha(config, path)
-            commit_sha = github_put_file(config, path, content, message, sha)
+            commit_sha = github_put_file(config, path, content, message, body.base_sha)
             run_url = github_dispatch_workflow(config)
         except GithubError as exc:
             logger.warning(
@@ -244,7 +260,7 @@ def _publish(config: GithubPublishConfig, operator: Any, body: PublishModelSheet
         "web publish: operator=%s role=%s model_id=%s commit=%s",
         operator.operator_id, operator.role, body.model_id, commit_sha,
     )
-    return {"outcome": "dispatched", "run_url": run_url, "commit_sha": commit_sha}
+    return {"outcome": "dispatched", "run_url": run_url, "commit_sha": commit_sha, "sha": git_blob_sha(content)}
 
 
 @web_publish_router.get("/model-sheet/{model_id}")
@@ -298,30 +314,69 @@ def _map_run(run: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _cached_status(now: float) -> tuple[dict[str, Any] | None, dict[str, Any] | None] | None:
+    """The cached (answer, failure) while it is fresh; caller holds `_status_lock`."""
+    if _status_cache is None:
+        return None
+    taken_at, answer, failure = _status_cache
+    if now - taken_at < (STATUS_CACHE_SECONDS if answer is not None else STATUS_FAILURE_SECONDS):
+        return answer, failure
+    return None
+
+
+def _refresh_status(config: GithubPublishConfig, flight: Future) -> None:
+    """Runs in a worker thread, detached from any one request: a poller that disconnects cannot
+    leave the others waiting on a flight nobody finishes."""
+    global _status_cache, _status_inflight
+    answer: dict[str, Any] | None = None
+    failure: dict[str, Any] | None = None
+    try:
+        answer = _map_run(github_latest_deploy_run(config))
+    except GithubError as exc:
+        logger.warning("web publish status failed: code=%s status=%s", exc.code, exc.status)
+        failure = {"code": exc.code, "message": str(exc)}
+    except BaseException as exc:  # pragma: no cover - a bug, not GitHub; still release the waiters
+        with _status_lock:
+            if _status_inflight is flight:
+                _status_inflight = None
+        flight.set_exception(exc)
+        return
+    with _status_lock:
+        # Stamped after the call: a 20 s timeout must not leave an already-expired entry.
+        _status_cache = (_clock(), answer, failure)
+        if _status_inflight is flight:
+            _status_inflight = None
+    flight.set_result((answer, failure))
+
+
+def _answer(outcome: tuple[dict[str, Any] | None, dict[str, Any] | None]) -> dict[str, Any]:
+    answer, failure = outcome
+    if answer is not None:
+        return answer
+    raise HTTPException(status_code=502, detail=dict(failure or {}))
+
+
 @web_publish_router.get("/publish-status/{model_id}")
-def get_publish_status(model_id: ModelId, operator: Deciding, request: Request) -> dict[str, Any]:
+async def get_publish_status(model_id: ModelId, operator: Deciding, request: Request) -> dict[str, Any]:
     """State of the latest deploy run. `model_id` is accepted for symmetry with the other routes and
     for future filtering; today the latest `web-deploy.yml` dispatch is returned whichever model it
     was for (a dispatch carries no model). One GitHub call per 10 s per process, however many
-    editors poll; a failure is remembered for 5 s, so pollers queued behind a slow call get the
-    same 502 at once instead of each waiting out their own."""
-    global _status_cache
+    editors poll: concurrent pollers share one in-flight read (single flight) and await it without
+    holding a thread each; a failure is remembered for 5 s."""
+    global _status_inflight
     config = _config(request)
+    start = False
     with _status_lock:
-        now = _clock()
-        if _status_cache is not None:
-            taken_at, answer, failure = _status_cache
-            if now - taken_at < (STATUS_CACHE_SECONDS if answer is not None else STATUS_FAILURE_SECONDS):
-                if answer is not None:
-                    return answer
-                raise HTTPException(status_code=502, detail=dict(failure or {}))
-        try:
-            answer = _map_run(github_latest_deploy_run(config))
-        except GithubError as exc:
-            logger.warning("web publish status failed: code=%s status=%s", exc.code, exc.status)
-            failure = {"code": exc.code, "message": str(exc)}
-            # Stamped after the call: a 20 s timeout must not leave an already-expired entry.
-            _status_cache = (_clock(), None, failure)
-            raise HTTPException(status_code=502, detail=dict(failure)) from None
-        _status_cache = (now, answer, None)
-        return answer
+        cached = _cached_status(_clock())
+        if cached is not None:
+            return _answer(cached)
+        flight = _status_inflight
+        if flight is None:
+            flight = Future()
+            flight.set_running_or_notify_cancel()  # a cancelled waiter can then never cancel it
+            _status_inflight = flight
+            start = True
+    if start:
+        asyncio.get_running_loop().run_in_executor(None, _refresh_status, config, flight)
+    # shield: one poller going away must not cancel the read the others are waiting for.
+    return _answer(await asyncio.shield(asyncio.wrap_future(flight)))

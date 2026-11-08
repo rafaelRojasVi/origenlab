@@ -14,7 +14,10 @@ import type { ProxyEnv } from "./proxy";
  * Two modes, picked by `STATS_ORIGIN`:
  *   - set: a sanitized event is forwarded to the self-hosted analytics origin (Umami or Plausible
  *     CE; the Worker does not care which, see STATS_EVENT_PATH / STATS_SCRIPT_PATH);
- *   - empty: the Worker counts the event itself in KV (daily counters) and answers 204.
+ *   - empty: the Worker records the event itself as one Workers Analytics Engine data point
+ *     (binding `STATS_AE`, dataset `origenlab_web_stats`) and answers 204. Totals are read with the
+ *     Analytics Engine SQL API (README). No read-before-write, so concurrent events never lose a
+ *     count; without the binding the event is validated and answered 204, and nothing is written.
  *
  * Nothing here logs an IP, a User-Agent or a body. The analytics origin never receives a cookie,
  * an `Authorization` header, the API key or Access credentials: upstream headers are built from
@@ -38,6 +41,8 @@ export const STATS_ORIGENES: ReadonlySet<string> = new Set([
   "directo",
   "whatsapp",
   "otro",
+  // Same-site navigation: the visitor came from another origenlab.cl page.
+  "interno",
 ]);
 
 const STATS_SITE_ORIGIN = "https://origenlab.cl";
@@ -45,7 +50,6 @@ const EVENT_PATH = "/api/stats/event";
 const SCRIPT_PATH = "/api/stats/script.js";
 const DEFAULT_UPSTREAM_EVENT_PATH = "/api/event"; // Plausible CE; Umami is "/api/send"
 const DEFAULT_UPSTREAM_SCRIPT_PATH = "/js/script.js"; // Plausible CE; Umami is "/script.js"
-const COUNTER_TTL_SECONDS = 60 * 60 * 24 * 90;
 const PAGINA_RE = /^(?!.*\/\/)\/[a-z0-9/-]{0,80}$/;
 const MODELO_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const UPSTREAM_PATH_RE = /^\/[A-Za-z0-9._\-/]*$/;
@@ -63,10 +67,11 @@ export type StatsEnv = ProxyEnv & {
   /** Comma-separated page paths a visit counter may key on; any other page counts as "otra". */
   STATS_PAGINAS?: string;
   STATS_RATELIMIT?: RateLimit;
-  STATS_KV?: KVNamespace;
+  /** Workers Analytics Engine dataset `origenlab_web_stats` (counter mode). Optional: absent = no write. */
+  STATS_AE?: AnalyticsEngineDataset;
 };
 
-interface StatsEvent {
+export interface StatsEvent {
   name: string;
   modelo: string | undefined;
   origen: string | undefined;
@@ -173,36 +178,33 @@ function allowedPaginas(raw: string | undefined): Set<string> {
 }
 
 /**
- * Best-effort daily counter, `daily:{YYYY-MM-DD}:{name}:{modelo}`. The modelo is part of the key only
- * when it is in `STATS_MODELOS`; any other value counts as "other", so a client cannot mint keys
- * (an event with no modelo keeps the empty segment). Read-then-write, so two events
- * landing in the same instant can lose one count: acceptable for coarse click totals, and
- * counting never blocks or fails the visitor's request.
+ * The Analytics Engine data point of one event, counter mode:
+ *   blobs   [name, modelo | "", origen | "", pagina | ""]
+ *   doubles [1]
+ *   indexes [name]
+ * Cardinality stays bounded: a modelo outside `STATS_MODELOS` is recorded as
+ * "other", a page outside `STATS_PAGINAS` as "otra", and origen is a closed set of seven.
  */
-async function bump(kv: KVNamespace, key: string): Promise<void> {
-  try {
-    const current = parseInt((await kv.get(key)) ?? "0", 10);
-    await kv.put(key, String(Number.isFinite(current) ? current + 1 : 1), {
-      expirationTtl: COUNTER_TTL_SECONDS,
-    });
-  } catch {
-    console.warn("stats_counter_failed"); // a fixed string: no key, no IP, no body
+export function statsDataPoint(event: StatsEvent, env: StatsEnv): AnalyticsEngineDataPoint {
+  let modelo = "";
+  let origen = "";
+  let pagina = "";
+  if (event.name === "visita" && event.origen !== undefined && event.pagina !== undefined) {
+    origen = event.origen;
+    pagina = allowedPaginas(env.STATS_PAGINAS).has(event.pagina) ? event.pagina : OTHER_PAGINA;
+  } else if (event.modelo !== undefined) {
+    modelo = allowedModelos(env.STATS_MODELOS).has(event.modelo) ? event.modelo : OTHER_MODELO;
   }
+  return { blobs: [event.name, modelo, origen, pagina], doubles: [1], indexes: [event.name] };
 }
 
-async function incrementCounter(kv: KVNamespace, event: StatsEvent, env: StatsEnv): Promise<void> {
-  const today = new Date().toISOString().slice(0, 10);
-  if (event.name === "visita" && event.origen !== undefined && event.pagina !== undefined) {
-    // ONE write per visit (KV's free plan allows about 1,000 writes a day). Both segments are bounded:
-    // origen is a closed set of six, pagina is STATS_PAGINAS or "otra", so at most
-    // 6 x (STATS_PAGINAS size + 1) keys per day. A per-source total is the sum over its pages at read time.
-    const pagina = allowedPaginas(env.STATS_PAGINAS).has(event.pagina) ? event.pagina : OTHER_PAGINA;
-    await bump(kv, `daily:${today}:visita:${event.origen}:${pagina}`);
-    return;
+/** One write per event, fire-and-forget; counting never blocks or fails the visitor's request. */
+function recordEvent(dataset: AnalyticsEngineDataset, event: StatsEvent, env: StatsEnv): void {
+  try {
+    dataset.writeDataPoint(statsDataPoint(event, env));
+  } catch {
+    console.warn("stats_write_failed"); // a fixed string: no event, no IP, no body
   }
-  const known = allowedModelos(env.STATS_MODELOS);
-  const segment = event.modelo === undefined ? "" : known.has(event.modelo) ? event.modelo : OTHER_MODELO;
-  await bump(kv, `daily:${today}:${event.name}:${segment}`);
 }
 
 export async function handleStatsRequest(request: Request, env: StatsEnv): Promise<Response> {
@@ -279,7 +281,7 @@ export async function handleStatsRequest(request: Request, env: StatsEnv): Promi
   if (event === null) return empty(400);
 
   if (!proxyMode) {
-    if (env.STATS_KV) await incrementCounter(env.STATS_KV, event, env);
+    if (env.STATS_AE) recordEvent(env.STATS_AE, event, env);
     return empty(204);
   }
 

@@ -254,6 +254,89 @@ def test_status_recovers_after_a_cached_failure(monkeypatch) -> None:
     assert client.get(STATUS_URL, headers=HEADERS).json()["status"] == "queued"
 
 
+def _run_pollers(n: int, *, cancel_one: bool = False):
+    """Call the status route `n` times concurrently on one event loop whose default executor has a
+    single thread: the shared GitHub read gets it, the waiters need none."""
+    import asyncio
+    import types
+    from concurrent.futures import ThreadPoolExecutor
+
+    request = types.SimpleNamespace(app=types.SimpleNamespace(state=types.SimpleNamespace(web_publish_config=_config())))
+
+    async def poll():
+        try:
+            return await web_publish.get_publish_status("modelo-ficticio-100", _operator("sales"), request)
+        except Exception as exc:  # HTTPException for a shared failure
+            return exc
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        tasks = [asyncio.ensure_future(poll()) for _ in range(n)]
+        if cancel_one:
+            await asyncio.sleep(0.05)
+            tasks[0].cancel()
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    return asyncio.run(main())
+
+
+def test_concurrent_pollers_share_one_github_read(monkeypatch) -> None:
+    import time
+
+    calls = []
+
+    def slow(config):
+        calls.append(1)
+        time.sleep(0.2)
+        return _run("in_progress")
+
+    monkeypatch.setattr(web_publish, "github_latest_deploy_run", slow)
+    results = _run_pollers(8)
+    assert len(calls) == 1
+    assert all(r == results[0] for r in results)
+    assert results[0]["status"] == "running"
+    assert web_publish._status_inflight is None
+
+
+def test_concurrent_pollers_share_one_failure(monkeypatch) -> None:
+    import time
+
+    from fastapi import HTTPException
+
+    calls = []
+
+    def slow_fail(config):
+        calls.append(1)
+        time.sleep(0.1)
+        raise _github.GithubError("status_failed", "GitHub answered HTTP 500 reading the runs", 500)
+
+    monkeypatch.setattr(web_publish, "github_latest_deploy_run", slow_fail)
+    results = _run_pollers(5)
+    assert len(calls) == 1
+    assert all(isinstance(r, HTTPException) and r.status_code == 502 for r in results)
+    assert {r.detail["code"] for r in results} == {"status_failed"}
+
+
+def test_a_poller_that_goes_away_does_not_strand_the_others(monkeypatch) -> None:
+    import asyncio
+    import time
+
+    calls = []
+
+    def slow(config):
+        calls.append(1)
+        time.sleep(0.2)
+        return _run("queued")
+
+    monkeypatch.setattr(web_publish, "github_latest_deploy_run", slow)
+    results = _run_pollers(4, cancel_one=True)
+    assert isinstance(results[0], asyncio.CancelledError)
+    assert all(r["status"] == "queued" for r in results[1:])
+    assert len(calls) == 1
+    assert web_publish._status_inflight is None
+
+
 # ------------------------------------------------------------------------------- _github helpers
 
 class _FakeTransport:

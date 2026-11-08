@@ -184,6 +184,7 @@ describe("«Catálogo web»", () => {
     await waitFor(() => expect(publishModelSheet).toHaveBeenCalledTimes(1));
     const body = publishModelSheet.mock.calls[0][0];
     expect(body.model_id).toBe("modelo-ficticio");
+    expect(body.base_sha).toBe("abc123");
     expect(body.sheet).toEqual({
       ...SHEET,
       name: "Modelo Ficticio 200",
@@ -225,6 +226,36 @@ describe("«Catálogo web»", () => {
     publishModelSheet.mockRejectedValueOnce(refusal(502, { code: "commit_failed" }));
     fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
     expect(await screen.findByText(/GitHub no guardó la ficha/)).toBeInTheDocument();
+  });
+
+  it("sends base_sha null for a new sheet", async () => {
+    fetchModelSheet.mockResolvedValue(null);
+    renderPage();
+    await findF("Titular");
+    fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
+    await waitFor(() => expect(publishModelSheet).toHaveBeenCalledTimes(1));
+    expect(publishModelSheet.mock.calls[0][0].base_sha).toBeNull();
+  });
+
+  it("asks to reload when the sheet changed in GitHub since it was loaded", async () => {
+    publishModelSheet.mockRejectedValueOnce(refusal(502, { detail: { code: "commit_conflict", message: "m" } }));
+    renderPage();
+    await findF("Titular");
+    fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
+    expect(await screen.findByText("La ficha cambió en GitHub; vuelve a cargar y publica de nuevo.")).toBeInTheDocument();
+    expect(screen.queryByText("Publicado — despliegue en curso")).not.toBeInTheDocument();
+  });
+
+  it("bases the next publish on the sha the last publish wrote", async () => {
+    publishModelSheet.mockResolvedValueOnce({ outcome: "dispatched", run_url: "https://github.com/x/runs/1", commit_sha: "def456", sha: "fff999" });
+    renderPage();
+    await findF("Titular");
+    fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
+    await screen.findByText("Publicado — despliegue en curso");
+    fireEvent.click(screen.getByRole("button", { name: "Publicar en el sitio" }));
+    await waitFor(() => expect(publishModelSheet).toHaveBeenCalledTimes(2));
+    expect(publishModelSheet.mock.calls[0][0].base_sha).toBe("abc123");
+    expect(publishModelSheet.mock.calls[1][0].base_sha).toBe("fff999");
   });
 
   it("sends one request when the form is submitted twice before the first answer", async () => {
