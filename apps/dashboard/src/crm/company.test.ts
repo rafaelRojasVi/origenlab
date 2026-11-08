@@ -15,7 +15,12 @@ describe("parseWhatsappNumber", () => {
     expect(parseWhatsappNumber("0056 9 1234 5678")).toBe("56912345678");
   });
   it("is null for empty, missing or malformed values", () => {
-    for (const bad of [undefined, null, "", "   ", "abc", "1234567", "5691234567890123", "56 9 12x4 5678"]) {
+    for (const bad of [undefined, null, "", "   ", "abc", "1234567", "5691234567890123", "56 9 12x4 5678", "5612345", "569123456789"]) {
+      expect(parseWhatsappNumber(bad)).toBeNull();
+    }
+  });
+  it("is Chile-only: a number without the country code, or from another country, is null", () => {
+    for (const bad of ["912345678", "0912345678", "14155550100", "+1 415 555 0100"]) {
       expect(parseWhatsappNumber(bad)).toBeNull();
     }
   });

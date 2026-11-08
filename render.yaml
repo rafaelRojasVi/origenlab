@@ -74,6 +74,9 @@ services:
     envVars:
       - key: VITE_ORIGENLAB_API_BASE_URL
         value: https://dashboard.origenlab.cl/api
+      # WhatsApp line + QR on the quotation PDF (digits with country code); set in the Render dashboard.
+      - key: VITE_ORIGENLAB_WHATSAPP
+        sync: false
     routes:
       - type: headers
         source: /*

@@ -96,6 +96,9 @@ function penalty(m: QrMatrix): number {
       if (run === 5) score += 3;
       else if (run > 5) score += 1;
     }
+    // Rule 3: a finder-like 1:1:3:1:1 run with four light modules on either side; outside the
+    // symbol counts as light (ISO/IEC 18004, as in Nayuki), so patterns touching an edge count too.
+    s = `0000${s}0000`;
     score += 40 * ((s.match(/(?=00001011101|10111010000)/g) ?? []).length);
   };
   for (let i = 0; i < n; i++) {
@@ -110,8 +113,12 @@ function penalty(m: QrMatrix): number {
   return score + 10 * Math.max(0, k);
 }
 
-/** Encode `text` (UTF-8) as a QR symbol; `true` is a dark module. No quiet zone included. */
-export function encodeQr(text: string): QrMatrix {
+/**
+ * Encode `text` (UTF-8) as a QR symbol; `true` is a dark module. No quiet zone included.
+ * `mask` (0-7) forces a mask pattern, for tests against a reference encoder; default: the best by penalty.
+ */
+export function encodeQr(text: string, mask?: number): QrMatrix {
+  if (mask !== undefined && !(Number.isInteger(mask) && mask >= 0 && mask < 8)) throw new RangeError(`QR: mask ${mask} is not 0-7`);
   const bytes = new TextEncoder().encode(text);
   const version = M_TABLE.findIndex(([total, ec, blocks]) => bytes.length <= total - ec * blocks - 2) + 1;
   if (version === 0) throw new RangeError(`QR: ${bytes.length} bytes do not fit version ${MAX_VERSION} at level M`);
@@ -179,15 +186,15 @@ export function encodeQr(text: string): QrMatrix {
 
   let best: QrMatrix | null = null;
   let bestScore = Infinity;
-  for (let mask = 0; mask < 8; mask++) {
-    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && MASKS[mask](y, x)) grid[y][x] = !grid[y][x];
-    drawFormat(mask);
+  for (const m of mask === undefined ? [0, 1, 2, 3, 4, 5, 6, 7] : [mask]) {
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && MASKS[m](y, x)) grid[y][x] = !grid[y][x];
+    drawFormat(m);
     const score = penalty(grid);
     if (score < bestScore) {
       bestScore = score;
       best = grid.map((row) => row.slice());
     }
-    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && MASKS[mask](y, x)) grid[y][x] = !grid[y][x]; // undo
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && MASKS[m](y, x)) grid[y][x] = !grid[y][x]; // undo
   }
   return best!;
 }

@@ -77,6 +77,83 @@ describe("Reed-Solomon", () => {
   });
 });
 
+/**
+ * Golden symbols from an independent encoder (node-qrcode 1.5.4, byte mode, level M), not derived
+ * from this module's own formulas. "#" is dark. Both encoders choose the same mask on their own here,
+ * so the comparison covers mask selection too; the forced-mask call pins the layout alone.
+ */
+const GOLDEN: Array<{ text: string; mask: number; rows: string[] }> = [
+  {
+    text: "HELLO WORLD", // version 1, mask 4
+    mask: 4,
+    rows: [
+      "#######.##..#.#######",
+      "#.....#....#..#.....#",
+      "#.###.#..#.#..#.###.#",
+      "#.###.#.#..#..#.###.#",
+      "#.###.#.###.#.#.###.#",
+      "#.....#.#..#..#.....#",
+      "#######.#.#.#.#######",
+      "........#..##........",
+      "#...#.######.#####..#",
+      "...#....#.###....####",
+      "..######..##.##.#..#.",
+      "#####...##...#.......",
+      "#####.#.#.#.#.##..##.",
+      "........#.#.####.#.##",
+      "#######.###.#.#.##.#.",
+      "#.....#..#.###.##..##",
+      "#.###.#.##.#.##...##.",
+      "#.###.#..#..#...##.##",
+      "#.###.#..###...###...",
+      "#.....#....#.#.......",
+      "#######.#########.#.#",
+    ],
+  },
+  {
+    text: "https://wa.me/56912345678", // version 2, mask 2
+    mask: 2,
+    rows: [
+      "#######....#..#...#######",
+      "#.....#....#...##.#.....#",
+      "#.###.#.##.##.##..#.###.#",
+      "#.###.#.#..#.#..#.#.###.#",
+      "#.###.#.###.#.#...#.###.#",
+      "#.....#.#...##.#..#.....#",
+      "#######.#.#.#.#.#.#######",
+      "........##.#....#........",
+      "#.#####..#####.##.#####..",
+      "#.##...#.##.#.#....#...#.",
+      "...#.######..#.##.####.##",
+      "#.##.#.###.#..######....#",
+      ".#.#.##..##.##.##.###.###",
+      "##..#...###...#....#.#.#.",
+      "#.#..##..#.##.####.###.##",
+      "#.#.#..##..#....#..##...#",
+      "#..#####...###..#####.#..",
+      "........##..#.###...##...",
+      "#######...#.#.#.#.#.#.###",
+      "#.....#.#.#.#.###...##.##",
+      "#.###.#.####.#.######.#..",
+      "#.###.#.#####.#..##.#####",
+      "#.###.#.##...##......##.#",
+      "#.....#...##...###.###..#",
+      "#######.###..#...########",
+    ],
+  },
+];
+
+describe("against a reference encoder", () => {
+  const draw = (m: boolean[][]) => m.map((row) => row.map((dark) => (dark ? "#" : ".")).join(""));
+  it.each(GOLDEN)("$text matches module by module", ({ text, mask, rows }) => {
+    expect(draw(encodeQr(text, mask))).toEqual(rows);
+    expect(draw(encodeQr(text))).toEqual(rows);
+  });
+  it("refuses a mask outside 0-7", () => {
+    expect(() => encodeQr("hello", 8)).toThrow(RangeError);
+  });
+});
+
 describe("a symbol read back", () => {
   const url = "https://wa.me/56912345678?text=Hola%20OrigenLab%2C%20cotizaci%C3%B3n%20CN01234A-26.";
   const payloads: Array<[number, string]> = [
