@@ -287,6 +287,10 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   .story__beat {
     padding-block: 2rem;
   }
+  /* Aire entre el titular del tramo y su texto: sin él la línea baja del titular tocaba el párrafo. */
+  .story__text > .t-h2 + .t-lead {
+    margin-top: 1rem;
+  }
   .story__row {
     display: flex;
     flex-wrap: wrap;
@@ -544,11 +548,15 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
      * Se lee un tramo a la vez: el activo o, antes de que la historia arranque,
      * la entrada. `display: none` y no sólo opacidad: el texto oculto no recibe
      * foco ni clics, y la entrada sale de cuadro para la barra fija.
+     * El que sale se va en el acto (sin transición): sólo el que entra funde.
+     * Con los dos fundiendo en la misma celda, el titular del que salía (el
+     * nombre del modelo, en la entrada) quedaba montado sobre el texto nuevo.
      */
     .story[data-live][data-mode='scroll'] .story__beat:not([data-on]),
     .story[data-mode='scroll']:not([data-live]) .story__beat:not(:first-child) {
       display: none;
       opacity: 0;
+      transition: none;
     }
     .story[data-live][data-mode='scroll'] .story__stage {
       opacity: clamp(0, (1 - var(--story-progress, 0)) * 10, 1);
