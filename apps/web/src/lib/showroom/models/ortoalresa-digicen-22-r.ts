@@ -385,7 +385,7 @@ export function build(): BuiltModel {
       g.fillText(BTN_ICONS[i], w / 2, w / 2);
     });
     keep(iconTex.texture);
-    const cap = new THREE.Mesh(btnCapGeo.clone(), keep(new THREE.MeshStandardMaterial({
+    const cap = new THREE.Mesh(keep(btnCapGeo.clone()), keep(new THREE.MeshStandardMaterial({
       map: iconTex.texture, roughness: 0.5, transparent: false,
     })));
     cap.position.set(PANEL_X - 48 + i * 32, BTN_Y, BTN_Z + 4);

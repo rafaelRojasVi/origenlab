@@ -5,7 +5,10 @@
  * Para cada id (todos los de `catalog.ts` si no se pasa ninguno) importa el
  * modelo, llama a `build()` y exige que `root` tenga hijos, que existan
  * las vistas y anclas que nombra `content/<id>.ts` (`views.general` la calcula
- * la escena, no el modelo) y que `dispose()` no lance. Imprime una línea por modelo y
+ * la escena, no el modelo) y que `dispose()` no lance ni deje nada vivo: cada
+ * geometría, material y textura que `build()` crea debe liberarse en `dispose()`
+ * (se cuentan por el id correlativo que three asigna y se anotan los `dispose`).
+ * Imprime una línea por modelo y
  * sale con código distinto de cero si alguno falla. Sin WebGL: sólo geometría;
  * el `canvas` de `canvasTexture` se sustituye por un contexto 2D falso.
  *
@@ -120,6 +123,25 @@ function catalogIds() {
   console.log('  ok  parseSpecNumber y familyScale');
 }
 
+// Cuenta de creación y liberación. three numera cada geometría, material y
+// textura con un id correlativo por clase: un objeto de prueba antes y otro
+// después de `build()` acotan los creados; los `dispose` se anotan por id.
+const THREE = await import('three');
+const tracked = [
+  ['geometrías', THREE.BufferGeometry, () => new THREE.BufferGeometry()],
+  ['materiales', THREE.Material, () => new THREE.Material()],
+  ['texturas', THREE.Texture, () => new THREE.Texture()],
+];
+const disposed = new Map(tracked.map(([name]) => [name, new Set()]));
+for (const [name, Class] of tracked) {
+  const original = Class.prototype.dispose;
+  Class.prototype.dispose = function (...args) {
+    disposed.get(name).add(this.id);
+    return original.apply(this, args);
+  };
+}
+const nextIds = () => tracked.map(([, , make]) => make().id);
+
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : catalogIds();
 let failed = 0;
 
@@ -135,7 +157,9 @@ for (const id of ids) {
     if (!existsSync(file)) throw new Error(`falta models/${id}.ts`);
     const { build } = await import(pathToFileURL(file).href);
     if (typeof build !== 'function') throw new Error('no exporta build()');
+    const before = nextIds();
     const model = build();
+    const after = nextIds();
     if (!(model.root?.children?.length > 0)) throw new Error('root no tiene hijos');
     // `general` no vive en `model.views`: la escena la calcula sola (types.ts).
     // Lo que sí se exige es que cada vista y cada ancla que nombra la página
@@ -153,6 +177,30 @@ for (const id of ids) {
         throw new Error(`el hotspot «${spot.anchor}» apunta a la vista «${spot.view}», que no existe`);
     }
     model.dispose();
+    const leaks = tracked
+      .map(([name], i) => {
+        const created = after[i] - before[i] - 1;
+        let freed = 0;
+        for (const done of disposed.get(name)) if (done > before[i] && done < after[i]) freed += 1;
+        return created === freed ? '' : `${created - freed} ${name} sin liberar (${created} creadas, ${freed} liberadas)`;
+      })
+      .filter(Boolean);
+    // Y todo lo que cuelga del modelo, aunque no lo haya creado `build()` (la
+    // geometría que three comparte entre sprites, una textura de módulo).
+    const reachable = new Set();
+    model.root.traverse((object) => {
+      for (const material of [object.material].flat()) {
+        if (!material) continue;
+        reachable.add(material);
+        for (const value of Object.values(material)) if (value?.isTexture) reachable.add(value);
+      }
+      if (object.geometry) reachable.add(object.geometry);
+    });
+    for (const item of reachable) {
+      const kind = item.isTexture ? 'texturas' : item.isMaterial ? 'materiales' : 'geometrías';
+      if (!disposed.get(kind).has(item.id)) leaks.push(`${item.type} ${item.name || `#${item.id}`} (${kind}) en el modelo y sin liberar`);
+    }
+    if (leaks.length) throw new Error(`dispose() deja recursos en la GPU: ${leaks.join('; ')}`);
     const ms = Math.round(performance.now() - started);
     console.log(`  ok  ${id} (${model.root.children.length} hijos, ${Object.keys(model.views).length + 1} vistas, ${ms} ms)`);
   } catch (error) {

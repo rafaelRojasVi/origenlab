@@ -414,6 +414,8 @@ export function build(_options: BuildOptions = {}): BuiltModel {
     new THREE.SpriteMaterial({ map: glowTex.texture, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0 }),
   );
   const glow = new THREE.Sprite(glowMat);
+  // La geometría del sprite es la que three comparte entre todos; liberarla sólo vacía su copia en la GPU.
+  keep(glow.geometry);
   glow.scale.set(46, 34, 1);
   glow.position.set(0, TIP_Y - 5, 0);
   glow.renderOrder = 2;

@@ -35,10 +35,17 @@ export interface MountOptions {
   probe: boolean;
   /** El sondeo bajó de `medium`: la escena ya se liberó y la página vuelve a la imagen fija. */
   onLow(): void;
+  /**
+   * El navegador retiró el contexto WebGL: la escena ya se liberó (y soltó su
+   * contexto) y la página vuelve a la imagen fija con «Ver en 3D», sobre un
+   * lienzo nuevo. No se rehace la escena en el mismo contexto.
+   */
+  onLost(): void;
 }
 
 export interface MountedStory {
-  dispose(): void;
+  /** `discard`: el lienzo no vuelve a usarse y se suelta también su contexto. */
+  dispose(discard?: boolean): void;
 }
 
 const PROBE_SKIP = 10; // cuadros de compilación de sombreadores que no cuentan
@@ -81,11 +88,11 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
   let disposed = false;
   let runner: { dispose(): void } | null = null;
   const handle: MountedStory = {
-    dispose() {
+    dispose(discard = false) {
       if (disposed) return;
       disposed = true;
       runner?.dispose();
-      scene.dispose();
+      scene.dispose(discard);
       canvas.hidden = true;
       delete canvas.dataset.ready;
       delete root.dataset.live;
@@ -94,6 +101,13 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
       for (const el of marked) el.removeAttribute('data-on');
     },
   };
+
+  scene.onContextLost(() =>
+    queueMicrotask(() => {
+      handle.dispose(true);
+      options.onLost();
+    }),
+  );
 
   // Primer cuadro: el lienzo releva a la imagen. Después, el sondeo de tiempo:
   // suma la duración de los cuadros dibujados hasta reunir ~2 s.

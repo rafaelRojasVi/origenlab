@@ -127,23 +127,31 @@ try {
 
   for (const entry of models) {
     const label = `${entry.slug} (${entry.showroom_id})`;
+    // Un modelo con historia que se salta es un fallo: su página quedaría sin póster.
+    const hasStory = existsSync(join(root, 'src', 'lib', 'showroom', 'stories', `${entry.showroom_id}.ts`));
+    const skip = (why) => {
+      if (hasStory) {
+        console.error(`   x ${label}: ${why}`);
+        failed++;
+      } else console.warn(`  salta ${label}: ${why}`);
+    };
     const context = await browser.newContext({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
     const page = await context.newPage();
     try {
       const url = `${base}${pagePath(entry)}?poster=1`;
       const response = await page.goto(url, { waitUntil: 'load' });
       if (!response?.ok()) {
-        console.warn(`  salta ${label}: la página responde ${response?.status()} (${url})`);
+        skip(`la página responde ${response?.status()} (${url})`);
         continue;
       }
       if ((await page.locator('[data-story]').count()) === 0) {
-        console.warn(`  salta ${label}: la página no tiene historia 3D (falta src/lib/showroom/stories/${entry.showroom_id}.ts)`);
+        skip(hasStory ? 'la página no monta su historia 3D' : `la página no tiene historia 3D (falta src/lib/showroom/stories/${entry.showroom_id}.ts)`);
         continue;
       }
       try {
         await page.waitForSelector('canvas[data-ready]', { timeout: READY_MS });
       } catch {
-        console.warn(`  salta ${label}: la escena no dibujó un cuadro en ${READY_MS / 1000} s (¿falta el fragmento scene-* o WebGL?)`);
+        skip(`la escena no dibujó un cuadro en ${READY_MS / 1000} s (¿falta el fragmento scene-* o WebGL?)`);
         continue;
       }
       // El lienzo funde con opacidad 0,6 s al primer cuadro; un par de cuadros más y se captura.

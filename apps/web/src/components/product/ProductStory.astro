@@ -567,7 +567,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
   type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
 
   for (const root of document.querySelectorAll<HTMLElement>('[data-story]')) {
-    const canvas = root.querySelector<HTMLCanvasElement>('[data-story-canvas]')!;
+    let canvas = root.querySelector<HTMLCanvasElement>('[data-story-canvas]')!;
     const button = root.querySelector<HTMLButtonElement>('[data-story-3d]')!;
     const nav = navigator as Nav;
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -581,7 +581,9 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     }
     const asked = (posterMode ? 'high' : params.get('tier')) as Tier | null;
     const forced = asked === 'high' || asked === 'medium' || asked === 'low';
-    const narrow = innerWidth < 760;
+    // Mismo umbral que `innerWidth < 760` en sintaxis que Safari < 16.4 también entiende.
+    const narrowQuery = matchMedia('(max-width: 759.98px)');
+    const narrow = narrowQuery.matches;
     const saveData = nav.connection?.saveData === true;
     const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
     let tier: Tier = forced ? asked! : reduced || saveData ? 'low' : narrow || modest ? 'medium' : 'high';
@@ -593,8 +595,9 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
 
     const layout = () => {
       canvas.dataset.tier = tier;
-      root.dataset.mode = tier === 'low' || reduced || posterMode ? 'static' : innerWidth < 760 ? 'tap' : 'scroll';
+      root.dataset.mode = tier === 'low' || reduced || posterMode ? 'static' : narrowQuery.matches ? 'tap' : 'scroll';
     };
+    let mountedMode = '';
     const fallBack = (offer: boolean) => {
       story = null;
       tier = 'low';
@@ -616,12 +619,28 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
           return Promise.all([import('../../lib/showroom/mountStory'), modelLoaders[id](), storyLoaders[id](), document.fonts.ready]);
         })
         .then(([{ mountStory }, model, { story: config }]) =>
-          mountStory(root, model, config, { tier: tier as 'high' | 'medium', still: reduced || posterMode, probe: !forced && !onDemand, onLow: () => fallBack(true) }),
+          mountStory(root, model, config, {
+            tier: tier as 'high' | 'medium',
+            still: reduced || posterMode,
+            probe: !forced && !onDemand,
+            onLow: () => fallBack(true),
+            onLost: () => {
+              // El contexto perdido queda en su lienzo: «Ver en 3D» montará sobre uno nuevo.
+              const fresh = canvas.cloneNode(false) as HTMLCanvasElement;
+              canvas.replaceWith(fresh);
+              canvas = fresh;
+              watchReady();
+              fallBack(true);
+            },
+          }),
         )
         .then((mounted) => {
+          mountedMode = root.dataset.mode ?? '';
           // Si la página se fue mientras cargaba, se libera en vez de guardarla.
           if (gone) mounted.dispose();
           else story = mounted;
+          // Si la pantalla giró mientras cargaba, se rehace en el modo que toca.
+          if (story && mountedMode !== root.dataset.mode) remount();
         })
         .catch((error) => {
           console.warn('Historia 3D no disponible; queda la imagen.', error);
@@ -630,14 +649,36 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
         .finally(() => (loading = false));
     };
 
+    // Girar el teléfono (o estrechar la ventana) cruza el umbral de 760 px: la
+    // historia se libera y vuelve a montarse en el otro modo (scroll ↔ toque).
+    // Mientras tanto queda la imagen fija; el lienzo se reutiliza.
+    const remount = () => {
+      if (!story) return;
+      story.dispose();
+      story = null;
+      boot();
+    };
+    let rotateTimer = 0;
+    narrowQuery.addEventListener?.('change', () => {
+      clearTimeout(rotateTimer);
+      rotateTimer = window.setTimeout(() => {
+        layout();
+        if (story && mountedMode !== root.dataset.mode) remount();
+      }, 250);
+    });
+
     layout();
     button.hidden = tier !== 'low';
     // El lienzo marca `data-ready="1"` en su primer cuadro dibujado (`mountStory`).
-    new MutationObserver((_records, observer) => {
-      if (canvas.dataset.ready !== '1') return;
-      observer.disconnect();
-      interacted(root);
-    }).observe(canvas, { attributes: true, attributeFilter: ['data-ready'] });
+    const watchReady = () => {
+      if (interactSent) return;
+      new MutationObserver((_records, observer) => {
+        if (canvas.dataset.ready !== '1') return;
+        observer.disconnect();
+        interacted(root);
+      }).observe(canvas, { attributes: true, attributeFilter: ['data-ready'] });
+    };
+    watchReady();
     button.addEventListener('click', () => {
       interacted(root);
       tier = 'medium';
