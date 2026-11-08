@@ -7,6 +7,7 @@ import { CaseDrawer } from "../drawer/CaseDrawer";
 import type { Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
+import { ClosedCases } from "./ClosedCases";
 import { DecideCases, reviewableOpenCards } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
@@ -293,8 +294,7 @@ function Pipeline({
       ) : view === "cards" ? (
         <CardGrid cards={visible} onOpen={(id) => open(id)} />
       ) : view === "cerradas" ? (
-        // «Cerradas» by month comes in its own piece (losses older than a week leave the board).
-        <EmptyState title="Cerradas">Las pérdidas de más de 7 días se agrupan aquí por mes. Las ganadas siguen en el tablero.</EmptyState>
+        <ClosedCases cards={visible} onOpen={(id) => open(id)} />
       ) : (
         <Board
           cards={visible}
