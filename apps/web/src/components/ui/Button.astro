@@ -5,9 +5,9 @@ import Icon from './Icon.astro';
  * Botón del sistema (tablero Sistema). Renderiza un `<a>` cuando hay `href` y un
  * `<button>` en caso contrario; el CSS vive en global.css (`.btn-*`), sin JS.
  *
- * - Showroom oscuro: un solo aspecto en todo el sitio (primario teal, el resto
- *   sin relleno con borde claro). `tone="ink"` se acepta por compatibilidad;
- *   sólo añade `.on-ink`, que en el botón ya no cambia el color.
+ * - Sitio claro «Blanco con color»: píldoras; primario teal con texto blanco, el
+ *   resto sin relleno con borde `--color-edge`. `tone` se acepta por
+ *   compatibilidad y no cambia nada.
  * - `variant="icon"` exige `label`: es el nombre accesible del botón; el glifo va en el slot.
  * - `external` abre una pestaña nueva y la anuncia a lectores de pantalla.
  * - Cualquier `data-*` / `aria-*` extra se reenvía al elemento.
@@ -17,7 +17,7 @@ interface Props {
   href?: string;
   variant?: 'primary' | 'secondary' | 'tertiary' | 'whatsapp' | 'icon';
   size?: 'md' | 'sm';
-  /** Compatibilidad: ya no cambia el color (todo el sitio es oscuro). */
+  /** Compatibilidad: ya no cambia nada (un solo aspecto claro). */
   tone?: 'paper' | 'ink';
   /** Por defecto true en primary, secondary y tertiary. */
   arrow?: boolean;
@@ -37,7 +37,6 @@ const {
   href,
   variant = 'primary',
   size = 'md',
-  tone = 'paper',
   arrow = variant === 'primary' || variant === 'secondary' || variant === 'tertiary',
   label,
   external = false,
@@ -51,7 +50,6 @@ const {
 const classes = [
   variant === 'tertiary' ? 'btn-tertiary' : `btn btn-${variant}`,
   size === 'sm' && variant !== 'tertiary' && 'btn-sm',
-  tone === 'ink' && 'on-ink',
   className,
 ];
 const newTab = '(abre en una pestaña nueva)';

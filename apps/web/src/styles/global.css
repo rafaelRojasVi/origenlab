@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   OrigenLab Website — design tokens: «showroom oscuro»
-   One dark world (no light theme): graphite ground, light ink, one teal accent.
-   See docs/design/DESIGN_SYSTEM.md. Every value below is a token; components
-   must not invent colors or radii.
+   OrigenLab Website — design tokens: «Blanco con color» (2026-11-08)
+   One light world: white page, ink text, one teal accent, soft teal/aqua light
+   behind the machines and a pastel tint per product family. No grey or dark
+   surface anywhere (company owner's rule); the ONE exception is the site
+   footer (`--color-footer`, owner ruling 2026-11-08). Shadows are teal-tinted,
+   never black. See docs/design/DESIGN_SYSTEM.md. Components must not invent
+   colours or radii: everything below is a token.
 
-   The token NAMES predate the dark redesign and keep their roles, not their
-   lightness: `paper` is still "the page ground" (now near-black graphite) and
-   `ink-*` is still "text and strong lines" (now light). Higher `ink-*` numbers
-   still mean more contrast against the ground. Do not use `ink-950` as a
-   background: dark bands use `--color-band` or `--color-raised`.
+   Token names predate the redesigns and keep their roles: `paper` is the page
+   ground (white), `ink-*` is text and strong lines (higher = more contrast).
    ============================================================================ */
 
 /* --- Self-hosted type (SIL OFL). Provenance: scripts/sync-fonts.mjs -------- */
@@ -59,106 +59,115 @@
   --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Ground and structure (dark → lighter). Measured against ink below. */
-  --color-paper: #0d0f10; /* page ground, the 3D studio and every poster */
-  --color-surface: #15181a; /* reading sections, footer */
-  --color-raised: #1c2023; /* cards, raised bands, menus */
-  --color-pressed: #23282b; /* hover/active fill on raised */
-  --color-hairline: #2a2f33; /* decorative dividers (not control edges) */
-  --color-hairline-strong: #3a4045; /* decorativo: subrayados; no es borde de control */
+  /* Ground and structure. All light; measured against ink below. */
+  --color-paper: #ffffff; /* page ground; posters and strips are baked on white */
+  --color-surface: #effaf8; /* pale teal tint: alternate sections, inset fields */
+  --color-raised: #ffffff; /* cards, menus, panels (lifted by a teal shadow) */
+  --color-pressed: #e2f3ef; /* hover/active fill */
+  --color-hairline: #e5eeeb; /* decorative dividers (not control edges) */
+  --color-hairline-strong: #cfdeda; /* decorativo: subrayados; no es borde de control */
 
-  /* Ink — light on graphite. ≥ 4.5:1 on paper, surface, raised and pressed. */
-  --color-ink-950: #ecedeb; /* headings, strongest text and lines (16.4:1 on paper) */
-  --color-ink-900: #e2e4e2;
-  --color-ink-800: #cfd2d1; /* body text (12.6:1) */
-  --color-ink-600: #a9aeb1; /* secondary text, labels (8.6:1 paper, 7.3:1 raised) */
-  --color-ink-500: #8d9396; /* tertiary text and control edges (6.2:1 paper, 4.8:1 pressed) */
-  --color-ink-disabled: #6b7175;
+  /* Ink. ≥ 4.5:1 on paper, surface, pressed and every family tint. */
+  --color-ink-950: #0d1918; /* headings (18:1 on white) */
+  --color-ink-900: #172524;
+  --color-ink-800: #263432; /* body text (13:1) */
+  --color-ink-600: #465755; /* secondary text (7.6:1 white, ≥ 6.4:1 on tints) */
+  --color-ink-500: #5a6b68; /* tertiary text (5.6:1 white, ≥ 4.7:1 on tints) */
+  --color-ink-disabled: #8a9997;
 
-  /* Ink on the band (`--color-band`, `.on-ink`): same light family. */
-  --color-onink-100: #ecedeb;
-  --color-onink-300: #b9bdbf;
-  --color-onink-500: #959a9d;
-  --color-onink-hairline: #343a3e;
-  --color-onink-line: #4b5257;
+  /* Ink on the dark footer (`--color-footer`), the only dark surface. */
+  --color-onink-100: #ececeb; /* 15:1 on the footer */
+  --color-onink-300: #b9bcbd; /* 9.5:1 */
+  --color-onink-500: #8d9295; /* 5.8:1 */
+  --color-onink-hairline: #33383a;
+  --color-onink-line: #4b5154;
 
-  /* Accent — one teal, for action, place and one rule per page. The scale is
-     flipped like ink: 800 is the lightest (strongest on graphite). */
-  --color-teal-800: #5eead4; /* links on graphite (13:1) */
-  --color-teal-700: #2dd4bf; /* labels, rules, markers; the accent (10.3:1) */
-  --color-teal-500: #14b8a6; /* dots, LEDs, focus ring on bands (7.7:1) */
-  --color-teal-100: #134e4a; /* selection fill */
-  --color-teal-50: #0f2a28; /* faint teal tint fill */
-
-  /*
-   * Familias de equipo (`--color-family-*`, declaradas más abajo en
-   * `@theme static`). Seis tintas de identificación (no un segundo acento),
-   * aclaradas y desaturadas para leer sobre grafito: todas superan 6,2:1 sobre
-   * paper, surface, raised y pressed, de modo que pueden teñir texto.
-   * Centrifugación reutiliza el teal del sistema.
-   */
+  /* Accent: one teal. 700 is the action colour, 800 links, 500 highlights
+     (never text: 2.5:1 on white). */
+  --color-teal-800: #115e59; /* links (7.6:1 white) */
+  --color-teal-700: #0f766e; /* buttons, labels, focus ring (5.5:1 white, ≥ 4.6:1 tints) */
+  --color-teal-500: #14b8a6; /* the headline period, dots, LEDs */
+  --color-teal-100: #ccfbf1; /* selection fill */
+  --color-teal-50: #f0fdfa; /* faint teal fill */
 
   /* Page shell */
   --spacing-gutter: 1.25rem;
 }
 
 /* Estáticos: Tailwind poda las variables de @theme que ningún utilitario usa, y
-   estos las usan los componentes de fases posteriores. */
+   estos las usan los componentes por nombre. */
 @theme static {
-  /* Tintas de familia (ver el comentario de arriba): la portada las pide por
-     nombre de propiedad desde datos, así que Tailwind no puede verlas usadas. */
-  --color-family-sonicacion: #7fb2e5;
-  --color-family-dispersion: #b99ae0;
-  --color-family-centrifugacion: #2dd4bf;
-  --color-family-pesaje: #e0b062;
-  --color-family-osmometria: #6cc5dc;
-  --color-family-electroforesis: #ec8fae;
+  /* Familias: tinta de texto/punto (≥ 5.6:1 sobre blanco) y fondo pastel de
+     tarjeta y miniatura (`--color-tint-*`). Humedad tiene su propio fondo
+     aunque comparte familia con pesaje (los analizadores de humedad). */
+  --color-family-sonicacion: #1d4f7c;
+  --color-family-dispersion: #1f5f7a;
+  --color-family-centrifugacion: #5b3f96;
+  --color-family-pesaje: #7d5310;
+  --color-family-osmometria: #6d5a0e;
+  --color-family-electroforesis: #2f4a8f;
+  --color-tint-sonicacion: #e6f0fd;
+  --color-tint-humedad: #dff5f2;
+  --color-tint-pesaje: #fdf0d5;
+  --color-tint-centrifugacion: #ece9fb;
+  --color-tint-dispersion: #e3f3fb;
+  --color-tint-osmometria: #fdf6d8;
+  --color-tint-electroforesis: #e9effd;
+  --color-tint: #f2faf8; /* tile without family */
 
-  /* --- Showroom oscuro: roles nuevos ------------------------------------- */
-  /* Texto sobre cualquier fondo oscuro; no cambia dentro de `.on-ink`. */
-  --color-fg: #ecedeb;
-  --color-fg-muted: #a9aeb1;
-  /* Banda elevada: lo que antes era la banda de tinta (cierre, menú, panel de
-     chat). Grafito con un velo teal profundo; el texto es `onink-*`. */
-  --color-band: #112624;
-  --color-band-line: #24413d;
-  /* Acción primaria: botón teal con texto casi negro (9,2:1). */
-  --color-accent: #2dd4bf;
-  --color-accent-hover: #5eead4;
-  --color-accent-active: #14b8a6;
-  --color-on-accent: #04201c;
-  /* Estudio 3D: el fondo sobre el que se hornean pósteres y tiras de giro.
-     Igual a `paper`; una caja de `Turntable` lo usa para fundirse con ellos. */
-  --color-studio: #0d0f10;
-  /* Caja de luz (`LightBox`): plinto claro para las fotografías de fondo
-     blanco del fabricante. El único sitio claro del sitio. */
-  --color-lightbox-hi: #f4f4f1;
-  --color-lightbox-lo: #d9dbd7;
-  --color-lightbox-ink: #2b2e30; /* texto, si alguna vez va dentro (12:1) */
-  /* Cabecera translúcida (con `backdrop-filter`). */
-  --color-header: rgb(13 15 16 / 0.74);
-  /* Halo del foco de producto (tarjetas iluminadas, escenario). */
-  --color-glow: rgb(45 212 191 / 0.14);
-  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 48px -24px rgb(0 0 0 / 0.7);
+  /* Text that must stay readable on any light surface. */
+  --color-fg: #0d1918;
+  --color-fg-muted: #465755;
+  /* Control edges (secondary buttons, inputs): ≥ 3.5:1 on white and tints. */
+  --color-edge: #6d7e7b;
+  /* Closing band and other teal washes (light). Text on them is ink. */
+  --color-band: #dcf6f0;
+  --color-band-line: #bfe6dd;
+  /* Primary action: teal with white text (5.5:1; 7.6:1 on hover). */
+  --color-accent: #0f766e;
+  --color-accent-hover: #115e59;
+  --color-accent-active: #134e4a;
+  --color-on-accent: #ffffff;
+  /* 3D studio: what posters and strips are baked on (= paper). Put on a tint
+     with `.pz` (brightness lift + multiply) and the floor takes the tint. */
+  --color-studio: #ffffff;
+  /* Hero light: teal and aqua glows with a white pool under the machine. */
+  --color-glow-teal: #c4f1e6;
+  --color-glow-aqua: #c9ecfb;
+  --color-glow-mint: #e4faf5;
+  --color-quote: #f4f9fe; /* the quote section's pale blue */
+  /* The only dark surface: the site footer (owner ruling 2026-11-08). */
+  --color-footer: #141617;
+  /* Header: white glass. */
+  --color-header: rgb(255 255 255 / 0.82);
+  /* Teal halo: focus/hover ring around cards and the primary button. */
+  --color-glow: rgb(20 184 166 / 0.18);
+  /* Teal-tinted shadows (rgb 15 90 80), never black. */
+  --shadow-card: 0 1px 2px rgb(15 90 80 / 0.06), 0 24px 48px -28px rgb(15 90 80 / 0.28);
+  --shadow-lift: 0 40px 60px -40px rgb(15 90 80 / 0.35);
+  --shadow-btn: 0 10px 24px -12px rgb(15 90 80 / 0.55);
+  --shadow-sheet: 0 1px 2px rgb(15 90 80 / 0.08), 0 30px 60px -24px rgb(15 90 80 / 0.28), 0 60px 90px -50px rgb(15 90 80 / 0.25);
 
-  /* Radios: 2 px para etiquetas y tablas, 10 botones, 16 tarjetas. */
+  /* Radios: 2 px etiquetas y tablas, píldora botones, 26 px escenarios. */
   --radius-edge: 2px;
-  --radius-btn: 0.625rem;
-  --radius-card: 1rem;
+  --radius-btn: 999px;
+  --radius-field: 0.75rem; /* inputs, textareas, small panels */
+  --radius-card: 1.625rem;
   --radius-band: 1.75rem;
-  --radius-scene: 1.5rem;
+  --radius-scene: 1.625rem;
 
-  /* Botones (tablero Sistema) */
-  --btn-h: 3rem;
+  /* Botones */
+  --btn-h: 3.125rem;
   --btn-h-sm: 2.5rem;
-  --btn-px: 1.25rem;
-  --btn-px-sm: 1rem;
+  --btn-px: 1.75rem;
+  --btn-px-sm: 1.25rem;
   --ease-ui: 150ms ease-out;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @layer base {
   html {
-    color-scheme: dark;
+    color-scheme: light;
     background-color: var(--color-paper);
     -webkit-text-size-adjust: 100%;
     /* La cabecera es fija: sin este margen el navegador deja el elemento
@@ -208,7 +217,7 @@
 
   ::selection {
     background-color: var(--color-teal-100);
-    color: var(--color-fg);
+    color: var(--color-ink-950);
   }
 
   :focus-visible {
@@ -216,31 +225,14 @@
     outline-offset: 2px;
   }
 
-  /* Bands get the deeper teal ring (7.7:1 on the band). */
-  .on-ink :focus-visible,
-  .on-ink:focus-visible {
-    outline-color: var(--color-teal-500);
-  }
-
-  /*
-   * `.on-ink` — compatibility scope for components written for the old light
-   * site, where a dark band was `background: var(--color-ink-950)` with
-   * `color: var(--color-paper)` or `onink-*` text. Inside it those two tokens
-   * keep their OLD meaning (ink-950 = dark ground, paper = light text, teal-700
-   * = dark teal), so a
-   * legacy band stays a dark band instead of turning light. New code should not
-   * rely on it: use `--color-band` / `--color-raised` for the ground and
-   * `--color-fg` / `onink-*` for text.
-   */
-  .on-ink {
-    --color-ink-950: #0d0f10;
-    --color-paper: #ecedeb;
-    /* Lo que pinta `paper` de fondo dentro de la banda queda claro: el teal de
-       contorno vuelve al tono oscuro de antes para seguir midiendo 3:1 ahí. */
-    --color-teal-700: #0f766e;
-    :where(h1, h2, h3, h4) {
-      color: var(--color-onink-100);
-    }
+  /* `.pz`: a poster or turntable strip baked on the white studio, placed on any
+     light surface. The brightness lift pushes the studio white (and JPEG noise)
+     to pure white; multiply then lets the floor take the colour underneath
+     (white, a family tint, a glow). The surface must be in the same stacking
+     context: never put a transformed or isolated wrapper between them. */
+  .pz {
+    filter: brightness(1.037);
+    mix-blend-mode: multiply;
   }
 
   /* Debajo de 1024 px el botón pequeño sube a 44 px (objetivo táctil) y los
@@ -298,7 +290,7 @@
   .t-d3,
   .t-display {
     font-weight: 800;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.04em;
     overflow-wrap: anywhere;
   }
   .t-d1 {
@@ -317,8 +309,8 @@
   .t-h2 {
     font-size: clamp(2rem, 1.78rem + 0.9vw, 2.5rem);
     line-height: 1.1;
-    letter-spacing: -0.02em;
-    font-weight: 700;
+    letter-spacing: -0.03em;
+    font-weight: 800;
   }
   .t-h3 {
     font-size: clamp(1.125rem, 1.08rem + 0.2vw, 1.25rem);
@@ -364,13 +356,9 @@
   }
 
   /* --- Actions -------------------------------------------------------------
-   * Sistema de botones sobre grafito (un solo mundo: no hay variante clara).
-   * Primario: teal con texto casi negro. Secundario, WhatsApp e icono: sin
-   * relleno, borde ink-500 (>= 4,8:1 incluso sobre `pressed`; qa:contrast exige
-   * 3:1). Los colores salen de roles que `.on-ink` no reasigna (`--color-fg`,
-   * `--color-accent*`), así que el botón se ve igual en cualquier banda.
-   * `tone="ink"` / `.on-ink` en el botón ya no cambia nada; se acepta por
-   * compatibilidad.
+   * Píldoras sobre blanco. Primario: teal con texto blanco y sombra teal.
+   * Secundario, WhatsApp e icono: sin relleno, borde `--color-edge` de 1,5 px
+   * (≥ 3,5:1 sobre blanco y sobre cada tinte; qa:contrast exige 3:1).
    * ------------------------------------------------------------------------- */
   .btn {
     display: inline-flex;
@@ -380,10 +368,10 @@
     height: var(--btn-h);
     padding-inline: var(--btn-px);
     border-radius: var(--radius-btn);
-    border: 1px solid transparent;
+    border: 1.5px solid transparent;
     background: none;
     color: var(--color-fg);
-    font-size: 0.9375rem;
+    font-size: 1rem;
     font-weight: 600;
     line-height: 1;
     letter-spacing: -0.005em;
@@ -396,7 +384,7 @@
       border-color var(--ease-ui),
       color var(--ease-ui),
       box-shadow var(--ease-ui),
-      transform var(--ease-ui);
+      transform 200ms var(--ease-out);
     &:is(:disabled, [aria-disabled='true']) {
       cursor: not-allowed;
     }
@@ -408,44 +396,43 @@
   .btn-sm {
     height: var(--btn-h-sm);
     padding-inline: var(--btn-px-sm);
-    font-size: 0.875rem;
+    font-size: 0.9375rem;
   }
 
   .btn-primary {
     background-color: var(--color-accent);
     color: var(--color-on-accent);
+    box-shadow: var(--shadow-btn);
     &:hover {
       background-color: var(--color-accent-hover);
-      box-shadow: 0 0 0 4px var(--color-glow);
     }
     &:active {
       background-color: var(--color-accent-active);
     }
     &:is(:disabled, [aria-disabled='true']) {
       background-color: var(--color-pressed);
-      color: var(--color-ink-disabled);
+      color: var(--color-ink-500);
       box-shadow: none;
     }
   }
-  /* Anillo de foco separado del relleno teal: sobre el propio teal no se vería. */
   .btn-primary:focus-visible {
-    outline-color: var(--color-fg);
+    outline-color: var(--color-teal-700);
+    outline-offset: 3px;
   }
 
   .btn-secondary,
   .btn-whatsapp,
   .btn-icon {
-    border-color: var(--color-ink-500);
+    border-color: var(--color-edge);
     &:hover {
-      border-color: var(--color-fg);
-      background-color: rgb(255 255 255 / 0.06);
+      border-color: var(--color-ink-950);
     }
     &:active {
-      border-color: var(--color-fg);
-      background-color: rgb(255 255 255 / 0.12);
+      border-color: var(--color-ink-950);
+      background-color: var(--color-pressed);
     }
     &:is(:disabled, [aria-disabled='true']) {
-      border-color: var(--color-hairline);
+      border-color: var(--color-hairline-strong);
       background-color: transparent;
       color: var(--color-ink-disabled);
     }
@@ -458,24 +445,24 @@
     }
   }
 
-  /* Terciario: sin relleno; el subrayado de la etiqueta crece de 0 a 100 %.
+  /* Terciario: enlace teal; el subrayado crece de 0 a 100 %.
      `.link-arrow` es un alias para los enlaces con flecha ya existentes. */
   .btn-tertiary,
   .link-arrow {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.375rem;
     height: auto;
     min-height: 1.75rem;
     padding: 0;
     border-radius: var(--radius-edge);
-    color: var(--color-fg);
+    color: var(--color-teal-700);
     font-size: 0.9375rem;
     font-weight: 600;
     line-height: 1.2;
     cursor: pointer;
     transition: color var(--ease-ui);
-    /* 44 px de alto en pantallas táctiles (WCAG 2.5.8 va más allá; el tablero pide 44). */
+    /* 44 px de alto en pantallas táctiles. */
     @media (width < 1024px) {
       min-height: 2.75rem;
     }
@@ -483,34 +470,24 @@
       flex: none;
       transition: transform var(--ease-ui);
     }
+    &:hover {
+      color: var(--color-teal-800);
+    }
   }
   .btn-tertiary .lbl {
     padding-bottom: 3px;
-    background:
-      linear-gradient(currentColor, currentColor) 0 100% / 0% 2px no-repeat,
-      linear-gradient(var(--color-hairline-strong), var(--color-hairline-strong)) 0 100% / 100% 1px
-        no-repeat;
-    transition: background-size var(--ease-ui);
+    background: linear-gradient(currentColor, currentColor) 0 100% / 0% 1.5px no-repeat;
+    transition: background-size 250ms var(--ease-out);
   }
   .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .lbl {
-    background-size: 100% 2px, 100% 1px;
+    background-size: 100% 1.5px;
   }
   .btn-tertiary:is(:disabled, [aria-disabled='true']) {
     color: var(--color-ink-disabled);
     cursor: not-allowed;
-    .lbl {
-      background-size: 0% 2px, 100% 1px;
-    }
   }
-  .on-ink .btn-tertiary .lbl,
-  .btn-tertiary.on-ink .lbl {
-    background-image:
-      linear-gradient(currentColor, currentColor),
-      linear-gradient(var(--color-onink-line), var(--color-onink-line));
-  }
-  /* Alias sobre texto suelto (sin `.lbl`): el subrayado es el del texto. */
   .link-arrow {
-    text-decoration: underline 1px var(--color-hairline-strong);
+    text-decoration: underline 1px transparent;
     text-underline-offset: 0.3em;
     transition: color var(--ease-ui), text-decoration-color var(--ease-ui);
     &:hover:not([aria-disabled='true']) {
@@ -529,7 +506,6 @@
       transition: none;
     }
   }
-  /* El desplazamiento de la flecha y el escalado al pulsar sólo con movimiento. */
   @media (prefers-reduced-motion: no-preference) {
     .btn:active:not(:is(:disabled, [aria-disabled='true'])) {
       transform: scale(0.98);
@@ -542,7 +518,7 @@
   }
 
   /* Fila de enlaces con flecha: se apila en móvil y se alinea en una fila
-     desde 768 px. Usada en las páginas que enlazan a varias aplicaciones. */
+     desde 768 px. */
   .link-row {
     list-style: none;
     margin: 0;
@@ -567,12 +543,11 @@
     transition: text-decoration-color 150ms, color 150ms;
   }
   .link-plain:hover {
-    color: var(--color-fg);
+    color: var(--color-ink-950);
     text-decoration-color: currentColor;
   }
 
   /* --- Structure ----------------------------------------------------------- */
-  /* Index row: the default grouping device. Replaces cards across the site. */
   .index-list {
     border-top: 1px solid var(--color-hairline);
   }
@@ -586,39 +561,35 @@
     background-color: var(--color-surface);
   }
 
-  /* --- Showroom oscuro: superficies compartidas ---------------------------
-   * `.surface-reading`  sección de lectura a ancho completo: grafito un tono
-   *                     más claro que la página, con filetes arriba y abajo.
-   * `.surface-band`     banda elevada (lo que antes era una banda de tinta).
-   * `.card-lit`         tarjeta iluminada: `raised`, radio de tarjeta, foco
-   *                     suave arriba y sombra profunda. Sólo para tarjetas de
-   *                     modelo o familia (regla del sistema: no hay tarjetas
-   *                     dentro de tarjetas). El borde se enciende al pasar
-   *                     el mouse o al enfocar algo dentro.
+  /* --- Superficies compartidas ---------------------------------------------
+   * `.surface-reading`  sección alterna a ancho completo: el tinte teal pálido.
+   * `.surface-band`     lavado teal/aqua (banda de cierre y destacados); texto tinta.
+   * `.surface-quote`    el azul pálido de la sección de la cotización.
+   * `.card-lit`         panel blanco con sombra teal (formularios, paneles).
+   *                     Las tarjetas de modelo usan `ui/LitCard.astro`.
    * ------------------------------------------------------------------------- */
   .surface-reading {
     background-color: var(--color-surface);
-    border-block: 1px solid var(--color-hairline);
   }
   .surface-band {
     background:
-      radial-gradient(60% 90% at 12% 0%, var(--color-glow), transparent 70%),
+      radial-gradient(60% 120% at 85% 20%, var(--color-glow-aqua) 0%, transparent 70%),
+      radial-gradient(60% 120% at 10% 90%, var(--color-glow-teal) 0%, transparent 70%),
       var(--color-band);
-    color: var(--color-onink-100);
+    color: var(--color-ink-950);
+  }
+  .surface-quote {
+    background:
+      radial-gradient(50% 70% at 72% 50%, #e6eefd 0%, transparent 100%),
+      var(--color-quote);
   }
   .card-lit {
     position: relative;
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius-card);
-    background:
-      radial-gradient(80% 60% at 50% 0%, rgb(255 255 255 / 0.05), transparent 70%),
-      var(--color-raised);
+    background: var(--color-raised);
     box-shadow: var(--shadow-card);
     transition: border-color var(--ease-ui), box-shadow 300ms ease-out;
-  }
-  .card-lit:is(:hover, :focus-within) {
-    border-color: var(--color-ink-500);
-    box-shadow: var(--shadow-card), 0 0 0 4px var(--color-glow);
   }
 
   .prose-block p + p {
@@ -640,17 +611,29 @@
   .home-head {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.25rem;
     margin-bottom: clamp(2.5rem, 5vw, 4rem);
     .t-label {
       color: var(--color-teal-700);
     }
   }
+  /* Titular de sección del sitio claro: 800, apretado, punto teal (`.dot`). */
   .home-h2 {
-    font-size: clamp(2.125rem, 4.6vw, 3.75rem);
-    line-height: 1.04;
-    letter-spacing: -0.025em;
-    font-weight: 700;
+    font-size: clamp(2.375rem, 5vw, 4.375rem);
+    line-height: 1;
+    letter-spacing: -0.045em;
+    font-weight: 800;
+  }
+  .lede {
+    font-size: clamp(1.0625rem, 1.4vw, 1.25rem);
+    line-height: 1.5;
+    color: var(--color-ink-600);
+    max-width: 44ch;
+  }
+  .dot {
+    color: var(--color-teal-500);
+    font-style: normal;
+    margin-left: -0.07em;
   }
   @media (prefers-reduced-motion: no-preference) {
     @supports (animation-timeline: view()) {

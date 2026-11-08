@@ -389,7 +389,10 @@ const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).si
 // CSS 92 kB y JS 16,5 kB (2026-11-08): el sitio entero pasa a showroom oscuro con tarjetas
 // iluminadas y el giro de cada modelo (~1,4 kB); los rediseños de página borran el CSS claro
 // que reemplazan.
-const CSS_BUDGET = 92_000;
+// CSS 110 kB (2026-11-08): sitio claro «Blanco con color» — la hoja de cotización animada,
+// el mega-menú con miniaturas, los resplandores y tintes de familia, y la tarjeta única
+// (LitCard). Medido tras borrar el CSS del showroom oscuro que reemplaza.
+const CSS_BUDGET = 110_000;
 const kb = (bytes) => (bytes / 1000).toFixed(1);
 assert(js < 16_500, `dist: ${kb(js)} kB de JavaScript (presupuesto 16,5 kB)`);
 assert(chat < 2_500, `dist: ${kb(chat)} kB en el panel de la burbuja bajo demanda (techo 2,5 kB)`);

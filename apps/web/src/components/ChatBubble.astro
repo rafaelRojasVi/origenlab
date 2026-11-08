@@ -52,7 +52,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
 ---
 
 <noscript><style>.cb-btn{display:none}</style></noscript>
-<button type="button" class="cb-btn on-ink" aria-haspopup="dialog" aria-controls="cb" data-cb-open>
+<button type="button" class="cb-btn" aria-haspopup="dialog" aria-controls="cb" data-cb-open>
   <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
     <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1"></path>
   </svg>
@@ -162,7 +162,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     border-radius: 50%;
     background-color: var(--color-accent);
     color: var(--color-on-accent);
-    box-shadow: 0 6px 24px rgb(0 0 0 / 0.55), 0 0 0 4px var(--color-glow);
+    box-shadow: var(--shadow-btn), 0 0 0 4px var(--color-glow);
     cursor: pointer;
   }
   .cb-btn:hover {
@@ -192,7 +192,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     border-radius: var(--radius-card);
     background-color: var(--color-raised);
     color: var(--color-ink-950);
-    box-shadow: 0 18px 48px rgb(0 0 0 / 0.6);
+    box-shadow: var(--shadow-sheet);
     overflow: hidden;
   }
   .cb[open] {
@@ -200,7 +200,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     flex-direction: column;
   }
   .cb::backdrop {
-    background-color: rgb(0 0 0 / 0.5);
+    background-color: rgb(13 25 24 / 0.28);
   }
   .cb__hd {
     display: flex;
@@ -256,7 +256,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     max-width: 92%;
     margin-bottom: 0.25rem;
     padding: 0.625rem 0.875rem;
-    border-radius: 0.25rem var(--radius-btn) var(--radius-btn) var(--radius-btn);
+    border-radius: 0.25rem 1rem 1rem 1rem;
     background-color: var(--color-surface);
     font-size: 0.9375rem;
     font-weight: 500;
@@ -275,7 +275,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     gap: 0.5rem;
     min-height: 2.75rem;
     padding: 0 0.875rem 0 0.75rem;
-    border: 1px solid var(--color-ink-500);
+    border: 1px solid var(--color-edge);
     border-radius: var(--radius-btn);
     font-size: 0.875rem;
     font-weight: 600;
@@ -311,8 +311,8 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     width: 100%;
     height: 2.75rem;
     padding: 0 0.875rem;
-    border: 1px solid var(--color-ink-500);
-    border-radius: var(--radius-btn);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-field);
     background-color: var(--color-paper);
     color: var(--color-ink-950);
     font: inherit;

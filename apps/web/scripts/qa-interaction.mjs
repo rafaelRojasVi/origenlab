@@ -129,8 +129,8 @@ console.log('\nMenú móvil (375 px)');
   );
   check(
     (await page.locator('.site-menu__panel').evaluate((el) => getComputedStyle(el).backgroundColor)) ===
-      'rgb(28, 32, 35)',
-    'el panel del menú es grafito elevado (raised, rgb(28, 32, 35))',
+      'rgb(255, 255, 255)',
+    'el panel del menú es una hoja blanca (raised, rgb(255, 255, 255))',
   );
   const menuWa = await page.locator('.site-menu__panel a.btn-whatsapp').evaluate((el) => ({
     height: Math.round(el.getBoundingClientRect().height),
@@ -817,7 +817,7 @@ console.log('\nPie y promesas de garantía');
   const familyLinks = [...navOf('Familias').matchAll(/href="(\/productos\/[\w-]+\/)"/g)].map((m) => m[1]);
   check(brandLinks.length === 7 && new Set(brandLinks).size === 7, `Pie: siete enlaces a /marcas/{slug}/ (${brandLinks.length})`);
   check(familyLinks.length === 6 && new Set(familyLinks).size === 6, `Pie: seis enlaces de familia (${familyLinks.length})`);
-  check(!/on-ink/.test(footer.match(/<footer\b[^>]*>/)?.[0] ?? ''), 'Pie: sobre papel, sin la clase on-ink');
+  check(!/on-ink/.test(footer.match(/<footer\b[^>]*>/)?.[0] ?? ''), 'Pie: sin la clase on-ink (sus colores salen de --color-footer y onink-*)');
   const linkedinSet = /linkedinUrl:\s*'[^']+'/.test(readFileSync(join(root, 'src/config/site.ts'), 'utf8'));
   check(/linkedin\.com/.test(footer) === linkedinSet, `Pie: LinkedIn sólo si site.linkedinUrl tiene valor (${linkedinSet ? 'con valor' : 'vacío, sin enlace'})`);
   check(/href="\/como-comprar\/#compras-publicas"/.test(footer) && /mailto:contacto@origenlab\.cl/.test(footer), 'Pie: Mercado Público y contacto@');
@@ -905,11 +905,11 @@ console.log('\nContacto y pie (1440 px)');
     const style = getComputedStyle(el);
     return `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`;
   });
-  check(ring === '2px solid rgb(45, 212, 191)', `Contacto: el foco del campo es teal-700 de 2 px (${ring})`);
+  check(ring === '2px solid rgb(15, 118, 110)', `Contacto: el foco del campo es teal-700 de 2 px (${ring})`);
 
   await page.goto(`${base}/`, { waitUntil: 'load' });
   const bg = await page.locator('footer').evaluate((el) => getComputedStyle(el).backgroundColor);
-  check(bg === 'rgb(21, 24, 26)', `Pie: fondo grafito (surface) en la portada (${bg})`);
+  check(bg === 'rgb(20, 22, 23)', `Pie: fondo oscuro (--color-footer, la única superficie oscura) en la portada (${bg})`);
   const paddingTop = await page.locator('footer').evaluate((el) => getComputedStyle(el).paddingTop);
   check(paddingTop === '88px', `Pie: 88 px de aire superior (${paddingTop})`);
   await context.close();
@@ -1399,7 +1399,7 @@ console.log('\nPortada y cómo comprar');
     `Home: las notas destacadas se muestran sólo si hay notas (${notes.length} notas)`,
   );
   const band = home.match(/<section\b[^>]*\bclass="[^"]*\bband-wrap\b[\s\S]*?<\/section>/)?.[0] ?? '';
-  check(/<a\b[^>]*href="\/contacto\/"[^>]*class="btn btn-primary on-ink/.test(band) || /<a\b[^>]*class="btn btn-primary on-ink[^"]*"[^>]*href="\/contacto\/"/.test(band), 'Home: la banda de cierre lleva el botón primario al formulario (/contacto/)');
+  check(/<a\b[^>]*href="\/contacto\/"[^>]*class="btn btn-primary/.test(band) || /<a\b[^>]*class="btn btn-primary[^"]*"[^>]*href="\/contacto\/"/.test(band), 'Home: la banda de cierre lleva el botón primario al formulario (/contacto/)');
   check(/<a\b[^>]*href="https:\/\/wa\.me\/[^"]+"[^>]*btn-whatsapp/.test(band) || /btn-whatsapp[^>]*href="https:\/\/wa\.me\//.test(band), 'Home: la banda de cierre lleva el botón de WhatsApp');
   check(
     ![...home.matchAll(/<a\b[^>]*>/g)].some(([tag]) => tag.includes('wa.me') && tag.includes('btn-invert')),
@@ -1914,7 +1914,7 @@ console.log('\nBurbuja de conversación');
     });
     check(box.tag === 'BUTTON' && box.popup === 'dialog', `burbuja: es un <button aria-haspopup="dialog"> (${box.tag}, ${box.popup})`);
     check(box.w === 56 && box.h === 56 && box.right >= 8 && box.right <= 40 && box.bottom >= 8 && box.bottom <= 40, `burbuja: 56 px abajo a la derecha (${JSON.stringify(box)})`);
-    check(box.bg === 'rgb(45, 212, 191)', `burbuja: relleno teal (accent) (${box.bg})`);
+    check(box.bg === 'rgb(15, 118, 110)', `burbuja: relleno teal (accent) (${box.bg})`);
     check((await chatChunks(page)).length === 0, 'burbuja: el código del panel no se carga antes del primer clic');
     await bubble.focus();
     await page.keyboard.press('Enter');

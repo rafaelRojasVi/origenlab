@@ -6,10 +6,10 @@ import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { ctaLabels } from '../../lib/ctaLabels';
 
 /**
- * Banda de cierre (tablero HomeA): la banda elevada (`--color-band`, grafito con
- * velo teal y un foco suave arriba a la izquierda) dentro de los márgenes de la
- * página, con el titular a la izquierda y las dos acciones apiladas a la
- * derecha. Conserva `.band` (qa:contrast la mide) y `.on-ink`.
+ * Banda de cierre («Blanco con color»): un lavado teal/aqua claro a ancho
+ * completo (`.surface-band`) justo antes del pie oscuro, con el titular grande
+ * a la izquierda y, a la derecha, la línea y las dos acciones en fila. Texto
+ * tinta. Conserva `.band` (qa:contrast la mide).
  *
  * El correo y el teléfono ya no se repiten aquí: viven en el pie.
  *
@@ -37,76 +37,77 @@ const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
 const whatsappFirst = primary === 'whatsapp';
 ---
 
-<section class="shell band-wrap" aria-labelledby="band-title">
-  <div class="band on-ink rv">
+<section class="band band-wrap surface-band" aria-labelledby="band-title">
+  <div class="shell band__in">
+    <h2 id="band-title" class="band__title">{title}</h2>
     <div>
-      <h2 id="band-title" class="band__title">{title}</h2>
       <p class="band__body">{body}</p>
-    </div>
-    <div class="band__actions">
-      {
-        whatsappFirst ? (
-          <>
-            <Button href={whatsappHref} tone="ink" external arrow={false} track="whatsapp_click" modelo={modelo}>
-              <Icon name="whatsapp" size={18} />
-              {ctaLabels.escribirWhatsapp}
-            </Button>
-            <Button href={quoteHref} variant="secondary" tone="ink" track="cotizacion_click" modelo={modelo}>
-              {ctaLabels.solicitarCotizacion}
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button href={quoteHref} tone="ink" track="cotizacion_click" modelo={modelo}>
-              {ctaLabels.solicitarCotizacion}
-            </Button>
-            <Button href={whatsappHref} variant="whatsapp" tone="ink" external track="whatsapp_click" modelo={modelo}>
-              {ctaLabels.escribirWhatsapp}
-            </Button>
-          </>
-        )
-      }
+      <div class="band__actions">
+        {
+          whatsappFirst ? (
+            <>
+              <Button href={whatsappHref} external arrow={false} track="whatsapp_click" modelo={modelo}>
+                <Icon name="whatsapp" size={18} />
+                {ctaLabels.escribirWhatsapp}
+              </Button>
+              <Button href={quoteHref} variant="secondary" track="cotizacion_click" modelo={modelo}>
+                {ctaLabels.solicitarCotizacion}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button href={quoteHref} track="cotizacion_click" modelo={modelo}>
+                {ctaLabels.solicitarCotizacion}
+              </Button>
+              <Button href={whatsappHref} variant="whatsapp" external track="whatsapp_click" modelo={modelo}>
+                {ctaLabels.escribirWhatsapp}
+              </Button>
+            </>
+          )
+        }
+      </div>
     </div>
   </div>
 </section>
 
 <style>
-  .band-wrap {
-    margin-top: clamp(4rem, 8vw, 8rem);
-  }
   .band {
+    margin-top: clamp(5rem, 10vw, 8rem);
+  }
+  .band__in {
     display: grid;
-    grid-template-columns: 1.4fr 1fr;
+    grid-template-columns: 7fr 5fr;
     gap: 2.5rem;
     align-items: end;
-    padding: clamp(3rem, 7vw, 6rem) clamp(1.5rem, 6vw, 5.5rem);
-    border: 1px solid var(--color-band-line);
-    border-radius: var(--radius-band);
-    background:
-      radial-gradient(60% 90% at 12% 0%, var(--color-glow), transparent 70%),
-      var(--color-band);
-    color: var(--color-onink-100);
+    padding-block: clamp(5.25rem, 9vw, 8rem);
   }
   .band__title {
-    color: var(--color-fg);
-    font-size: clamp(2.125rem, 4.6vw, 4rem);
+    max-width: 14ch;
+    color: var(--color-ink-950);
+    font-size: clamp(2.75rem, 6vw, 5.5rem);
     font-weight: 800;
     line-height: 1;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.045em;
   }
   .band__body {
-    max-width: 30em;
-    margin-top: 1.25rem;
-    color: var(--color-onink-300);
+    max-width: 32ch;
+    color: var(--color-ink-600);
+    font-size: clamp(1.0625rem, 1.4vw, 1.25rem);
+    line-height: 1.5;
   }
   .band__actions {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 0.75rem;
+    margin-top: 1.75rem;
+  }
+  .band__actions :global(.btn-whatsapp),
+  .band__actions :global(.btn-secondary) {
+    background-color: rgb(255 255 255 / 0.5);
   }
   @media (max-width: 1023.98px) {
-    .band {
-      grid-template-columns: 1fr;
+    .band__in {
+      grid-template-columns: minmax(0, 1fr);
       align-items: start;
     }
   }

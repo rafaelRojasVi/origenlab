@@ -54,10 +54,9 @@ const { tone = 'ink', size = 30, motion = false, class: className = '' } = Astro
   .site-logo--ink .site-logo__word {
     color: var(--color-ink-950);
   }
-  /* `paper` es el lockup para una superficie clara (la caja de luz, un
-     documento): tinta oscura fija, porque `--color-paper` ahora es grafito. */
+  /* `paper`: lockup claro para el pie oscuro. */
   .site-logo--paper .site-logo__word {
-    color: #141617;
+    color: var(--color-paper);
   }
 </style>
 

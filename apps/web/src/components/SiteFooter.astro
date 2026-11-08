@@ -10,7 +10,9 @@ import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import SiteLogo from './SiteLogo.astro';
 
 /**
- * Pie en grafito (`surface`, un tono sobre el fondo de página; tablero HomeA): marca, las seis familias, las siete marcas en
+ * Pie oscuro (`--color-footer`, como el sitio en línea): la única superficie
+ * oscura del sitio claro, por decisión de la dueña (2026-11-08). Logo claro,
+ * texto `onink-*` (≥ 5,8:1), teal claro al pasar. Marca, las seis familias, las siete marcas en
  * el orden de la lista cerrada, la empresa y el contacto, y una fila legal.
  * Las marcas se enlazan todas: la regla de la portada que oculta una marca del
  * riel no alcanza al pie.
@@ -36,7 +38,7 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     <div class="site-footer__grid">
       <div class="site-footer__brand">
         <a href="/" class="site-footer__logo" aria-label="OrigenLab, ir al inicio">
-          <SiteLogo size={28} />
+          <SiteLogo size={28} tone="paper" />
         </a>
         <p>Equipos de laboratorio para todo Chile. Trabajamos directo con el fabricante.</p>
       </div>
@@ -111,8 +113,8 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
 
 <style>
   .site-footer {
-    background-color: var(--color-surface);
-    border-top: 1px solid var(--color-hairline);
+    background-color: var(--color-footer);
+    color: var(--color-onink-300);
     padding: 88px 0 40px;
   }
   .site-footer__grid {
@@ -132,13 +134,13 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
   .site-footer__brand p {
     margin-top: 1rem;
     max-width: 22em;
-    color: var(--color-ink-600);
+    color: var(--color-onink-300);
     font-size: 0.9375rem;
     line-height: 1.5;
   }
   .site-footer__heading {
     margin-bottom: 0.75rem;
-    color: var(--color-ink-500);
+    color: var(--color-onink-500);
   }
   .site-footer ul {
     display: flex;
@@ -156,11 +158,11 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     @media (width < 1024px) {
       min-height: 2.75rem;
     }
-    color: var(--color-ink-800);
+    color: var(--color-onink-300);
     font-size: 0.9375rem;
     transition: color var(--ease-ui);
     &:hover {
-      color: var(--color-teal-700);
+      color: #5eead4; /* teal claro sobre el pie: 12:1 */
     }
   }
   .site-footer__legal {
@@ -170,8 +172,8 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     gap: 0.5rem 1.5rem;
     margin-top: 4.5rem;
     padding-top: 1.25rem;
-    border-top: 1px solid var(--color-hairline);
-    color: var(--color-ink-500);
+    border-top: 1px solid var(--color-onink-hairline);
+    color: var(--color-onink-500);
     font-size: 0.8125rem;
   }
   .site-footer .site-footer__legal ul {
@@ -180,7 +182,7 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     gap: 0 1.5rem;
   }
   .site-footer .site-footer__legal li a {
-    color: var(--color-ink-500);
+    color: var(--color-onink-500);
     font-family: var(--font-mono);
     font-size: 0.8125rem;
     @media (width < 1024px) {
@@ -188,7 +190,10 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
     }
   }
   .site-footer .site-footer__legal li a:hover {
-    color: var(--color-ink-950);
+    color: var(--color-onink-100);
+  }
+  .site-footer :focus-visible {
+    outline-color: #5eead4;
   }
   .site-footer__legal > span {
     display: inline-flex;
