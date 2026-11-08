@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperatorApiError } from "../api/operatorClient";
 import { splitAddress } from "./address";
-import { crmHash, isCrmHash, parseCrmHash } from "./crmRoute";
+import { crmHash, isShellHash, legacyCrmTarget, parseCrmHash } from "./crmRoute";
 import type { OpportunityCardData, PipelineResponse, WorkspaceOverview } from "./crmTypes";
 import { PipelinePage } from "./pages/PipelinePage";
 import { PeoplePage } from "./pages/PeoplePage";
@@ -101,33 +101,33 @@ afterEach(() => {
 });
 
 describe("crm routing", () => {
-  it("recognises #/crm and parses section and uuid", () => {
-    expect(isCrmHash("#/crm")).toBe(true);
-    expect(isCrmHash("#/crm/drive")).toBe(true);
-    expect(isCrmHash("#/crmx")).toBe(false);
-    expect(isCrmHash("#/cotizaciones")).toBe(false);
-    expect(parseCrmHash("#/crm")).toEqual({ section: "resumen", id: null });
-    expect(parseCrmHash("#/crm/nope")).toEqual({ section: "resumen", id: null });
+  it("recognises the five areas and parses section and uuid", () => {
+    expect(isShellHash("#/hoy")).toBe(true);
+    expect(isShellHash("#/ajustes/operaciones/drive")).toBe(true);
+    expect(isShellHash("#/hoyx")).toBe(false);
+    expect(isShellHash("#/cotizaciones")).toBe(false);
+    expect(parseCrmHash("#/hoy")).toEqual({ section: "resumen", id: null });
+    expect(parseCrmHash("#/ventas/nope")).toEqual({ section: "resumen", id: null });
     // A page's own query (the catalog keeps its supplier and search there) never changes the route.
-    expect(parseCrmHash("#/crm/catalogo?s=x&q=y")).toEqual({ section: "catalogo", id: null });
-    expect(parseCrmHash("#/crm/catalogo/6bafddfa-0000-4000-8000-0000000000c1?q=y")).toEqual({
+    expect(parseCrmHash("#/catalogo?s=x&q=y")).toEqual({ section: "catalogo", id: null });
+    expect(parseCrmHash("#/catalogo/6bafddfa-0000-4000-8000-0000000000c1?q=y")).toEqual({
       section: "catalogo", id: "6bafddfa-0000-4000-8000-0000000000c1" });
     // Old links keep working: Revisión is Historial; suppliers and the Drive archive live in Datos.
-    expect(parseCrmHash("#/crm/revision")).toEqual({ section: "historial", id: null });
-    expect(parseCrmHash("#/crm/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
-    expect(parseCrmHash("#/crm/drive")).toEqual({ section: "datos", id: null, tab: "drive" });
+    expect(legacyCrmTarget("#/crm/revision")).toBe("#/ajustes/historial");
+    expect(legacyCrmTarget("#/crm/proveedores")).toBe("#/ajustes/operaciones/proveedores");
+    expect(parseCrmHash(legacyCrmTarget("#/crm/drive")!)).toEqual({ section: "datos", id: null, tab: "drive" });
     // A «Datos» tab has its own address, so a link can open it directly.
-    expect(parseCrmHash("#/crm/datos/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
-    expect(crmHash("datos", null, "drive")).toBe("#/crm/datos/drive");
+    expect(parseCrmHash("#/ajustes/operaciones/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
+    expect(crmHash("datos", null, "drive")).toBe("#/ajustes/operaciones/drive");
     const id = "11111111-1111-4111-8111-111111111111";
-    expect(parseCrmHash(`#/crm/oportunidades/${id}`)).toEqual({ section: "oportunidades", id });
+    expect(parseCrmHash(`#/ventas/pipeline/${id}`)).toEqual({ section: "oportunidades", id });
     // A non-uuid id is dropped, never interpolated into a request.
-    expect(parseCrmHash("#/crm/oportunidades/../../v2/commands")).toEqual({ section: "oportunidades", id: null });
+    expect(parseCrmHash("#/ventas/pipeline/../../v2/commands")).toEqual({ section: "oportunidades", id: null });
     // «Licitaciones» also opens a Mercado Público notice: `mp-<uuid>`, there and nowhere else.
-    expect(parseCrmHash(`#/crm/licitaciones/mp-${id}`)).toEqual({ section: "licitaciones", id: `mp-${id}` });
-    expect(parseCrmHash(`#/crm/oportunidades/mp-${id}`)).toEqual({ section: "oportunidades", id: null });
-    expect(parseCrmHash("#/crm/licitaciones/mp-1234567-12-LE26")).toEqual({ section: "licitaciones", id: null });
-    expect(crmHash("drive")).toBe("#/crm/drive");
+    expect(parseCrmHash(`#/ventas/licitaciones/mp-${id}`)).toEqual({ section: "licitaciones", id: `mp-${id}` });
+    expect(parseCrmHash(`#/ventas/pipeline/mp-${id}`)).toEqual({ section: "oportunidades", id: null });
+    expect(parseCrmHash("#/ventas/licitaciones/mp-1234567-12-LE26")).toEqual({ section: "licitaciones", id: null });
+    expect(crmHash("drive")).toBe("#/ajustes/operaciones/drive");
   });
 });
 
@@ -358,12 +358,12 @@ describe("dashboard shell", () => {
   });
 
   it("shows an admin the thirteen sections in order and marks the current one", async () => {
-    signedInAt(`#/crm/oportunidades`);
+    signedInAt(`#/ventas/pipeline`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const links = within(nav).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/crm/resumen", "#/crm/oportunidades", "#/crm/cotizador", "#/crm/licitaciones", "#/crm/prospectos", "#/crm/pagos", "#/crm/organizaciones", "#/crm/personas",
-      "#/crm/catalogo", "#/crm/catalogo-web", "#/crm/marketing", "#/crm/historial", "#/crm/datos",
+      "#/hoy", "#/ventas/pipeline", "#/ventas/cotizaciones", "#/ventas/licitaciones", "#/ventas/listas", "#/finanzas/por-cobrar", "#/ventas/clientes", "#/ventas/clientes/personas",
+      "#/catalogo", "#/catalogo/web", "#/ventas/listas/campanas", "#/ajustes/historial", "#/ajustes/operaciones",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
       "Oportunidades",
@@ -371,23 +371,23 @@ describe("dashboard shell", () => {
   });
 
   it("hides «Datos» from a sales user", async () => {
-    signedInAt(`#/crm/oportunidades`, "sales");
+    signedInAt(`#/ventas/pipeline`, "sales");
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     expect(within(nav).queryByRole("link", { name: /Datos/ })).not.toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: /Historial/ })).toBeInTheDocument();
   });
 
   it("opens the «Datos» tab a link asks for, also when already on «Datos»", async () => {
-    signedInAt(`#/crm/datos/proveedores`);
+    signedInAt(`#/ajustes/operaciones/proveedores`);
     expect(await screen.findByRole("button", { name: /^Proveedores/, pressed: true })).toBeInTheDocument();
-    window.location.hash = "#/crm/datos/estado";
+    window.location.hash = "#/ajustes/operaciones/estado";
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     expect(await screen.findByRole("button", { name: /^Estado de los datos/, pressed: true })).toBeInTheDocument();
   });
 
   it("folds the section names into a rail of icons, and remembers it", async () => {
     window.localStorage.removeItem("crm.nav.collapsed");
-    signedInAt(`#/crm/oportunidades`);
+    signedInAt(`#/ventas/pipeline`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const toggle = within(nav).getByRole("button", { name: "Contraer menú" });
     fireEvent.click(toggle);
@@ -399,14 +399,14 @@ describe("dashboard shell", () => {
 
   it("opens the case an old ?opportunity= bookmark selected", async () => {
     signedInAt(`#/ventas?opportunity=${CASE}`);
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${CASE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/pipeline/${CASE}`));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("opens the list, not a guess, when the bookmarked case is not in the CRM", async () => {
     const other = "22222222-2222-4222-8222-222222222222";
     signedInAt(`#/casos?id=${other}`);
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${other}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/pipeline/${other}`));
     expect(await screen.findByTestId(`board-card-${CASE}`)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });

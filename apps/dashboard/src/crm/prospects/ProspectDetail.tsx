@@ -29,7 +29,7 @@ function Line({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-/** Everything known about one prospect, grouped, with the source of every fact (`#/crm/prospectos/<id>`). */
+/** Everything known about one prospect, grouped, with the source of every fact (`#/ventas/listas/<id>`). */
 function DetailBody({ p }: { p: ProspectDetailData }) {
   return (
     <>

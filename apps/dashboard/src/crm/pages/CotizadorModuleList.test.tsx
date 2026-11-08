@@ -122,34 +122,34 @@ afterEach(() => {
 describe("Cotizador module — «Todas»", () => {
   it("lists the quotes, and a row opens its tab named from the row, at the quote's address", async () => {
     const api = stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     const list = await screen.findByRole("table");
     fireEvent.click(within(list).getByText("CN00041"));
     await waitFor(() => expect(quoteTabs()).toHaveLength(1));
     expect(quoteTabs()[0]).toHaveAttribute("aria-selected", "true");
     expect(quoteTabs()[0]).toHaveTextContent("CN00041");
     expect(quoteTabs()[0]).toHaveTextContent("Universidad Ejemplo 1");
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${Q(1)}`));
     expect(JSON.parse(localStorage.getItem(tabsStorageKey(OP)) ?? "{}").tabs[0].id).toBe(Q(1));
     await waitFor(() => expect(api.reads).toContain(Q(1)));
   });
 
   it("shows a quote already open instead of opening it twice", async () => {
     stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     await screen.findByRole("table");
     for (let i = 0; i < 2; i++) {
       fireEvent.click(within(await screen.findByRole("tabpanel", { hidden: true, name: "Todas" })).getByText("CN00041"));
       await waitFor(() => expect(quoteTabs()).toHaveLength(1));
       fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
-      await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+      await waitFor(() => expect(window.location.hash).toBe("#/ventas/cotizaciones"));
     }
     expect(quoteTabs()).toHaveLength(1);
   });
 
   it("opens an imported quote with nothing to edit", async () => {
     stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     const list = await screen.findByRole("table");
     expect(within(list).getByText("importada")).toBeInTheDocument();
     fireEvent.click(within(list).getByText("CN00042"));

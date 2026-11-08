@@ -757,7 +757,7 @@ describe("«Licitación cierra mañana»", () => {
     stub();
     const navigate = renderTenders(closing);
     const link = await screen.findByRole("link", { name: "Licitación cierra mañana: Compra de balanzas de ejemplo" });
-    expect(link).toHaveAttribute("href", `#/crm/licitaciones/${TENDER}`);
+    expect(link).toHaveAttribute("href", `#/ventas/licitaciones/${TENDER}`);
     fireEvent.click(link);
     expect(navigate).toHaveBeenCalledWith("licitaciones", TENDER);
   });

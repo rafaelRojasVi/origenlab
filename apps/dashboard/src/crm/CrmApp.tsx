@@ -193,7 +193,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
         >
           ☰
         </button>
-        <a href="#/crm/resumen" className="flex shrink-0 items-center gap-2" aria-label="OrigenLab">
+        <a href={crmHash("resumen")} className="flex shrink-0 items-center gap-2" aria-label="OrigenLab">
           <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-600 text-[11px] font-bold text-white">
             O
           </span>
@@ -378,7 +378,7 @@ function SideNav({
             {CRM_NAV.filter((n) => n.group === g && (!n.adminOnly || admin) && (!n.quoting || mayQuote)).map((n) => (
               <li key={n.id}>
                 <NavLink
-                  href={`#/crm/${n.id}`}
+                  href={crmHash(n.id)}
                   current={n.id === activeCrm}
                   collapsed={collapsed}
                   icon={NAV_ICON[n.id]}

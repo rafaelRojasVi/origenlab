@@ -13,14 +13,14 @@ import { Button, Modal, Skeleton } from "../ui";
 import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
 
 /**
- * «Cotizador»: many quotes open at once, as tabs (R4), at `#/crm/cotizador[/<quoteId>]`.
+ * «Cotizador»: many quotes open at once, as tabs (R4), at `#/ventas/cotizaciones[/<quoteId>]`.
  *
  * «Todas» comes first (the list of quotes), then up to eight open quotes — each tab says
  * the quote's CN number, its client and its state (a dot: amber draft, green approved, blue sent,
  * grey voided) — then «+ Nueva» (`NewQuoteDialog`: a client, and the API finds or opens its case;
  * the quote made opens as a tab). The address names the tab shown:
  * a click on a tab, an entry point elsewhere («Cotizar» in Hoy, a request, a case) or the old
- * `#/crm/cotizar/<id>` all open the quote here, and a quote already open is only shown again.
+ * `#/crm/cotizar/<id>` (redirected) all open the quote here, and a quote already open is only shown again.
  *
  * Each tab's pane is the one-quote page (`CotizadorPage`). A pane stays mounted, hidden, once it
  * has been shown, so its autosave timers and unsaved edits survive a switch; a tab restored from
@@ -30,7 +30,7 @@ import { CotizadorPage, NoQuoteAccess } from "./CotizadorPage";
  * the closed tab, its × or its pane. A ninth tab closes the oldest one with nothing pending, and
  * asks when every tab has something pending.
  *
- * «Preferencias» (`#/crm/cotizador/preferencias`) and «Rentabilidad» (`#/crm/cotizador/rentabilidad`),
+ * «Preferencias» (`#/ventas/cotizaciones/preferencias`) and «Rentabilidad» (`#/ventas/cotizaciones/rentabilidad`),
  * the list's two buttons, are fixed panes, not tabs: the company's defaults (`PreferencesPage`) and
  * each quote's money (`RentabilidadPage`, whose rows open their quote's tab). While one is shown
  * no tab is selected; «Todas» goes back to the list, a tab is one click away, and a quote made with
@@ -153,7 +153,7 @@ function CotizadorModule({
       activate(null);
       return;
     }
-    // Leaving a fixed pane for `#/crm/cotizador` is «Todas», whatever opened behind the pane meanwhile.
+    // Leaving a fixed pane for `#/ventas/cotizaciones` is «Todas», whatever opened behind the pane meanwhile.
     const fromFixedPane = onFixedPane.current;
     onFixedPane.current = false;
     if (lastRoute.current === routeId && !(fromFixedPane && !routeId)) return;

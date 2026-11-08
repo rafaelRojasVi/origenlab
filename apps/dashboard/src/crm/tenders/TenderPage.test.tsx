@@ -441,10 +441,10 @@ describe("TenderPage — offer, forms and package", () => {
     expect(posted(calls, "/v2/commands/create-tender-offer-quote")[0].body).toEqual({ opportunity_id: TENDER, preparation_id: READ });
     const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
     const cotizador = await screen.findByRole("link", { name: "Abrir en Cotizador" });
-    expect(cotizador).toHaveAttribute("href", `#/crm/cotizador/${QUOTE}`);
+    expect(cotizador).toHaveAttribute("href", `#/ventas/cotizaciones/${QUOTE}`);
     fireEvent.click(cotizador);
     scroll.mockRestore();
-    expect(window.location.hash).toBe(`#/crm/cotizador/${QUOTE}`);
+    expect(window.location.hash).toBe(`#/ventas/cotizaciones/${QUOTE}`);
   });
 
   it("«Llenar formularios» is disabled with the reason when the bidder's data is missing", async () => {

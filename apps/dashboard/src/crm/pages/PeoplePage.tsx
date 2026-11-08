@@ -64,7 +64,7 @@ export function PeoplePage({ navigate, initialId = null }: { navigate: (s: CrmSe
   const [line, setLine] = useState<string | null>(null);
   const mayAuthor = useMayAuthorCrm();
   const [showNewPerson, setShowNewPerson] = useState(false);
-  // A link from a case («Persona») opens that person directly: `#/crm/personas/<id>`.
+  // A link from a case («Persona») opens that person directly: `#/ventas/clientes/personas/<id>`.
   const [openPersonId, setOpenPersonId] = useState<string | null>(initialId);
   const [suggestions, reloadSuggestions] = useResource(fetchPersonSuggestions);
 

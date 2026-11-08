@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import { crmHash, isCrmHash, movedCrmHash, parseCrmHash, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
+import { AREA_HOME, crmHash, isShellHash, legacyCrmTarget, matchSectionPath, parseCrmHash, type AreaKey, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
 
 /**
- * One dashboard, one navigation, one sign-in: the CRM under `#/crm/*`. The bare root opens
- * Resumen. Bookmarks from the earlier operator panel are redirected to the CRM section that
- * now covers the same ground, and to Resumen when nothing does; the old screens are gone.
+ * One dashboard, one navigation, one sign-in: five areas, `#/hoy`, `#/ventas/…`, `#/finanzas/…`,
+ * `#/catalogo…` and `#/ajustes/…`. The bare root opens Hoy. Old `#/crm/…` links, and bookmarks
+ * from the earlier operator panel, are redirected to the page that now covers the same ground
+ * (keeping the record and the query), and to Hoy when nothing does.
  */
-export const SHELL_HOME_HASH = "#/crm/resumen";
+export const SHELL_HOME_HASH = "#/hoy";
 
 export interface ShellRoute {
   section: CrmSection;
@@ -17,13 +18,12 @@ export interface ShellRoute {
   pane?: CotizadorPane;
 }
 
-/** Earlier-panel hash (without `#/` and query) → the CRM section that replaced it. */
-/** Old panel paths → the CRM path segment they now open («proveedores» and «drive» resolve into «Datos»). */
+/** Earlier-panel paths (without `#/` and query) → the page they now open («proveedores» and «drive» are «Datos» tabs).
+ *  «ventas» and «catalogo» are absent: they are area routes now, and open the same page as before. */
 export const LEGACY_REDIRECTS: Record<string, CrmSection | "proveedores" | "drive"> = {
   today: "resumen",
   inbox: "resumen",
   pipeline: "oportunidades",
-  ventas: "oportunidades",
   deals: "oportunidades",
   cotizaciones: "oportunidades",
   casos: "oportunidades",
@@ -36,14 +36,14 @@ export const LEGACY_REDIRECTS: Record<string, CrmSection | "proveedores" | "driv
   revision: "historial",
   importacion: "historial",
   "crm-v2": "resumen",
-  catalogo: "catalogo",
   tenders: "resumen",
   "payments-logistics": "resumen",
   system: "resumen",
 };
 
+/** The page an address shows; an address about to be redirected already reads as its target. */
 export function parseShellHash(hash: string): ShellRoute {
-  return isCrmHash(hash) ? parseCrmHash(hash) : { section: "resumen", id: null };
+  return parseCrmHash(redirectHash(hash) ?? hash);
 }
 
 const CASE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,10 +59,26 @@ function legacyCaseId(query: string | undefined): string | null {
   return CASE_ID.test(value) ? value.toLowerCase() : null;
 }
 
-/** The hash an address should be replaced with: a non-CRM one, or a CRM one that moved; else null. */
+/**
+ * The hash an address should be replaced with, or null when it is already final. A new hash is
+ * final unless it is a bare area root (→ that area's first page) or a path no page has (→ Hoy);
+ * an old `#/crm/…` → `legacyCrmTarget`; anything else → `LEGACY_REDIRECTS`. Every target is final.
+ */
 export function redirectHash(hash: string): string | null {
-  if (isCrmHash(hash)) return movedCrmHash(hash);
   const [path, query] = hash.replace(/^#\/?/, "").split("?");
+  if (isShellHash(hash)) {
+    const parts = path.split("/").filter(Boolean);
+    if (parts.length === 1) {
+      const home = AREA_HOME[parts[0] as AreaKey];
+      // «Hoy» and «Catálogo» are pages at their area root (the catalog keeps its `?query` there).
+      if (crmHash(home) === `#/${parts[0]}`) return null;
+      // An earlier-panel `#/ventas?opportunity=<uuid>` keeps its case.
+      return crmHash(home, home === "oportunidades" ? legacyCaseId(query) : null);
+    }
+    return matchSectionPath(hash) ? null : SHELL_HOME_HASH;
+  }
+  const legacy = legacyCrmTarget(hash);
+  if (legacy) return legacy;
   const section = LEGACY_REDIRECTS[path.trim().toLowerCase()] ?? "resumen";
   // Only Oportunidades opens a single record; other sections land on their list.
   return crmHash(section, section === "oportunidades" ? legacyCaseId(query) : null);

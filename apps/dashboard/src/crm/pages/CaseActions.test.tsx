@@ -822,7 +822,7 @@ describe("case drawer actions", () => {
     const review = await within(dialog).findByRole("region", { name: "Cotización en otro hilo" });
     expect(within(review).getByText(/Este hilo ya corresponde a otro caso/)).toBeInTheDocument();
     expect(within(review).getByRole("link", { name: /Abrir caso original/ }))
-      .toHaveAttribute("href", `#/crm/oportunidades/${otherId}`);
+      .toHaveAttribute("href", `#/ventas/pipeline/${otherId}`);
     expect(within(review).queryByRole("button", { name: "Revisar vínculo con este caso" }))
       .not.toBeInTheDocument();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
@@ -995,7 +995,7 @@ describe("case drawer actions", () => {
     });
     const dialog = await openDrawer(session("sales"));
     const box = within(dialog).getByTestId("case-confirm-institution");
-    expect(within(box).getByRole("link", { name: "Cambiar" })).toHaveAttribute("href", `#/crm/organizaciones/${ORG}`);
+    expect(within(box).getByRole("link", { name: "Cambiar" })).toHaveAttribute("href", `#/ventas/clientes/${ORG}`);
     fireEvent.click(within(box).getByRole("button", { name: "Sí, confirmar" }));
     expect(await within(dialog).findByText(/Institución «nuevo-ficticio.example.cl» confirmada/)).toBeInTheDocument();
     const post = calls.find((c) => c.method === "POST")!;
@@ -1220,8 +1220,8 @@ describe("case drawer actions", () => {
   it("opens the institution and the person from «Contacto»", async () => {
     stubApi({ pipelines: [page([card({ contact: { source: "crm_participant", name: "Persona Ficticia", address: null, others: 0, person_id: PERSON } })])] });
     const dialog = await openDrawer(session("sales"));
-    expect(within(dialog).getByTestId("case-org-link")).toHaveAttribute("href", `#/crm/organizaciones/${ORG}`);
-    expect(within(dialog).getByTestId("case-person-link")).toHaveAttribute("href", `#/crm/personas/${PERSON}`);
+    expect(within(dialog).getByTestId("case-org-link")).toHaveAttribute("href", `#/ventas/clientes/${ORG}`);
+    expect(within(dialog).getByTestId("case-person-link")).toHaveAttribute("href", `#/ventas/clientes/personas/${PERSON}`);
   });
 
   it("searches Gmail for a contact that is only an email recipient", async () => {

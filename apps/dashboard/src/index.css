@@ -20,7 +20,7 @@
   --color-muted: #64748b;
   --color-border: #e2e8f0;
 
-  /* CRM workspace (#/crm/*): warm neutrals, one teal accent, status colours that always
+  /* CRM workspace (#/hoy, #/ventas/*, …): warm neutrals, one teal accent, status colours that always
      travel with text. Every status text colour reaches WCAG AA on its own -bg. */
   --color-canvas: #fafaf9;
   --color-canvas-raised: #ffffff;

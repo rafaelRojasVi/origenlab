@@ -75,9 +75,9 @@ describe("the Cotizador section", () => {
     expect(names.indexOf("Prospectos")).toBe(names.indexOf("Licitaciones") + 1);
     expect(names.indexOf("Pagos")).toBe(names.indexOf("Prospectos") + 1);
     expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Pagos") + 1);
-    expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/crm/licitaciones");
+    expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/ventas/licitaciones");
     expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("aria-current", "page");
-    expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/crm/cotizador");
+    expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/ventas/cotizaciones");
     // The Cotizador is its own chunk: it arrives a moment after the shell.
     expect(await screen.findByRole("tablist", { name: "Cotizaciones abiertas" })).toBeInTheDocument();
     expect(await screen.findByText("Esta cotización no existe.")).toBeInTheDocument();
