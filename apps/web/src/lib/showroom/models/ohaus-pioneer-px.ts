@@ -1,713 +1,680 @@
 /**
- * OHAUS Pioneer PX — balanza analítica con protector de vidrio.
+ * OHAUS Pioneer PX — balanza analítica (PX124 / PX224) con protector de vidrio.
  *
- * Fuentes de dimensiones:
- *   Hoja de datos OHAUS PX (80775267-D) vía ei.uk/wp-content/uploads/ei/product/
- *     documents/Ohaus_Pioneer_PX_Datasheet.pdf (texto extraído con pdftotext):
- *       Dimensiones totales (W×D×H): 209×321×309 mm  ← D=321 mm es el fondo
- *       Cuerpo solo (modelo de precisión, sin protector): 209×321×98 mm → H_cuerpo=98 mm
- *       Dimensiones internas del protector: 172×131×205 mm (W×D×H)
- *   brandModels.ts: plato Ø 90 mm
+ * Modelado sobre FOTOGRAFÍAS REALES, no sobre una descripción:
+ *   - foto del fabricante en el repo: `public/products/ohaus/pioneer-px.jpg`
+ *     (tres cuartos por la izquierda, pantalla encendida «0.0000 g / Place sample»);
+ *   - foto PX224 de LabFriend (distribuidor OHAUS), mismo ángulo a 1000 px:
+ *     labfriendcoredataprod.blob.core.windows.net/labfriendcore-data-prod/images/
+ *     6705045_analytical-balance-pioneer-px224-…-incal-model.jpeg
+ *     (labfriend.com.au/ohaus-analytical-balance-pioneer-px224-220g-00001g-309x321x209mm-incal-model);
+ *   - hoja de datos OHAUS «Pioneer Analytical and Precision Balances» 80775269
+ *     (2018-04-27), vía ei.uk/wp-content/uploads/ei/product/documents/Ohaus_Pioneer_PX_Datasheet.pdf:
+ *     p. 1 (foto de la analítica), p. 2 (tabla: plato Ø 90 en PX124/PX224), p. 3
+ *     (primer plano frontal de la pantalla y el teclado) y p. 4 (planos acotados).
+ *   Copias en ~/data/origenlab-v2-migration/insights-20261107/study/web/ref/
+ *   ohaus-pioneer-px-{maker,labfriend-px224,datasheet-p1,datasheet-display,datasheet-dimensions}.*
+ *   (us.ohaus.com / mx.ohaus.com fallan por certificado TLS desde aquí).
  *
- * Estimados (marcados «est.»):
- *   Patas            Ø 26 mm, H ≈ 14 mm, con aro más claro en el centro
- *   Consola delantera  H desde 18 mm hasta 96 mm con pendiente ~29°
- *   Marco del protector  paredes blancas, cuadradas, 9×9 mm; franja roja en la tapa
- *   Pedestal del plato   Ø 8 mm, H ≈ 26 mm (est.)
- *   Masa ilustrativa   12,3456 g (solo en pantalla; no es especificación)
+ * Cotas de la hoja de datos (p. 4), en mm:
+ *   conjunto 209 (ancho) × 321 (fondo) × 309 (alto); base sola 98 de alto con el plato;
+ *   protector 172 de ancho exterior × 142 de fondo exterior (131 interior), vidrio
+ *   235 de alto; la puerta lateral abierta asoma 138 por detrás (430 en total);
+ *   plato Ø 90.
  *
- * Convención de ejes (igual que hielscher-up400st):
- *   Perfil en plano XY: X = fondo (0=trasero, D=delantero), Y = altura
- *   Extrusión en Z (eje del ancho)
- *   La cara delantera (consola con display) queda al frente (+X tras la rotación yaw)
+ * sourceNote — ESTIMADOS medidos sobre los planos y las fotos (no son cotas):
+ *   frente del protector a 107 del frente de la base (plano lateral, a escala);
+ *   cubierta donde se apoya el protector a 80; canto delantero de la consola a 40;
+ *   consola inclinada ~22° desde z = 62 hasta el frente; tapa del protector 12 de
+ *   alto con barras de 10; varillas de esquina Ø 6; patas Ø 36 × 11 (plano frontal);
+ *   arco de la base entre patas 14–18; panel gris 170 × 78; LCD 104 × 34; franja de
+ *   teclas 100 × 11; burbuja Ø 9; aletas de agarre de 60 de alto (la izquierda delante,
+ *   como la foto; la derecha atrás, porque la foto no la muestra delante); asa
+ *   semicircular de la puerta superior 74 × 10; recorrido de las puertas; masa de la
+ *   muestra 2,4853 g (sólo ilustrativa); costado derecho y trasera (no salen en las fotos).
+ *
+ * Ejes: x = ancho, y = alto (0 = suelo), z = fondo; el FRENTE (consola) mira a +z.
+ * El giro de presentación (`yaw` positivo) muestra el costado izquierdo con el
+ * rótulo «OHAUS», como la foto.
+ *
+ * Animación (`update`, nivel 0–1): al arrancar, la puerta lateral izquierda y la
+ * superior se deslizan hacia atrás, la navecilla con la muestra baja al plato, las
+ * puertas se cierran y la lectura se asienta (indicador de estabilidad «*»).
+ * `setPower(true)` enciende la retroiluminación de la LCD.
  */
 import * as THREE from 'three';
 import type { BuiltModel } from '../types';
 import { SANS, canvasTexture, lathe, labGlass, disposer } from './kit';
 
 // ── Dimensiones (mm) ──────────────────────────────────────────────────────────
-const W      = 209;   // ancho total
-const D      = 321;   // fondo total (X en el perfil)
-const H_BODY = 98;    // alto del cuerpo (de la hoja de datos: modelo de precisión)
-const H_TOT  = 309;   // alto total con protector
-const H_SH   = H_TOT - H_BODY;   // 211 mm — alto del protector
-const PAN_R  = 45;    // radio del plato = Ø 90 / 2
-const BEVEL  = 12;  // generous bevel → soft, sculpted corners
+const W = 209; // ancho de la base (hoja de datos)
+const D = 321; // fondo de la base (hoja de datos)
+const H = 309; // alto total (hoja de datos)
+const HW = W / 2;
+const HD = D / 2;
+const FOOT_H = 11; // est. (plano frontal)
+const FOOT_R = 18; // est.
+const DECK = 80; // est.: cubierta donde se apoya el protector
+const NOSE = 40; // est.: alto del canto delantero
+const SLOPE_Z = 62; // est.: donde la consola empieza a bajar
+const SLOPE_K = (DECK - NOSE) / (HD - SLOPE_Z);
+const SLOPE_ANGLE = Math.atan(SLOPE_K);
 
-// Pendiente de la consola delantera
-// De (D, 18) a (D-42, 96) → ~29° desde la vertical
-const SL_BOT = new THREE.Vector2(D, 18);
-const SL_TOP = new THREE.Vector2(D - 42, 96);
-const slopeAlong   = new THREE.Vector3(SL_TOP.x - SL_BOT.x, SL_TOP.y - SL_BOT.y, 0).normalize();
-const slopeOutward = new THREE.Vector3(slopeAlong.y, -slopeAlong.x, 0); // normal que apunta hacia afuera (+X, +Y)
-const slopeLen     = SL_BOT.distanceTo(SL_TOP);  // ≈ 89 mm
-const slopeMid2    = new THREE.Vector2(
-  (SL_BOT.x + SL_TOP.x) / 2,
-  (SL_BOT.y + SL_TOP.y) / 2,
-);
+const SH_W = 172; // ancho exterior del protector (hoja de datos)
+const SH_D = 142; // fondo exterior del protector (hoja de datos)
+const SH_FRONT = HD - 107; // est. (plano lateral)
+const SH_BACK = SH_FRONT - SH_D;
+const SH_CZ = (SH_FRONT + SH_BACK) / 2;
+const CAP_H = 12; // est.
+const CAP_B = 10; // est.
+const ROD_R = 3; // est.
+const PAN_R = 45; // Ø 90 (hoja de datos)
 
-// Protector: dimensiones del marco
-// El protector se centra sobre la zona trasera del cuerpo.
-// Delantera del protector a X_SF mm del frente del cuerpo.
-const X_SF   = 102;  // fondo de la zona de consola (est.) → frente del protector en X=D-X_SF=219
-const X_SR   = 24;   // borde trasero de los postes del protector en X=24
-const SH_Z   = 90;   // semiancho de los postes del protector (centrados en Z=0)
-const POST_W = 9;    // sección cuadrada de los postes (blanco)
+const PANEL = { w: 170, h: 78 }; // est.
+const LCD = { x: 33, y: 13, w: 104, h: 34 }; // est., mm del panel (origen arriba a la izquierda)
+const SAMPLE_G = 2.4853; // ilustrativa
 
-// Masa ilustrativa (valor de pantalla; no es una especificación del equipo)
-const SAMPLE_G = 12.3456;
+// ── Perfil de la base ─────────────────────────────────────────────────────────
+const smin = (a: number, b: number, r: number) => {
+  const h = Math.max(r - Math.abs(a - b), 0) / r;
+  return Math.min(a, b) - (h * h * r) / 4;
+};
+const smooth = (e0: number, e1: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
+/** Alto de la carcasa blanca a la profundidad `z`. */
+const topAt = (z: number) => smin(DECK, DECK - (z - SLOPE_Z) * SLOPE_K, 14);
+/** Arco de la base entre las patas: 0 sobre una pata, 1 en el centro del vano. */
+const arch = (x: number, z: number) => Math.max(1 - smooth(70, 118, Math.abs(z)), 1 - smooth(46, 74, Math.abs(x)));
+
+/**
+ * Sólido barrido a lo largo de z: en cada z una sección de rectángulo redondeado
+ * (medio ancho, arriba, abajo); los extremos se redondean con radio `endR` y
+ * `lift` levanta el borde inferior (el arco entre las patas).
+ */
+function loft(
+  section: (z: number) => { half: number; top: number; bot: number },
+  opts: { z0: number; z1: number; endR: number; rTop: number; rBot: number; lift: (x: number, z: number) => number },
+) {
+  const { z0, z1, endR, rTop, rBot, lift } = opts;
+  const zs: number[] = [];
+  const N = 70;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const u = 0.5 - 0.5 * Math.cos(Math.PI * t); // más secciones cerca de los extremos
+    zs.push(z0 + (z1 - z0) * (0.35 * t + 0.65 * u));
+  }
+  const corner = (cx: number, cy: number, r: number, a0: number, a1: number, n: number, out: [number, number][]) => {
+    for (let i = 0; i <= n; i++) {
+      const a = a0 + ((a1 - a0) * i) / n;
+      out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+    }
+  };
+  const line = (x0: number, y0: number, x1: number, y1: number, n: number, out: [number, number][]) => {
+    for (let i = 0; i <= n; i++) out.push([x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n]);
+  };
+  const ring = (half: number, top: number, bot: number) => {
+    const rt = Math.max(0.5, Math.min(rTop, half - 1, (top - bot) / 2 - 0.5));
+    const rb = Math.max(0.5, Math.min(rBot, half - 1, (top - bot) / 2 - 0.5));
+    const pts: [number, number][] = [];
+    const segs: (() => void)[] = [
+      () => line(-half + rb, bot, half - rb, bot, 16, pts),
+      () => corner(half - rb, bot + rb, rb, -Math.PI / 2, 0, 5, pts),
+      () => line(half, bot + rb, half, top - rt, 6, pts),
+      () => corner(half - rt, top - rt, rt, 0, Math.PI / 2, 8, pts),
+      () => line(half - rt, top, -half + rt, top, 12, pts),
+      () => corner(-half + rt, top - rt, rt, Math.PI / 2, Math.PI, 8, pts),
+      () => line(-half, top - rt, -half, bot + rb, 6, pts),
+      () => corner(-half + rb, bot + rb, rb, Math.PI, (3 * Math.PI) / 2, 5, pts),
+    ];
+    for (const s of segs) {
+      s();
+      pts.pop(); // el último punto de cada tramo es el primero del siguiente
+    }
+    return { pts, edge: bot + rb + 0.01 };
+  };
+  const pos: number[] = [];
+  let M = 0;
+  for (const z of zs) {
+    const d = Math.min(z - z0, z1 - z);
+    const inset = d < endR ? endR - Math.sqrt(Math.max(0, endR * endR - (endR - d) * (endR - d))) : 0;
+    const s = section(z);
+    const { pts, edge } = ring(s.half - inset, s.top - inset, s.bot + inset * 0.45);
+    M = pts.length;
+    for (const [x, y] of pts) pos.push(x, y < edge ? y + lift(x, z) : y, z);
+  }
+  const idx: number[] = [];
+  for (let i = 0; i < zs.length - 1; i++) {
+    for (let j = 0; j < M; j++) {
+      const a = i * M + j;
+      const b = i * M + ((j + 1) % M);
+      const c = (i + 1) * M + j;
+      const e = (i + 1) * M + ((j + 1) % M);
+      idx.push(a, b, c, b, e, c);
+    }
+  }
+  // Tapas: abanico desde el centro de la primera y la última sección.
+  for (const [ring0, back] of [[0, true], [zs.length - 1, false]] as const) {
+    let cx = 0;
+    let cy = 0;
+    for (let j = 0; j < M; j++) {
+      cx += pos[(ring0 * M + j) * 3];
+      cy += pos[(ring0 * M + j) * 3 + 1];
+    }
+    const center = pos.length / 3;
+    pos.push(cx / M, cy / M, zs[ring0]);
+    for (let j = 0; j < M; j++) {
+      const a = ring0 * M + j;
+      const b = ring0 * M + ((j + 1) % M);
+      if (back) idx.push(center, a, b);
+      else idx.push(center, b, a);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// ── Dígitos de siete segmentos ────────────────────────────────────────────────
+type P = [number, number];
+const SEGMENTS: Record<string, string> = {
+  '0': 'abcdef', '1': 'bc', '2': 'abdeg', '3': 'abcdg', '4': 'bcfg',
+  '5': 'acdfg', '6': 'acdefg', '7': 'abc', '8': 'abcdefg', '9': 'abcdfg', '-': 'g', ' ': '',
+};
+function segDigit(g: CanvasRenderingContext2D, ch: string, x: number, y: number, w: number, h: number, t: number) {
+  const hor = (cx: number, cy: number, len: number): P[] => [
+    [cx - len / 2, cy], [cx - len / 2 + t / 2, cy - t / 2], [cx + len / 2 - t / 2, cy - t / 2],
+    [cx + len / 2, cy], [cx + len / 2 - t / 2, cy + t / 2], [cx - len / 2 + t / 2, cy + t / 2],
+  ];
+  const ver = (cx: number, cy: number, len: number): P[] => [
+    [cx, cy - len / 2], [cx + t / 2, cy - len / 2 + t / 2], [cx + t / 2, cy + len / 2 - t / 2],
+    [cx, cy + len / 2], [cx - t / 2, cy + len / 2 - t / 2], [cx - t / 2, cy - len / 2 + t / 2],
+  ];
+  const L = w - t * 1.2;
+  const M = h / 2 - t * 0.9;
+  const parts: Record<string, P[]> = {
+    a: hor(x + w / 2, y + t / 2, L), g: hor(x + w / 2, y + h / 2, L), d: hor(x + w / 2, y + h - t / 2, L),
+    f: ver(x + t / 2, y + h / 4, M), b: ver(x + w - t / 2, y + h / 4, M),
+    e: ver(x + t / 2, y + (3 * h) / 4, M), c: ver(x + w - t / 2, y + (3 * h) / 4, M),
+  };
+  for (const key of SEGMENTS[ch] ?? '') {
+    g.beginPath();
+    parts[key].forEach(([px, py], i) => {
+      const sx = px + (y + h - py) * 0.06; // leve inclinación, como la LCD real
+      if (i) g.lineTo(sx, py);
+      else g.moveTo(sx, py);
+    });
+    g.closePath();
+    g.fill();
+  }
+}
+
+/**
+ * Texto en un lienzo escalado a milímetros: se dibuja a escala de píxel (un
+ * cuerpo de 3 px escalado ×6 sale con el espaciado roto).
+ */
+function label(g: CanvasRenderingContext2D, k: number, s: string, x: number, y: number, size: number, weight: number) {
+  g.save();
+  g.scale(1 / k, 1 / k);
+  g.font = `${weight} ${size * k}px ${SANS}`;
+  g.fillText(s, x * k, y * k);
+  g.restore();
+}
+const measure = (g: CanvasRenderingContext2D, k: number, s: string, size: number, weight: number) => {
+  g.save();
+  g.font = `${weight} ${size * k}px ${SANS}`;
+  const w = g.measureText(s).width / k;
+  g.restore();
+  return w;
+};
 
 export function build(): BuiltModel {
   const { keep, dispose } = disposer();
   const root = new THREE.Group();
-
-  // ── Materiales ──────────────────────────────────────────────────────────────
-  const bodyMat = keep(
-    new THREE.MeshPhysicalMaterial({
-      color: 0xe8e8e4,
-      roughness: 0.42,
-      metalness: 0,
-      clearcoat: 0.25,
-      clearcoatRoughness: 0.4,
-    }),
-  );
-  const panMat = keep(
-    new THREE.MeshPhysicalMaterial({
-      color: 0xbbbfc2,
-      metalness: 0.88,
-      roughness: 0.18,
-    }),
-  );
-  const redMat = keep(
-    new THREE.MeshStandardMaterial({ color: 0xc21212, roughness: 0.6 }),
-  );
-  const footRingMat = keep(
-    new THREE.MeshStandardMaterial({ color: 0xe03030, roughness: 0.35, metalness: 0.05 }),
-  );
-  // Vidrio con un leve tono verde, como el canto del vidrio real: incoloro se perdía.
-  const glassMat  = keep(labGlass());
-  glassMat.color.set(0xd6ece6);
-  glassMat.opacity = 0.3;
-  // MeshBasicMaterial para la tapa: no recibe iluminación ni entorno, así
-  // el panel horizontal no refleja los tonos cálidos del HDRI como losa roja.
-  const topGlassMat = keep(
-    new THREE.MeshBasicMaterial({
-      color: 0xdff0ee,
-      transparent: true,
-      opacity: 0.10,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    }),
-  );
-  const boatMat = keep(
-    new THREE.MeshPhysicalMaterial({
-      color: 0xf5f2e6,
-      roughness: 0.7,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-    }),
-  );
-  const sampleMat = keep(
-    new THREE.MeshStandardMaterial({
-      color: 0xd4c28a,
-      roughness: 0.85,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-    }),
-  );
-
-  // ── Canvas: consola delantera (LCD + teclado) ────────────────────────────────
-  let screenOn    = false;
-  let dispReading = 0;
-  let stableFlag  = false;
-
-  // El canvas tiene proporciones del área de la pendiente (≈ 200 × 150 px útiles)
-  const CV_W = 512, CV_H = 384;
-
-  const drawConsole = (g: CanvasRenderingContext2D, w: number, h: number) => {
-    // Fondo del panel de consola (ligeramente más oscuro que el cuerpo blanco)
-    // Panel gris claro, más oscuro que el cuerpo blanco: así se lee la consola.
-    g.fillStyle = '#c9cccd';
-    g.fillRect(0, 0, w, h);
-    g.strokeStyle = '#9ea2a5';
-    g.lineWidth = 4;
-    g.strokeRect(2, 2, w - 4, h - 4);
-
-    // ── Franja roja superior (rasgo de marca OHAUS) ──
-    const stripeH = h * 0.065;
-    g.fillStyle = '#c01010';
-    g.fillRect(0, 0, w, stripeH);
-
-    // «PIONEER» pequeño, blanco, arriba a la derecha sobre la franja
-    g.fillStyle = '#ffffff';
-    g.font = `700 ${stripeH * 0.62}px ${SANS}`;
-    g.textAlign = 'right';
-    g.textBaseline = 'middle';
-    g.fillText('PIONEER', w - w * 0.04, stripeH / 2);
-
-    // ── Ventana LCD ──────────────────────────────────────────────────────────
-    const lx = w * 0.06;
-    const ly = stripeH + h * 0.06;
-    const lw = w * 0.72;
-    const lh = h * 0.42;
-
-    // Marco bezel negro del LCD
-    g.fillStyle = '#2b2e31';
-    g.beginPath();
-    g.roundRect(lx - 7, ly - 7, lw + 14, lh + 14, 6);
-    g.fill();
-
-    // Pantalla: blanco puro con retroiluminación cuando encendida
-    const lcdBg = screenOn ? '#f3f8f6' : '#8f9893';
-    g.fillStyle = lcdBg;
-    g.fillRect(lx, ly, lw, lh);
-
-    // Línea roja delgada en la parte superior del LCD
-    g.fillStyle = '#c01010';
-    g.fillRect(lx, ly, lw, 3);
-
-    if (screenOn) {
-      // Lectura principal: dígitos oscuros estilo LCD
-      const txt = dispReading.toFixed(4);
-      g.fillStyle = '#1a2a10';
-      g.font = `700 ${lh * 0.54}px "Courier New", monospace`;
-      g.textAlign = 'right';
-      g.textBaseline = 'middle';
-      g.fillText(txt, lx + lw - 8, ly + lh * 0.44);
-      // Unidad
-      g.font = `600 ${lh * 0.26}px ${SANS}`;
-      g.fillText('g', lx + lw - 6, ly + lh * 0.76);
-      // Indicador de estabilidad (cuadrado sólido, estilo LCD)
-      if (stableFlag) {
-        g.fillStyle = '#1a2a10';
-        g.font = `700 ${lh * 0.22}px ${SANS}`;
-        g.textAlign = 'left';
-        g.textBaseline = 'middle';
-        g.fillText('▪', lx + 6, ly + lh * 0.44);
-      }
-      // «Place sample» si en cero
-      if (dispReading < 0.0005) {
-        g.fillStyle = '#2a3a20';
-        g.font = `400 ${lh * 0.17}px ${SANS}`;
-        g.textAlign = 'center';
-        g.textBaseline = 'bottom';
-        g.fillText('Place sample', lx + lw / 2, ly + lh - 5);
-      }
-    } else {
-      // Apagada: segmentos tenues
-      // Apagada: los segmentos se adivinan sobre el LCD gris.
-      g.fillStyle = 'rgba(40, 48, 44, 0.18)';
-      g.font = `700 ${lh * 0.54}px "Courier New", monospace`;
-      g.textAlign = 'right';
-      g.textBaseline = 'middle';
-      g.fillText('8.8888', lx + lw - 8, ly + lh * 0.44);
-    }
-
-    // ── Burbuja de nivel (bola de aire, a la derecha del LCD) ────────────────
-    const bubR  = h * 0.055;
-    const bubX  = lx + lw + (w - lx - lw) / 2;
-    const bubY  = ly + lh * 0.42;
-    g.strokeStyle = '#aaa8a0';
-    g.lineWidth = 2;
-    g.beginPath();
-    g.arc(bubX, bubY, bubR, 0, Math.PI * 2);
-    g.fillStyle = '#d8e8d0';
-    g.fill();
-    g.stroke();
-    // Burbuja interior
-    g.beginPath();
-    g.arc(bubX + bubR * 0.08, bubY - bubR * 0.08, bubR * 0.3, 0, Math.PI * 2);
-    g.fillStyle = 'rgba(255,255,255,0.75)';
-    g.fill();
-
-    // ── Tira de teclas (franja delgada, como en la foto) ────────────────────
-    const kyTop  = ly + lh + h * 0.038;      // cerca del LCD
-    const kyH    = h * 0.17;                  // franja delgada ≈ 65 px
-    const labels = [['Zero', ''], ['Print', ''], ['Function', 'Mode'], ['Tare', 'Cal / On']];
-    const kyW    = lw / labels.length;
-    labels.forEach(([top, bot], i) => {
-      const kx = lx + i * kyW + kyW / 2;
-      // Tecla
-      g.fillStyle = '#55595d';
-      g.beginPath();
-      g.roundRect(kx - kyW * 0.44, kyTop + 2, kyW * 0.88, kyH - 4, 4);
-      g.fill();
-      g.strokeStyle = '#3c3f42';
-      g.lineWidth = 0.8;
-      g.stroke();
-      // Label: fuente compacta con maxWidth para que «Function» no desborde
-      const fSz = h * 0.037;
-      const maxLabelW = kyW * 0.86;
-      g.fillStyle = '#ffffff';
-      g.font = `600 ${fSz * 1.15}px ${SANS}`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      const cy = bot ? kyTop + kyH * 0.32 : kyTop + kyH * 0.50;
-      g.fillText(top, kx, cy, maxLabelW);
-      if (bot) {
-        g.fillStyle = '#d6d9dc';
-        g.font = `400 ${fSz * 0.9}px ${SANS}`;
-        g.fillText(bot, kx, kyTop + kyH * 0.70, maxLabelW);
-      }
-    });
-
-    // ── Logo OHAUS (marca redonda pequeña, abajo a la izquierda) ────────────
-    const logoR = h * 0.07;
-    const logoX = lx * 0.5;
-    const logoY = kyTop + kyH * 0.5;
-    g.beginPath();
-    g.arc(logoX, logoY, logoR, 0, Math.PI * 2);
-    g.fillStyle = '#c01010';
-    g.fill();
-    g.beginPath();
-    g.arc(logoX, logoY, logoR * 0.55, 0, Math.PI * 2);
-    g.fillStyle = '#c9cccd';
-    g.fill();
-    g.fillStyle = '#c01010';
-    g.font = `700 ${logoR * 0.72}px ${SANS}`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText('O', logoX, logoY);
-  };
-
-  const consoleTex = canvasTexture(CV_W, CV_H, drawConsole);
-  keep(consoleTex.texture);
-
-  const consoleMat = keep(
-    new THREE.MeshStandardMaterial({
-      map: consoleTex.texture,
-      roughness: 0.6,
-      envMapIntensity: 0.35,
-      // Sin clearcoat: a 0° (vista frontal) el clearcoat producía un destello
-      // blanco que tapaba la textura del canvas. MeshStandardMaterial muestra
-      // la pantalla y las teclas con claridad desde la vista perpendicular.
-      emissive: 0x88ccff,
-      emissiveMap: consoleTex.texture,
-      emissiveIntensity: 0,
-    }),
-  );
-
-  // ── Perfil lateral del cuerpo y extrusión ───────────────────────────────────
-  // Perfil en XY: X = fondo (0=atrás, D=adelante), Y = altura (0=suelo, H_BODY=tope)
-  const profile = new THREE.Shape();
-  profile.moveTo(BEVEL, 0);
-  profile.lineTo(D - BEVEL, 0);
-  profile.quadraticCurveTo(D, 0, D, BEVEL);
-  // Cara delantera vertical (tramo inferior antes de la pendiente)
-  profile.lineTo(SL_BOT.x, SL_BOT.y);
-  // Pendiente de la consola (face angled toward user)
-  profile.lineTo(SL_TOP.x, SL_TOP.y);
-  // Hombro redondeado → tope
-  profile.quadraticCurveTo(D - 46, H_BODY, D - 60, H_BODY);
-  // Tope plano hacia atrás
-  profile.lineTo(BEVEL, H_BODY);
-  // Pared trasera
-  profile.quadraticCurveTo(0, H_BODY, 0, H_BODY - BEVEL);
-  profile.lineTo(0, BEVEL);
-  profile.quadraticCurveTo(0, 0, BEVEL, 0);
-
-  const housingGeo = keep(
-    new THREE.ExtrudeGeometry(profile, {
-      depth: W - BEVEL * 2,
-      bevelEnabled: true,
-      bevelSize: BEVEL,
-      bevelThickness: BEVEL,
-      bevelSegments: 5,
-      curveSegments: 20,
-    }),
-  );
-  housingGeo.translate(0, 0, -(W - BEVEL * 2) / 2);
-  const housing = new THREE.Mesh(housingGeo, bodyMat);
-  housing.castShadow  = true;
-  housing.receiveShadow = true;
-  root.add(housing);
-
-  // ── Display en la pendiente ──────────────────────────────────────────────────
-  // Posición: punto medio de la pendiente + 1.5 mm de offset (sin z-fighting)
-  // El bisel de la extrusión lleva la cara BEVEL mm hacia fuera: el panel va por delante.
-  const PANEL_OFFSET = BEVEL + 1.5;
-  const mid3 = new THREE.Vector3(
-    slopeMid2.x + slopeOutward.x * PANEL_OFFSET,
-    slopeMid2.y + slopeOutward.y * PANEL_OFFSET,
-    0,
-  );
-  const dispW = W - BEVEL * 2 - 24;  // panel claramente dentro del bevel
-  const dispH = slopeLen - 22;
-  const consoleGeo = keep(new THREE.PlaneGeometry(dispW, dispH));
-  const consoleMesh = new THREE.Mesh(consoleGeo, consoleMat);
-  consoleMesh.position.copy(mid3);
-  consoleMesh.up.copy(slopeAlong);
-  consoleMesh.lookAt(mid3.clone().add(slopeOutward));
-  root.add(consoleMesh);
-
-  // ── Rótulo «OHAUS» en el costado izquierdo del cuerpo ───────────────────────
-  // Canvas pequeño con el wordmark en rojo
-  const sideLogoCv = canvasTexture(256, 64, (g, w, h) => {
-    g.fillStyle = '#c01010';
-    g.font = `900 ${h * 0.78}px ${SANS}`;
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText('OHAUS', w / 2, h / 2);
-  });
-  keep(sideLogoCv.texture);
-  const sideLogoMat = keep(
-    new THREE.MeshStandardMaterial({
-      map: sideLogoCv.texture,
-      transparent: true,
-      roughness: 0.4,
-    }),
-  );
-  // Plano del rótulo: en el costado derecho del cuerpo (cara +Z, hacia afuera)
-  // El normal del PlaneGeometry por defecto apunta a +Z → no necesita rotación extra,
-  // solo se desplaza a z = +W/2 + 0.3 para sobresalir de la cara del cuerpo.
-  const logoGeo = keep(new THREE.PlaneGeometry(72, 18));
-  const logoMesh = new THREE.Mesh(logoGeo, sideLogoMat);
-  // X ≈ D-110 (cerca del frente pero antes del ángulo de la consola), Y a 45 % de altura
-  logoMesh.position.set(D - 110, H_BODY * 0.45, W / 2 + 0.3);
-  // Sin rotación extra: la cara del plano (normal +Z) queda mirando hacia fuera del costado
-  root.add(logoMesh);
-
-  // ── Patas de goma (rojas, anchas y bajas con aro más claro) ─────────────────
-  const FW = 13;   // radio de la pata
-  const FH = 10;   // altura de la pata (disco bajo y ancho)
-  const FINX = 12; // inset desde el borde del cuerpo (X): en la esquina, para que se vean
-  const FINZ = 10; // inset desde el borde del cuerpo (Z)
-
-  // Patas parcialmente bajo el cuerpo: centro en Y=-FH/3 → tope visible a Y=+FH/6 (dentro del bevel).
-  const FOOT_CY = -(FH / 3);
-  for (const [sx, sz] of [[0, -1], [D, -1], [0, 1], [D, 1]] as const) {
-    const legGeo = keep(new THREE.CylinderGeometry(FW, FW * 1.08, FH, 28));
-    const leg = new THREE.Mesh(legGeo, redMat);
-    leg.position.set(sx === 0 ? FINX : D - FINX, FOOT_CY, sz * (W / 2 - FINZ));
-    leg.castShadow = true;
-    root.add(leg);
-    // Aro más claro en el borde inferior visible
-    const ringGeo = keep(new THREE.TorusGeometry(FW * 0.88, 1.6, 8, 28));
-    const ring = new THREE.Mesh(ringGeo, footRingMat);
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(sx === 0 ? FINX : D - FINX, FOOT_CY - FH * 0.26, sz * (W / 2 - FINZ));
-    root.add(ring);
-  }
-
-  // ── Plato y pedestal ────────────────────────────────────────────────────────
-  const PED_H = 26;  // est.
-  const PED_R = 4;
-  const PAN_TOP = H_BODY + PED_H + 5;  // 129 mm
-
-  // Pedestal
-  const pedGeo = keep(new THREE.CylinderGeometry(PED_R, PED_R * 1.08, PED_H, 20));
-  const pedMesh = new THREE.Mesh(pedGeo, panMat);
-  // El pedestal está centrado en la cámara del protector
-  // (a mitad del ancho: Z=0, y en X a la mitad entre X_SR y D-X_SF)
-  const panCtrX = (X_SR + (D - X_SF)) / 2;  // ≈ 121
-  pedMesh.position.set(panCtrX, H_BODY + PED_H / 2, 0);
-  pedMesh.renderOrder = 1;
-  root.add(pedMesh);
-
-  // Anillo del plato (wind ring)
-  const windGeo = keep(new THREE.TorusGeometry(PAN_R + 2, 1.5, 8, 64));
-  const windRing = new THREE.Mesh(windGeo, panMat);
-  windRing.rotation.x = Math.PI / 2;
-  windRing.position.set(panCtrX, H_BODY + PED_H + 2, 0);
-  windRing.renderOrder = 1;
-  root.add(windRing);
-
-  // Plato (lathe, acero inox)
-  const panGeo = keep(
-    lathe([
-      [0, 0],
-      [PAN_R * 0.9, 0],
-      [PAN_R, 1.5],
-      [PAN_R, 4.5],
-      [PAN_R - 1, 5.5],
-      [3, 5.5],
-      [0, 5.5],
-    ]),
-  );
-  const panMesh = new THREE.Mesh(panGeo, panMat);
-  panMesh.position.set(panCtrX, H_BODY + PED_H, 0);
-  panMesh.renderOrder = 1;
-  panMesh.castShadow = true;
-  root.add(panMesh);
-
-  // Torre trasera del protector (visible en la foto, atrás del plato)
-  const towerGeo = keep(new THREE.CylinderGeometry(7, 7, H_SH * 0.45, 16));
-  const tower = new THREE.Mesh(towerGeo, bodyMat);
-  tower.position.set(X_SR + 20, H_BODY + H_SH * 0.225, 0);
-  tower.castShadow = true;
-  root.add(tower);
-
-  // ── Marco del protector (blanco, postes cuadrados) ──────────────────────────
-  const X_SF_POS = D - X_SF;  // X del poste delantero = 219
-  const X_SR_POS = X_SR;      // X del poste trasero  = 24
-
-  // Marco en gris claro satinado: en el mismo blanco del cuerpo no se distinguía.
-  const frameMat = keep(new THREE.MeshPhysicalMaterial({ color: 0xd3d6d8, roughness: 0.3, metalness: 0.35, clearcoat: 0.4 }));
-  // 4 postes
-  const postGeo = keep(new THREE.BoxGeometry(POST_W, H_SH, POST_W));
-  for (const [px, pz] of [
-    [X_SF_POS, -SH_Z], [X_SF_POS, SH_Z],
-    [X_SR_POS, -SH_Z], [X_SR_POS, SH_Z],
-  ] as const) {
-    const post = new THREE.Mesh(postGeo, frameMat);
-    post.position.set(px, H_BODY + H_SH / 2, pz);
-    post.castShadow = true;
-    root.add(post);
-  }
-
-  // Travesaños horizontales (4 barras que forman la tapa)
-  const capBarH = keep(new THREE.BoxGeometry(X_SF_POS - X_SR_POS - POST_W, POST_W, POST_W));
-  const capBarW = keep(new THREE.BoxGeometry(POST_W, POST_W, SH_Z * 2 - POST_W));
-  for (const pz of [-SH_Z, SH_Z]) {
-    const b = new THREE.Mesh(capBarH, bodyMat);
-    b.position.set((X_SF_POS + X_SR_POS) / 2, H_TOT, pz);
-    root.add(b);
-  }
-  for (const px of [X_SF_POS, X_SR_POS]) {
-    const b = new THREE.Mesh(capBarW, bodyMat);
-    b.position.set(px, H_TOT, 0);
-    root.add(b);
-  }
-
-  // Franja roja: línea MUY delgada (2.5 mm en Y, 0.5 mm en X) en el borde superior
-  // de la CARA FRONTAL del travesaño delantero. No sobresale hacia arriba — solo
-  // colorea el borde superior de la cara blanca.
-  {
-    // MeshBasicMaterial: sin iluminación → sin bloom. La franja aparece como
-    // una línea roja plana de 3 mm en el borde frontal del marco de la tapa.
-    const topRedMat = keep(new THREE.MeshBasicMaterial({ color: 0xc01010 }));
-    const STRIPE_H = 3;  // 3 mm (spec: 2–3 mm)
-    // Caja de 1 mm de profundidad × 3 mm de alto × ancho interior del marco.
-    // Queda en la cara frontal del travesaño frontal superior.
-    const topRedGeo = keep(new THREE.BoxGeometry(1.5, STRIPE_H, SH_Z * 2 + POST_W));
-    const topRed = new THREE.Mesh(topRedGeo, topRedMat);
-    // Centro: cara frontal del travesaño (X = X_SF_POS + POST_W/2 = 223.5),
-    // en los 3 mm superiores de la cara (Y = H_TOT + POST_W/2 - STRIPE_H/2)
-    topRed.position.set(
-      X_SF_POS + POST_W / 2 + 0.75,
-      H_TOT + POST_W / 2 - STRIPE_H / 2,
-      0,
-    );
-    root.add(topRed);
-  }
-
-  // Rieles inferiores (base del protector)
-  const baseBarH = keep(new THREE.BoxGeometry(X_SF_POS - X_SR_POS - POST_W, 5, 5));
-  const baseBarW = keep(new THREE.BoxGeometry(5, 5, SH_Z * 2 - POST_W));
-  for (const pz of [-SH_Z, SH_Z]) {
-    const b = new THREE.Mesh(baseBarH, frameMat);
-    b.position.set((X_SF_POS + X_SR_POS) / 2, H_BODY + 2.5, pz);
-    root.add(b);
-  }
-  for (const px of [X_SF_POS, X_SR_POS]) {
-    const b = new THREE.Mesh(baseBarW, frameMat);
-    b.position.set(px, H_BODY + 2.5, 0);
-    root.add(b);
-  }
-
-  // ── Paneles de vidrio ────────────────────────────────────────────────────────
-  // Todos con renderOrder=2, depthWrite=false (labGlass ya lo pone).
-  // NO se usan boxGeometry de borde: muestran su cara grande desde el ángulo 3/4
-  // y crean la ilusión de paneles flotantes fuera del marco. Solo el panel trasero
-  // lleva una caja de borde (queda dentro del protector, da profundidad visual).
-  const glassMidY = H_BODY + H_SH / 2;
-  const glassH    = H_SH - POST_W;
-  const glassXW   = X_SF_POS - X_SR_POS - POST_W;  // ancho de vidrio frente/atrás
-  const glassZW   = SH_Z * 2 - POST_W;               // ancho de vidrio laterales
-
-  const addGlass = (geo: THREE.BufferGeometry, x: number, y: number, z: number, ry: number) => {
-    const g = keep(geo);
-    const m = new THREE.Mesh(g, glassMat);
+  const add = (parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(keep(geo), mat);
     m.position.set(x, y, z);
-    m.rotation.y = ry;
-    m.renderOrder = 2;
-    root.add(m);
+    parent.add(m);
     return m;
   };
 
-  // Paneles laterales: izquierdo (Z=-SH_Z) y derecho (Z=+SH_Z).
-  // ry=0 → normal apunta a ±Z. El pane queda DENTRO del marco de postes.
-  const glassCtrX = (X_SF_POS + X_SR_POS) / 2;
-  for (const sz of [-SH_Z, SH_Z]) {
-    addGlass(new THREE.PlaneGeometry(glassXW, glassH), glassCtrX, glassMidY, sz, 0);
+  // ── Materiales ──────────────────────────────────────────────────────────────
+  const whiteMat = keep(new THREE.MeshPhysicalMaterial({ color: 0xe9e9e6, roughness: 0.4, clearcoat: 0.3, clearcoatRoughness: 0.35 }));
+  const lowerMat = keep(new THREE.MeshPhysicalMaterial({ color: 0xe4e6e5, roughness: 0.5, clearcoat: 0.15 }));
+  const capMat = keep(new THREE.MeshPhysicalMaterial({ color: 0xf5f5f2, roughness: 0.38, clearcoat: 0.25 }));
+  const chromeMat = keep(new THREE.MeshStandardMaterial({ color: 0xa9b0b5, metalness: 1, roughness: 0.22 }));
+  const steelMat = keep(new THREE.MeshStandardMaterial({ color: 0xd0d4d6, metalness: 0.9, roughness: 0.22 }));
+  const floorMat = keep(new THREE.MeshStandardMaterial({ color: 0xc4c8ca, metalness: 0.75, roughness: 0.35 }));
+  const darkMat = keep(new THREE.MeshStandardMaterial({ color: 0x3a3e40, metalness: 0.4, roughness: 0.5 }));
+  const redMat = keep(new THREE.MeshStandardMaterial({ color: 0xa00b16, roughness: 0.48 }));
+  const stripeMat = keep(new THREE.MeshBasicMaterial({ color: 0xc0101c, toneMapped: false }));
+  const glassMat = keep(labGlass());
+  glassMat.color.set(0xe6f4f0);
+  glassMat.opacity = 0.16;
+  const edgeMat = keep(new THREE.MeshStandardMaterial({ color: 0x7fcfb4, roughness: 0.2, transparent: true, opacity: 0.85 }));
+  const boatMat = keep(new THREE.MeshStandardMaterial({ color: 0xf7f7f2, roughness: 0.6, transparent: true, opacity: 0, side: THREE.DoubleSide }));
+  const sampleMat = keep(new THREE.MeshStandardMaterial({ color: 0xe7dcc0, roughness: 0.9, transparent: true, opacity: 0 }));
+
+  // ── Base: carcasa blanca sobre la carcasa inferior gris (metal fundido) ─────
+  const housing = add(
+    root,
+    loft((z) => ({ half: HW, top: topAt(z), bot: 22 }), { z0: -HD, z1: HD, endR: 12, rTop: 13, rBot: 3, lift: (x, z) => 14 * arch(x, z) }),
+    whiteMat,
+  );
+  housing.castShadow = true;
+  housing.receiveShadow = true;
+  const lower = add(
+    root,
+    loft((z) => ({ half: HW - 4 + 6.5 * smooth(96, 132, Math.abs(z)), top: 34, bot: FOOT_H }), { z0: -HD + 3, z1: HD - 3, endR: 8, rTop: 2, rBot: 3, lift: (x, z) => 18 * arch(x, z) }),
+    lowerMat,
+  );
+  lower.castShadow = true;
+
+  // ── Patas rojas moleteadas en las cuatro esquinas ─────────────────────────
+  const footGeo = keep(new THREE.CylinderGeometry(FOOT_R, FOOT_R + 0.6, FOOT_H + 4, 72, 1));
+  {
+    const p = footGeo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      if (Math.hypot(p.getX(i), p.getZ(i)) < FOOT_R - 0.5) continue;
+      const k = 1 + 0.025 * Math.sign(Math.cos(Math.atan2(p.getZ(i), p.getX(i)) * 36));
+      p.setXYZ(i, p.getX(i) * k, p.getY(i), p.getZ(i) * k);
+    }
+    footGeo.computeVertexNormals();
+  }
+  const FX = HW - 17;
+  const FZ = HD - 22;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const f = new THREE.Mesh(footGeo, redMat);
+      f.position.set(sx * FX, (FOOT_H + 4) / 2, sz * FZ);
+      f.castShadow = true;
+      root.add(f);
+    }
   }
 
-  // Panel trasero: X = X_SR_POS, perpendicular al eje X (ry=PI/2 → normal hacia +X).
-  // Extiende ±glassZW/2 en Z, dentro de los postes laterales.
-  // Conserva un box de borde tenue: solo la pared del fondo (oculta desde el frente).
-  addGlass(new THREE.PlaneGeometry(glassZW, glassH), X_SR_POS, glassMidY, 0, Math.PI / 2);
+  // ── Consola: panel gris con LCD, teclas, logotipo y burbuja de nivel ───────
+  // Plano de la pendiente: normal hacia arriba y adelante; +y del panel = hacia atrás.
+  const PANEL_Z = (SLOPE_Z + 8 + HD - 10) / 2; // est.
+  const consoleGrp = new THREE.Group();
+  consoleGrp.position.set(0, topAt(PANEL_Z) + 0.6, PANEL_Z);
+  consoleGrp.rotation.x = -(Math.PI / 2 - SLOPE_ANGLE);
+  root.add(consoleGrp);
+  const K = 6; // px por mm
+  const mmX = (x: number) => x - PANEL.w / 2;
+  const mmY = (y: number) => PANEL.h / 2 - y;
+  const BUB = { x: 155, y: 23 };
 
-  // Panel superior (horizontal) — usa topGlassMat (sin clearcoat) para evitar que
-  // la reflexión del entorno aparezca como una losa roja sólida.
-  {
-    const geo = keep(new THREE.PlaneGeometry(glassXW, glassZW));
-    geo.rotateX(-Math.PI / 2);
-    const m = new THREE.Mesh(geo, topGlassMat);
-    m.position.set((X_SF_POS + X_SR_POS) / 2, H_TOT + POST_W * 0.5 - 0.5, 0);
+  const panelTex = canvasTexture(PANEL.w * K, PANEL.h * K, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.save();
+    g.scale(K, K);
+    // Recuadro gris claro, con un filo algo más oscuro.
+    g.fillStyle = '#b5bbba';
+    g.strokeStyle = '#868d8b';
+    g.lineWidth = 0.5;
+    g.beginPath();
+    g.roundRect(0.4, 0.4, PANEL.w - 0.8, PANEL.h - 0.8, 7);
+    g.fill();
+    g.stroke();
+    // Marco de la ventana de la LCD.
+    g.fillStyle = '#a2a9a7';
+    g.beginPath();
+    g.roundRect(LCD.x - 1.2, LCD.y - 1.2, LCD.w + 2.4, LCD.h + 2.4, 1.5);
+    g.fill();
+    // «PIONEER™» en versalitas, arriba a la derecha de la ventana.
+    g.fillStyle = '#2a2d2e';
+    g.textAlign = 'right';
+    g.textBaseline = 'alphabetic';
+    const pw = measure(g, K, 'IONEER', 4.4, 800);
+    label(g, K, 'IONEER', LCD.x + LCD.w - 2, LCD.y - 3, 4.4, 800);
+    label(g, K, 'P', LCD.x + LCD.w - 2 - pw, LCD.y - 3, 5.6, 800);
+    g.textAlign = 'left';
+    label(g, K, '™', LCD.x + LCD.w - 1.8, LCD.y - 6.2, 2, 600);
+    // Logotipo OHAUS: cuadro rojo con la elipse blanca y el nombre debajo.
+    const lx = 16;
+    const ly = 26;
+    g.fillStyle = '#b00d1a';
+    g.fillRect(lx - 6, ly - 5.5, 12, 10);
+    g.save();
+    g.translate(lx, ly - 0.5);
+    g.rotate(-0.75);
+    g.strokeStyle = '#b5bbba';
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.ellipse(0, 0, 6.2, 3, 0, 0, Math.PI * 2);
+    g.stroke();
+    g.restore();
+    g.fillStyle = '#b00d1a';
+    g.textAlign = 'center';
+    label(g, K, 'OHAUS', lx, ly + 8.2, 2.9, 900);
+    // Burbuja de nivel: hueco redondo a la derecha.
+    const rg = g.createRadialGradient(BUB.x - 1, BUB.y - 1, 0.5, BUB.x, BUB.y, 4.8);
+    rg.addColorStop(0, '#f4f6f5');
+    rg.addColorStop(0.55, '#b9bebd');
+    rg.addColorStop(1, '#7d8483');
+    g.fillStyle = rg;
+    g.beginPath();
+    g.arc(BUB.x, BUB.y, 4.5, 0, Math.PI * 2);
+    g.fill();
+    // Franja de cuatro teclas de membrana, con su segunda función debajo.
+    const kx = 40;
+    const ky = 55;
+    const kw = 100;
+    const kh = 11;
+    g.fillStyle = '#aab0ae';
+    g.strokeStyle = '#7c8381';
+    g.lineWidth = 0.4;
+    g.beginPath();
+    g.roundRect(kx, ky, kw, kh, 1.4);
+    g.fill();
+    g.stroke();
+    const keys: [string, string, string][] = [
+      ['Zero', '', 'Yes'],
+      ['Print', 'Unit', 'No'],
+      ['Function', 'Mode', 'Back'],
+      ['Tare', 'Menu-Cal', 'Exit'],
+    ];
+    keys.forEach(([a, b, sub], i) => {
+      const cx = kx + (kw / 4) * (i + 0.5);
+      if (i) {
+        g.strokeStyle = '#8f9694';
+        g.lineWidth = 0.4;
+        g.beginPath();
+        g.moveTo(kx + (kw / 4) * i, ky + 1.5);
+        g.lineTo(kx + (kw / 4) * i, ky + kh - 1.5);
+        g.stroke();
+      }
+      g.fillStyle = '#1f2324';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      if (b) {
+        label(g, K, a, cx, ky + 3.6, 2.9, 700);
+        label(g, K, b, cx, ky + 7.4, 2.9, 700);
+      } else {
+        label(g, K, a, cx - 2, ky + kh / 2, 2.9, 700);
+        // Ícono de encendido rojo junto a «Zero».
+        g.strokeStyle = '#b00d1a';
+        g.lineWidth = 0.5;
+        g.beginPath();
+        g.arc(cx + 5.2, ky + kh / 2 + 0.2, 1.4, -Math.PI / 2 + 0.6, Math.PI * 1.5 - 0.6);
+        g.moveTo(cx + 5.2, ky + kh / 2 - 1.6);
+        g.lineTo(cx + 5.2, ky + kh / 2 + 0.1);
+        g.stroke();
+      }
+      g.fillStyle = '#2f3436';
+      label(g, K, sub, cx, ky + kh + 3.2, 2.2, 600);
+    });
+    g.restore();
+  });
+  keep(panelTex.texture);
+  const panelMat = keep(new THREE.MeshStandardMaterial({ map: panelTex.texture, transparent: true, roughness: 0.55, envMapIntensity: 0.5 }));
+  add(consoleGrp, new THREE.PlaneGeometry(PANEL.w, PANEL.h), panelMat);
+  // Anillo en relieve alrededor del hueco de la burbuja.
+  add(consoleGrp, new THREE.TorusGeometry(4.7, 0.55, 10, 40), whiteMat, mmX(BUB.x), mmY(BUB.y), 0.3);
+
+  // LCD retroiluminada: plano propio para que sólo ella brille.
+  let screenOn = false;
+  let shown = 0;
+  let stable = false;
+  const LK = 8;
+  const lcdTex = canvasTexture(LCD.w * LK, LCD.h * LK, (g) => {
+    g.save();
+    g.scale(LK, LK);
+    const bg = g.createLinearGradient(0, 0, 0, LCD.h);
+    bg.addColorStop(0, screenOn ? '#fbfdfc' : '#c4cac7');
+    bg.addColorStop(1, screenOn ? '#eef3f1' : '#b6bdba');
+    g.fillStyle = bg;
+    g.fillRect(0, 0, LCD.w, LCD.h);
+    // Líneas rojas impresas en el cristal, arriba y abajo (se ven siempre).
+    g.fillStyle = '#b00d1a';
+    g.fillRect(0, 2.2, LCD.w, 1.3);
+    g.fillRect(0, LCD.h - 3.6, LCD.w, 1.3);
+    if (screenOn) {
+      g.fillStyle = '#101413';
+      // Indicadores a la izquierda: estabilidad «*» y cero «→0←».
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      if (stable) label(g, LK, '*', 3.5, 10.5, 5, 800);
+      if (shown < 0.00005) label(g, LK, '→0←', 2.6, 16.5, 2.8, 700);
+      // Cifra principal en siete segmentos, alineada a la derecha delante de la «g».
+      const txt = shown.toFixed(4);
+      const dw = 8.6;
+      const dh = 14.5;
+      const top = 6.6;
+      const gap = 1.6;
+      let width = 0;
+      for (const ch of txt) width += ch === '.' ? 2.6 : dw + gap;
+      let cx = LCD.w - 13 - width;
+      for (const ch of txt) {
+        if (ch === '.') {
+          g.fillRect(cx + 0.1, top + dh - 1.7, 1.7, 1.7);
+          cx += 2.6;
+        } else {
+          segDigit(g, ch, cx, top, dw, dh, 2.3);
+          cx += dw + gap;
+        }
+      }
+      g.textBaseline = 'alphabetic';
+      label(g, LK, 'g', LCD.w - 9, top + dh, 5.2, 700);
+      // Segunda línea de guía.
+      if (shown < 0.00005) label(g, LK, 'Place sample', 10, LCD.h - 6, 3.6, 600);
+    }
+    g.restore();
+  });
+  keep(lcdTex.texture);
+  const lcdMat = keep(
+    // Sin luz de escena: el lienzo ya es la LCD apagada (gris) o retroiluminada (blanca).
+    new THREE.MeshBasicMaterial({ map: lcdTex.texture, toneMapped: false }),
+  );
+  add(consoleGrp, new THREE.PlaneGeometry(LCD.w, LCD.h), lcdMat, mmX(LCD.x + LCD.w / 2), mmY(LCD.y + LCD.h / 2), 0.25);
+
+  // ── Rótulo «OHAUS» en el costado izquierdo ──────────────────────────────────
+  const sideTex = canvasTexture(512, 112, (g, w, h) => {
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = '#b00d1a';
+    g.font = `900 ${h * 0.86}px ${SANS}`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('OHAUS', w / 2, h * 0.54, w * 0.98);
+  });
+  keep(sideTex.texture);
+  const sideMat = keep(new THREE.MeshStandardMaterial({ map: sideTex.texture, transparent: true, roughness: 0.45 }));
+  const sideLogo = add(root, new THREE.PlaneGeometry(46, 10), sideMat, -HW - 0.3, 47, 92);
+  sideLogo.rotation.y = -Math.PI / 2;
+
+  // ── Interior del protector: piso metálico, subplato y plato ────────────────
+  add(root, new THREE.BoxGeometry(SH_W - 14, 1.2, SH_D - 14), floorMat, 0, DECK + 0.3, SH_CZ);
+  add(root, new THREE.CylinderGeometry(30, 32, 9, 48), darkMat, 0, DECK + 5, SH_CZ);
+  const PAN_Y = DECK + 10;
+  const pan = add(
+    root,
+    lathe([[0, 0], [PAN_R - 4, 0], [PAN_R - 0.5, 1], [PAN_R, 3.5], [PAN_R - 0.6, 5.2], [PAN_R - 2.4, 4.2], [PAN_R - 3.5, 2.6], [0, 2.6]]),
+    steelMat,
+    0,
+    PAN_Y,
+    SH_CZ,
+  );
+  pan.castShadow = true;
+  pan.receiveShadow = true;
+  const PAN_TOP = PAN_Y + 2.6;
+
+  // ── Protector: zócalo, varillas cromadas, tapa blanca, vidrios con canto verde ─
+  const SH_TOP = H - CAP_H;
+  const glassH = SH_TOP - DECK - 4;
+  const glassY = DECK + 4 + glassH / 2;
+  for (const sz of [-1, 1]) add(root, new THREE.BoxGeometry(SH_W, 4, 6), capMat, 0, DECK + 2, SH_CZ + sz * (SH_D / 2 - 3));
+  for (const sx of [-1, 1]) add(root, new THREE.BoxGeometry(6, 4, SH_D - 12), capMat, sx * (SH_W / 2 - 3), DECK + 2, SH_CZ);
+  const rodGeo = keep(new THREE.CylinderGeometry(ROD_R, ROD_R, SH_TOP - DECK, 20));
+  for (const sx of [-1, 1]) {
+    for (const z of [SH_FRONT - 6, SH_BACK + 6]) {
+      const r = new THREE.Mesh(rodGeo, chromeMat);
+      r.position.set(sx * (SH_W / 2 - 6), (DECK + SH_TOP) / 2, z);
+      r.castShadow = true;
+      root.add(r);
+    }
+  }
+  // Tapa: marco blanco de cuatro barras.
+  const capY = SH_TOP + CAP_H / 2;
+  for (const sz of [-1, 1]) add(root, new THREE.BoxGeometry(SH_W, CAP_H, CAP_B), capMat, 0, capY, SH_CZ + sz * (SH_D / 2 - CAP_B / 2)).castShadow = true;
+  for (const sx of [-1, 1]) add(root, new THREE.BoxGeometry(CAP_B, CAP_H, SH_D - 2 * CAP_B), capMat, sx * (SH_W / 2 - CAP_B / 2), capY, SH_CZ).castShadow = true;
+  // Línea roja en el canto interior delantero de la tapa.
+  add(root, new THREE.BoxGeometry(SH_W - 2 * CAP_B, 0.6, 1.6), stripeMat, 0, H + 0.05, SH_FRONT - CAP_B + 0.8);
+
+  const glassMesh = (geo: THREE.BufferGeometry) => {
+    const m = new THREE.Mesh(keep(geo), glassMat);
     m.renderOrder = 2;
+    return m;
+  };
+  const edgeGeo = keep(new THREE.BoxGeometry(2.6, glassH, 3));
+  // Vidrio delantero fijo y trasero.
+  for (const z of [SH_FRONT - 2, SH_BACK + 2]) {
+    const m = glassMesh(new THREE.BoxGeometry(SH_W - 14, glassH, 2.5));
+    m.position.set(0, glassY, z);
     root.add(m);
   }
+  for (const sx of [-1, 1]) {
+    const e = new THREE.Mesh(edgeGeo, edgeMat);
+    e.position.set(sx * (SH_W / 2 - 8), glassY, SH_FRONT - 2);
+    root.add(e);
+  }
+  // Puertas laterales deslizantes (hacia atrás), con su aleta blanca de agarre.
+  const finShape = new THREE.Shape();
+  finShape.moveTo(0, 0);
+  finShape.lineTo(9, 0);
+  finShape.quadraticCurveTo(9, 30, 2, 60);
+  finShape.quadraticCurveTo(0.5, 62, 0, 58);
+  finShape.lineTo(0, 0);
+  const finGeo = keep(new THREE.ExtrudeGeometry(finShape, { depth: 5, bevelEnabled: true, bevelSize: 1.2, bevelThickness: 1.2, bevelSegments: 3, curveSegments: 16 }));
+  finGeo.translate(0, 0, -2.5);
+  const doorLen = SH_D - 10;
+  const doors: THREE.Group[] = [];
+  for (const sx of [-1, 1]) {
+    const door = new THREE.Group();
+    door.position.set(sx * (SH_W / 2 - 2), 0, SH_CZ);
+    root.add(door);
+    const m = glassMesh(new THREE.BoxGeometry(doorLen, glassH, 2.5));
+    m.rotation.y = Math.PI / 2;
+    m.position.set(0, glassY, 0);
+    door.add(m);
+    const e = new THREE.Mesh(edgeGeo, edgeMat);
+    e.position.set(0, glassY, doorLen / 2 - 1);
+    door.add(e);
+    // Aleta vertical por fuera, junto al canto delantero, en la mitad baja.
+    const fin = new THREE.Mesh(finGeo, capMat);
+    fin.rotation.y = sx < 0 ? Math.PI : 0;
+    // Izquierda: junto al canto delantero (foto); derecha: la foto no la muestra
+    // delante, se pone atrás (est.), con un botón de tope en el canto delantero.
+    fin.position.set(sx * 1.5, DECK + 14, sx < 0 ? doorLen / 2 - 14 : -doorLen / 2 + 8);
+    fin.castShadow = true;
+    door.add(fin);
+    if (sx > 0) add(door, new THREE.SphereGeometry(2.6, 16, 12), chromeMat, 3, DECK + glassH * 0.6, doorLen / 2 - 4);
+    doors.push(door);
+  }
+  const leftDoor = doors[0];
+  // Puerta superior deslizante con su asa semicircular.
+  const topDoor = new THREE.Group();
+  topDoor.position.set(0, H - 2, SH_CZ);
+  root.add(topDoor);
+  topDoor.add(glassMesh(new THREE.BoxGeometry(SH_W - 2 * CAP_B + 4, 2.5, SH_D - 2 * CAP_B + 4)));
+  {
+    const domeGeo = keep(new THREE.CylinderGeometry(37, 37, 3, 48, 1, false, -Math.PI / 2, Math.PI));
+    domeGeo.rotateX(-Math.PI / 2);
+    domeGeo.scale(1, 0.27, 1);
+    const dome = new THREE.Mesh(domeGeo, capMat);
+    dome.position.set(0, 1.2, SH_D / 2 - CAP_B - 26);
+    topDoor.add(dome);
+  }
 
-  // Panel delantero izquierdo (fijo) — sin caja de borde
-  const HALF_DOOR_Z = glassZW / 2;  // cada hoja ocupa la mitad del ancho
-  addGlass(
-    new THREE.PlaneGeometry(HALF_DOOR_Z, glassH),
-    X_SF_POS, glassMidY, -HALF_DOOR_Z / 2,
-    -Math.PI / 2,
-  );
+  // ── Navecilla de pesaje con la muestra (aparece con el nivel) ──────────────
+  const boat = new THREE.Group();
+  boat.position.set(0, PAN_TOP, SH_CZ);
+  boat.visible = false;
+  root.add(boat);
+  const boatGeo = new THREE.CylinderGeometry(19, 14, 7, 4, 1, true);
+  boatGeo.rotateY(Math.PI / 4);
+  boatGeo.scale(1, 1, 0.75);
+  add(boat, boatGeo, boatMat, 0, 3.5, 0).renderOrder = 1;
+  add(boat, new THREE.PlaneGeometry(20, 15).rotateX(-Math.PI / 2), boatMat, 0, 0.2, 0).renderOrder = 1;
+  const heapGeo = new THREE.SphereGeometry(7, 20, 12);
+  heapGeo.scale(1, 0.4, 0.85);
+  add(boat, heapGeo, sampleMat, 0, 1, 0).renderOrder = 1;
 
-  // Hoja deslizante delantera (derecha): empieza en Z = +HALF_DOOR_Z/2
-  const slidingGeo = keep(new THREE.PlaneGeometry(HALF_DOOR_Z, glassH));
-  const slidingDoor = new THREE.Mesh(slidingGeo, glassMat);
-  slidingDoor.position.set(X_SF_POS, glassMidY, HALF_DOOR_Z / 2);
-  slidingDoor.rotation.y = -Math.PI / 2;
-  slidingDoor.renderOrder = 2;
-  root.add(slidingDoor);
-
-  // Variable para animar la puerta (sin caja de borde separada)
-  const slidingEdge = slidingDoor;  // alias para el bloque de animación
-
-  // Tirador de la puerta deslizante (en el borde izquierdo de la hoja, Z≈0)
-  const handleGeo = keep(new THREE.CylinderGeometry(2, 2, 44, 8));
-  const handle = new THREE.Mesh(handleGeo, bodyMat);
-  handle.position.set(X_SF_POS + 3.5, glassMidY, 0);
-  root.add(handle);
-
-  // ── Barca de pesaje (aparece animada) ─────────────────────────────────────
-  const boatGroup = new THREE.Group();
-  boatGroup.position.set(panCtrX, PAN_TOP, 0);
-  boatGroup.visible = false;
-  root.add(boatGroup);
-
-  const boatGeo = keep(new THREE.BoxGeometry(34, 6, 42));
-  const boatMesh = new THREE.Mesh(boatGeo, boatMat);
-  boatMesh.position.y = 3;
-  boatMesh.renderOrder = 1;
-  boatGroup.add(boatMesh);
-
-  const foldGeo = keep(new THREE.BoxGeometry(36, 1, 44));
-  const foldMesh = new THREE.Mesh(foldGeo, boatMat);
-  foldMesh.position.y = 7;
-  foldMesh.renderOrder = 1;
-  boatGroup.add(foldMesh);
-
-  const smplGeo = keep(new THREE.SphereGeometry(8, 14, 10));
-  smplGeo.scale(1, 0.34, 1);
-  const smplMesh = new THREE.Mesh(smplGeo, sampleMat);
-  smplMesh.position.set(1, 10, -2);
-  smplMesh.renderOrder = 1;
-  boatGroup.add(smplMesh);
-
-  // ── Anclas para la escena ───────────────────────────────────────────────────
+  // ── Anclas ──────────────────────────────────────────────────────────────────
   const displayAnchor = new THREE.Object3D();
-  displayAnchor.position.copy(mid3).add(slopeOutward.clone().multiplyScalar(10));
-  root.add(displayAnchor);
-
+  displayAnchor.position.set(mmX(LCD.x + LCD.w / 2), mmY(LCD.y + LCD.h / 2), 6);
+  consoleGrp.add(displayAnchor);
   const panAnchor = new THREE.Object3D();
-  panAnchor.position.set(panCtrX, PAN_TOP + 5, 0);
+  panAnchor.position.set(0, PAN_TOP + 6, SH_CZ);
   root.add(panAnchor);
-
   const shieldAnchor = new THREE.Object3D();
-  shieldAnchor.position.set(X_SF_POS + 8, H_BODY + H_SH * 0.55, SH_Z + 5);
+  shieldAnchor.position.set(-SH_W / 2 - 4, DECK + glassH * 0.62, SH_CZ + 20);
   root.add(shieldAnchor);
-
   const footAnchor = new THREE.Object3D();
-  footAnchor.position.set(D - FINX, -(FH + BEVEL), W / 2 - FINZ);
+  footAnchor.position.set(-FX, FOOT_H / 2, FZ + FOOT_R);
   root.add(footAnchor);
 
-  // ── Estado de animación ─────────────────────────────────────────────────────
-  let powered    = false;
-  let doorSlideZ = 0;   // desplazamiento actual de la hoja deslizante en Z
-  let boatAlpha  = 0;
-  let reading    = 0;
-  let lastRedraw = 0;
-  const DOOR_MAX = HALF_DOOR_Z * 0.96;
+  // Normal de la consola en el marco del modelo.
+  const consoleNormal = new THREE.Vector3(0, Math.cos(SLOPE_ANGLE), Math.sin(SLOPE_ANGLE));
 
-  // Todo sube lo que miden las patas: antes quedaban bajo el suelo y no se veían.
-  const LIFT = FH;
-  const lifted = new THREE.Group();
-  for (const child of [...root.children]) lifted.add(child);
-  lifted.position.y = LIFT;
-  root.add(lifted);
-
-  // Ranura gris alrededor del cuerpo, donde la cara vertical se encuentra con la pendiente.
-  {
-    const grooveMat = keep(new THREE.MeshStandardMaterial({ color: 0x9a9ea1, roughness: 0.6 }));
-    const front = new THREE.Mesh(keep(new THREE.BoxGeometry(1.2, 2.2, W - 8)), grooveMat);
-    front.position.set(D + BEVEL + 0.4, SL_BOT.y - 2, 0);
-    lifted.add(front);
-  }
+  // ── Estado ──────────────────────────────────────────────────────────────────
+  let powered = false;
+  let doorOpen = 0;
+  let boatAlpha = 0;
+  let reading = 0;
+  let lastDraw = -1;
+  let drawn = '';
+  const DOOR_TRAVEL = 112; // est.: la hoja abierta asoma ~138 por detrás (plano)
+  const TOP_TRAVEL = 70; // est.
 
   return {
     root,
-    anchors: {
-      display: displayAnchor,
-      pan:     panAnchor,
-      shield:  shieldAnchor,
-      foot:    footAnchor,
-    },
+    anchors: { display: displayAnchor, pan: panAnchor, shield: shieldAnchor, foot: footAnchor },
     views: {
-      pantalla: {
-        target:    displayAnchor,
-        // Dirección en espacio del modelo: slopeOutward (normal de la pendiente) + sesgo +Y
-        // muy pequeño. Con sesgo 0.28 la cámara queda en Y=386 mm (sobre la tapa del
-        // protector) y apunta hacia abajo en lugar de hacia la pantalla.
-        // Con sesgo 0.05 y distancia 270 la cámara queda a ~195 mm de altura,
-        // mirando casi perpendicularmente a la cara de la consola.
-        direction: new THREE.Vector3(slopeOutward.x, slopeOutward.y + 0.05, 0),
-        distance:  270,
-      },
-      plato: {
-        target:    panAnchor,
-        direction: new THREE.Vector3(0.15, 0.9, 0.8).normalize(),
-        distance:  270,
-      },
-      protector: {
-        target:    shieldAnchor,
-        direction: new THREE.Vector3(0.7, 0.18, 0.8).normalize(),
-        distance:  500,
-      },
+      pantalla: { target: displayAnchor, direction: consoleNormal.clone().add(new THREE.Vector3(0, 0.08, 0)), distance: 250 },
+      plato: { target: panAnchor, direction: new THREE.Vector3(-0.35, 0.95, 0.75), distance: 420 },
+      protector: { target: shieldAnchor, direction: new THREE.Vector3(-0.8, 0.28, 0.72), distance: 520 },
     },
-    frameTop: H_TOT + 12 + FH,
-    yaw: -Math.PI / 2 + 0.55, // la consola mira a +X: se gira para que quede de frente, en tres cuartos
+    frameTop: H + 10,
+    frameMargin: 1.6,
+    yaw: 0.68,
 
     setPower(on: boolean) {
       powered = on;
-      if (on) screenOn = true;
     },
 
     update(dt: number, t: number, level: number) {
-      // Puerta: se abre a mitad de la animación y se cierra antes del fin
-      const wantDoor = level > 0.16 && level < 0.84 ? DOOR_MAX : 0;
-      doorSlideZ += (wantDoor - doorSlideZ) * Math.min(1, dt * 3.0);
-      slidingDoor.position.z  = HALF_DOOR_Z / 2 + doorSlideZ;
-      slidingEdge.position.z  = HALF_DOOR_Z / 2 + doorSlideZ;
-      handle.position.z       = doorSlideZ;
+      // Puertas: se abren al arrancar, entra la muestra, se cierran.
+      const wantDoor = level > 0.12 && level < 0.78 ? 1 : 0;
+      doorOpen += (wantDoor - doorOpen) * Math.min(1, dt * 3);
+      leftDoor.position.z = SH_CZ - doorOpen * DOOR_TRAVEL;
+      topDoor.position.z = SH_CZ - doorOpen * TOP_TRAVEL;
 
-      // Barca
-      const wantAlpha = level > 0.36 ? 0.96 : 0;
-      boatAlpha += (wantAlpha - boatAlpha) * Math.min(1, dt * 2.0);
-      boatGroup.visible  = boatAlpha > 0.02;
-      boatMat.opacity    = boatAlpha;
-      sampleMat.opacity  = boatAlpha;
+      const wantBoat = level > 0.3 ? 1 : 0;
+      boatAlpha += (wantBoat - boatAlpha) * Math.min(1, dt * 2.4);
+      boat.visible = boatAlpha > 0.02;
+      boatMat.opacity = boatAlpha;
+      sampleMat.opacity = boatAlpha;
+      boat.position.y = PAN_TOP + (1 - boatAlpha) * 40;
 
-      // Ligera bajada del plato al pesar
-      panMesh.position.y = H_BODY + PED_H - level * 1.0 * Math.max(0, boatAlpha - 0.3);
+      // Pantalla: la lectura sube con la muestra y se asienta.
+      screenOn = powered || level > 0.02;
+      const want = boatAlpha > 0.9 ? SAMPLE_G : 0;
+      reading += (want - reading) * Math.min(1, dt * 4);
+      if (Math.abs(want - reading) < 0.00004) reading = want;
+      // Estable: sin navecilla, o con ella ya apoyada y la cifra quieta.
+      // Con una puerta abierta la corriente de aire no deja asentarse la cifra.
+      stable = Math.abs(want - reading) < 0.0002 && (boatAlpha < 0.02 || boatAlpha > 0.98) && doorOpen < 0.05;
+      shown = Math.max(0, stable ? want : reading + Math.sin(t * 37) * (doorOpen > 0.05 ? 0.0021 : 0.0003));
 
-      // Pantalla
-      if (screenOn && !powered && level < 0.02) screenOn = false;
-      const wantR = powered && level > 0.52 ? SAMPLE_G : 0;
-      reading += (wantR - reading) * Math.min(1, dt * (powered ? 1.0 : 7));
-      dispReading = reading;
-      stableFlag  = powered && Math.abs(reading - SAMPLE_G) < 0.08 && level > 0.7;
-
-      if (t - lastRedraw > 1 / 15) {
-        lastRedraw = t;
-        consoleTex.redraw();
+      const key = `${screenOn}|${shown.toFixed(4)}|${stable}`;
+      if (key !== drawn && t - lastDraw > 1 / 15) {
+        drawn = key;
+        lastDraw = t;
+        lcdTex.redraw();
       }
-      consoleMat.emissiveIntensity = screenOn ? 0.28 * level : 0;
     },
 
     dispose,
