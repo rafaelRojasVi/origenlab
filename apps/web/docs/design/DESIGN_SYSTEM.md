@@ -269,15 +269,14 @@ estas resuelve el problema.
 | `ui/SectionIndex` | Índice numerado de sección |
 | `ui/PageIntro` | Migas, H1 y frase de contexto de toda página interior |
 | `ui/Breadcrumbs` | Ruta + `BreadcrumbList` en JSON-LD |
-| `ui/ModelRow` | Fila de modelo: fotografía, nombre, tipo y cifras. Sustituye a las fichas de producto |
+| `ui/ModelRow` | Fila de modelo compacta: sólo la lista de relacionadas de las fichas de centrífuga (el catálogo usa `LitCard`) |
 | `ui/ModelList` | Contenedor de filas de modelo (filete superior y reinicio de lista) |
 | `ui/ApplicationList` | Las tres líneas comerciales como lista numerada |
-| `ui/SkuList` | Referencias sin ficha propia: nombre, número de ítem y una línea |
 | `ui/ProductFigure` | Fotografía de equipo en caja cuadrada sobre papel, con `<picture>` AVIF/WebP |
 | `ui/ModelPhoto` | Fotografía de un modelo o familia desde `productImages.ts`; sólo dibuja filas `VERIFIED`, `object-fit: contain`, rótulo con modelo y fabricante, y rotula las imágenes de familia como representativas |
 | `ui/KeyFacts` | Tres o cuatro cifras de cabecera en mono |
 | `ui/SpecGroups` | Ficha técnica agrupada en listas de definición |
-| `ui/CompareTable` | Comparativa: tabla con región desplazable en escritorio, listas apiladas bajo 768 px |
+| `ui/CompareTable` | Comparativa compacta de una familia bajo sus tarjetas: una fila por modelo (orden comercial), 3–4 cifras del fabricante; bloques por modelo bajo 768 px |
 | `ui/BrandLogo` | Logotipo a tinta única con altura óptica por marca. `loading="eager"` sólo en el riel |
 | `ui/ModelSheet` | Ficha de un modelo que el sitio describe y enlaza pero no aloja: qué hace, usos, criterios y fuente |
 | `ui/ClosingQuoteBand` | Banda de cierre invertida, única por página; `primary="whatsapp"` pone WhatsApp en el botón y el formulario entre los canales |
@@ -295,11 +294,12 @@ estas resuelve el problema.
 | `home/HomeIndustries` | Entradas por sector hacia las páginas de familia y compras públicas |
 | `home/HomeSteps` | Cómo comprar en pasos (`buyingSteps()`); la reusan la portada y `/como-comprar/` |
 | `home/HomeNotes` | Notas de aplicación; sólo se dibuja si existen (hoy ninguna) |
-| `product/ModelCard` | Tarjeta de modelo (`entry`, `variant`); una de las dos únicas con tarjeta |
-| `product/FamilyScale` | Escala logarítmica o lineal de la familia (`familyScale`, `parseSpecNumber`), con tarjetas por potencia ascendente |
+| `product/ModelCard` | Tarjeta `related` de la ficha; se retira cuando la ficha use `LitCard` |
+| `product/FamilyModels` | Rejilla de `LitCard` del catálogo (`/productos/`, familias, centrífugas, `/categorias/`), orden `rankModels`, 2/3/4 columnas; fotos de fondo gris sobre panel blanco |
 | `product/SpecTable` | Ficha técnica de modelo en tabla que se desplaza dentro de su caja |
 | `product/ModelHero`, `ModelHeroCopy` | Primera pantalla de modelo: 3D (`[data-first-screen]`) y copia; barra fija `[data-sticky-cta]` tras ella |
-| `product/TrustStrip`, `ModelFaq`, `RelatedModels`, `AccessoryCards`, `FamilyConsult` | Secciones de la ficha y de la familia |
+| `product/TrustStrip`, `ModelFaq`, `RelatedModels`, `AccessoryCards` | Secciones de la ficha |
+| `product/FamilyConsult` | «¿No sabe cuál?»: la `ClosingQuoteBand` de las páginas de familia |
 | `ui/StepList` | Procedimiento vertical con filete continuo; por defecto los cuatro pasos de compra |
 
 Utilidades globales en `global.css`: `.shell` (ancho y márgenes de página),
@@ -364,7 +364,7 @@ en blanco al llegar.
 
 ## 6. Lo que el sistema no admite
 
-- Tarjetas fuera de las de modelo y de familia (`ModelCard`, `FamilyScale`): en
+- Tarjetas fuera de las de modelo (`LitCard`, `ModelCard`): en
   todo lo demás se agrupa con filetes y espacio. Nunca fichas dentro de fichas ni
   una rejilla de tres tarjetas iguales.
 - Un segundo verde, un degradado, una sombra o un segundo radio. Las seis tintas

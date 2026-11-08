@@ -1,18 +1,14 @@
 ---
 import Layout from '../../../layouts/Layout.astro';
 import PageIntro from '../../../components/ui/PageIntro.astro';
-import SectionIndex from '../../../components/ui/SectionIndex.astro';
-import FamilyScale from '../../../components/product/FamilyScale.astro';
 import FamilyModels from '../../../components/product/FamilyModels.astro';
 import FamilyConsult from '../../../components/product/FamilyConsult.astro';
 import CompareTable from '../../../components/ui/CompareTable.astro';
-import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
 import Notice from '../../../components/ui/Notice.astro';
 import Icon from '../../../components/ui/Icon.astro';
 import { getCollection } from 'astro:content';
-import { byBrandAndName, familyOrder } from '../../../lib/modelos';
 import type { Modelo } from '../../../content.config';
 import { getProductFamilyBySlug } from '../../../data/productFamilies';
 import { categories } from '../../../data/categories';
@@ -22,24 +18,15 @@ import { itemListJsonLd } from '../../../lib/jsonld';
 const family = getProductFamilyBySlug('centrifugas');
 const products = getOrtoalresaCentrifuges();
 const brand = getBrandById('ortoalresa');
-const models = familyOrder(
-  (await getCollection('modelos'))
-    .map((item) => item.data as Modelo)
-    .filter((entry) => entry.family === 'centrifugacion')
-    .sort(byBrandAndName),
-  'centrifugacion',
-);
+/** Página propia de centrifugación (URL heredada), en el mismo lenguaje que las
+ *  demás familias: tarjetas iluminadas → ficha, comparativa compacta y la banda
+ *  «¿No sabe cuál?». Orden comercial dentro de `FamilyModels`/`CompareTable`. */
+const models = (await getCollection('modelos'))
+  .map((item) => item.data as Modelo)
+  .filter((entry) => entry.family === 'centrifugacion');
 
-/** Filas de la comparativa: sólo etiquetas presentes en todos los modelos o
- *  claramente diferenciadoras. El resto vive en cada ficha. */
-const compareRows = [
-  'Versión',
-  'Capacidad máxima',
-  'Velocidad máxima',
-  'Temperatura',
-  'Pantalla',
-  'Cámara',
-];
+/** Columnas de la comparativa: las tres decisiones de compra. El resto vive en cada ficha. */
+const compareRows = ['Capacidad máxima', 'Velocidad máxima', 'Versión', 'Temperatura'];
 
 /** Aplicaciones declaradas en las fichas, sin repetir, en orden de aparición. */
 const applications = [...new Set(products.flatMap((product) => product.applications ?? []))];
@@ -73,55 +60,51 @@ const relatedCategories = categories.filter((category) =>
     </PageIntro>
   </div>
 
-  <FamilyScale models={models} slug="centrifugacion" />
-  <FamilyModels models={models} title="Modelos de la familia" />
+  <section class="shell cf-sec" aria-labelledby="modelos-title">
+    <h2 id="modelos-title" class="sr-only">Modelos de centrífugas</h2>
+    <FamilyModels models={models} eager={4} label="Modelos de centrífugas" />
+  </section>
 
-  <section class="shell section rule-top" aria-labelledby="comparativa-title">
-    <SectionIndex index={1} label="Comparativa" />
-    <h2 id="comparativa-title" class="t-h2">Qué diferencia a cada modelo</h2>
-    <p class="t-lead mt-5">
+  <section class="shell cf-sec" aria-labelledby="comparativa-title">
+    <h2 id="comparativa-title" class="t-h2">Compárelas<span class="dot">.</span></h2>
+    <p class="lede cf-lede">
       La elección suele resolverse en tres decisiones: volumen por ciclo, si necesita control de
       temperatura y qué formatos de tubo va a usar.
     </p>
-    <div class="mt-10">
-      <CompareTable
-        products={products}
-        rows={compareRows}
-        caption="Comparativa de especificaciones de las centrífugas Ortoalresa"
-      />
-    </div>
+    <CompareTable
+      models={models}
+      family="centrifugacion"
+      labels={compareRows}
+      caption="Comparativa de especificaciones de las centrífugas Ortoalresa"
+    />
   </section>
 
-  <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
-    <SectionIndex index={2} label="Aplicaciones" />
-    <h2 id="aplicaciones-title" class="t-h2">Dónde se usan</h2>
-    <p class="t-body mt-5 applications">{applications.join(', ')}.</p>
-    <ul class="link-row mt-8">
+  <section class="shell cf-sec cf-rule" aria-labelledby="aplicaciones-title">
+    <div class="cf-two">
+      <div>
+        <h2 id="aplicaciones-title" class="t-h2">Dónde se usan<span class="dot">.</span></h2>
+        <p class="t-body cf-apps">{applications.join(', ')}.</p>
+        <ul class="link-row mt-6">
+          {
+            relatedCategories.map((category) => (
+              <li>
+                <a href={`/categorias/${category.slug}/`} class="link-arrow">
+                  {category.name}
+                  <Icon name="arrow-right" size={18} class="arrow" />
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
       {
-        relatedCategories.map((category) => (
-          <li>
-            <a href={`/categorias/${category.slug}/`} class="link-arrow">
-              {category.name}
-              <Icon name="arrow-right" size={18} class="arrow" />
-            </a>
-          </li>
-        ))
-      }
-    </ul>
-  </section>
-
-  {
-    brand && (
-      <section class="shell section rule-top" aria-labelledby="marca-title">
-        <SectionIndex index={3} label="Marca" />
-        <div class="brand-block">
-          <div>
-            <h2 id="marca-title" class="t-h2">{brand.name}</h2>
-            {brand.legalName && <p class="t-small brand-block__legal">{brand.legalName}</p>}
-            <p class="t-body brand-block__summary">{brand.summary}</p>
-            <div class="brand-block__links">
+        brand && (
+          <div class="cf-brand">
+            <BrandLogo brand={brand} scale={1.3} />
+            <p class="t-body cf-brand__summary">{brand.summary}</p>
+            <div class="cf-brand__links">
               <a href={`/marcas/${brand.slug}/`} class="link-arrow">
-                Ver la marca
+                Ver {brand.name}
                 <Icon name="arrow-right" size={18} class="arrow" />
               </a>
               {brand.websiteUrl && (
@@ -131,22 +114,13 @@ const relatedCategories = categories.filter((category) =>
               )}
             </div>
           </div>
-          <BrandLogo brand={brand} scale={1.5} />
-        </div>
-        <Notice class="mt-10">
-          {brand.manufacturerAttribution} {brand.commercialNote}
-        </Notice>
-      </section>
-    )
-  }
+        )
+      }
+    </div>
+    {brand && <Notice class="mt-10">{brand.manufacturerAttribution} {brand.commercialNote}</Notice>}
+  </section>
 
   <FamilyConsult brandName={brand?.name} />
-
-  <ClosingQuoteBand
-    title="Cotice la centrífuga adecuada para su flujo de trabajo."
-    body="Indique volumen por ciclo, formato de tubo, si necesita refrigeración y para qué laboratorio es. Con eso proponemos modelo, rotor y accesorios."
-    brandName={brand?.name}
-  />
 </Layout>
 
 <style>
@@ -160,32 +134,54 @@ const relatedCategories = categories.filter((category) =>
   .brand-link__label {
     color: var(--color-ink-500);
   }
-  .applications {
+  .cf-sec {
+    padding-block: 2.5rem 4rem;
+  }
+  .cf-rule {
+    border-top: 1px solid var(--color-hairline);
+    padding-top: 4rem;
+  }
+  .cf-lede {
+    margin: 0.75rem 0 2rem;
+    max-width: 52ch;
+  }
+  .cf-two {
+    display: grid;
+    gap: 3rem;
+  }
+  .cf-apps {
+    margin-top: 1rem;
     color: var(--color-ink-600);
     max-width: 62ch;
   }
-  .brand-block {
-    display: grid;
-    gap: 2rem;
-    align-items: start;
+  .cf-brand {
+    padding: 2rem;
+    border-radius: var(--radius-card);
+    background: var(--color-tint-centrifugacion);
   }
-  .brand-block__legal {
-    margin-top: 0.375rem;
-    color: var(--color-ink-500);
-  }
-  .brand-block__summary {
+  .cf-brand__summary {
     margin-top: 1.25rem;
+    color: var(--color-ink-800);
   }
-  .brand-block__links {
+  .cf-brand__links {
     display: flex;
     flex-wrap: wrap;
-    gap: 1rem 2rem;
-    margin-top: 1.75rem;
+    gap: 0.5rem 2rem;
+    margin-top: 1.25rem;
   }
   @media (min-width: 768px) {
-    .brand-block {
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 4rem;
+    .cf-sec {
+      padding-block: 3rem 6rem;
+    }
+    .cf-rule {
+      padding-top: 6rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .cf-two {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 26rem);
+      gap: 5rem;
+      align-items: start;
     }
   }
 </style>

@@ -11,8 +11,9 @@ import Icon from './Icon.astro';
  * Toda la fila es el enlace y su único nombre accesible es el modelo, de modo
  * que un lector de pantalla no encuentra cinco enlaces llamados "Ver ficha".
  *
- * `size="feature"` da a la imagen el peso de una página de familia;
- * `size="compact"` es para listas secundarias (modelos relacionados).
+ * Sólo queda la lista de relacionadas de las fichas de centrífuga (`compact`);
+ * el catálogo usa `LitCard`. `size="feature"` se acepta y se dibuja como
+ * `compact`. Cuando la ficha pase a `LitCard`, este componente se borra.
  */
 interface Props {
   product: Product;
@@ -22,12 +23,11 @@ interface Props {
 const { product, size = 'feature' } = Astro.props;
 const href = productPageHref(product);
 const image = productImageSources(product);
-const facts = keyFactsFor(product).slice(0, size === 'feature' ? 3 : 2);
-const sizes =
-  size === 'feature' ? '(min-width: 768px) 240px, 33vw' : '(min-width: 768px) 120px, 25vw';
+const facts = keyFactsFor(product).slice(0, 2);
+const sizes = '(min-width: 768px) 120px, 25vw';
 ---
 
-<li class:list={['model-row', `model-row--${size}`]}>
+<li class="model-row" data-size={size}>
   <a href={href} class="model-row__link">
     {
       image && (
@@ -52,7 +52,6 @@ const sizes =
     <div class="model-row__body">
       <h3 class="model-row__name">{product.name}</h3>
       {product.equipmentType && <p class="model-row__type">{product.equipmentType}</p>}
-      {size === 'feature' && <p class="model-row__summary t-small">{product.summary}</p>}
     </div>
 
     {
@@ -141,12 +140,6 @@ const sizes =
     font-size: 0.9375rem;
     color: var(--color-ink-600);
   }
-  .model-row__summary {
-    display: none;
-    margin-top: 0.625rem;
-    color: var(--color-ink-600);
-    max-width: 52ch;
-  }
   .model-row__facts dt {
     font-family: var(--font-mono);
     font-size: 0.8125rem;
@@ -170,13 +163,7 @@ const sizes =
 
   /* Desde 768 px hay ancho para que las cifras vivan bajo el nombre. */
   @media (min-width: 768px) {
-    .model-row--feature .model-row__link {
-      grid-template-columns: 15rem minmax(0, 1fr) 2rem;
-      column-gap: 3rem;
-      row-gap: 1rem;
-      padding-block: 2.25rem;
-    }
-    .model-row--compact .model-row__link {
+    .model-row__link {
       grid-template-columns: 6.5rem minmax(0, 1fr) 2rem;
       column-gap: 1.5rem;
       padding-block: 1.5rem;
@@ -193,12 +180,6 @@ const sizes =
       display: flex;
       flex-wrap: wrap;
       gap: 0.5rem 2.5rem;
-    }
-    .model-row--feature .model-row__summary {
-      display: block;
-    }
-    .model-row--feature .model-row__name {
-      font-size: 1.375rem;
     }
   }
 </style>
