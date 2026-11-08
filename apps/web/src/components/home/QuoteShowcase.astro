@@ -1,0 +1,793 @@
+---
+import { contact } from '../../data/contact';
+import { consultant } from '../../data/consultation';
+import { site } from '../../config/site';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { qrRows } from './quoteQr';
+
+/**
+ * «Así se ve su cotización» (dueño, 2026-11-08): réplica HTML/CSS de la
+ * cotización imprimible del Cotizador (`QuotePrintView` + `quotePrint.css`, la
+ * versión con QR de WhatsApp), con datos ficticios, que se arma sola al entrar
+ * en pantalla. Es el único papel blanco del sitio: un documento, presentado
+ * como una hoja iluminada sobre el showroom oscuro.
+ *
+ * - Medidas: la hoja se diseña en px de A4 a 96 ppp (794 × 1123) y se escala
+ *   (`scale: var(--k)`) al ancho de su marco, por escalones de contenedor. La
+ *   caja reserva la proporción A4: la animación no mueve la página.
+ * - Precios: cifras de relleno, desenfocadas y `aria-hidden`; el lector de
+ *   pantalla oye «Precios según cada cotización».
+ * - Animación (una vez, al entrar en pantalla; IntersectionObserver + CSS):
+ *   la hoja sube → se dibuja la línea teal → logo y número → cliente y
+ *   atención se escriben → cada línea cae con su código de modelo resaltado →
+ *   montos desenfocados → neto/IVA/total → condiciones → el QR se dibuja fila
+ *   a fila → la firma se traza. Las llamadas 1–6 aparecen al completarse cada
+ *   parte; en teléfono son una lista numerada bajo la hoja.
+ * - Sin JavaScript o con movimiento reducido: la hoja completa, quieta.
+ * - QR: el WhatsApp del sitio (`contact.ts`, la fuente de `site.ts`) con el
+ *   mensaje genérico de `lib/whatsapp.ts`, codificado en el build (SVG).
+ * - Firma y contacto: sólo datos ya públicos (`consultation.ts`, `contact.ts`);
+ *   sin la dirección de calle, que el sitio no publica.
+ */
+
+const qr = qrRows(buildWhatsAppQuoteUrl());
+const rowPath = qr.rows.join('');
+
+// Momento (s) en que cada parte termina de armarse: las llamadas aparecen ahí.
+const T = { client: 2.35, lines: 3.4, totals: 4.25, terms: 5.05, qr: 5.9, sign: 6.25 };
+
+const callouts = [
+  { n: 1, label: 'Su institución y su contacto', at: T.client, y: 22.4, mx: 94.1, my: 16.2 },
+  { n: 2, label: 'El modelo exacto, con su descripción', at: T.lines, y: 37.5, mx: 3.6, my: 35.2 },
+  { n: 3, label: 'Neto, IVA y total, claros', at: T.totals, y: 56.8, mx: 51.6, my: 54.6 },
+  { n: 4, label: 'Plazo y condiciones de pago', at: T.terms, y: 71.8, mx: 3.6, my: 64.4 },
+  { n: 5, label: 'Un QR para escribirnos por WhatsApp', at: T.qr, y: 83.5, mx: 57.7, my: 83.5 },
+  { n: 6, label: 'Firmada por una persona', at: T.sign, y: 92.5, mx: 3.6, my: 87.6 },
+];
+
+const lines = [
+  {
+    no: '01',
+    item: 'Analizador de humedad OHAUS',
+    model: 'MB120',
+    href: '/productos/pesaje-humedad/ohaus-mb120/',
+    note: ['Capacidad 120 g · legibilidad 0,001 g / 0,01 %', 'Calentamiento halógeno, hasta 230 °C'],
+    qty: '1',
+    unit: '$ 0.000.000',
+    total: '$ 0.000.000',
+  },
+  {
+    no: '02',
+    item: 'Balanza analítica OHAUS Pioneer',
+    model: 'PX224',
+    href: '/productos/pesaje-humedad/ohaus-pioneer-px/',
+    note: ['Capacidad 220 g · legibilidad 0,1 mg · calibración interna'],
+    qty: '1',
+    unit: '$ 0.000.000',
+    total: '$ 0.000.000',
+  },
+  {
+    no: '03',
+    item: 'Platos de aluminio desechables para analizador de humedad (caja de 80)',
+    model: '',
+    href: '',
+    note: [],
+    qty: '2',
+    unit: '$ 00.000',
+    total: '$ 00.000',
+  },
+];
+
+const terms = [
+  ['Plazo de entrega', '15 días hábiles desde la orden de compra'],
+  ['Validez', '30 días'],
+  ['Forma de pago', 'Según cada cotización'],
+  ['Documentación', 'Ficha técnica del fabricante'],
+  ['Lugar de entrega', 'Despacho incluido a sus dependencias'],
+  ['Instalación', 'Puesta en marcha y capacitación de uso incluidas'],
+];
+
+const issuerLines = [
+  `${consultant.name} - ${consultant.company}`,
+  `Casa Matriz: ${contact.locationPublic}`,
+  `${contact.email} · ${contact.phoneDisplay}`,
+  `www.${site.domain} · Horario: ${contact.hours}`,
+  `WhatsApp ${site.whatsapp}`,
+];
+const d = (s: number) => `--d:${s}s`;
+---
+
+<figure class="qs" data-qs aria-labelledby="qs-caption">
+  <div class="qs__stage">
+    <div class="qs__frame">
+      <article class="qs-sheet" style={d(0)} aria-label="Cotización de ejemplo CN09876, con datos ficticios">
+        <header class="qs-head">
+          <div class="qs-brand qs-a qs-fade" style={d(0.95)}>
+            <img src="/logo/origenlab-mark-light.svg" alt="" width="44" height="44" />
+            <div>
+              <div class="qs-brand-name">OrigenLab</div>
+              <div class="qs-muted">Equipamiento científico para laboratorios</div>
+            </div>
+          </div>
+          <div class="qs-number">
+            <span class="qs-eyebrow qs-a qs-fade" style={d(1.05)}>Cotización</span>
+            <span class="qs-label qs-a qs-type" style={d(1.15)}>CN09876</span>
+            <span class="qs-muted qs-a qs-fade" style={d(1.35)}>8 de noviembre de 2026</span>
+            <span class="qs-muted qs-a qs-fade" style={d(1.45)}>Válida hasta el 8 de diciembre de 2026</span>
+          </div>
+        </header>
+
+        <section class="qs-client qs-a qs-fade" style={d(1.3)} aria-label="Cliente">
+          <div>
+            <span class="qs-eyebrow-muted">Cliente</span>
+            <span class="qs-strong qs-a qs-type" style={d(1.5)}>Instituto Ficticio de Biociencias</span>
+            <span class="qs-muted qs-a qs-type" style={d(1.7)}>RUT 12.345.678-5</span>
+            <span class="qs-muted qs-a qs-type" style={d(1.82)}>Av. Ejemplo 1234</span>
+            <span class="qs-muted qs-a qs-type" style={d(1.94)}>Valdivia</span>
+          </div>
+          <div>
+            <span class="qs-eyebrow-muted">Atención</span>
+            <span class="qs-strong qs-a qs-type" style={d(1.65)}>Dra. Ana Pérez</span>
+            <span class="qs-muted qs-a qs-type" style={d(1.85)}>Jefa de laboratorio · Laboratorio de Análisis de Alimentos</span>
+            <span class="qs-muted qs-a qs-type" style={d(2.05)}>ana.perez@ejemplo.invalid</span>
+          </div>
+        </section>
+
+        <table class="qs-lines">
+          <caption class="sr-only">Líneas de la cotización. Precios según cada cotización.</caption>
+          <thead class="qs-a qs-fade" style={d(2.3)}>
+            <tr>
+              <th scope="col" class="qs-col-no">#</th>
+              <th scope="col">Descripción</th>
+              <th scope="col" class="qs-num">Cant.</th>
+              <th scope="col" class="qs-num">Precio unit.</th>
+              <th scope="col" class="qs-num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              lines.map((line, i) => (
+                <tr class="qs-a qs-drop" style={d(2.45 + i * 0.28)}>
+                  <td class="qs-col-no qs-mono">{line.no}</td>
+                  <td>
+                    <span class="qs-item">
+                      {line.item}
+                      {line.model && (
+                        <>
+                          {' '}
+                          <a class="qs-model qs-a qs-glow" style={d(2.7 + i * 0.28)} href={line.href}>{line.model}</a>
+                        </>
+                      )}
+                    </span>
+                    {line.note.length > 0 && <span class="qs-note">{line.note.join('\n')}</span>}
+                  </td>
+                  <td class="qs-num qs-mono">{line.qty}</td>
+                  <td class="qs-num qs-mono"><span class="qs-price qs-a qs-blur" style={d(3.15 + i * 0.08)} aria-hidden="true">{line.unit}</span></td>
+                  <td class="qs-num qs-mono"><span class="qs-price qs-a qs-blur" style={d(3.2 + i * 0.08)} aria-hidden="true">{line.total}</span></td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+
+        <dl class="qs-totals" aria-label="Totales">
+          <div class="qs-a qs-settle" style={d(3.65)}>
+            <dt>Neto</dt>
+            <dd class="qs-mono"><span class="qs-price" aria-hidden="true">$ 0.000.000</span></dd>
+          </div>
+          <div class="qs-a qs-settle" style={d(3.8)}>
+            <dt>IVA 19 %</dt>
+            <dd class="qs-mono"><span class="qs-price" aria-hidden="true">$ 000.000</span></dd>
+          </div>
+          <div class="qs-total qs-a qs-settle" style={d(3.95)}>
+            <dt>Total CLP</dt>
+            <dd class="qs-mono"><span class="qs-price" aria-hidden="true">$ 0.000.000</span><span class="sr-only">Precios según cada cotización</span></dd>
+          </div>
+        </dl>
+
+        <section aria-label="Condiciones">
+          <p class="qs-h2 qs-a qs-fade" style={d(4.3)}>Condiciones</p>
+          <dl class="qs-terms">
+            {
+              terms.map(([label, value], i) => (
+                <div class="qs-a qs-fade" style={d(4.4 + i * 0.1)}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))
+            }
+          </dl>
+        </section>
+
+        <footer class="qs-foot">
+          <div class="qs-sign">
+            <span class="qs-sign-greet qs-a qs-fade" style={d(5.1)}>Atentamente,</span>
+            <span class="qs-sign-line qs-a qs-stroke" style={d(5.35)} aria-hidden="true"></span>
+            <span class="qs-sign-name qs-a qs-type" style={d(5.75)}>{consultant.name}</span>
+            <span class="qs-sign-title qs-a qs-fade" style={d(5.95)}>{consultant.profession} · {consultant.company}</span>
+          </div>
+          <div class="qs-wa">
+            <svg
+              class="qs-a qs-qr"
+              style={`${d(5.05)};--rows:${qr.side}`}
+              viewBox={`0 0 ${qr.side} ${qr.side}`}
+              role="img"
+              aria-label="Código QR para escribir por WhatsApp"
+              shape-rendering="crispEdges"
+            >
+              <rect width={qr.side} height={qr.side} fill="#ffffff" />
+              <path d={rowPath} fill="#000000" />
+            </svg>
+            <span class="qs-a qs-fade" style={d(5.6)}>Escanee para escribir por WhatsApp sobre esta cotización</span>
+          </div>
+          <div class="qs-muted qs-right qs-a qs-fade" style={d(5.5)}>
+            {issuerLines.map((line) => <span>{line}</span>)}
+          </div>
+        </footer>
+
+        {
+          callouts.map((c) => (
+            <span class="qs-mark qs-a qs-pop" style={`${d(c.at)};left:${c.mx}%;top:${c.my}%`} aria-hidden="true">
+              {c.n}
+            </span>
+          ))
+        }
+      </article>
+    </div>
+
+    <ol class="qs__callouts" aria-label="Qué trae cada cotización">
+      {
+        callouts.map((c) => (
+          <li class="qs-a qs-pop" style={`${d(c.at)};--y:${c.y}%`}>
+            <span class="qs__n" aria-hidden="true">{c.n}</span>
+            <span>{c.label}</span>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+  <figcaption id="qs-caption" class="t-small qs__caption">
+    Ejemplo. Plazos y condiciones se definen en cada cotización.
+  </figcaption>
+</figure>
+
+<style is:global>
+  /* Global a propósito: todas las clases llevan el prefijo `qs`, y sin el
+     atributo de alcance de Astro en cada selector la hoja pesa ~4 kB menos. */
+  /* ---- Marco: la hoja sobre el showroom ----------------------------------- */
+  .qs {
+    margin: 0;
+  }
+  .qs__stage {
+    position: relative;
+    display: grid;
+    gap: 2rem;
+  }
+  /* La hoja mide 794 × 1123 px (A4 a 96 ppp) y se escala con `scale: var(--k)`;
+     el marco toma el ancho escalado de un escalón y reserva la proporción A4,
+     así que la animación no mueve nada. `scale` (no `transform`) para que las
+     animaciones de `transform` se sumen a la escala. */
+  .qs {
+    container: qs / inline-size;
+  }
+  .qs__frame {
+    --k: 0.36272;
+    position: relative;
+    width: 288px;
+    aspect-ratio: 794 / 1123;
+    margin-inline: auto;
+  }
+  @container qs (width >= 320px) { .qs__frame { --k: 0.40302; width: 320px; } }
+  @container qs (width >= 360px) { .qs__frame { --k: 0.4534; width: 360px; } }
+  @container qs (width >= 420px) { .qs__frame { --k: 0.52897; width: 420px; } }
+  @container qs (width >= 480px) { .qs__frame { --k: 0.60453; width: 480px; } }
+  @container qs (width >= 560px) { .qs__frame { --k: 0.70529; width: 560px; } }
+  @container qs (width >= 640px) { .qs__frame { --k: 0.80605; width: 640px; } }
+  .qs__caption {
+    margin-top: 1.5rem;
+    color: var(--color-ink-600);
+    text-align: center;
+  }
+
+  /* ---- Llamadas: lista bajo la hoja; al lado desde 1100 px --------------- */
+  .qs__callouts {
+    display: grid;
+    gap: 0.75rem;
+    max-width: 40rem;
+    width: 100%;
+    margin: 0 auto;
+    padding: 0;
+    list-style: none;
+    counter-reset: none;
+  }
+  .qs__callouts li {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--color-ink-800);
+    font-size: 0.9375rem;
+    line-height: 1.35;
+  }
+  .qs__n,
+  .qs-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 999px;
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    font: 600 0.8125rem/1 var(--font-mono);
+  }
+  .qs-mark {
+    position: absolute;
+    z-index: 2;
+    width: 28px;
+    height: 28px;
+    margin: -12px 0 0 -14px;
+    font-size: 16px;
+    scale: calc(0.8 / var(--k));
+    box-shadow: 0 0 0 5px var(--color-glow);
+  }
+  @media (min-width: 1100px) {
+    .qs__stage {
+      grid-template-columns: minmax(0, 40rem) minmax(15rem, 19rem);
+      justify-content: center;
+      gap: 0 3.5rem;
+    }
+    .qs__frame {
+      margin: 0;
+    }
+    .qs__callouts {
+      position: relative;
+      display: block;
+      max-width: none;
+      margin: 0;
+    }
+    .qs__callouts li {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: var(--y);
+      transform: translateY(-50%);
+    }
+    /* Línea guía hacia la hoja. */
+    .qs__callouts li::before {
+      content: '';
+      flex: none;
+      width: 2.25rem;
+      height: 1px;
+      margin-left: -3.25rem;
+      background: linear-gradient(90deg, transparent, var(--color-teal-700));
+    }
+  }
+
+  /* ---- La hoja (réplica de quotePrint.css, en px de A4 a 96 ppp) ----- */
+  .qs-sheet {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 794px;
+    height: 1123px;
+    scale: var(--k);
+    transform-origin: 0 0;
+    overflow: hidden;
+    padding: 59px 57px 45px;
+    border-radius: 3px;
+    background: #ffffff;
+    color: #14201d;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: left;
+    box-shadow: var(--shadow-card);
+  }
+  /* La línea teal de arriba es un pseudo-elemento para poder dibujarla. */
+  .qs-sheet::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 auto;
+    height: 6px;
+    background: #0f766e;
+    transform-origin: left center;
+  }
+  .qs-sheet a {
+    color: inherit;
+  }
+  .qs-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .qs-muted {
+    display: block;
+    font-size: 12px;
+    color: #4b5c57;
+  }
+  .qs-strong {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .qs-right {
+    text-align: right;
+  }
+  .qs-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+  }
+  .qs-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .qs-brand img {
+    width: 44px;
+    height: 44px;
+  }
+  .qs-brand-name {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.3;
+  }
+  .qs-number {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 3px;
+    text-align: right;
+  }
+  .qs-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: #0f766e;
+  }
+  .qs-label {
+    font-family: var(--font-mono);
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+  .qs-client {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 12px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    background: #f4f6f5;
+  }
+  .qs-client > div {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+  .qs-eyebrow-muted {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #4b5c57;
+  }
+  .qs-lines {
+    width: 100%;
+    margin-top: 12px;
+    border-collapse: collapse;
+  }
+  .qs-lines th {
+    padding: 8px 6px;
+    border-bottom: 1.5px solid #14201d;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #4b5c57;
+    text-align: left;
+  }
+  .qs-lines td {
+    padding: 10px 6px;
+    border-bottom: 1px solid #d9e2df;
+    vertical-align: top;
+    font-size: 12.5px;
+  }
+  .qs-lines .qs-num {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .qs-col-no {
+    width: 28px;
+    color: #4b5c57;
+  }
+  .qs-item {
+    display: block;
+    font-size: 13.5px;
+    font-weight: 600;
+  }
+  .qs-model {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    color: #0f766e !important;
+    text-decoration: none;
+    border-radius: 3px;
+  }
+  .qs-model:hover {
+    text-decoration: underline;
+  }
+  .qs-model:focus-visible {
+    outline: 2px solid #0f766e;
+    outline-offset: 2px;
+  }
+  .qs-note {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    color: #4b5c57;
+    white-space: pre-line;
+  }
+  /* Montos de relleno: siempre desenfocados (los precios son de cada cotización). */
+  .qs-price {
+    display: inline-block;
+    filter: blur(3.6px);
+    user-select: none;
+  }
+  .qs-totals {
+    width: 300px;
+    margin: 12px 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .qs-totals > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .qs-totals dt {
+    color: #4b5c57;
+  }
+  .qs-totals dd {
+    margin: 0;
+  }
+  .qs-totals .qs-total {
+    align-items: baseline;
+    margin-top: 2px;
+    padding-top: 7px;
+    border-top: 1px solid #14201d;
+  }
+  .qs-totals .qs-total dt {
+    color: #14201d;
+    font-weight: 700;
+  }
+  .qs-totals .qs-total dd {
+    font-weight: 700;
+  }
+  .qs-h2 {
+    margin: 12px 0 6px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .qs-terms {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 24px;
+  }
+  .qs-terms > div {
+    min-width: 0;
+    padding-top: 7px;
+    border-top: 1px solid #d9e2df;
+  }
+  .qs-terms dt {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #4b5c57;
+  }
+  .qs-terms dd {
+    margin: 2px 0 0;
+    font-size: 12.5px;
+  }
+  .qs-foot {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    padding-top: 16px;
+  }
+  .qs-foot .qs-right {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+  }
+  .qs-sign {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 200px;
+    font-size: 13px;
+  }
+  .qs-sign-greet {
+    color: #4b5c57;
+    font-size: 12.5px;
+  }
+  .qs-sign-line {
+    display: block;
+    width: 190px;
+    margin: 26px 0 6px;
+    border-top: 1px solid #9fb1ac;
+    transform-origin: left center;
+  }
+  .qs-sign-name {
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .qs-sign-title {
+    font-size: 12px;
+    color: #4b5c57;
+  }
+  .qs-wa {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    max-width: 144px;
+    text-align: center;
+    font-size: 10px;
+    line-height: 1.3;
+    color: #000000;
+  }
+  .qs-wa svg {
+    display: block;
+    width: 84px;
+    height: 84px;
+  }
+
+  /* ---- Construcción: sólo con script y sin movimiento reducido ------------
+     Cada parte declara su animación (`--an`), duración (`--t`), curva (`--e`)
+     y retraso (`--d`, en línea). `qs-in` es la entrada común: opacidad y un
+     desplazamiento vertical `--y`. */
+  @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
+    .qs:not(.qs--play) :is(.qs-sheet, .qs-a) {
+      opacity: 0;
+    }
+    .qs:not(.qs--play) .qs-sheet::before,
+    .qs:not(.qs--play) .qs-stroke {
+      transform: scaleX(0);
+    }
+    .qs--play :is(.qs-sheet, .qs-a),
+    .qs--play .qs-sheet::before {
+      animation: var(--an, qs-in) var(--t, 450ms) var(--e, cubic-bezier(0.2, 0.7, 0.2, 1)) var(--d, 0s) both;
+    }
+    /* Las variables se heredan: cada parte animada vuelve a los valores por
+       defecto antes de declarar los suyos. */
+    .qs-sheet {
+      --y: 48px;
+      --t: 900ms;
+    }
+    .qs-a {
+      --an: qs-in;
+      --t: 450ms;
+      --y: 6px;
+      --e: cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+    .qs-sheet::before,
+    .qs-stroke {
+      --an: qs-draw;
+      --t: 600ms;
+      --e: cubic-bezier(0.65, 0, 0.35, 1);
+    }
+    .qs-sheet::before {
+      --d: 0.45s;
+    }
+    .qs-type {
+      --an: qs-type;
+      --e: steps(22, end);
+    }
+    .qs-drop {
+      --y: -12px;
+    }
+    .qs-settle {
+      --y: 10px;
+    }
+    .qs-glow {
+      --an: qs-glow;
+      --t: 1.1s;
+    }
+    .qs-blur {
+      --an: qs-blur;
+    }
+    .qs-qr {
+      --an: qs-wipe;
+      --t: 850ms;
+      --e: steps(var(--rows), end);
+    }
+    .qs-pop {
+      --an: qs-pop;
+      --e: cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @media (min-width: 1100px) {
+      .qs__callouts .qs-pop {
+        --an: qs-slide;
+      }
+    }
+  }
+  @keyframes qs-in {
+    from {
+      opacity: 0;
+      transform: translateY(var(--y, 6px));
+    }
+  }
+  @keyframes qs-draw {
+    from {
+      transform: scaleX(0);
+    }
+  }
+  @keyframes qs-type {
+    from {
+      clip-path: inset(0 100% 0 0);
+    }
+  }
+  @keyframes qs-wipe {
+    from {
+      clip-path: inset(0 0 100%);
+    }
+  }
+  @keyframes qs-glow {
+    30% {
+      background-color: rgb(15 118 110 / 0.18);
+      box-shadow: 0 0 0 3px rgb(15 118 110 / 0.18);
+    }
+  }
+  @keyframes qs-blur {
+    from {
+      opacity: 0;
+      filter: blur(12px);
+    }
+  }
+  @keyframes qs-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+  }
+  @keyframes qs-slide {
+    from {
+      opacity: 0;
+      transform: translate(-12px, -50%);
+    }
+    to {
+      transform: translateY(-50%);
+    }
+  }
+</style>
+
+<script>
+  // Arma la hoja una sola vez, cuando entra en pantalla (el CSS hace el resto).
+  for (const el of document.querySelectorAll<HTMLElement>('[data-qs]')) {
+    const play = () => el.classList.add('qs--play');
+    if (!('IntersectionObserver' in window)) play();
+    else {
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            io.disconnect();
+            play();
+          }
+        },
+        { threshold: 0.3 },
+      );
+      io.observe(el.querySelector('.qs-sheet') ?? el);
+    }
+  }
+</script>

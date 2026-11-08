@@ -1,6 +1,13 @@
 ---
 import { industries } from '../../data/industries';
 
+// Plan comercial (dueño, 2026-11-08): primero los compradores de industria
+// (alimentos y agro, producción, control de calidad), después la academia.
+const LEAD = ['Alimentos', 'Salmón', 'Farma', 'Hospitales', 'Universidades', 'Sector público'];
+const ordered = [...industries].sort(
+  (a, b) => (LEAD.indexOf(a.name) + 1 || 99) - (LEAD.indexOf(b.name) + 1 || 99),
+);
+
 /**
  * Industrias (tablero HomeA): una fila bajo un filete de tinta, con una marca
  * de 1 × 12 px sobre cada enlace y un subrayado que crece al pasar el cursor.
@@ -15,7 +22,7 @@ import { industries } from '../../data/industries';
   <nav aria-labelledby="industrias-title" class="rv">
     <ul class="ind">
       {
-        industries.map((industry) => (
+        ordered.map((industry) => (
           <li data-industry>
             <a href={industry.href}><span>{industry.name}</span></a>
           </li>
@@ -40,7 +47,7 @@ import { industries } from '../../data/industries';
     margin: 0;
     padding: 0;
     list-style: none;
-    border-top: 1px solid var(--color-ink-950);
+    border-top: 1px solid var(--color-hairline-strong);
   }
   .ind a {
     position: relative;
@@ -58,7 +65,7 @@ import { industries } from '../../data/industries';
     top: -1px;
     width: 1px;
     height: 12px;
-    background-color: var(--color-ink-950);
+    background-color: var(--color-teal-700);
   }
   .ind span {
     padding-bottom: 3px;
@@ -84,7 +91,7 @@ import { industries } from '../../data/industries';
     .ind a {
       min-height: 3.5rem;
       padding: 1.125rem 0;
-      border-top: 1px solid var(--color-ink-950);
+      border-top: 1px solid var(--color-hairline-strong);
     }
     .ind a::before {
       height: 8px;

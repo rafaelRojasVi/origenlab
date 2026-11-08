@@ -8,7 +8,9 @@ import { publicClaim } from '../../data/claims';
  * lleva sólo las promesas aprobadas que la guía completa también dice. No hay
  * ítem de garantía: nadie la ha aprobado.
  *
- * `tone="raised"` es la banda blanca de la portada, con filetes arriba y abajo;
+ * El slot recibe, en la portada, el avance de la cotización de ejemplo.
+ *
+ * `tone="raised"` es la banda elevada de la portada, con filetes arriba y abajo;
  * `tone="paper"` la deja sobre el papel de la página (`/como-comprar/`), donde
  * además se cambian la etiqueta y el titular, se da un `id` de ancla y se omite
  * la fila de promesas (la página las dice en su propia franja).
@@ -23,7 +25,10 @@ interface Props {
 const { tone = 'raised', id, label = 'Cómo comprar', title = 'Cuatro pasos, sin vueltas', claims = true } = Astro.props;
 
 const steps = buyingSteps();
-const pay = claims ? [publicClaim('despacho-todo-chile'), publicClaim('vende-mercado-publico')].filter(Boolean) : [];
+// Soporte visible (plan comercial 2026-11-08), sólo con el texto del registro de afirmaciones.
+const pay = claims
+  ? [publicClaim('puesta-en-marcha-con-fabrica'), publicClaim('despacho-todo-chile'), publicClaim('vende-mercado-publico')].filter(Boolean)
+  : [];
 ---
 
 <section
@@ -54,6 +59,7 @@ const pay = claims ? [publicClaim('despacho-todo-chile'), publicClaim('vende-mer
         </ul>
       )
     }
+    <slot />
   </div>
 </section>
 
@@ -89,7 +95,7 @@ const pay = claims ? [publicClaim('despacho-todo-chile'), publicClaim('vende-mer
   }
   .steps__n {
     display: block;
-    color: var(--color-ink-950);
+    color: var(--color-teal-700);
     font-family: var(--font-mono);
     font-size: 3.5rem;
     font-weight: 400;

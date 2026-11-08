@@ -2,6 +2,7 @@
 import ModelPhoto from '../ui/ModelPhoto.astro';
 import { imageForModel, imageForProduct } from '../../data/productImages';
 import { showroomEntry } from '../../lib/showroom/catalog';
+import { turntableFor } from '../../lib/turntable';
 import type { ShowroomEntry } from '../../lib/showroom/content/types';
 
 /**
@@ -16,9 +17,9 @@ import type { ShowroomEntry } from '../../lib/showroom/content/types';
  * el mismo lienzo. Un solo WebGL dibuja a la vez, y cada modelo se descarga
  * sólo cuando se elige.
  *
- * Mejora progresiva estricta. Lo que llega en el HTML es la fotografía oficial
- * del equipo, con su fila VERIFIED, y el pie; sin 3D, la fila de tareas cambia
- * la fotografía. La escena 3D sólo se carga si hay WebGL, si el visitante no
+ * Mejora progresiva estricta. Lo que llega en el HTML es el póster del estudio
+ * oscuro (`npm run posters`) o, si el equipo no lo tiene, la fotografía oficial
+ * con su fila VERIFIED, y el pie; sin 3D, la fila de tareas cambia la imagen. La escena 3D sólo se carga si hay WebGL, si el visitante no
  * pidió movimiento reducido ni ahorro de datos, si el dispositivo no declara
  * poca memoria y cuando la figura está cerca de la pantalla; hasta que dibuja
  * su primer cuadro, la foto sigue ahí.
@@ -29,15 +30,15 @@ import type { ShowroomEntry } from '../../lib/showroom/content/types';
 interface Props {
   id?: string;
   items?: { id: string; task: string }[];
-  /** Fondo sobre el que se coloca: decide el color de las tareas y del pie. */
+  /** Compatibilidad: ya no cambia nada (un solo aspecto oscuro). */
   tone?: 'paper' | 'ink';
   /**
-   * `wide`: escenario 16/9 (4/3 en teléfono) en un marco de papel de hasta
+   * `wide`: escenario 16/9 (4/3 en teléfono) sobre el estudio oscuro, de hasta
    * 1120 px, con las tareas debajo. `portrait`: el 4/5 de las fichas de modelo.
    */
   frame?: 'portrait' | 'wide';
 }
-const { tone = 'paper', frame = 'portrait' } = Astro.props;
+const { frame = 'portrait' } = Astro.props;
 const wide = frame === 'wide';
 const picks = Astro.props.items ?? (Astro.props.id ? [{ id: Astro.props.id, task: '' }] : []);
 const entries = picks
@@ -47,6 +48,7 @@ const entries = picks
     entry,
     task: pick.task,
     image: 'modelId' in entry.photo ? imageForModel(entry.photo.modelId) : imageForProduct(entry.photo.productId),
+    poster: turntableFor(entry.id)?.poster ?? null,
     hotspots: entry.hotspots.filter((spot) => spot.body.length > 0).map((spot, index) => ({ ...spot, numeral: index + 1 })),
   }))
   .filter((item) => item.image);
@@ -58,7 +60,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
 {
   first && (
     <figure
-      class:list={['showroom', { 'showroom--selector': selector, 'showroom--wide': wide, 'showroom--ink': tone === 'ink' }]}
+      class:list={['showroom', { 'showroom--selector': selector, 'showroom--wide': wide }]}
       data-showroom={selector ? 'selector' : first.entry.id}
       data-active={first.entry.id}
       aria-labelledby={domId(first.entry.id, 'pie')}
@@ -75,7 +77,20 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
       <div class="showroom__stage">
         {entries.map((item, index) => (
           <div class="showroom__photo" data-showroom-photo data-entry={item.entry.id} hidden={index > 0}>
-            <ModelPhoto image={item.image} size="hero" priority={index === 0} ratio="4 / 5" />
+            {item.poster ? (
+              <img
+                class="showroom__poster"
+                src={item.poster}
+                alt={`${item.entry.brand} ${item.entry.name}, modelo 3D`}
+                width="1200"
+                height="900"
+                loading={index === 0 ? 'eager' : 'lazy'}
+                fetchpriority={index === 0 ? 'high' : undefined}
+                decoding="async"
+              />
+            ) : (
+              <ModelPhoto image={item.image} size="hero" priority={index === 0} ratio="4 / 5" />
+            )}
           </div>
         ))}
         <canvas class="showroom__canvas" data-showroom-canvas aria-hidden="true" hidden />
@@ -135,7 +150,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
         <figcaption class="showroom__caption t-data" id={domId(item.entry.id, 'pie')} data-entry={item.entry.id} hidden={index > 0}>
           <span class="showroom__model">{item.entry.brand} {item.entry.name}</span>
           <span>{item.entry.kind}</span>
-          <span class="showroom__mode" data-showroom-mode>Fotografía oficial del fabricante</span>
+          <span class="showroom__mode" data-showroom-mode>{item.poster ? 'Modelo 3D con las medidas del fabricante' : 'Fotografía oficial del fabricante'}</span>
         </figcaption>
       ))}
     </figure>
@@ -143,7 +158,16 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
 }
 
 <style>
+  /*
+   * Showroom oscuro: el equipo se ilumina sobre el estudio de `scene.ts` (piso
+   * grafito con un foco suave). El escenario es del mismo grafito que los
+   * pósteres (`--color-studio`), de modo que póster, lienzo y página se funden:
+   * sin caja blanca y sin marco duro. Los controles son píldoras de vidrio
+   * oscuro (grafito translúcido, texto claro, teal para lo elegido/encendido).
+   */
   .showroom {
+    --glass: color-mix(in srgb, var(--color-surface) 78%, transparent);
+    --glass-edge: var(--color-ink-500);
     margin: 0;
   }
   .showroom__stage {
@@ -151,6 +175,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     aspect-ratio: 4 / 5;
     max-height: 44rem;
     width: 100%;
+    background: var(--color-studio);
   }
   .showroom__photo,
   .showroom__canvas {
@@ -162,8 +187,15 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
   .showroom__photo {
     transition: opacity 0.6s ease;
   }
-  /* La figura y su caja llenan el escenario: con alto automático la caja medía
-     0 px y la foto de respaldo quedaba reducida a su relleno. */
+  /* Póster del estudio oscuro (4:3, horneado sobre `--color-studio`): se
+     contiene en el escenario y sus bordes no se ven. */
+  .showroom__poster {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  /* Sin póster: la fotografía del fabricante llena el escenario. */
   .showroom__photo :global(.model-photo),
   .showroom__photo :global(.model-photo__frame) {
     height: 100%;
@@ -178,10 +210,13 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     cursor: grab;
     touch-action: pan-y;
     opacity: 0;
-    transition: opacity 0.6s ease;
+    transition: opacity 0.35s ease;
   }
   .showroom[data-ready] .showroom__canvas {
     opacity: 1;
+  }
+  .showroom[data-swapping] .showroom__canvas {
+    opacity: 0 !important;
   }
   .showroom__canvas:active {
     cursor: grabbing;
@@ -211,17 +246,22 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     height: 1.75rem;
     margin: -0.875rem 0 0 -0.875rem;
     border-radius: 999px;
-    border: 1px solid var(--color-hairline);
-    background: var(--color-paper);
-    color: var(--color-family-sonicacion);
+    border: 1px solid var(--glass-edge);
+    background: var(--glass);
+    backdrop-filter: blur(8px);
+    color: var(--color-fg);
     font: 600 0.8125rem/1 var(--font-mono);
     cursor: pointer;
-    box-shadow: 0 0 0 0.375rem rgb(29 79 124 / 0.12);
+    box-shadow: 0 0 0 0.375rem var(--color-glow);
+    transition: background-color var(--ease-ui), color var(--ease-ui), border-color var(--ease-ui);
+  }
+  .hotspot__dot:hover {
+    border-color: var(--color-teal-700);
   }
   .hotspot__dot[aria-expanded='true'] {
-    background: var(--color-family-sonicacion);
-    border-color: var(--color-family-sonicacion);
-    color: var(--color-paper);
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-on-accent);
   }
   .hotspot__dot:focus-visible {
     outline: 2px solid var(--color-teal-700);
@@ -233,18 +273,21 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     top: -0.75rem;
     width: 15rem;
     padding: 0.75rem 0.875rem;
-    border: 1px solid var(--color-hairline);
-    background: var(--color-paper);
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 0.625rem;
+    background: var(--color-raised);
+    box-shadow: var(--shadow-card);
     font-size: 0.8125rem;
     line-height: 1.45;
     color: var(--color-ink-600);
+    text-align: left;
     opacity: 0;
     visibility: hidden;
     transform: translateX(-0.25rem);
     transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
   }
   .hotspot__title {
-    color: var(--color-ink-950);
+    color: var(--color-fg);
     font-weight: 600;
     margin-bottom: 0.25rem;
   }
@@ -255,7 +298,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     transform: none;
   }
 
-  /* --- controles ----------------------------------------------------------- */
+  /* --- controles: píldoras de vidrio oscuro -------------------------------- */
   .showroom__bar {
     display: flex;
     flex-wrap: wrap;
@@ -263,8 +306,6 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     justify-content: space-between;
     gap: 0.75rem;
     margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-hairline);
   }
   .showroom__bar[hidden] {
     display: none;
@@ -276,27 +317,35 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     gap: 0.5rem;
     min-height: 2.5rem;
     padding: 0 1rem;
-    border: 1px solid var(--color-hairline);
+    border: 1px solid var(--glass-edge);
     border-radius: 999px;
-    background: var(--color-paper);
+    background: var(--glass);
+    backdrop-filter: blur(10px) saturate(140%);
     color: var(--color-ink-800);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
+    transition: background-color var(--ease-ui), color var(--ease-ui), border-color var(--ease-ui);
+  }
+  .showroom__power:hover,
+  .showroom__view:hover {
+    border-color: var(--color-fg);
+    color: var(--color-fg);
   }
   .showroom__power[aria-pressed='true'] {
-    background: var(--color-ink-950);
-    border-color: var(--color-ink-950);
-    color: var(--color-paper);
+    border-color: var(--color-teal-700);
+    color: var(--color-teal-800);
   }
   .showroom__led {
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 999px;
-    background: var(--color-hairline);
+    background: var(--color-ink-disabled);
+    transition: background-color var(--ease-ui), box-shadow var(--ease-ui);
   }
   .showroom__power[aria-pressed='true'] .showroom__led {
-    background: var(--color-teal-500);
+    background: var(--color-teal-700);
+    box-shadow: 0 0 0 3px var(--color-glow), 0 0 10px var(--color-teal-700);
   }
   .showroom__views {
     display: flex;
@@ -304,13 +353,9 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     gap: 0.375rem;
   }
   .showroom__view[aria-pressed='true'] {
-    border-color: var(--color-ink-950);
-    color: var(--color-ink-950);
-  }
-  .showroom__power:focus-visible,
-  .showroom__view:focus-visible {
-    outline: 2px solid var(--color-teal-700);
-    outline-offset: 2px;
+    border-color: var(--color-accent);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
   }
   .showroom__caption {
     display: flex;
@@ -328,38 +373,31 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     .showroom__photo,
     .showroom__canvas,
     .hotspot,
-    .hotspot__note {
+    .hotspot__note,
+    .hotspot__dot,
+    .showroom__power,
+    .showroom__view,
+    .showroom__task {
       transition: none;
     }
   }
 
-  /* --- selector de tareas: control segmentado ------------------------------ */
+  /* --- selector de tareas: control segmentado de vidrio --------------------- */
   .showroom__tasks {
-    --seg-edge: var(--color-hairline);
-    --seg-text: var(--color-ink-600);
-    --seg-hover: var(--color-ink-950);
-    --seg-on: var(--color-ink-950);
-    --seg-on-text: var(--color-paper);
     display: flex;
     gap: 2px;
     width: fit-content;
     max-width: 100%;
     margin: 0 auto 1rem;
     padding: 4px;
-    border: 1px solid var(--seg-edge);
+    border: 1px solid var(--color-hairline-strong);
     border-radius: 12px;
+    background: var(--color-surface);
     overflow-x: auto;
     scrollbar-width: none;
   }
   .showroom__tasks::-webkit-scrollbar {
     display: none;
-  }
-  .showroom--ink .showroom__tasks {
-    --seg-edge: var(--color-onink-hairline);
-    --seg-text: var(--color-onink-500);
-    --seg-hover: var(--color-onink-100);
-    --seg-on: var(--color-onink-100);
-    --seg-on-text: var(--color-ink-950);
   }
   .showroom__task {
     flex: none;
@@ -368,12 +406,12 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     border: 0;
     border-radius: 8px;
     background: transparent;
-    color: var(--seg-text);
+    color: var(--color-ink-600);
     font-size: 0.9375rem;
     font-weight: 500;
     line-height: 1;
     cursor: pointer;
-    transition: background-color 150ms ease-out, color 150ms ease-out;
+    transition: background-color var(--ease-ui), color var(--ease-ui);
   }
   @media (min-width: 1024px) {
     .showroom__task {
@@ -381,17 +419,12 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     }
   }
   .showroom__task:hover {
-    color: var(--seg-hover);
+    color: var(--color-fg);
+    background: var(--color-raised);
   }
   .showroom__task[aria-pressed='true'] {
-    background: var(--seg-on);
-    color: var(--seg-on-text);
-  }
-  .showroom__canvas {
-    transition: opacity 0.35s ease;
-  }
-  .showroom[data-swapping] .showroom__canvas {
-    opacity: 0 !important;
+    background: var(--color-accent);
+    color: var(--color-on-accent);
   }
 
   /* --- marco ancho (portada): escenario 16/9, controles dentro, tareas debajo */
@@ -406,8 +439,6 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     aspect-ratio: 4 / 3;
     max-height: none;
     overflow: hidden;
-    background: var(--color-paper);
-    border: 1px solid var(--color-onink-hairline);
     border-radius: var(--radius-scene);
   }
   @media (min-width: 640px) {
@@ -421,8 +452,32 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     align-self: end;
     z-index: 1;
     margin: 0.75rem;
-    padding: 0;
-    border-top: 0;
+  }
+  /* En teléfono la barra es una sola fila: encendido fijo y vistas que se
+     desplazan en horizontal, para no tapar el equipo. */
+  @media (max-width: 639.98px) {
+    .showroom--wide .showroom__bar {
+      flex-wrap: nowrap;
+      gap: 0.375rem;
+      margin: 0.5rem;
+    }
+    .showroom--wide .showroom__power {
+      flex: none;
+    }
+    .showroom--wide .showroom__views {
+      flex-wrap: nowrap;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-radius: 999px;
+    }
+    .showroom--wide .showroom__views::-webkit-scrollbar {
+      display: none;
+    }
+    .showroom--wide .showroom__view {
+      flex: none;
+      padding: 0 0.875rem;
+    }
   }
   .showroom--wide .showroom__tasks {
     margin: 1.75rem auto 0;
@@ -431,12 +486,6 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     justify-content: center;
     margin-top: 1rem;
     text-align: center;
-  }
-  .showroom--ink .showroom__caption {
-    color: var(--color-onink-500);
-  }
-  .showroom--ink .showroom__model {
-    color: var(--color-onink-100);
   }
 </style>
 
