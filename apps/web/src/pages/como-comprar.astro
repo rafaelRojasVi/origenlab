@@ -6,6 +6,7 @@ import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import Button from '../components/ui/Button.astro';
 import FaqList from '../components/ui/FaqList.astro';
 import HomeSteps from '../components/home/HomeSteps.astro';
+import QuoteShowcase from '../components/home/QuoteShowcase.astro';
 import { consultationProcess } from '../data/consultation';
 import { buyingFaqs } from '../data/faq';
 import { contact } from '../data/contact';
@@ -15,7 +16,8 @@ import { faqJsonLd } from '../lib/jsonld';
 
 /**
  * Cómo se compra: los cuatro pasos de `buyingSteps()` (los mismos de la
- * portada), lo que pasa dentro del primero, la vía de las compras públicas y
+ * portada), «Así se ve su cotización» (`#cotizacion`, la hoja de ejemplo que
+ * se arma sola: `QuoteShowcase`), lo que pasa dentro del primero, la vía de las compras públicas y
  * las preguntas de `buyingFaqs()`.
  *
  * Sin precios y sin cifras. Cada frase que es una afirmación sale de
@@ -77,6 +79,19 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
     title="Cuatro pasos, de la cotización a la entrega"
     claims={false}
   />
+
+  <section id="cotizacion" class="shell home-sec quote-sec" aria-labelledby="cotizacion-title">
+    <div class="home-head quote-sec__head">
+      <p class="t-label">Su cotización</p>
+      <h2 id="cotizacion-title" class="t-h2">Así se ve su cotización</h2>
+      <p class="t-body guide__body guide__body--flush">
+        Cada cotización se arma para su institución y su laboratorio: el modelo exacto con su
+        descripción, los montos con IVA a la vista y las condiciones por escrito, firmada por una
+        persona del equipo.
+      </p>
+    </div>
+    <QuoteShowcase />
+  </section>
 
   <section class="shell home-sec" aria-labelledby="asesoria-title">
     <div class="guide">
@@ -189,6 +204,13 @@ const description = publicClaim('cotizacion-mismo-dia-habil')
   }
   .guide__link {
     margin-top: 2rem;
+  }
+  .quote-sec__head {
+    align-items: center;
+    text-align: center;
+  }
+  .quote-sec__head .guide__body {
+    margin-inline: auto;
   }
   .faq-sec {
     padding-bottom: clamp(5rem, 10vw, 9rem);

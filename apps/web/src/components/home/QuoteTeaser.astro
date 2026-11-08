@@ -1,0 +1,109 @@
+---
+import Icon from '../ui/Icon.astro';
+
+/**
+ * Avance de «Así se ve su cotización» para la portada: una línea y una
+ * miniatura de la hoja (dibujada con CSS, sin imagen ni cifras) que llevan al
+ * ejemplo completo en `/como-comprar/#cotizacion` (`QuoteShowcase`).
+ */
+---
+
+<a class="qt" href="/como-comprar/#cotizacion">
+  <span class="qt__sheet" aria-hidden="true">
+    <i class="qt__rule"></i>
+    <i class="qt__bar qt__bar--title"></i>
+    <i class="qt__box"></i>
+    <i class="qt__bar"></i>
+    <i class="qt__bar qt__bar--short"></i>
+    <i class="qt__bar"></i>
+    <i class="qt__bar qt__bar--total"></i>
+  </span>
+  <span class="qt__text">
+    <span class="t-label qt__label">Así se ve su cotización</span>
+    <span class="qt__line">Hecha para su institución: el modelo exacto, neto, IVA y total claros, y una persona que la firma.</span>
+    <span class="qt__go">Ver el ejemplo <Icon name="arrow-right" size={16} class="arrow" /></span>
+  </span>
+</a>
+
+<style>
+  .qt {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 3rem;
+    padding: 1.25rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+    color: var(--color-fg);
+    transition: border-color var(--ease-ui);
+  }
+  .qt:hover {
+    border-color: var(--color-ink-500);
+  }
+  .qt:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 3px;
+  }
+  .qt__sheet {
+    position: relative;
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: 5px;
+    width: 4.5rem;
+    aspect-ratio: 210 / 297;
+    padding: 10px 8px;
+    border-radius: 3px;
+    background: var(--color-lightbox-hi);
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+  }
+  .qt__sheet i {
+    display: block;
+    border-radius: 1px;
+    background: var(--color-lightbox-lo);
+  }
+  .qt__rule {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--color-accent-active) !important;
+  }
+  .qt__bar {
+    height: 3px;
+  }
+  .qt__bar--title {
+    width: 55%;
+    height: 4px;
+  }
+  .qt__bar--short {
+    width: 60%;
+  }
+  .qt__bar--total {
+    width: 40%;
+    margin: auto 0 0 auto;
+    filter: blur(1px);
+  }
+  .qt__box {
+    height: 12px;
+  }
+  .qt__text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .qt__label {
+    color: var(--color-teal-700);
+  }
+  .qt__line {
+    color: var(--color-ink-800);
+    line-height: 1.5;
+  }
+  .qt__go {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--color-teal-800);
+    font-weight: 600;
+  }
+</style>
