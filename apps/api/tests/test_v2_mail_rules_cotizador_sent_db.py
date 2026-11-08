@@ -200,3 +200,70 @@ def test_the_ygaero_shape_two_cases_one_reply(world) -> None:
         assert _rows(dsn, "select stage from crm.opportunity where id = %s", (case_id,))[0]["stage"] == "quoting"
         assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
                           "and opportunity_id = %s and unlinked_at is null", (email, case_id))[0]["n"] == 1
+
+
+def _request_of(dsn: str, operator: OperatorIdentity, institution: str | None, address: str) -> str:
+    """An open request (a lead, no quote) whose quote recipient is `address` — as a forward (R11) opens it."""
+    [(case_id,)] = _owner(dsn, "insert into crm.opportunity (title, stage, owner_operator_id, organization_id) "
+                               "values ('Solicitud — Balanzas', 'lead', %s, %s) returning id::text",
+                          (operator.operator_id, institution))
+    [(point,)] = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) "
+                             "values ('email', %s, %s, 'unattributed', 'machine_proposed') returning id", (address, address))
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, contact_point_id, role, is_primary, "
+                "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, 'machine_proposed')",
+           (case_id, point))
+    return case_id
+
+
+def test_the_seed_company_shape_the_recipients_quoteless_request_closes_as_a_duplicate(world) -> None:
+    """Production 2026-11-06: a forward opened the request (no institution yet); the Cotizador, not seeing
+    it, opened its own case for the quote. The quote goes out → the request closes as a duplicate."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    quoted = _case(dsn, world["operator"], world["institution"])
+    request = _request_of(dsn, world["operator"], None, "compras@cliente-ficticio.test")
+    one = _approved(world, quoted)
+    email, _ = _email(dsn, [_doc(f"Cotización CN{one['quote_number'][:5]} — Cliente.pdf")], case_id=None,
+                      linked_by=admin.operator_id, sent_at=datetime.now(UTC) + timedelta(minutes=1))
+    repo = _mail_rules(dsn)
+    # Pass one: R2 links the email to the case whose number the PDF carries; R16 waits. Pass two: R16.
+    assert not repo.apply(admin, [{"evidence_id": email, "rule_id": "R2"}])["refused"]
+    planned = _planned(repo, email)["R16"]
+    assert planned["case_id"] == quoted and any("duplicad" in r for r in planned["reasons"])
+    result = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
+    assert not result["refused"], result["refused"]
+    assert _revision(dsn, one["revision_id"])["status"] == "sent"
+    assert _rows(dsn, "select stage from crm.opportunity where id = %s", (quoted,))[0]["stage"] == "quoting"
+    closed = _rows(dsn, "select stage, closed_at, close_reason from crm.opportunity where id = %s", (request,))[0]
+    assert closed["stage"] == "abandoned" and closed["closed_at"] is not None
+    assert quoted[:8] in closed["close_reason"] and one["quote_number"] in closed["close_reason"]
+    for case_id in (quoted, request):
+        assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
+                          "and opportunity_id = %s and unlinked_at is null", (email, case_id))[0]["n"] == 1
+    # Once: the second pass plans nothing more for this email.
+    assert "R16" not in _planned(repo, email)
+
+
+def test_the_golden_omega_shape_a_reply_on_another_open_cases_thread_still_sends(world) -> None:
+    """Production 2026-11-06: a quote made on a new case, emailed as a reply on the thread of an
+    older open case. R1 only proposes (thread vs number); R16 sends on the named case and leaves the other."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    older = _case(dsn, world["operator"], world["institution"])
+    newer = _case(dsn, world["operator"], world["institution"])
+    sent_before = _approved(world, older)
+    thread = f"t-{uuid.uuid4().hex[:12]}"
+    _email(dsn, [_doc(f"Cotización CN{sent_before['quote_number'][:5]} — Cliente.pdf")], case_id=older,
+           linked_by=admin.operator_id, sent_at=datetime.now(UTC) - timedelta(days=10), thread=thread)
+    two = _approved(world, newer)
+    email, _ = _email(dsn, [_doc(f"Cotización CN{two['quote_number'][:5]} — Cliente.pdf")], case_id=None,
+                      linked_by=admin.operator_id, sent_at=datetime.now(UTC) + timedelta(minutes=1), thread=thread)
+    repo = _mail_rules(dsn)
+    planned = _planned(repo, email)
+    assert planned["R1"]["mode"] == "proposal" and planned["R16"]["case_id"] == newer
+    result = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
+    assert not result["refused"], result["refused"]
+    assert _revision(dsn, two["revision_id"])["status"] == "sent"
+    assert _rows(dsn, "select stage from crm.opportunity where id = %s", (newer,))[0]["stage"] == "quoting"
+    assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
+                      "and opportunity_id = %s and unlinked_at is null", (email, older))[0]["n"] == 0

@@ -23,7 +23,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R11 | a request forwarded to contacto@ (`forwarded_request`, read by the worker), still pending | auto: joins the one open case whose emails come from that customer, or of the customer's institution; otherwise a request (`create_request_from_forward`) with the known institution, the company the forward names, or none. Never a supplier's domain; never links a Labdelivery-mailbox email |
 | R14 | outbound from contacto@, sent in the last `LATE_QUOTE_WINDOW_DAYS`, already linked to exactly one open case (by a rule or a person), carrying exactly one CN PDF whose number no case records | auto: the R1 gates (requesting institution, open stage, correlative not under another year), then «Enviada» + quote on that case; no link (it is there). The one rule that still reads an email another rule acted on |
 | R15 | an institution «por confirmar» that R4, R10 or «Completar con la cotización» created, not a supplier, no free-mail domain, with a quote on its case recorded ≥ `SETTLE_DAYS` ago and still sent | auto: confirmed — renamed first from the PDF's institution segment when it is named after its domain (exactly one distinct segment across its quotes, naming which institution, not only a kind; else a person); confirmed with no operator named. Keyed by the institution's id, not an email |
-| R16 | outbound from contacto@, carrying the PDF of a Cotizador revision of that case that is approved and not yet sent — matched by the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; a «(borrador)» print never; the email's year, else the year before), sent after the approval | auto: each such revision → «sent» (the email, its PDF's hash), the case → «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several PDFs in one email: each its revision, on each case it belongs to, the email linked there. A closed case among them, an email a person put elsewhere, or an open case of its thread no PDF names → nothing. Reads an email another rule acted on, once |
+| R16 | outbound from contacto@, carrying the PDF of a Cotizador revision of that case that is approved and not yet sent — matched by the file name's number **and** revision letter (the browser's «Cotización CN01274A — ….pdf» or a hand-renamed «CN01274A-….pdf»; A = revision 2; a «(borrador)» print never; the email's year, else the year before), sent after the approval | auto: each such revision → «sent» (the email, its PDF's hash), the case → «Enviada». The PDF is never read: what it says is what the Cotizador approved. Several PDFs in one email: each its revision, on each case it belongs to, the email linked there. A closed case among them or an email a person put elsewhere → nothing; another case's thread never blocks. The recipient's one open request without a quote (not among them) is closed as a duplicate of the sending case, the email linked there. Reads an email another rule acted on, once |
 | R17 | inbound, already on exactly one case in «Enviada» (`quoting`), sent in the last `REPLY_WINDOW_DAYS` and after that case's live quote was sent, from neither us nor a supplier, not an automatic reply | auto: the case → «Conversación» (`negotiating`). Reads an email another rule acted on (R1 links it a pass earlier), once |
 | R18 | inbound from the client (not ours, a supplier, a bounce or an automatic reply) on exactly one open **or won** case (linked, or on its thread when not linked), sent in the last `REPLY_WINDOW_DAYS`, whose triage reading says `needs_reply: false` and not `stage: lost` | auto: a receipt only — no CRM write; the card marks that email `no_reply` and Hoy leaves it out of «Responder». Reads an email another rule acted on, once |
 | R19 | inbound from the client, the newest one on exactly one open case not «En pausa», whose triage reading says `stage: lost` (the body, which R6 never reads) | auto: the case → «Perdida» (`READ_LOST_CLOSE_REASON`); R6's sender gate, else a proposal; waits a pass while R17 moves the case. Reads an email another rule acted on, once |
@@ -1532,6 +1532,17 @@ def year_before(key: tuple[int, int]) -> tuple[int, int]:
     return ((key[0] - 1) % 100, key[1])
 
 
+def _duplicate_request(e: MailEvidence, ix: _Index, sending: dict[str, CaseState]) -> CaseState | None:
+    """R16: the recipient's one open request still without a quote, if it is none of the cases the
+    quote goes out from — the request the Cotizador did not see (a seed company's balances, 2026-11-06). None or several
+    → None: a person decides, if anyone must."""
+    recipients = {a.lower() for a in addresses(e.recipients)}
+    found = [c for c in ix.cases.values()
+             if c.id not in sending and not c.closed and not c.quotes and c.stage in _REQUEST_STAGES
+             and recipients & set(c.people)]
+    return found[0] if len(found) == 1 else None
+
+
 def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     """R16 (owner, 2026-10-21): contacto@ emailed the PDF of a quote the Cotizador approved on the case
     the email is on. The revision becomes «sent» and the case «Enviada». Nothing is read from the PDF —
@@ -1541,8 +1552,16 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     Cotizador's (`origin = 'authored'`), approved, not superseded, not yet sent and approved before the
     email left counts — on each case they belong to (a client's request and the case the Cotizador
     opened beside it), the email linked there if it is not. A closed case among them, a stage past
-    «Enviada», an email a person put on another case, or an open case of its thread none of the PDFs
-    names leave the email to a person. Historical quotes are R1/R14's, never this rule's."""
+    «Enviada» or an email a person put on another case leave the email to a person. The thread does
+    not (owner 2026-11-08, after Golden Omega's 2026-11-06 reply on another open case's thread): the
+    approved revision the PDF names is the Cotizador's own word on which case this is.
+
+    The recipient's one open request still waiting for its first quote (`_REQUEST_STAGES`, no quote,
+    the recipient among its people — the case a forward or an RFQ opened, that the Cotizador did not
+    see when it opened its own case beside it, as a seed company's request on 2026-11-06) is the same deal: it is closed
+    as a duplicate of the case the quote went out from, the email linked there first (owner
+    2026-11-08). Two such requests, or none, change nothing. Historical quotes are R1/R14's, never
+    this rule's."""
     if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
         return None
     sent = _instant(e.sent_at)
@@ -1575,10 +1594,10 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
         return None
     if set(e.linked_case_ids) - set(cases):
         return None  # a person or a rule put it on a case none of its PDFs names
-    # A reply on an old thread is fine when that thread's case is closed (a client asking again on a
-    # lost quote's thread); an open case of the thread that none of the PDFs names is a person's call.
-    if any(not t.closed and t.id not in cases for t in ix.by_thread.get(e.thread_id or "", [])):
-        return None
+    # The thread never blocks: a reply on another case's thread (a lost quote's, or an open one's —
+    # Golden Omega on 2026-10-20 and 2026-11-06) still sends the revision its PDF names; that other
+    # case is simply not touched.
+    duplicate = _duplicate_request(e, ix, cases)
     # Each PDF is its own case's evidence: two cases of one client (a request and the case «Nueva
     # cotización» opened beside it) each get their revision sent, the email and «Enviada». The case
     # the thread or a link already names goes last, so the action's case is that one.
@@ -1590,6 +1609,9 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                f"{', '.join(labels)}, aprobada{'s' if len(labels) > 1 else ''} en el Cotizador"]
     if len(order) > 1:
         reasons.append(f"son de {len(order)} casos del cliente: cada uno queda en «Enviada»")
+    if duplicate is not None:
+        reasons.append(f"la solicitud abierta «{duplicate.title}» del destinatario, sin cotización, es la misma "
+                       "compra: queda cerrada como duplicada")
     note = _note("R16", reasons)
     steps: list[dict[str, Any]] = []
     for c in order:
@@ -1604,6 +1626,15 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
             steps.append(_link_step(c, e.id, "mentions", note))
         steps += [_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]]
     first, main = order[0], order[-1]
+    if duplicate is not None:
+        # Another case than the action's: the link names it outright (its id and the version the rule
+        # read), and the executor then acts there (`_absorb` follows the link's `opportunity_id`).
+        steps.append({"command": "link_case_evidence", "inputs": {
+            "opportunity_id": duplicate.id, "opportunity_version": duplicate.version, "relation": "mentions",
+            "source_record_id": e.id, "note": note}})
+        steps.append(_advance_step("abandoned", note, close_reason=(
+            f"Duplicado: la cotización {labels[0]} a este destinatario salió del caso {main.id[:8]} «{main.title}»; "
+            "esta solicitud era la misma compra.")))
     return PlannedAction(e.id, "R16", AUTO, tuple(reasons), case_id=main.id, case_title=main.title,
                          organization_id=main.organization_id, quote_number=labels[0], commands=tuple(steps),
                          candidates=tuple(c.id for c in order) if len(order) > 1 else (),

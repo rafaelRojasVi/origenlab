@@ -160,9 +160,16 @@ def test_an_old_lost_thread_does_not_block_the_golden_omega_shape() -> None:
     [a] = r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, lost))
     assert a.case_id == "c-new" and [c["command"] for c in a.commands][:2] == ["record_authored_quote_sent",
                                                                                "link_case_evidence"]
-    # The same reply on an OPEN case's thread that no PDF names stays with a person.
+    # Production 2026-11-06 (owner 2026-11-08): the same reply on an OPEN case's thread that no PDF names
+    # no longer waits for a person — the approved revision the PDF names wins over the thread. Only the
+    # named case moves; the thread's case is not touched.
     open_other = replace(lost, stage="quoting", closed=False)
-    assert r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, open_other)) == []
+    [b] = r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, open_other))
+    assert (b.case_id, b.candidates) == ("c-new", ())
+    assert [c["command"] for c in b.commands] == ["record_authored_quote_sent", "link_case_evidence",
+                                                  "advance_case_stage", "advance_case_stage", "advance_case_stage"]
+    assert all(c["inputs"].get("opportunity_id") == "@case" for c in b.commands[1:])
+    assert b.context["case"] == "c-new"
 
 
 def test_a_pdf_naming_two_quotes_leaves_it_to_a_person() -> None:
@@ -247,5 +254,61 @@ def test_a_browser_named_pdf_on_a_new_thread_is_linked_by_r16_itself() -> None:
                                                   "advance_case_stage"]
     assert a.commands[1]["inputs"]["source_record_id"] == "e-1" and a.commands[1]["inputs"]["note"].startswith(
         "Sistema (correo) R16")
-    # On another case's thread it stays with a person.
+    # On another open case's thread, with the number read: R1 only proposes (the thread says one case,
+    # the number another), and R16 acts on the case the PDF names (owner 2026-11-08). Without the number
+    # R1 links the thread's case by itself and the email is then a person's to move.
+    numbered = mail(pdf("Cotización CN01276 — Cliente Ficticio.pdf"), linked_case_ids=(), thread_id="t-new")
+    [b] = r16(numbered, cases=(case(q), case(id="c-2", thread_ids=("t-new",))))
+    assert b.case_id == "c-1" and all("c-2" not in str(c["inputs"]) for c in b.commands)
     assert r16(fresh, cases=(case(q), case(id="c-2", thread_ids=("t-new",)))) == []
+
+
+def request(**over) -> CaseState:
+    """An open request without a quote: the case a forward (R11) or an RFQ (R7) opened for the client."""
+    base = dict(id="c-req", title="Solicitud — Balanzas", stage="lead", version=2, organization_id=None,
+                closed=False, thread_ids=(), quotes=(), people=("compras@cliente.test",))
+    base.update(over)
+    return CaseState(**base)
+
+
+def test_the_recipients_open_request_without_a_quote_is_closed_as_a_duplicate() -> None:
+    # Production 2026-11-06 (a seed company's balances): the request a forward opened on 11-05 had no institution yet, so the
+    # Cotizador opened a second case for the client's quote; the quote went out from that one and the
+    # request stayed «Solicitada» forever. Now the request closes as its duplicate (owner 2026-11-08).
+    q = quote("09320-26", authored("r-1", 1))
+    [a] = r16(mail(pdf("Cotización CN09320 — Cliente Ficticio.pdf")), cases=(case(q), request()))
+    assert a.case_id == "c-1"
+    assert [c["command"] for c in a.commands] == ["record_authored_quote_sent", "advance_case_stage",
+                                                  "link_case_evidence", "advance_case_stage"]
+    link, close = a.commands[2]["inputs"], a.commands[3]["inputs"]
+    # The request is another case than the action's: its own id and version, read when the rule planned.
+    assert (link["opportunity_id"], link["opportunity_version"], link["relation"]) == ("c-req", 2, "mentions")
+    assert (close["opportunity_id"], close["stage"]) == ("@case", "abandoned")
+    assert "c-1" in close["close_reason"] and "09320-26" in close["close_reason"]
+    assert any("Solicitud — Balanzas" in r and "duplicad" in r for r in a.reasons)
+    assert a.commands[1]["inputs"]["stage"] == "quoting"  # the Cotizador case still walks to «Enviada»
+    assert a.candidates == ()
+
+
+def test_the_request_is_left_alone_when_it_is_not_clearly_this_deal() -> None:
+    q = quote("09320-26", authored("r-1", 1))
+    doc = pdf("Cotización CN09320 — Cliente Ficticio.pdf")
+    only_sent = ["record_authored_quote_sent", "advance_case_stage"]
+    # Two open requests of the recipient: a person chooses which one this quote answers.
+    [a] = r16(mail(doc), cases=(case(q), request(), request(id="c-req2", title="Otra solicitud")))
+    assert [c["command"] for c in a.commands] == only_sent
+    # A request that already has a quote, or that is past «Solicitada», is a deal of its own.
+    [a] = r16(mail(doc), cases=(case(q), request(quotes=(quote("01300-26", authored("r-9", 1, status="sent")),))))
+    assert [c["command"] for c in a.commands] == only_sent
+    [a] = r16(mail(doc), cases=(case(q), request(stage="quoting")))
+    assert [c["command"] for c in a.commands] == only_sent
+    # Another person's request is not this recipient's.
+    [a] = r16(mail(doc), cases=(case(q), request(people=("otra@cliente.test",))))
+    assert [c["command"] for c in a.commands] == only_sent
+    # A closed request stays closed; a tender is never a case here (the snapshot holds sales only).
+    [a] = r16(mail(doc), cases=(case(q), request(stage="abandoned", closed=True)))
+    assert [c["command"] for c in a.commands] == only_sent
+    # The request the PDF itself names (R13 put the quote there) is the deal, not a duplicate.
+    named = request(quotes=(q,), id="c-req")
+    [a] = r16(mail(pdf("Cotización CN09320 — Cliente Ficticio.pdf"), linked_case_ids=("c-req",)), cases=(named,))
+    assert a.case_id == "c-req" and "abandoned" not in str(a.commands)
