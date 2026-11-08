@@ -159,6 +159,13 @@ const tasks = rankFamilies(applications, (application) => segment(application.fa
     padding: 0;
     list-style: none;
   }
+  /* Tarjetas de una fila, de igual alto. */
+  .task__models > li {
+    display: flex;
+  }
+  .task__models > li > :global(*) {
+    flex: 1;
+  }
   .task__foot {
     display: flex;
     flex-wrap: wrap;

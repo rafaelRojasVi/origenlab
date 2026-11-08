@@ -3,7 +3,7 @@ import Turntable from './Turntable.astro';
 import LightBox from './LightBox.astro';
 import { getBrandById } from '../../lib/catalog';
 import { ctaLabels } from '../../lib/ctaLabels';
-import { familyInfo, familyTint, imageForEntry, keyStats, modelHref } from '../../lib/modelos';
+import { familyInfo, imageForEntry, keyStats, modelHref } from '../../lib/modelos';
 import { stageFrame, turntableFor } from '../../lib/turntable';
 import type { Modelo } from '../../content.config';
 
@@ -11,11 +11,13 @@ import type { Modelo } from '../../content.config';
  * Tarjeta de modelo canónica del sitio claro («Blanco con color»). Una sola para
  * portada, marcas, aplicaciones, catálogo, familias y relacionados.
  *
- * - Escenario redondeado con el tinte pastel de la familia (`familyTint`) y un
- *   charco de luz blanca bajo el equipo. Con 3D, `Turntable` (póster + tira de
- *   giro), encuadrado por `stageFrame()` para que el equipo quede grande y
- *   centrado; sin 3D, la foto blanca del fabricante «parada» sobre el tinte
- *   (`LightBox`). Ninguna caja blanca: los dos se funden por multiply.
+ * - Tarjeta blanca con filete claro y sombra teal suave (dueña, 2026-11-08: sin
+ *   fondos pastel por familia). Con 3D, `Turntable` (póster + tira de giro),
+ *   encuadrado por `stageFrame()` para que el equipo quede grande y centrado;
+ *   sin 3D, la foto blanca del fabricante (`LightBox`). Los dos se funden con
+ *   el blanco del escenario por multiply. La foto se encoge dentro de una caja
+ *   con margen (no con `padding` en la imagen), así su tope de tamaño real no
+ *   cuenta el margen y las fotos pequeñas no salen diminutas.
  * - Debajo: «Familia, Marca», el nombre, una línea de dato del fabricante
  *   (`keyStats`, nunca una cifra comercial) y «Ver ficha» + «Cotizar» (el
  *   formulario recibe el modelo: `/contacto/?producto=<slug>`).
@@ -54,7 +56,7 @@ const top = kicker === 'family' ? `${familyInfo(entry.family).short}, ${brandNam
 const Heading = heading;
 ---
 
-<article class:list={['lc', `lc--${variant}`, className]} data-tt-host style={`--lc-tint: ${familyTint(entry)}; --lc-ratio: ${ratio}`}>
+<article class:list={['lc', `lc--${variant}`, className]} data-tt-host style={`--lc-ratio: ${ratio}`}>
   <div class="lc__stage">
     {
       spins ? (
@@ -82,30 +84,27 @@ const Heading = heading;
 </article>
 
 <style>
+  /* Tarjeta blanca: filete claro y sombra teal suave; se eleva al pasar. */
   .lc {
     position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;
-  }
-  /* Escenario: tinte de familia + charco de luz blanca; es el contexto donde el
-     póster y la foto se funden (multiply). Se eleva al pasar el mouse. */
-  .lc__stage {
-    position: relative;
-    aspect-ratio: var(--lc-ratio);
-    overflow: hidden;
+    border: 1px solid var(--color-hairline);
     border-radius: var(--radius-card);
-    background: var(--lc-tint, var(--color-tint));
+    background: #fff;
+    box-shadow: var(--shadow-card);
     transition:
       transform 600ms var(--ease-out),
       box-shadow 600ms var(--ease-out);
   }
-  .lc__stage::before {
-    content: '';
-    position: absolute;
-    inset: 14% 6% 10%;
-    border-radius: 50%;
-    background: radial-gradient(closest-side, #fff 35%, rgb(255 255 255 / 0) 100%);
+  /* Escenario blanco: el contexto donde el póster y la foto se funden. */
+  .lc__stage {
+    position: relative;
+    aspect-ratio: var(--lc-ratio);
+    overflow: hidden;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+    background: #fff;
   }
   .lc__stage :global(.lc__tt) {
     position: absolute;
@@ -113,21 +112,26 @@ const Heading = heading;
     transform-origin: 50% 62%;
     transition: transform 800ms var(--ease-out);
   }
-  .lc__stage :global(.lc__photo),
+  /* El margen va en la caja, no en la imagen: el tope de tamaño real de la
+     foto (`max-width`/`max-height` en línea) mide la imagen sola. */
+  .lc__stage :global(.lc__photo) {
+    position: absolute;
+    inset: 12%;
+  }
   .lc__stage :global(.lc__photo .lightbox__plinth) {
     position: absolute;
     inset: 0;
     aspect-ratio: auto !important;
   }
   .lc__stage :global(.lc__photo img) {
-    padding: 12%;
+    padding: 0;
     transition: transform 800ms var(--ease-out);
   }
   .lc__txt {
     display: flex;
     flex: 1;
     flex-direction: column;
-    padding: 1.25rem 0.25rem 0;
+    padding: 0.75rem 1.25rem 1rem;
   }
   .lc__top {
     font-size: 0.84375rem;
@@ -197,13 +201,13 @@ const Heading = heading;
     font-size: 1.0625rem;
   }
   .lc--tile .lc__txt {
-    padding-top: 0.875rem;
+    padding-top: 0.5rem;
   }
   @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    .lc:hover .lc__stage,
-    .lc:focus-within .lc__stage {
-      transform: translateY(-6px);
-      box-shadow: var(--shadow-lift);
+    .lc:hover,
+    .lc:focus-within {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-card), var(--shadow-lift);
     }
     .lc:hover .lc__stage :global(.lc__tt),
     .lc:hover .lc__stage :global(.lc__photo img) {
@@ -215,8 +219,8 @@ const Heading = heading;
     }
   }
   @media (max-width: 639.98px) {
-    .lc__stage {
-      border-radius: 1.25rem;
+    .lc__txt {
+      padding-inline: 1rem;
     }
     .lc__row {
       gap: 0 0.875rem;

@@ -99,23 +99,14 @@
 /* Estáticos: Tailwind poda las variables de @theme que ningún utilitario usa, y
    estos las usan los componentes por nombre. */
 @theme static {
-  /* Familias: tinta de texto/punto (≥ 5.6:1 sobre blanco) y fondo pastel de
-     tarjeta y miniatura (`--color-tint-*`). Humedad tiene su propio fondo
-     aunque comparte familia con pesaje (los analizadores de humedad). */
+  /* Familias: tinta de texto/punto (≥ 5.6:1 sobre blanco). Tarjetas y
+     miniaturas son blancas (dueña, 2026-11-08): sin fondos pastel por familia. */
   --color-family-sonicacion: #1d4f7c;
   --color-family-dispersion: #1f5f7a;
   --color-family-centrifugacion: #5b3f96;
   --color-family-pesaje: #7d5310;
   --color-family-osmometria: #6d5a0e;
   --color-family-electroforesis: #2f4a8f;
-  --color-tint-sonicacion: #e6f0fd;
-  --color-tint-humedad: #dff5f2;
-  --color-tint-pesaje: #fdf0d5;
-  --color-tint-centrifugacion: #ece9fb;
-  --color-tint-dispersion: #e3f3fb;
-  --color-tint-osmometria: #fdf6d8;
-  --color-tint-electroforesis: #e9effd;
-  --color-tint: #f2faf8; /* tile without family */
 
   /* Text that must stay readable on any light surface. */
   --color-fg: #0d1918;
