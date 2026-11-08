@@ -1,0 +1,222 @@
+---
+import { getCollection } from 'astro:content';
+import type { Modelo } from '../../content.config';
+import { brands } from '../../data/brands';
+import { applications } from '../../data/applications';
+import { equipmentScope } from '../../data/equipmentScope';
+import { familyForScope, familyHref, familyInfo, imageForEntry, modelHref } from '../../lib/modelos';
+import { brandEntries, rankEntries } from '../../lib/brandShowcase';
+import { rankBrands, rankFamilies } from '../../lib/ranking';
+import { turntableFor } from '../../lib/turntable';
+import { imageSourcesFor } from '../../lib/productImage';
+
+/**
+ * Contenido de un menú desplegable de la cabecera: columnas de grupos, cada
+ * grupo con su enlace (familia, marca o aplicación) y sus modelos, cada modelo
+ * con una miniatura iluminada y directo a su ficha (regla del dueño,
+ * 2026-11-08: «just take me to the ficha»).
+ *
+ * - `productos`: las seis familias.
+ * - `marcas`: las siete marcas.
+ * - `aplicaciones`: las tareas de `applications.ts`, con los modelos de sus
+ *   familias.
+ *
+ * Familias, marcas y modelos van en el orden comercial de `ranking.ts`
+ * (ficha 3D primero, IKA al final). Todo sale de la colección `modelos` y de los datos de marca y aplicación;
+ * aquí no hay listas de modelos escritas a mano. Miniatura: el póster 3D sobre
+ * el estudio oscuro o la fotografía verificada (derivado de 480 px) sobre el
+ * plinto claro. `loading="lazy"` dentro de un panel oculto: no se descarga
+ * nada hasta que el panel se abre.
+ */
+interface Props {
+  menu: 'productos' | 'marcas' | 'aplicaciones';
+  variant: 'panel' | 'accordion';
+}
+
+const { menu, variant } = Astro.props;
+const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+
+interface Group {
+  label: string;
+  href: string;
+  models: Modelo[];
+}
+
+const familyGroup = (slug: NonNullable<ReturnType<typeof familyForScope>>): Group => ({
+  label: familyInfo(slug).short,
+  href: familyHref(slug),
+  models: rankEntries(all.filter((entry) => entry.family === slug)),
+});
+
+/** Orden comercial (`ranking.ts`): por el segmento de URL de cada familia. */
+const families = rankFamilies(
+  equipmentScope.map((scope) => familyForScope(scope.id)).filter((slug) => slug !== undefined),
+  (slug) => familyHref(slug).split('/')[2] ?? slug,
+);
+
+const groups: Group[] =
+  menu === 'productos'
+    ? families.map(familyGroup)
+    : menu === 'marcas'
+      ? rankBrands(brands).map((brand) => ({ label: brand.name, href: `/marcas/${brand.slug}/`, models: brandEntries(brand.id, all) }))
+      : applications.map((application) => ({
+          label: application.name,
+          href: `/aplicaciones/#${application.slug}`,
+          models: rankEntries(
+            application.familyIds
+              .map((id) => familyForScope(id))
+              .filter((slug) => slug !== undefined)
+              .flatMap((slug) => familyGroup(slug).models),
+          ),
+        }));
+
+const thumb = (entry: Modelo) => {
+  const files = turntableFor(entry.slug);
+  if (files) return { kind: '3d', src: files.poster, srcset: undefined, width: 1200, height: 900 };
+  const sources = imageSourcesFor(imageForEntry(entry));
+  if (!sources) return null;
+  return {
+    kind: 'photo',
+    src: sources.src,
+    srcset: sources.webpSrcset.split(', ')[0],
+    width: sources.width,
+    height: sources.height,
+  };
+};
+const brandName = (entry: Modelo) => brands.find((brand) => brand.id === entry.brand)?.name ?? '';
+---
+
+<div class:list={['mm-groups', `mm-groups--${variant}`, `mm-groups--${menu}`]}>
+  {
+    groups.map((group) => (
+      <div class="mm-group">
+        <a href={group.href} class="mm-group__head" translate={menu === 'marcas' ? 'no' : undefined}>
+          {group.label}
+        </a>
+        <ul class="mm-group__list">
+          {group.models.map((entry) => {
+            const t = thumb(entry);
+            return (
+              <li>
+                <a href={modelHref(entry)} class="mm-model">
+                  <span class="mm-thumb" data-kind={t?.kind}>
+                    {t && (
+                      <img
+                        src={t.src}
+                        srcset={t.srcset}
+                        sizes={t.srcset ? '56px' : undefined}
+                        width={t.width}
+                        height={t.height}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    )}
+                  </span>
+                  <span class="mm-model__text">
+                    <span class="mm-model__name" translate="no">{entry.name}</span>
+                    {menu !== 'marcas' && <span class="mm-model__brand" translate="no">{brandName(entry)}</span>}
+                  </span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    ))
+  }
+</div>
+
+<style is:global>
+  .mm-groups {
+    display: grid;
+    gap: 1.75rem 1.5rem;
+  }
+  .mm-groups--panel {
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  }
+  .mm-group {
+    min-width: 0;
+  }
+  .mm-group__head {
+    display: block;
+    padding-bottom: 0.625rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-hairline-strong);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-teal-700);
+  }
+  .mm-group__head:hover {
+    color: var(--color-teal-800);
+  }
+  .mm-group__list {
+    display: grid;
+    gap: 0.125rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .mm-model {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 2.75rem;
+    padding: 0.25rem;
+    margin-inline: -0.25rem;
+    border-radius: 0.5rem;
+    transition: background-color 150ms;
+  }
+  .mm-model:hover {
+    background-color: var(--color-pressed);
+  }
+  .mm-thumb {
+    position: relative;
+    flex: none;
+    width: 3.5rem;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    isolation: isolate;
+    border-radius: 0.375rem;
+    background: var(--color-studio);
+    outline: 1px solid var(--color-hairline);
+  }
+  .mm-thumb[data-kind='photo'] {
+    background: radial-gradient(70% 60% at 50% 40%, var(--color-lightbox-hi), var(--color-lightbox-lo));
+  }
+  .mm-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mm-thumb[data-kind='photo'] img {
+    padding: 8%;
+    object-fit: contain;
+    mix-blend-mode: multiply;
+  }
+  .mm-model__text {
+    display: grid;
+    min-width: 0;
+  }
+  .mm-model__name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-ink-950);
+  }
+  .mm-model__brand {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .mm-model__brand {
+    font-size: 0.8125rem;
+    line-height: 1.3;
+    color: var(--color-ink-500);
+  }
+  .mm-groups--accordion {
+    padding: 0.5rem 0 1.25rem;
+  }
+</style>
