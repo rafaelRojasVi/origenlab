@@ -31,9 +31,9 @@
  *   · Tapa ~524 × 492 mm, abre ~66°; dos pernos de cierre metálicos en las
  *     esquinas del borde libre, hoyuelo central, amortiguador junto a la bisagra.
  *
- * Comportamiento: tapa cerrada en reposo. Al «Centrifugar» la tapa se abre y el
+ * Comportamiento: tapa abierta en reposo (se ve el rotor). Al «Centrifugar» el
  * rotor gira (las cubetas se abren un poco con la velocidad); al detener, el
- * rotor frena y la tapa se cierra. `setLid` permite a la historia fijar la tapa.
+ * rotor frena. `setLid` permite a la historia fijar la tapa (abrirla o cerrarla).
  */
 import * as THREE from 'three';
 import type { BuiltModel } from '../types';
@@ -683,7 +683,7 @@ export function build(): DigicenModel {
   body.add(bodyAnchor);
 
   // ── estado ─────────────────────────────────────────────────────────────────
-  let lidOpen = 0;
+  let lidOpen = 1; // en reposo la tapa está abierta: el rotor es lo que el dueño quiere mostrar
   let lidOverride: number | null = null;
   let swing = 0;
   const ease = (x: number) => x * x * (3 - 2 * x);
@@ -696,9 +696,8 @@ export function build(): DigicenModel {
       rotor: { target: rotorAnchor, direction: new THREE.Vector3(-0.25, 1.15, 0.85), distance: 760 },
       lateral: { target: bodyAnchor, direction: new THREE.Vector3(-1, 0.32, 0.42), distance: 900 },
     },
-    // La vista general encuadra el equipo cerrado (reposo) con aire encima; abierta,
-    // la punta de la tapa (~710 mm) sale un poco del cuadro general.
-    frameTop: 420,
+    // La vista general encuadra el equipo con la tapa abierta (reposo), punta incluida (~710 mm).
+    frameTop: 740,
     frameMargin: 1.3,
     yaw: 0.56,
 
@@ -712,8 +711,8 @@ export function build(): DigicenModel {
     },
 
     update(dt: number, t: number, level: number) {
-      // tapa: abierta mientras está en marcha o el rotor aún gira
-      const want = lidOverride ?? (powered || level > 0.04 ? 1 : 0);
+      // tapa: abierta en reposo y en marcha (muestra el rotor); la historia puede fijarla
+      const want = lidOverride ?? 1;
       lidOpen += (want - lidOpen) * Math.min(1, dt * 2.4);
       if (Math.abs(want - lidOpen) < 1e-3) lidOpen = want;
       lid.rotation.x = -LID_ANGLE * ease(lidOpen);
