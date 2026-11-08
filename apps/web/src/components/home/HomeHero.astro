@@ -5,6 +5,7 @@ import { company } from '../../data/company';
 import { ctaLabels } from '../../lib/ctaLabels';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { site } from '../../config/site';
+import { rankModels } from '../../lib/ranking';
 
 /**
  * Portada, primera pantalla (tablero HomeA): showroom oscuro. Titular, línea
@@ -24,6 +25,17 @@ interface Props {
   headlineB: boolean;
 }
 const { headlineB } = Astro.props;
+
+// Tareas de la sala en el orden comercial (`lib/ranking.ts`): 3D primero, IKA al final.
+const rooms = rankModels([
+  { id: 'hielscher-up400st', task: 'Sonicar' },
+  { id: 'ika-t25-digital', task: 'Dispersar' },
+  { id: 'ortoalresa-digicen-22-r', task: 'Centrifugar' },
+  { id: 'ohaus-pioneer-px', task: 'Pesar' },
+  { id: 'adam-highland', task: 'Pesar en terreno' },
+  { id: 'loeser-i-osmometer', task: 'Osmolalidad' },
+  { id: 'serva-bluevertical-prime', task: 'Electroforesis' },
+]);
 
 const title = headlineB
   ? ['Cotización', 'el mismo día.', 'Directo con', 'el fabricante.']
@@ -57,25 +69,15 @@ const title = headlineB
   <div class="shell hero__scene">
     <Showroom
       frame="wide"
-      items={[
-        { id: 'hielscher-up400st', task: 'Sonicar' },
-        { id: 'ika-t25-digital', task: 'Dispersar' },
-        { id: 'ortoalresa-digicen-22-r', task: 'Centrifugar' },
-        { id: 'ohaus-pioneer-px', task: 'Pesar' },
-        { id: 'adam-highland', task: 'Pesar en terreno' },
-        { id: 'loeser-i-osmometer', task: 'Osmolalidad' },
-        { id: 'serva-bluevertical-prime', task: 'Electroforesis' },
-      ]}
+      items={rooms}
     />
   </div>
 </section>
 
 <style>
-  /* Estudio oscuro: el grafito de la página con un foco cenital muy suave
-     detrás del equipo. Sin `.on-ink`: los tokens tienen aquí su valor normal. */
+  /* Sin `.on-ink`: los tokens tienen aquí su valor normal (fondo de página). */
   .hero {
     background-color: var(--color-paper);
-    background-image: radial-gradient(60rem 34rem at 50% 62%, rgb(255 255 255 / 0.035), transparent 70%);
     color: var(--color-fg);
     padding: clamp(3rem, 5vw, 4.5rem) 0 clamp(4rem, 9vw, 7.5rem);
     text-align: center;

@@ -1312,19 +1312,18 @@ console.log('\nPortada y cómo comprar');
   );
   check(home.includes('href="/como-comprar/"'), 'Home: enlaza la guía de compra');
 
-  // Tarjetas de familia: seis, con destinos distintos y los modelos de la colección (sin los de marcas ocultas).
+  // Tarjetas de familia: seis, con destinos distintos y los modelos de la colección (sin los de marcas ocultas),
+  // en el orden comercial de `src/lib/ranking.ts` (MODEL_ORDER; lo que no está, después).
   const models = readdirSync(join(root, 'src/content/modelos'))
     .filter((name) => name.endsWith('.json'))
     .map((name) => JSON.parse(readFileSync(join(root, 'src/content/modelos', name), 'utf8')));
+  const rankingSrc = readFileSync(join(root, 'src/lib/ranking.ts'), 'utf8');
+  const MODEL_ORDER = [...(rankingSrc.match(/MODEL_ORDER = \[([\s\S]*?)\] as const/)?.[1] ?? '').matchAll(/'([\w-]+)'/g)].map(([, slug]) => slug);
+  const rank = (slug) => (MODEL_ORDER.indexOf(slug) + 1 || MODEL_ORDER.length + 1);
   const expectedFoot = (family) =>
     models
       .filter((entry) => entry.family === family && !HIDDEN_ON_HOME.includes(entry.brand))
-      .sort(
-        (a, b) =>
-          Number(Boolean(b.showroom_id)) - Number(Boolean(a.showroom_id)) ||
-          a.brand.localeCompare(b.brand) ||
-          a.name.localeCompare(b.name, 'es', { numeric: true }),
-      )
+      .sort((a, b) => rank(a.slug) - rank(b.slug))
       .slice(0, 2)
       .map((entry) => entry.name)
       .join(' · ');
@@ -1341,7 +1340,8 @@ console.log('\nPortada y cómo comprar');
   check(await cards.count() === 6, `Home: seis tarjetas de familia (${await cards.count()})`);
   const hrefs = await cards.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
   check(new Set(hrefs).size === 6 && hrefs.every((href) => href?.startsWith('/') && href.endsWith('/')), `Home: seis destinos internos distintos (${hrefs.join(', ')})`);
-  const foots = await cards.evaluateAll((els) => els.map((el) => el.querySelector('.fam__models')?.textContent?.trim() ?? ''));
+  // Cada modelo del pie es su propio enlace a la ficha: el pie está en la tarjeta (`li`), no dentro del enlace de la familia.
+  const foots = await cards.evaluateAll((els) => els.map((el) => el.closest('li')?.querySelector('.fam__models')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''));
   const wanted = hrefs.map((href) => expectedFoot(href === '/productos/centrifugas/' ? 'centrifugacion' : href.split('/')[2]));
   check(
     JSON.stringify(foots) === JSON.stringify(wanted) && wanted.every(Boolean),

@@ -1,14 +1,26 @@
 ---
 import { getCollection } from 'astro:content';
 import Icon from '../ui/Icon.astro';
+import Turntable from '../ui/Turntable.astro';
+import LightBox from '../ui/LightBox.astro';
 import { publicClaim } from '../../data/claims';
-import { homeFamilyCards } from '../../lib/modelos';
+import { isShownOnHome } from '../../data/brands';
+import { getBrandById } from '../../lib/catalog';
+import { homeFamilyCards, imageForEntry, modelHref } from '../../lib/modelos';
+import { rankFamilies, rankModels } from '../../lib/ranking';
+import { turntableFor } from '../../lib/turntable';
 import type { Modelo } from '../../content.config';
 
 /**
- * Las seis familias como tarjetas (tablero HomeA). Cada tarjeta dice qué hace
- * el laboratorio con la muestra (el verbo) y nombra hasta dos modelos que salen
- * de la colección `modelos`, nunca de este archivo.
+ * Las seis familias como tarjetas grandes iluminadas (tablero HomeA, showroom
+ * oscuro). Cada tarjeta muestra el primer modelo de la familia en el estudio
+ * oscuro (póster que gira al pasar el mouse; foto en caja de luz si no hay 3D),
+ * dice qué hace el laboratorio con la muestra (el verbo, enlace a la familia) y
+ * nombra hasta dos modelos de la colección `modelos`, cada uno enlazado directo
+ * a su ficha (regla del dueño: ningún modelo pasa por una página intermedia).
+ *
+ * Orden comercial de `lib/ranking.ts`: familias por `rankFamilies` (sonicación
+ * primero, dispersión al final), modelos por `rankModels` (3D primero).
  *
  * La etiqueta de cifras sale del registro de afirmaciones: si alguien retira la
  * aprobación, esa parte desaparece sola. Con el titular B en la primera
@@ -22,7 +34,20 @@ const { headlineB } = Astro.props;
 const label = [publicClaim('familias-de-equipo'), publicClaim('marcas-con-las-que-trabajamos')]
   .filter(Boolean)
   .join(' · ');
-const cards = homeFamilyCards((await getCollection('modelos')).map((item) => item.data as Modelo));
+const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+const ranked = rankModels(all.map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry);
+const cards = rankFamilies(homeFamilyCards(all), (card) => card.href.split('/')[2] ?? '').map((card, index) => {
+  const models = ranked.filter((entry) => entry.family === card.slug && isShownOnHome(entry.brand)).slice(0, 2);
+  const lead = models[0];
+  return {
+    ...card,
+    numeral: String(index + 1).padStart(2, '0'),
+    models,
+    lead,
+    leadBrand: lead ? (getBrandById(lead.brand)?.name ?? lead.brand) : '',
+    has3d: lead ? turntableFor(lead.slug) !== null : false,
+  };
+});
 ---
 
 <section class="shell home-sec" id="familias" aria-labelledby="familias-title">
@@ -35,19 +60,37 @@ const cards = homeFamilyCards((await getCollection('modelos')).map((item) => ite
   <ul class="fam">
     {
       cards.map((card) => (
-        <li>
-          <a class="home-family-card rv" href={card.href}>
+        <li class="card-lit fam__tile rv">
+          {card.lead && (
+            <a class="fam__media" href={modelHref(card.lead)}>
+              {card.has3d ? (
+                <Turntable slug={card.lead.slug} alt={`${card.lead.name} de ${card.leadBrand}, modelo 3D`} />
+              ) : (
+                <LightBox image={imageForEntry(card.lead)} brandName={card.leadBrand} size="card" />
+              )}
+            </a>
+          )}
+          <div class="fam__body">
             <span class="t-label fam__top">
               <b><i aria-hidden="true" style={`background-color:var(${card.colorVar})`} />{card.short}</b>
               <span aria-hidden="true">{card.numeral}</span>
             </span>
-            <h3 class="fam__verb">{card.verb}</h3>
+            <h3 class="fam__verb">
+              <a class="home-family-card" href={card.href}>
+                {card.verb}
+                <Icon name="arrow-right" size={20} class="arrow" />
+              </a>
+            </h3>
             <p class="fam__line">{card.cardLine}</p>
-            <span class="fam__foot">
-              <span class="t-data fam__models">{card.models.join(' · ')}</span>
-              <Icon name="arrow-right" size={18} class="arrow" />
-            </span>
-          </a>
+            <p class="t-data fam__models">
+              {card.models.map((entry, index) => (
+                <>
+                  {index > 0 && <span aria-hidden="true"> · </span>}
+                  <a href={modelHref(entry)} translate="no">{entry.name}</a>
+                </>
+              ))}
+            </p>
+          </div>
         </li>
       ))
     }
@@ -73,34 +116,42 @@ const cards = homeFamilyCards((await getCollection('modelos')).map((item) => ite
       grid-template-columns: 1fr;
     }
   }
-  .home-family-card {
+  .fam__tile {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 16.25rem;
-    padding: 1.75rem;
-    border: 1px solid transparent;
+    overflow: hidden;
+  }
+  /* El equipo en su vitrina: el estudio del póster llena el ancho de la tarjeta. */
+  .fam__media {
+    display: block;
+    padding: 0.5rem 0.5rem 0;
+  }
+  .fam__media :global(.tt),
+  .fam__media :global(.lightbox__plinth) {
+    border-radius: calc(var(--radius-card) - 0.375rem);
+  }
+  .fam__media :global(.lightbox) {
+    margin: 0;
+  }
+  .fam__media :global(figcaption) {
+    display: none;
+  }
+  .fam__media:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: -2px;
     border-radius: var(--radius-card);
-    background-color: var(--color-surface);
-    transition:
-      transform 200ms ease-out,
-      background-color 200ms ease-out,
-      border-color 200ms ease-out;
   }
-  @media (min-width: 640px) {
-    .home-family-card {
-      min-height: 20rem;
-    }
-  }
-  .home-family-card:hover {
-    transform: translateY(-2px);
-    background-color: var(--color-raised);
-    border-color: var(--color-hairline);
+  .fam__body {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    padding: 1.25rem 1.5rem 1.5rem;
   }
   .fam__top {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    color: var(--color-ink-600);
   }
   .fam__top b {
     display: inline-flex;
@@ -115,56 +166,56 @@ const cards = homeFamilyCards((await getCollection('modelos')).map((item) => ite
     border-radius: 50%;
   }
   .fam__verb {
-    margin-top: auto;
-    font-size: 2.125rem;
+    margin-top: 0.875rem;
+    font-size: clamp(1.75rem, 1.4rem + 1vw, 2.125rem);
     font-weight: 700;
     line-height: 1.05;
     letter-spacing: -0.02em;
   }
-  .fam__line {
-    margin-top: 0.75rem;
-    color: var(--color-ink-600);
-    font-size: 1.03125rem;
-    line-height: 1.5;
-  }
-  .fam__foot {
-    display: flex;
+  .home-family-card {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-top: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-hairline);
+    gap: 0.5rem;
+    color: var(--color-fg);
+  }
+  .home-family-card :global(.arrow) {
+    flex: none;
+    color: var(--color-teal-700);
+    transition: transform var(--ease-ui);
+  }
+  .home-family-card:hover {
+    color: var(--color-teal-800);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .home-family-card:hover :global(.arrow) {
+      transform: translateX(4px);
+    }
+  }
+  .fam__line {
+    margin-top: 0.625rem;
+    color: var(--color-ink-600);
+    font-size: 1rem;
+    line-height: 1.5;
+    margin-bottom: 1.25rem;
   }
   .fam__models {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-hairline);
     color: var(--color-ink-500);
     font-size: 0.8125rem;
     letter-spacing: 0.02em;
     line-height: 1.4;
   }
-  /* Los nombres de la colección pueden ocupar dos líneas: se reservan las dos
-     para que el verbo quede a la misma altura en todas las tarjetas de la fila. */
-  @media (min-width: 640px) {
-    .fam__foot {
-      min-height: 5.25rem;
-    }
+  .fam__models a {
+    display: inline-block;
+    padding-block: 0.375rem;
+    color: var(--color-teal-800);
+    text-decoration: underline;
+    text-decoration-color: var(--color-hairline-strong);
+    text-underline-offset: 0.25em;
   }
-  .fam__foot :global(.arrow) {
-    flex: none;
-    color: var(--color-ink-950);
-    transition: transform 150ms ease-out;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .home-family-card:hover .fam__foot :global(.arrow) {
-      transform: translateX(4px);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .home-family-card {
-      transition: none;
-    }
-    .home-family-card:hover {
-      transform: none;
-    }
+  .fam__models a:hover {
+    text-decoration-color: currentColor;
   }
 </style>

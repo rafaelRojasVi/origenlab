@@ -166,7 +166,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
    * oscuro (grafito translúcido, texto claro, teal para lo elegido/encendido).
    */
   .showroom {
-    --glass: rgb(21 24 26 / 0.78);
+    --glass: color-mix(in srgb, var(--color-surface) 78%, transparent);
     --glass-edge: var(--color-ink-500);
     margin: 0;
   }
@@ -357,11 +357,6 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     background: var(--color-accent);
     color: var(--color-on-accent);
   }
-  .showroom__power:focus-visible,
-  .showroom__view:focus-visible {
-    outline: 2px solid var(--color-fg);
-    outline-offset: 2px;
-  }
   .showroom__caption {
     display: flex;
     flex-wrap: wrap;
@@ -430,10 +425,6 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
   .showroom__task[aria-pressed='true'] {
     background: var(--color-accent);
     color: var(--color-on-accent);
-  }
-  .showroom__task:focus-visible {
-    outline: 2px solid var(--color-fg);
-    outline-offset: 2px;
   }
 
   /* --- marco ancho (portada): escenario 16/9, controles dentro, tareas debajo */

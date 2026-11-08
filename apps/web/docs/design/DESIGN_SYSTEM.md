@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: web-maintainers
-Last reviewed: 2026-11-07
+Last reviewed: 2026-11-08
 
 Este documento describe el sistema visual del sitio público tras el rediseño V2.
 Es la referencia para decidir si algo nuevo pertenece al sitio o no. La verdad de
@@ -16,22 +16,31 @@ negocio todavía debe aportar están en [`CONTENT_NEEDED.md`](CONTENT_NEEDED.md)
 
 ## 1. Idea
 
-**Papel, tinta y medición.**
+**Showroom oscuro: equipo iluminado sobre grafito, un solo acento teal.**
 
-El sitio se lee como un documento técnico bien compuesto de una casa de
-instrumentos: fondo papel cálido, texto grafito, filetes de un píxel y un solo
-acento teal que marca acción y lugar. La jerarquía la sostienen la tipografía y
-el espacio en blanco, no las fichas ni las sombras. La única imagen del sistema
-es la fotografía real de equipo del fabricante, siempre sobre papel, a la misma
-escala óptica y con pie en monoespaciada.
+Desde el 2026-11-08 todo el sitio público es oscuro (decisión del dueño: «no me
+gusta el fondo blanco»). El equipo es el protagonista, presentado como en un
+lanzamiento de producto: estudio 3D grafito con un foco suave, tarjetas
+iluminadas y un teal que marca acción y lugar. La jerarquía la sigue sosteniendo
+la tipografía; las secciones de lectura usan un grafito un poco más claro,
+nunca blanco.
 
-Tres consecuencias prácticas:
+> **Estado (2026-11-08):** la paleta oscura de abajo es la de la base de la
+> Tarea 1 (`global.css`). El dueño pidió re-afinar la superficie oscura sobre
+> una de tres direcciones visuales que prepara diseño; los **nombres y roles**
+> de los tokens se mantienen, los **valores** pueden cambiar. Los componentes
+> deben pintar sólo con tokens y clases compartidas.
 
-1. **No hay fichas por defecto.** Se agrupa con filetes y espacio. Una caja sólo
-   aparece cuando aísla algo que debe leerse aparte.
-2. **Una sola superficie invertida por página**: la banda de cierre. Más el pie.
-3. **El aviso comercial se dice una vez por página**, en texto normal. Repetirlo
-   en cada fila se lee como ansiedad, no como rigor.
+Consecuencias prácticas:
+
+1. **Ningún fondo blanco de página.** Las dos únicas superficies claras son la
+   caja de luz (`LightBox`, fotografías de fabricante con fondo blanco) y la
+   hoja de la cotización de ejemplo (`QuoteShowcase`), que es un documento.
+2. **Tarjetas sólo para modelos y familias** (`.card-lit`): nunca tarjetas
+   dentro de tarjetas. Lo demás se agrupa con filetes y espacio.
+3. **Cada mención de un modelo enlaza directo a su ficha** (regla del dueño,
+   2026-11-08). Los listados siguen el orden comercial de `src/lib/ranking.ts`.
+4. **El aviso comercial se dice una vez por página**, en texto normal.
 
 ---
 
@@ -42,57 +51,72 @@ que introduce un color, un radio o una sombra propia está fuera del sistema.
 
 ### Color
 
+Los nombres conservan su **rol** del sitio claro y su **luminosidad se invirtió**:
+`paper` sigue siendo «fondo de página» (ahora casi negro) e `ink-*` «texto y
+filetes fuertes» (ahora claro; número mayor = más contraste contra el fondo).
+
 | Token | Valor | Uso |
 |---|---|---|
-| `paper` | `#FAFAF7` | Fondo de página |
-| `surface` | `#F2F2EE` | Banda de marcas, estado hover de filas |
-| `hairline` | `#E3E3DE` | Filetes de 1 px |
-| `hairline-strong` | `#C8CAC6` | Sólo decorativo (subrayados de enlace, filetes de énfasis). **No es borde de control**: contra papel queda en torno a 1,4:1, el piso que `qa:contrast` tolera para lo decorativo |
-| `pressed` / `raised` | `#E9E9E4` / `#FFFFFF` | Fondo del botón secundario pulsado; superficie elevada (hover del primario sobre tinta, tarjetas) |
-| `ink-900` / `ink-disabled` | `#1D2022` / `#8A8F92` | Botón primario pulsado; texto de un control deshabilitado (exento de contraste por WCAG) |
-| `ink-950` | `#141617` | Titulares, texto principal, banda de cierre y pie |
-| `ink-800` | `#2B2E30` | Texto corrido |
-| `ink-600` | `#54595D` | Texto secundario |
-| `ink-500` | `#676D71` | Etiquetas mono y pies (color de texto mínimo sobre papel) |
-| `teal-700` | `#0F766E` | Botón primario, foco, numeral del índice |
-| `teal-800` | `#115E59` | Hover del primario, enlaces sobre papel |
-| `teal-500` | `#14B8A6` | Acento sobre superficie oscura únicamente |
-| `onink-100/300/500` | `#ECECEB` / `#B9BCBD` / `#8D9295` | Texto sobre la banda oscura |
-| `onink-hairline` / `onink-line` | `#33383A` / `#4B5154` | Filetes y bordes de control sobre tinta |
-| `teal-100` / `teal-50` | `#CCFBF1` / `#F0FDFA` | Selección de texto y fondos tenues |
+| `paper` | `#0D0F10` | Fondo de página; estudio 3D; fondo horneado de pósteres y tiras de giro |
+| `surface` | `#15181A` | Secciones de lectura, pie, panel del formulario |
+| `raised` | `#1C2023` | Tarjetas, paneles elevados, menú móvil, panel del chat |
+| `pressed` | `#23282B` | Hover/activo sobre `raised` |
+| `hairline` | `#2A2F33` | Filetes decorativos (1,4:1: **nunca** borde de control) |
+| `hairline-strong` | `#3A4045` | Subrayados y filetes de énfasis, decorativo |
+| `ink-950` / `ink-900` | `#ECEDEB` / `#E2E4E2` | Titulares (16,4:1 sobre `paper`) |
+| `ink-800` | `#CFD2D1` | Texto corrido (12,6:1) |
+| `ink-600` | `#A9AEB1` | Texto secundario, etiquetas (8,6:1) |
+| `ink-500` | `#8D9396` | Texto terciario y **bordes de control** (6,2:1) |
+| `ink-disabled` | `#6B7175` | Sólo controles deshabilitados |
+| `teal-800` | `#5EEAD4` | Enlaces sobre grafito (13:1) |
+| `teal-700` | `#2DD4BF` | El acento: etiquetas, filetes, marcadores, anillo de foco (10,3:1) |
+| `teal-500` | `#14B8A6` | Puntos, LED |
+| `teal-100` / `teal-50` | `#134E4A` / `#0F2A28` | Selección de texto; tinte teal tenue |
+| `fg` / `fg-muted` | `#ECEDEB` / `#A9AEB1` | Texto que no cambia dentro de `.on-ink` (botones) |
+| `band` / `band-line` | `#112624` / `#24413D` | Banda elevada (cierre, `.surface-band`) |
+| `accent` / `-hover` / `-active` | `#2DD4BF` / `#5EEAD4` / `#14B8A6` | Botón primario, burbuja de chat, estado elegido de los controles de la sala 3D |
+| `on-accent` | `#04201C` | Texto sobre teal (9,2:1) |
+| `studio` | `#0D0F10` | Caja de `Turntable` y escenario de la sala 3D (= fondo de los pósteres) |
+| `lightbox-hi` / `-lo` / `-ink` | `#F4F4F1` / `#D9DBD7` / `#2B2E30` | Plinto de la caja de luz (la única superficie clara) |
+| `header` | `rgb(13 15 16 / .74)` | Cabecera translúcida con desenfoque |
+| `glow` | `rgb(45 212 191 / .14)` | Halo teal: hover de tarjetas, marcadores |
+| `onink-*` | ver `global.css` | Texto y filetes sobre la banda; heredado de `.on-ink` |
 
-Contraste verificado (WCAG 2.x): `ink-950` sobre `paper` 17,4:1; `ink-800` 13,1:1;
-`ink-600` 6,8:1; `ink-500` 5,0:1; `teal-800` sobre `paper` 7,3:1; blanco sobre
-`teal-700` 5,5:1; `teal-500` sobre `ink-950` 7,3:1.
+`.on-ink` es una capa de compatibilidad (re-apunta `paper`/`ink-950` a sus
+valores antiguos). **No se usa en código nuevo**; la portada ya no la lleva.
 
 `npm run qa:contrast` recalcula el contraste de cada texto visible del sitio
-construido sobre su fondo efectivo. El par más ajustado hoy es `ink-500` sobre
-`surface` con 4,67:1, en las etiquetas mono del riel de marcas.
+construido sobre su fondo efectivo (AA 4,5:1), el borde de los controles
+secundarios (3:1) y el anillo de foco de cada control.
 
-**El foco se divide por fondo**: `teal-700` sobre papel y `teal-500` sobre tinta
-(`.on-ink`). `qa:contrast` mide el anillo de foco de cada control contra su fondo
-efectivo. El borde de los botones secundarios, de WhatsApp y de icono es de 1 px
-en `ink-500` o más oscuro: debe llegar a 3:1 contra papel (WCAG 1.4.11), así que
-`hairline-strong` no puede hacer de borde.
+Errores de formulario: `global.css` no define tokens de error; `/contacto/`
+declara con alcance de página `--color-error` `#F87171` (borde, 6,4:1),
+`--color-error-fg` `#FCA5A5` (texto, 9,6:1) y `--color-error-bg` (mezcla sobre
+`raised`). Si se añade un segundo formulario, conviene subirlos a `global.css`.
 
-Reglas: un solo acento en todo el sitio; sin degradados; el color nunca es el
-único portador de significado; los filetes no transportan información.
+La hoja de la cotización de ejemplo (`components/home/QuoteShowcase.astro`)
+replica los colores de impresión del Cotizador (`quotePrint.css`: papel
+`#FFFFFF`, tinta `#14201D`, teal `#0F766E`): es un documento, no una superficie
+del sitio.
+
+Reglas: un solo acento en todo el sitio; el color nunca es el único portador de
+significado; los filetes no transportan información.
 
 #### Las seis tintas de familia
 
 Añadidas en la revisión del 2026-09-07 para la constelación del hero, que el
-2026-11-02 dejó su sitio a la sala 3D. Hoy sólo `family-sonicacion` se usa, en
-los marcadores de la sala 3D (el equipo que muestra es de esa familia). No
-aparecen en ningún otro sitio.
+2026-11-02 dejó su sitio a la sala 3D; aclaradas para el showroom oscuro el
+2026-11-08. Hoy marcan el punto de familia de las tarjetas de familia de la
+portada.
 
-| Token | Valor | Familia | Sobre `paper` |
+| Token | Valor | Familia | Sobre `paper`, `surface`, `raised` y `pressed` |
 |---|---|---|---|
-| `family-sonicacion` | `#1D4F7C` | Sonicación y procesamiento ultrasónico | 8,16:1 |
-| `family-dispersion` | `#6B3F96` | Dispersión y homogeneización | 7,23:1 |
-| `family-centrifugacion` | `#115E59` | Centrifugación y separación | 7,25:1 |
-| `family-pesaje` | `#7D5310` | Pesaje y análisis de humedad | 6,44:1 |
-| `family-osmometria` | `#15697F` | Osmometría | 5,90:1 |
-| `family-electroforesis` | `#8F2F4F` | Electroforesis | 7,47:1 |
+| `family-sonicacion` | `#7FB2E5` | Sonicación y procesamiento ultrasónico | ≥ 6,2:1 |
+| `family-dispersion` | `#B99AE0` | Dispersión y homogeneización | ≥ 6,2:1 |
+| `family-centrifugacion` | `#2DD4BF` | Centrifugación y separación (= acento) | ≥ 6,2:1 |
+| `family-pesaje` | `#E0B062` | Pesaje y análisis de humedad | ≥ 6,2:1 |
+| `family-osmometria` | `#6CC5DC` | Osmometría | ≥ 6,2:1 |
+| `family-electroforesis` | `#EC8FAE` | Electroforesis | ≥ 6,2:1 |
 
 No son un segundo acento: son una escala de identificación. El sistema sigue
 teniendo un acento, el teal, y centrifugación lo reutiliza en vez de inventar un
@@ -308,20 +332,18 @@ Acciones: se escriben con `ui/Button.astro` y no con clases a mano.
 
 | `variant` | Aspecto | Uso |
 |---|---|---|
-| `primary` | Relleno tinta (`ink-950`), texto papel, flecha | La acción de la página; una por pantalla |
+| `primary` | Relleno teal (`accent`), texto `on-accent`, flecha | La acción de la página; una por pantalla |
 | `secondary` | Contorno 1 px `ink-500`, fondo transparente, flecha | Acción alterna |
 | `tertiary` | Texto subrayado con `hairline-strong` y flecha | Enlace de acción; nunca compite con el primario |
 | `whatsapp` | Contorno, glifo de WhatsApp | Canal directo |
 | `icon` | Cuadrado con glifo; `label` obligatorio (nombre accesible) | Menú, cerrar, pausa |
 
-Tamaños `md` (48 px) y `sm` (40 px; 44 px bajo 1024 px). `tone="ink"` (o estar
-dentro de `.on-ink`) lo pinta para fondos oscuros: el primario pasa a papel. Estados
-sobre papel: hover (primario a `ink-800`, secundario con borde `ink-950` y fondo
-`surface`), pulsado (primario a `ink-900`, secundario a `pressed`, y escala .98 sólo
-con movimiento), foco (anillo 2 px, `teal-700` sobre papel y `teal-500` sobre
-tinta), deshabilitado (primario `hairline` con texto `ink-disabled`, secundario con
-borde `hairline`; `aria-disabled`). La flecha avanza 4 px al hover. Los `data-*` y
-`aria-*` extra se reenvían. El primario ya no es teal y `.btn-invert` desapareció;
+Tamaños `md` (48 px) y `sm` (40 px; 44 px bajo 1024 px). Un solo aspecto en todo
+el sitio oscuro (`tone="ink"` se acepta por compatibilidad y no cambia nada).
+Primario: hover `accent-hover` con halo `glow`, foco anillo `fg` (un anillo teal
+sobre teal no se vería). Secundario, WhatsApp e icono: sin relleno, borde
+`ink-500`, hover borde `fg` y 6 % de blanco. Deshabilitado con `aria-disabled`.
+La flecha avanza 4 px al hover. Los `data-*` y `aria-*` extra se reenvían;
 las clases `.btn-*` existen pero no se escriben a mano. Una intención,
 una etiqueta, y el sitio tiene dos:
 

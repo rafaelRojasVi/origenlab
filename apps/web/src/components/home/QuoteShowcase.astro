@@ -12,9 +12,9 @@ import { qrRows } from './quoteQr';
  * en pantalla. Es el único papel blanco del sitio: un documento, presentado
  * como una hoja iluminada sobre el showroom oscuro.
  *
- * - Medidas: la hoja se diseña en px de A4 a 96 ppp (794 × 1123) y escala con
- *   el ancho de su marco: `--u` = 1 px de diseño (`100cqw / 794`). La caja
- *   reserva la proporción A4: la animación no mueve la página.
+ * - Medidas: la hoja se diseña en px de A4 a 96 ppp (794 × 1123) y se escala
+ *   (`scale: var(--k)`) al ancho de su marco, por escalones de contenedor. La
+ *   caja reserva la proporción A4: la animación no mueve la página.
  * - Precios: cifras de relleno, desenfocadas y `aria-hidden`; el lector de
  *   pantalla oye «Precios según cada cotización».
  * - Animación (una vez, al entrar en pantalla; IntersectionObserver + CSS):
@@ -81,7 +81,7 @@ const lines = [
 const terms = [
   ['Plazo de entrega', '15 días hábiles desde la orden de compra'],
   ['Validez', '30 días'],
-  ['Forma de pago', '50 % anticipo con la orden de compra, 50 % contra entrega'],
+  ['Forma de pago', 'Según cada cotización'],
   ['Garantía', '12 meses del fabricante'],
   ['Lugar de entrega', 'Despacho incluido a sus dependencias'],
   ['Instalación', 'Puesta en marcha y capacitación de uso incluidas'],
@@ -251,8 +251,10 @@ const d = (s: number) => `--d:${s}s`;
   </figcaption>
 </figure>
 
-<style>
-  /* ---- Marco: la hoja iluminada sobre el showroom ------------------------ */
+<style is:global>
+  /* Global a propósito: todas las clases llevan el prefijo `qs`, y sin el
+     atributo de alcance de Astro en cada selector la hoja pesa ~4 kB menos. */
+  /* ---- Marco: la hoja sobre el showroom ----------------------------------- */
   .qs {
     margin: 0;
   }
@@ -261,13 +263,26 @@ const d = (s: number) => `--d:${s}s`;
     display: grid;
     gap: 2rem;
   }
+  /* La hoja mide 794 × 1123 px (A4 a 96 ppp) y se escala con `scale: var(--k)`;
+     el marco toma el ancho escalado de un escalón y reserva la proporción A4,
+     así que la animación no mueve nada. `scale` (no `transform`) para que las
+     animaciones de `transform` se sumen a la escala. */
+  .qs {
+    container: qs / inline-size;
+  }
   .qs__frame {
+    --k: 0.36272;
     position: relative;
-    container-type: inline-size;
-    width: 100%;
-    max-width: 40rem;
+    width: 288px;
+    aspect-ratio: 794 / 1123;
     margin-inline: auto;
   }
+  @container qs (width >= 320px) { .qs__frame { --k: 0.40302; width: 320px; } }
+  @container qs (width >= 360px) { .qs__frame { --k: 0.4534; width: 360px; } }
+  @container qs (width >= 420px) { .qs__frame { --k: 0.52897; width: 420px; } }
+  @container qs (width >= 480px) { .qs__frame { --k: 0.60453; width: 480px; } }
+  @container qs (width >= 560px) { .qs__frame { --k: 0.70529; width: 560px; } }
+  @container qs (width >= 640px) { .qs__frame { --k: 0.80605; width: 640px; } }
   .qs__caption {
     margin-top: 1.5rem;
     color: var(--color-ink-600);
@@ -308,11 +323,12 @@ const d = (s: number) => `--d:${s}s`;
   .qs-mark {
     position: absolute;
     z-index: 2;
-    width: max(1.25rem, calc(30 * var(--u)));
-    height: max(1.25rem, calc(30 * var(--u)));
-    margin: calc(-12 * var(--u)) 0 0 calc(-15 * var(--u));
-    font-size: max(0.6875rem, calc(14 * var(--u)));
-    box-shadow: 0 0 0 calc(5 * var(--u)) var(--color-glow);
+    width: 28px;
+    height: 28px;
+    margin: -12px 0 0 -14px;
+    font-size: 16px;
+    scale: calc(0.8 / var(--k));
+    box-shadow: 0 0 0 5px var(--color-glow);
   }
   @media (min-width: 1100px) {
     .qs__stage {
@@ -347,23 +363,26 @@ const d = (s: number) => `--d:${s}s`;
     }
   }
 
-  /* ---- La hoja (réplica de quotePrint.css; 1 U = 1 px de A4 a 96 ppp) ----- */
+  /* ---- La hoja (réplica de quotePrint.css, en px de A4 a 96 ppp) ----- */
   .qs-sheet {
-    --u: calc(100cqw / 794);
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    gap: calc(20 * var(--u));
-    width: 100%;
-    aspect-ratio: 794 / 1123;
+    gap: 20px;
+    width: 794px;
+    height: 1123px;
+    scale: var(--k);
+    transform-origin: 0 0;
     overflow: hidden;
-    padding: calc(59 * var(--u)) calc(57 * var(--u)) calc(45 * var(--u));
-    border-radius: calc(3 * var(--u));
+    padding: 59px 57px 45px;
+    border-radius: 3px;
     background: #ffffff;
     color: #14201d;
     font-family: var(--font-sans);
-    font-size: calc(13 * var(--u));
+    font-size: 13px;
     line-height: 1.45;
     text-align: left;
     box-shadow: var(--shadow-card);
@@ -373,7 +392,7 @@ const d = (s: number) => `--d:${s}s`;
     content: '';
     position: absolute;
     inset: 0 0 auto;
-    height: calc(6 * var(--u));
+    height: 6px;
     background: #0f766e;
     transform-origin: left center;
   }
@@ -386,12 +405,12 @@ const d = (s: number) => `--d:${s}s`;
   }
   .qs-muted {
     display: block;
-    font-size: calc(12 * var(--u));
+    font-size: 12px;
     color: #4b5c57;
   }
   .qs-strong {
     display: block;
-    font-size: calc(14 * var(--u));
+    font-size: 14px;
     font-weight: 600;
   }
   .qs-right {
@@ -401,19 +420,19 @@ const d = (s: number) => `--d:${s}s`;
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: calc(24 * var(--u));
+    gap: 24px;
   }
   .qs-brand {
     display: flex;
     align-items: center;
-    gap: calc(12 * var(--u));
+    gap: 12px;
   }
   .qs-brand img {
-    width: calc(44 * var(--u));
-    height: calc(44 * var(--u));
+    width: 44px;
+    height: 44px;
   }
   .qs-brand-name {
-    font-size: calc(22 * var(--u));
+    font-size: 22px;
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.3;
@@ -422,52 +441,52 @@ const d = (s: number) => `--d:${s}s`;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: calc(3 * var(--u));
+    gap: 3px;
     text-align: right;
   }
   .qs-eyebrow {
     font-family: var(--font-mono);
-    font-size: calc(11 * var(--u));
+    font-size: 11px;
     letter-spacing: 0.16em;
     text-transform: uppercase;
     color: #0f766e;
   }
   .qs-label {
     font-family: var(--font-mono);
-    font-size: calc(24 * var(--u));
+    font-size: 24px;
     font-weight: 500;
     line-height: 1.3;
   }
   .qs-client {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: calc(16 * var(--u));
-    margin-top: calc(12 * var(--u));
-    padding: calc(14 * var(--u)) calc(18 * var(--u));
-    border-radius: calc(12 * var(--u));
+    gap: 16px;
+    margin-top: 12px;
+    padding: 14px 18px;
+    border-radius: 12px;
     background: #f4f6f5;
   }
   .qs-client > div {
     display: flex;
     flex-direction: column;
-    gap: calc(3 * var(--u));
+    gap: 3px;
     min-width: 0;
   }
   .qs-eyebrow-muted {
-    font-size: calc(11 * var(--u));
+    font-size: 11px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: #4b5c57;
   }
   .qs-lines {
     width: 100%;
-    margin-top: calc(12 * var(--u));
+    margin-top: 12px;
     border-collapse: collapse;
   }
   .qs-lines th {
-    padding: calc(8 * var(--u)) calc(6 * var(--u));
-    border-bottom: calc(1.5 * var(--u)) solid #14201d;
-    font-size: calc(11 * var(--u));
+    padding: 8px 6px;
+    border-bottom: 1.5px solid #14201d;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -475,22 +494,22 @@ const d = (s: number) => `--d:${s}s`;
     text-align: left;
   }
   .qs-lines td {
-    padding: calc(10 * var(--u)) calc(6 * var(--u));
-    border-bottom: calc(1 * var(--u)) solid #d9e2df;
+    padding: 10px 6px;
+    border-bottom: 1px solid #d9e2df;
     vertical-align: top;
-    font-size: calc(12.5 * var(--u));
+    font-size: 12.5px;
   }
   .qs-lines .qs-num {
     text-align: right;
     white-space: nowrap;
   }
   .qs-col-no {
-    width: calc(28 * var(--u));
+    width: 28px;
     color: #4b5c57;
   }
   .qs-item {
     display: block;
-    font-size: calc(13.5 * var(--u));
+    font-size: 13.5px;
     font-weight: 600;
   }
   .qs-model {
@@ -498,7 +517,7 @@ const d = (s: number) => `--d:${s}s`;
     font-weight: 500;
     color: #0f766e !important;
     text-decoration: none;
-    border-radius: calc(3 * var(--u));
+    border-radius: 3px;
   }
   .qs-model:hover {
     text-decoration: underline;
@@ -509,28 +528,28 @@ const d = (s: number) => `--d:${s}s`;
   }
   .qs-note {
     display: block;
-    margin-top: calc(3 * var(--u));
-    font-size: calc(12 * var(--u));
+    margin-top: 3px;
+    font-size: 12px;
     color: #4b5c57;
     white-space: pre-line;
   }
   /* Montos de relleno: siempre desenfocados (los precios son de cada cotización). */
   .qs-price {
     display: inline-block;
-    filter: blur(calc(3.6 * var(--u)));
+    filter: blur(3.6px);
     user-select: none;
   }
   .qs-totals {
-    width: calc(300 * var(--u));
-    margin: calc(12 * var(--u)) 0 0 auto;
+    width: 300px;
+    margin: 12px 0 0 auto;
     display: flex;
     flex-direction: column;
-    gap: calc(6 * var(--u));
+    gap: 6px;
   }
   .qs-totals > div {
     display: flex;
     justify-content: space-between;
-    gap: calc(12 * var(--u));
+    gap: 12px;
   }
   .qs-totals dt {
     color: #4b5c57;
@@ -540,9 +559,9 @@ const d = (s: number) => `--d:${s}s`;
   }
   .qs-totals .qs-total {
     align-items: baseline;
-    margin-top: calc(2 * var(--u));
-    padding-top: calc(7 * var(--u));
-    border-top: calc(1 * var(--u)) solid #14201d;
+    margin-top: 2px;
+    padding-top: 7px;
+    border-top: 1px solid #14201d;
   }
   .qs-totals .qs-total dt {
     color: #14201d;
@@ -552,163 +571,161 @@ const d = (s: number) => `--d:${s}s`;
     font-weight: 700;
   }
   .qs-h2 {
-    margin: calc(12 * var(--u)) 0 calc(6 * var(--u));
-    font-size: calc(13 * var(--u));
+    margin: 12px 0 6px;
+    font-size: 13px;
     font-weight: 700;
   }
   .qs-terms {
     margin: 0;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: calc(10 * var(--u)) calc(24 * var(--u));
+    gap: 10px 24px;
   }
   .qs-terms > div {
     min-width: 0;
-    padding-top: calc(7 * var(--u));
-    border-top: calc(1 * var(--u)) solid #d9e2df;
+    padding-top: 7px;
+    border-top: 1px solid #d9e2df;
   }
   .qs-terms dt {
-    font-size: calc(11 * var(--u));
+    font-size: 11px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: #4b5c57;
   }
   .qs-terms dd {
-    margin: calc(2 * var(--u)) 0 0;
-    font-size: calc(12.5 * var(--u));
+    margin: 2px 0 0;
+    font-size: 12.5px;
   }
   .qs-foot {
     margin-top: auto;
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    gap: calc(24 * var(--u));
-    padding-top: calc(16 * var(--u));
+    gap: 24px;
+    padding-top: 16px;
   }
   .qs-foot .qs-right {
     display: flex;
     flex-direction: column;
-    gap: calc(2 * var(--u));
-    font-size: calc(12 * var(--u));
+    gap: 2px;
+    font-size: 12px;
   }
   .qs-sign {
     display: flex;
     flex-direction: column;
-    gap: calc(3 * var(--u));
-    min-width: calc(200 * var(--u));
-    font-size: calc(13 * var(--u));
+    gap: 3px;
+    min-width: 200px;
+    font-size: 13px;
   }
   .qs-sign-greet {
     color: #4b5c57;
-    font-size: calc(12.5 * var(--u));
+    font-size: 12.5px;
   }
   .qs-sign-line {
     display: block;
-    width: calc(190 * var(--u));
-    margin: calc(26 * var(--u)) 0 calc(6 * var(--u));
-    border-top: calc(1 * var(--u)) solid #9fb1ac;
+    width: 190px;
+    margin: 26px 0 6px;
+    border-top: 1px solid #9fb1ac;
     transform-origin: left center;
   }
   .qs-sign-name {
-    font-size: calc(14 * var(--u));
+    font-size: 14px;
     font-weight: 600;
   }
   .qs-sign-title {
-    font-size: calc(12 * var(--u));
+    font-size: 12px;
     color: #4b5c57;
   }
   .qs-wa {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: calc(4 * var(--u));
-    max-width: calc(144 * var(--u));
+    gap: 4px;
+    max-width: 144px;
     text-align: center;
-    font-size: calc(10 * var(--u));
+    font-size: 10px;
     line-height: 1.3;
     color: #000000;
   }
   .qs-wa svg {
     display: block;
-    width: calc(84 * var(--u));
-    height: calc(84 * var(--u));
+    width: 84px;
+    height: 84px;
   }
 
-  /* ---- Construcción: sólo con script y sin movimiento reducido ------------ */
+  /* ---- Construcción: sólo con script y sin movimiento reducido ------------
+     Cada parte declara su animación (`--an`), duración (`--t`), curva (`--e`)
+     y retraso (`--d`, en línea). `qs-in` es la entrada común: opacidad y un
+     desplazamiento vertical `--y`. */
   @media (scripting: enabled) and (prefers-reduced-motion: no-preference) {
-    .qs:not(.qs--play) .qs-sheet,
-    .qs:not(.qs--play) .qs-a {
+    .qs:not(.qs--play) :is(.qs-sheet, .qs-a) {
       opacity: 0;
     }
     .qs:not(.qs--play) .qs-sheet::before,
     .qs:not(.qs--play) .qs-stroke {
       transform: scaleX(0);
     }
-    .qs--play .qs-sheet,
-    .qs--play .qs-a,
+    .qs--play :is(.qs-sheet, .qs-a),
     .qs--play .qs-sheet::before {
-      animation: var(--k) var(--t, 450ms) var(--e, cubic-bezier(0.2, 0.7, 0.2, 1)) var(--d, 0s) both;
+      animation: var(--an, qs-in) var(--t, 450ms) var(--e, cubic-bezier(0.2, 0.7, 0.2, 1)) var(--d, 0s) both;
     }
-    .qs--play .qs-sheet {
-      --k: qs-rise;
+    /* Las variables se heredan: cada parte animada vuelve a los valores por
+       defecto antes de declarar los suyos. */
+    .qs-sheet {
+      --y: 48px;
       --t: 900ms;
     }
-    .qs--play .qs-sheet::before {
-      --k: qs-draw;
-      --t: 700ms;
-      --d: 0.45s;
+    .qs-a {
+      --an: qs-in;
+      --t: 450ms;
+      --y: 6px;
+      --e: cubic-bezier(0.2, 0.7, 0.2, 1);
+    }
+    .qs-sheet::before,
+    .qs-stroke {
+      --an: qs-draw;
+      --t: 600ms;
       --e: cubic-bezier(0.65, 0, 0.35, 1);
     }
-    .qs--play .qs-fade {
-      --k: qs-fade;
+    .qs-sheet::before {
+      --d: 0.45s;
     }
-    .qs--play .qs-type {
-      --k: qs-type;
-      --t: 520ms;
+    .qs-type {
+      --an: qs-type;
       --e: steps(22, end);
     }
-    .qs--play .qs-drop {
-      --k: qs-drop;
-      --t: 500ms;
+    .qs-drop {
+      --y: -12px;
     }
-    .qs--play .qs-glow {
-      --k: qs-glow;
-      --t: 1100ms;
-      --e: ease-out;
+    .qs-settle {
+      --y: 10px;
     }
-    .qs--play .qs-blur {
-      --k: qs-blur;
-      --t: 600ms;
+    .qs-glow {
+      --an: qs-glow;
+      --t: 1.1s;
     }
-    .qs--play .qs-settle {
-      --k: qs-settle;
-      --t: 520ms;
+    .qs-blur {
+      --an: qs-blur;
     }
-    .qs--play .qs-qr {
-      --k: qs-wipe;
+    .qs-qr {
+      --an: qs-wipe;
       --t: 850ms;
       --e: steps(var(--rows), end);
     }
-    .qs--play .qs-stroke {
-      --k: qs-draw;
-      --t: 500ms;
-      --e: cubic-bezier(0.65, 0, 0.35, 1);
-    }
-    .qs--play .qs-pop {
-      --k: qs-pop;
-      --t: 520ms;
+    .qs-pop {
+      --an: qs-pop;
       --e: cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     @media (min-width: 1100px) {
-      .qs--play .qs__callouts .qs-pop {
-        --k: qs-slide;
+      .qs__callouts .qs-pop {
+        --an: qs-slide;
       }
     }
   }
-  @keyframes qs-rise {
+  @keyframes qs-in {
     from {
       opacity: 0;
-      transform: translateY(48px) scale(0.985);
+      transform: translateY(var(--y, 6px));
     }
   }
   @keyframes qs-draw {
@@ -716,66 +733,26 @@ const d = (s: number) => `--d:${s}s`;
       transform: scaleX(0);
     }
   }
-  @keyframes qs-fade {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-  }
   @keyframes qs-type {
     from {
-      opacity: 1;
       clip-path: inset(0 100% 0 0);
     }
-    to {
-      opacity: 1;
-      clip-path: inset(0 0 0 0);
-    }
   }
-  @keyframes qs-drop {
+  @keyframes qs-wipe {
     from {
-      opacity: 0;
-      transform: translateY(-12px);
+      clip-path: inset(0 0 100%);
     }
   }
   @keyframes qs-glow {
-    0% {
-      opacity: 1;
-      background-color: rgb(15 118 110 / 0);
-    }
     30% {
       background-color: rgb(15 118 110 / 0.18);
-      box-shadow: 0 0 0 calc(3 * var(--u)) rgb(15 118 110 / 0.18);
-    }
-    100% {
-      opacity: 1;
-      background-color: rgb(15 118 110 / 0);
+      box-shadow: 0 0 0 3px rgb(15 118 110 / 0.18);
     }
   }
   @keyframes qs-blur {
     from {
       opacity: 0;
-      filter: blur(calc(12 * var(--u)));
-    }
-    to {
-      opacity: 1;
-      filter: blur(calc(3.6 * var(--u)));
-    }
-  }
-  @keyframes qs-settle {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-  }
-  @keyframes qs-wipe {
-    from {
-      opacity: 1;
-      clip-path: inset(0 0 100% 0);
-    }
-    to {
-      opacity: 1;
-      clip-path: inset(0 0 0 0);
+      filter: blur(12px);
     }
   }
   @keyframes qs-pop {
@@ -790,8 +767,7 @@ const d = (s: number) => `--d:${s}s`;
       transform: translate(-12px, -50%);
     }
     to {
-      opacity: 1;
-      transform: translate(0, -50%);
+      transform: translateY(-50%);
     }
   }
 </style>
