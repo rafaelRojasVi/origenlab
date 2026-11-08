@@ -1,0 +1,392 @@
+---
+import { getCollection } from 'astro:content';
+import Button from './ui/Button.astro';
+import Icon from './ui/Icon.astro';
+import { contact } from '../data/contact';
+import { publicClaim } from '../data/claims';
+import { buildWhatsAppQuoteMessage, buildWhatsAppQuoteUrl } from '../lib/whatsapp';
+import { familyInfo, modelHref, type FamilySlug } from '../lib/modelos';
+import type { Modelo } from '../content.config';
+
+/**
+ * Burbuja de conversación propia (decisión del titular, 2026-11-08). No es un
+ * chat en vivo ni un tercero: es el formulario de cotización contado como tres
+ * preguntas. El HTML trae todo el guion y el CSS revela cada pregunta cuando la
+ * anterior tiene respuesta (`:has()`), así que la carga de cada página es sólo
+ * el botón y un manejador de clic; `lib/chat.ts` llega al primer clic y sólo envía, compone el WhatsApp y mide.
+ *
+ * Es un diálogo modal (`showModal()`): el brief pide foco atrapado, y atrapar
+ * el foco en un diálogo no modal es justo lo que la guía de WAI-ARIA desaconseja.
+ * El modal nativo da, sin código, el resto de la página `inert`, Escape, el foco
+ * que entra (`autofocus` en la primera opción) y el foco que vuelve a la burbuja.
+ *
+ * Los campos son los del formulario de `/contacto/` (mismos nombres, mismo JSON,
+ * misma trampa, `submission_id`, `render_at` y consentimiento con el mismo
+ * texto y la misma versión). La API exige correo e institución, así que los dos
+ * son obligatorios para «Enviar»; WhatsApp no pide nada.
+ *
+ * El layout no la dibuja en `/contacto/` ni en páginas noindex.
+ */
+
+const FAMILIES: FamilySlug[] = ['sonicacion', 'dispersion', 'pesaje-humedad', 'osmometria', 'electroforesis', 'centrifugacion'];
+
+// En una página de modelo, el modelo viene elegido.
+const path = Astro.url.pathname.endsWith('/') ? Astro.url.pathname : `${Astro.url.pathname}/`;
+const model = (await getCollection('modelos')).map((item) => item.data as Modelo).find((entry) => modelHref(entry) === path);
+
+const generic = buildWhatsAppQuoteMessage();
+const chips = [
+  ...(model ? [{ value: model.slug, label: model.name, message: buildWhatsAppQuoteMessage({ productName: model.name }) }] : []),
+  ...FAMILIES.map((slug) => {
+    const short = familyInfo(slug).short;
+    return { value: short, label: short, message: generic.replace(/\.$/, ` de ${short.toLowerCase()}.`) };
+  }),
+  { value: '', label: 'Otro', message: generic },
+];
+const whatsappHref = buildWhatsAppQuoteUrl(model ? { productName: model.name } : undefined);
+
+// La promesa de plazo sólo se dice si el registro de afirmaciones la aprueba.
+const okText = publicClaim('cotizacion-mismo-dia-habil')
+  ? 'Recibido: le respondemos el mismo día hábil.'
+  : 'Recibido, le escribiremos pronto.';
+---
+
+<noscript><style>.cb-btn{display:none}</style></noscript>
+<button type="button" class="cb-btn on-ink" aria-haspopup="dialog" aria-controls="cb" data-cb-open>
+  <svg aria-hidden="true" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 20l1.3 -3.9c-2.324 -3.437 -1.426 -7.872 2.1 -10.374c3.526 -2.501 8.59 -2.296 11.845 .48c3.255 2.777 3.695 7.266 1.029 10.501c-2.666 3.235 -7.615 4.215 -11.574 2.293l-4.7 1"></path>
+  </svg>
+  <span class="sr-only">Escribir a OrigenLab</span>
+</button>
+
+<dialog id="cb" class="cb" aria-labelledby="cb-t" closedby="any">
+  <div class="cb__hd">
+    <p id="cb-t" class="cb__t">OrigenLab <span class="t-label">Cotizaciones</span></p>
+    <Button variant="icon" label="Cerrar" data-cb-x><Icon name="close" size={20} /></Button>
+  </div>
+  <form id="cb-f" class="cb__log" method="post" action="/api/web/solicitud">
+    <input type="hidden" name="render_at" />
+    <input type="hidden" name="submission_id" />
+    <div class="sol-trap-wrap cb__trap">
+      <input type="text" name="_trap" tabindex="-1" autocomplete="off" aria-hidden="true" />
+    </div>
+
+    <fieldset class="cb__q">
+      <legend class="cb__bot">Hola, soy del equipo de OrigenLab. ¿Qué equipo necesita?</legend>
+      <div class="cb__chips">
+        {chips.map((chip, i) => (
+          <label class="cb__chip">
+            <input
+              type="radio"
+              name="product"
+              value={chip.value}
+              data-l={chip.label}
+              data-m={chip.message}
+              checked={Boolean(model) && i === 0}
+              autofocus={i === 0}
+            />
+            {chip.label}
+          </label>
+        ))}
+      </div>
+    </fieldset>
+
+    <div class="cb__q cb__q--2">
+      <label for="cb-need" class="cb__bot">¿Para qué lo usará?</label>
+      <textarea id="cb-need" name="need" required rows="3" maxlength="4000" placeholder="Por ejemplo: lisis de células en 50 mL" class="cb__in"></textarea>
+    </div>
+
+    <fieldset class="cb__q cb__q--3">
+      <legend class="cb__bot">¿Cómo le contactamos?</legend>
+      <label for="cb-name" class="cb__lab">Nombre</label>
+      <input id="cb-name" name="name" maxlength="200" autocomplete="name" class="cb__in" />
+      <label for="cb-email" class="cb__lab">Correo electrónico <span aria-hidden="true">*</span></label>
+      <input id="cb-email" name="email" type="email" required maxlength="200" autocomplete="email" class="cb__in" />
+      <label for="cb-phone" class="cb__lab">Teléfono</label>
+      <input id="cb-phone" name="phone" type="tel" maxlength="200" autocomplete="tel" class="cb__in" />
+      <label for="cb-org" class="cb__lab">Institución o empresa <span aria-hidden="true">*</span></label>
+      <input id="cb-org" name="org" required maxlength="200" autocomplete="organization" class="cb__in" />
+
+      <div class="cb__consent">
+        <input type="checkbox" name="consent_version" id="cb-consent" value="consent-v1-2026-11" required />
+        <label for="cb-consent" class="t-small">
+          Acepto que OrigenLab use estos datos para responder mi solicitud y contactarme sobre ella.
+          Puedo pedir su eliminación en contacto@origenlab.cl.
+          Ver <a href="/privacidad/" class="link-plain">política de privacidad</a>.
+        </label>
+      </div>
+
+      <div class="cb__exits">
+        <Button type="submit" modelo={model?.slug}>Enviar</Button>
+        <Button href={whatsappHref} variant="whatsapp" external track="whatsapp_click" modelo={model?.slug}>Continuar por WhatsApp</Button>
+      </div>
+      <p class="t-small cb__err" role="alert" tabindex="-1" hidden data-cb-err>
+        No pudimos enviar la solicitud. Escríbanos a <a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a>.
+      </p>
+    </fieldset>
+  </form>
+  <p class="cb__bot cb__ok" tabindex="-1" hidden data-cb-ok>{okText}</p>
+</dialog>
+
+<script>
+  /* Lo que carga toda página: abrir, cerrar y pedir el resto al primer clic.
+     `lib/chat.ts` se construye como un archivo aparte (`?worker&url` sólo le pide
+     a Vite un paquete independiente y su URL; corre en la página, no en un
+     worker) y se inserta como <script>. Un `import()` haría que Vite lo
+     envolviera en su ayudante de precarga, que vive en `showroom-loaders`
+     (5,5 kB), y toda página sin sala 3D lo cargaría. */
+  import chat from '../lib/chat.ts?worker&url';
+
+  const d = document.getElementById('cb') as HTMLDialogElement | null;
+  let loaded = false;
+  document.querySelector('[data-cb-open]')?.addEventListener('click', () => {
+    d?.showModal();
+    if (loaded) return;
+    loaded = true;
+    document.head.append(Object.assign(document.createElement('script'), { src: chat }));
+  });
+  d?.querySelector('[data-cb-x]')?.addEventListener('click', () => d.close());
+</script>
+
+<style is:global>
+  .cb-btn {
+    position: fixed;
+    right: 1.25rem;
+    bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    width: 3.5rem;
+    height: 3.5rem;
+    border: 0;
+    border-radius: 50%;
+    background-color: var(--color-ink-950);
+    color: var(--color-onink-100);
+    box-shadow: 0 6px 20px rgb(20 22 23 / 0.18);
+    cursor: pointer;
+  }
+  .cb-btn:hover {
+    background-color: var(--color-ink-800);
+  }
+  /* Con la barra fija de la página de modelo a la vista, la burbuja se apoya encima. */
+  html:has([data-sticky-cta]:not([data-hidden])) .cb-btn {
+    bottom: calc(3.5rem + 1rem + env(safe-area-inset-bottom, 0px));
+  }
+  /* El menú móvil abierto la esconde. */
+  html:has([data-menu-toggle][aria-expanded='true']) .cb-btn {
+    display: none;
+  }
+  /* Lo enfocado con el teclado no queda escondido detrás de la burbuja. */
+  /* (Con barra fija manda el 5rem de `ModelHero`: más empuja la propia barra fuera de cuadro al enfocarla.) */
+  :root:has(.cb-btn):not(:has([data-sticky-cta])) {
+    scroll-padding-bottom: 5.5rem;
+  }
+
+  .cb {
+    inset: auto 1.25rem 1.25rem auto;
+    margin: 0;
+    width: min(24rem, calc(100vw - 2rem));
+    max-height: min(44rem, calc(100dvh - 2.5rem));
+    padding: 0;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+    background-color: var(--color-paper);
+    color: var(--color-ink-950);
+    box-shadow: 0 18px 48px rgb(20 22 23 / 0.18);
+    overflow: hidden;
+  }
+  .cb[open] {
+    display: flex;
+    flex-direction: column;
+  }
+  .cb::backdrop {
+    background-color: rgb(20 22 23 / 0.16);
+  }
+  .cb__hd {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.5rem 0.5rem 0.5rem 1.25rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .cb__t {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .cb__t .t-label {
+    color: var(--color-ink-500);
+  }
+  .cb__hd .btn-icon {
+    border-color: transparent;
+  }
+  .cb__log {
+    position: relative;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 1.25rem;
+    display: grid;
+    gap: 1.25rem;
+  }
+  .cb__q {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  /* Cada pregunta espera la respuesta de la anterior. */
+  .cb__q--2,
+  .cb__q--3 {
+    display: none;
+  }
+  .cb__log:has([name='product']:checked) .cb__q--2 {
+    display: grid;
+  }
+  .cb__log:has([name='product']:checked):has(#cb-need:not(:placeholder-shown)) .cb__q--3 {
+    display: grid;
+  }
+  .cb__bot {
+    float: none;
+    justify-self: start;
+    max-width: 92%;
+    margin-bottom: 0.25rem;
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.25rem var(--radius-btn) var(--radius-btn) var(--radius-btn);
+    background-color: var(--color-surface);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.4;
+    color: var(--color-ink-950);
+  }
+  .cb__chips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+  .cb__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0 0.875rem 0 0.75rem;
+    border: 1px solid var(--color-ink-500);
+    border-radius: var(--radius-btn);
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .cb__chip:hover {
+    background-color: var(--color-surface);
+  }
+  .cb__chip:has(:checked) {
+    border-color: var(--color-ink-950);
+    background-color: var(--color-teal-50);
+  }
+  .cb__chip input {
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    accent-color: var(--color-teal-700);
+  }
+  .cb__log[hidden] {
+    display: none;
+  }
+  .cb .sol-trap-wrap {
+    position: absolute;
+    left: -9999px;
+    top: 0;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* Campos como los de /contacto/: borde ink-500 (3:1, WCAG 1.4.11), radio de botón. */
+  .cb__in {
+    width: 100%;
+    height: 2.75rem;
+    padding: 0 0.875rem;
+    border: 1px solid var(--color-ink-500);
+    border-radius: var(--radius-btn);
+    background-color: var(--color-raised);
+    color: var(--color-ink-950);
+    font: inherit;
+    font-size: 1rem;
+  }
+  .cb__in:focus-visible {
+    border-color: var(--color-teal-700);
+  }
+  textarea.cb__in {
+    height: auto;
+    min-height: 5.5rem;
+    padding-block: 0.625rem;
+    resize: vertical;
+  }
+  .cb__lab {
+    margin-top: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-ink-900);
+  }
+  .cb__consent {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 0.75rem;
+    align-items: start;
+    margin-top: 0.75rem;
+  }
+  .cb__consent input {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin: 0.125rem 0 0;
+    accent-color: var(--color-teal-700);
+  }
+  .cb__consent label {
+    min-height: 2.75rem;
+  }
+  .cb__exits {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.625rem;
+    margin-top: 0.75rem;
+  }
+  .cb__exits .btn {
+    flex: 1 1 auto;
+  }
+  .cb__err {
+    color: #b91c1c;
+  }
+  .cb__ok {
+    margin: 1.25rem;
+  }
+  .cb__ok:focus {
+    outline: none;
+  }
+  @media (max-width: 639.98px) {
+    .cb-btn {
+      right: 1rem;
+      bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    }
+    .cb {
+      inset: auto 0.75rem 0.75rem;
+      width: auto;
+      max-height: calc(100dvh - 1.5rem);
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .cb[open] {
+      animation: cb-in 160ms ease-out;
+    }
+    @keyframes cb-in {
+      from {
+        opacity: 0;
+        transform: translateY(0.5rem);
+      }
+    }
+  }
+</style>

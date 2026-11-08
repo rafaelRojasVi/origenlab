@@ -1685,6 +1685,197 @@ console.log('\nDesbordamiento horizontal (375 px)');
   await context.close();
 }
 
+/* -- 10. Burbuja de conversación (ChatBubble) ------------------------------ */
+console.log('\nBurbuja de conversación');
+{
+  const CONTACT_FIELDS = ['product', 'need', 'email', 'org', 'name', 'phone', 'city', 'deadline', 'consent_version', '_trap', 'submission_id', 'render_at'];
+  let consentText = '';
+  const okText = claimApproved('cotizacion-mismo-dia-habil') ? 'Recibido: le respondemos el mismo día hábil.' : 'Recibido, le escribiremos pronto.';
+  const beaconSpy = () => {
+    window.__beacons = [];
+    navigator.sendBeacon = (url, body) => {
+      window.__beacons.push({ url: String(url), body });
+      return true;
+    };
+  };
+  const beacons = (page) => page.evaluate(async () => Promise.all((window.__beacons ?? []).map(async (b) => await b.body.text())));
+  const chatChunks = (page) => page.evaluate(() => performance.getEntriesByType('resource').map((r) => r.name).filter((n) => /\/_astro\/chat[.-][\w.-]*\.js$/.test(n)));
+
+  // Portada, 1440 px: burbuja, apertura, foco, conversación, envío.
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
+  await page.addInitScript(beaconSpy);
+  const posts = [];
+  await page.route('**/api/web/solicitud', (route) => {
+    posts.push({ type: route.request().headers()['content-type'], body: route.request().postData() ?? '' });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"status":"received"}' });
+  });
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  const bubble = page.locator('[data-cb-open]');
+  check((await bubble.count()) === 1, 'burbuja: la portada tiene una burbuja');
+  if ((await bubble.count()) === 1) {
+    const box = await bubble.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height), right: Math.round(innerWidth - r.right), bottom: Math.round(innerHeight - r.bottom), bg: getComputedStyle(el).backgroundColor, tag: el.tagName, popup: el.getAttribute('aria-haspopup') };
+    });
+    check(box.tag === 'BUTTON' && box.popup === 'dialog', `burbuja: es un <button aria-haspopup="dialog"> (${box.tag}, ${box.popup})`);
+    check(box.w === 56 && box.h === 56 && box.right >= 8 && box.right <= 40 && box.bottom >= 8 && box.bottom <= 40, `burbuja: 56 px abajo a la derecha (${JSON.stringify(box)})`);
+    check(box.bg === 'rgb(20, 22, 23)', `burbuja: relleno de tinta (${box.bg})`);
+    check((await chatChunks(page)).length === 0, 'burbuja: el código del panel no se carga antes del primer clic');
+    await bubble.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.locator('dialog#cb');
+    await page.waitForFunction(() => document.querySelector('dialog#cb')?.open === true, null, { timeout: 3000 }).catch(() => {});
+    const opened = await dialog.evaluate((el) => ({
+      label: document.getElementById(el.getAttribute('aria-labelledby') ?? '')?.textContent?.trim() ?? '',
+      inside: el.contains(document.activeElement) && document.activeElement !== el,
+      modal: el.matches(':modal'),
+    }));
+    check(opened.label.length > 0 && opened.inside && opened.modal, `panel: diálogo modal rotulado y el foco entra (${JSON.stringify(opened)})`);
+    await page.waitForFunction(() => performance.getEntriesByType('resource').some((r) => /\/_astro\/chat[.-][\w.-]*\.js$/.test(r.name)), null, { timeout: 5000 }).catch(() => {});
+    const chunk = await chatChunks(page);
+    check(chunk.length === 1 && !/\/scene-/.test(chunk[0]), `panel: el código llega en un trozo propio al abrir, no scene-* (${chunk.join(', ') || 'ninguno'})`);
+    check((await dialog.innerText()).includes('Hola, soy del equipo de OrigenLab. ¿Qué equipo necesita?'), 'panel: abre con el saludo y la pregunta del equipo');
+    const chips = await dialog.locator('input[name="product"]').evaluateAll((els) => els.map((el) => el.labels?.[0]?.textContent?.trim() ?? ''));
+    check(chips.length === 7 && chips.includes('Otro') && chips.includes('Sonicación') && chips.includes('Centrifugación'), `panel: seis familias y «Otro» (${chips.join(', ')})`);
+    // Modal nativo: el resto de la página es inerte; Tab recorre el panel y, a lo sumo, sale al navegador, nunca a la página.
+    const outside = [];
+    for (let i = 0; i < 25; i += 1) {
+      await page.keyboard.press('Tab');
+      const where = await dialog.evaluate((el) => {
+        const a = document.activeElement;
+        if (!a || a === document.body || el.contains(a)) return null;
+        return `${a.tagName.toLowerCase()} ${(a.textContent || '').trim().slice(0, 20)}`;
+      });
+      if (where) outside.push(where);
+    }
+    check(outside.length === 0, `panel: el tabulador no llega a la página detrás del panel (${outside.slice(0, 3).join('; ') || 'nunca'})`);
+    await page.keyboard.press('Escape');
+    check(!(await dialog.evaluate((el) => el.open)), 'panel: Escape lo cierra');
+    check(await bubble.evaluate((el) => el === document.activeElement), 'panel: el foco vuelve a la burbuja');
+
+    // Conversación guiada: cada respuesta abre la pregunta siguiente.
+    await bubble.click();
+    const shown = (sel) => dialog.locator(sel).isVisible();
+    check(!(await shown('#cb-need')), 'panel: «¿Para qué lo usará?» espera a que se elija un equipo');
+    await dialog.locator('label', { hasText: 'Sonicación' }).click();
+    check((await shown('#cb-need')) && (await dialog.innerText()).includes('¿Para qué lo usará?'), 'panel: elegir una familia muestra «¿Para qué lo usará?»');
+    check(!(await shown('#cb-email')), 'panel: «¿Cómo le contactamos?» espera la respuesta');
+    await page.fill('#cb-need', 'Lisis de células en 50 mL');
+    check((await shown('#cb-email')) && (await dialog.innerText()).includes('¿Cómo le contactamos?'), 'panel: responder muestra «¿Cómo le contactamos?»');
+    consentText = (await dialog.locator('label[for="cb-consent"]').textContent())?.replace(/\s+/g, ' ').trim();
+    const consent = dialog.locator('#cb-consent');
+    check((await consent.getAttribute('value')) === 'consent-v1-2026-11' && (await consent.evaluate((el) => el.required && !el.checked)), 'panel: consentimiento consent-v1-2026-11, obligatorio y sin marcar');
+    await page.fill('#cb-name', 'Ana Pérez');
+    await page.fill('#cb-email', 'ana@example.cl');
+    await page.fill('#cb-org', 'Laboratorio de prueba');
+    const wa = dialog.locator('a[href^="https://wa.me/"]');
+    check((await wa.getAttribute('data-track')) === 'whatsapp_click', 'panel: «Continuar por WhatsApp» lleva data-track="whatsapp_click"');
+    await wa.evaluate((el) => el.addEventListener('click', (e) => e.preventDefault(), { once: true }));
+    await wa.click();
+    const waText = new URL((await wa.getAttribute('href')) ?? 'https://wa.me/').searchParams.get('text') ?? '';
+    check(/sonicación/i.test(waText) && waText.includes('Lisis de células en 50 mL') && waText.includes('Ana Pérez'), `panel: el mensaje de WhatsApp recoge las respuestas (${waText.slice(0, 120)})`);
+    await page.click('dialog#cb button[type="submit"]');
+    await page.waitForTimeout(400);
+    check(posts.length === 0, `panel: sin consentimiento no envía (${posts.length})`);
+    await consent.check();
+    await page.waitForTimeout(2800); // el Worker descarta en silencio los envíos de menos de 3 s
+    await page.click('dialog#cb button[type="submit"]');
+    await page.waitForFunction(() => document.querySelector('[data-cb-ok]')?.hidden === false, null, { timeout: 5000 }).catch(() => {});
+    const body = JSON.parse(posts[0]?.body || '{}');
+    const keys = Object.keys(body);
+    check(posts.length === 1 && posts[0].type === 'application/json', `panel: «Enviar» hace un POST JSON a /api/web/solicitud (${posts.length}, ${posts[0]?.type})`);
+    check(keys.every((k) => CONTACT_FIELDS.includes(k)) && ['need', 'email', 'org', 'consent_version', '_trap', 'submission_id', 'render_at'].every((k) => k in body), `panel: los mismos campos que el formulario de contacto (${keys.join(', ')})`);
+    check(body.consent_version === 'consent-v1-2026-11' && body._trap === '' && Number(body.render_at) > 1e9 && /^[0-9a-f-]{36}$/.test(body.submission_id ?? ''), 'panel: consentimiento, trampa vacía, render_at y submission_id');
+    check(Boolean(body.need?.includes('Lisis de células en 50 mL')) && body.email === 'ana@example.cl' && body.org === 'Laboratorio de prueba', `panel: la solicitud lleva las respuestas (${body.need})`);
+    const ok = dialog.locator('[data-cb-ok]');
+    const okShown = (await ok.count()) ? (await ok.innerText()).trim() : '';
+    check((await ok.isVisible()) && okShown === okText, `panel: confirmación «${okText}» (${okShown})`);
+    const sent = await beacons(page);
+    check(sent.filter((b) => b.includes('cotizacion_click')).length === 1 && sent.filter((b) => b.includes('whatsapp_click')).length === 1, `panel: un cotizacion_click al enviar y un whatsapp_click (${sent.filter((b) => !b.includes('visita')).join(' ')})`);
+    check(!sent.some((b) => !/"name":"(visita|cotizacion_click|whatsapp_click)"/.test(b)), 'panel: ningún nombre de evento nuevo');
+  }
+  check(errors.length === 0, `panel: sin errores JS (${errors.join('; ') || 'ninguno'})`);
+  await context.close();
+
+  // El texto de consentimiento es el del formulario de contacto, palabra por palabra.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    const p = await ctx.newPage();
+    await p.goto(`${base}/contacto/`, { waitUntil: 'load' });
+    const formText = (await p.locator('label[for="solicitud-consent"]').textContent())?.replace(/\s+/g, ' ').trim();
+    check(Boolean(consentText) && consentText === formText, 'panel: el consentimiento dice exactamente lo mismo que el de /contacto/');
+    check((await p.locator('[data-cb-open], dialog#cb').count()) === 0, 'burbuja: no aparece en /contacto/');
+    await p.goto(`${base}/privacidad/`, { waitUntil: 'load' });
+    check((await p.locator('[data-cb-open]').count()) === 0, 'burbuja: no aparece en páginas noindex (/privacidad/)');
+    await ctx.close();
+  }
+
+  // Página de modelo, 390 px: el modelo viene elegido y la burbuja se apoya sobre la barra fija.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+    const p = await ctx.newPage();
+    await p.goto(`${base}/productos/sonicacion/hielscher-up400st/`, { waitUntil: 'load' });
+    await pastFirstScreen(p);
+    const geo = await p.evaluate(() => {
+      const b = document.querySelector('[data-cb-open]')?.getBoundingClientRect();
+      const bar = document.querySelector('[data-sticky-cta]').getBoundingClientRect();
+      return { bubbleBottom: Math.round(b?.bottom ?? 0), barTop: Math.round(bar.top), visible: Boolean(b?.height) };
+    });
+    check(geo.visible && geo.bubbleBottom <= geo.barTop - 4, `burbuja: sobre la barra fija, sin taparla (${JSON.stringify(geo)})`);
+    if (geo.visible) {
+      await p.click('[data-cb-open]');
+      const picked = await p.locator('dialog#cb input[name="product"]:checked').evaluate((el) => ({ value: el.value, label: el.labels?.[0]?.textContent?.trim() })).catch(() => ({}));
+      check(picked.value === 'hielscher-up400st' && picked.label === 'UP400St', `panel: el modelo de la página viene elegido (${JSON.stringify(picked)})`);
+      check(await p.locator('#cb-need').isVisible(), 'panel: con el modelo elegido la segunda pregunta ya está a la vista');
+      const anims = await p.evaluate(() => document.getAnimations().filter((a) => a.playState === 'running').length);
+      check(anims === 0, `panel: con movimiento reducido no se anima (${anims})`);
+      await p.fill('#cb-need', 'x');
+      const small = await p.evaluate(() => {
+        const out = [];
+        for (const el of document.querySelectorAll('dialog#cb a, dialog#cb button, dialog#cb input:not([type="hidden"]), dialog#cb textarea')) {
+          if (el.closest('.sol-trap-wrap, [hidden]')) continue;
+          // Exención de frase (WCAG 2.5.8), como en el barrido general: el enlace a la política dentro del consentimiento.
+          const host = el.parentElement;
+          if (el.matches('a:not(.btn)') && host?.matches('p, label') && (host.textContent || '').trim().length > (el.textContent || '').trim().length + 12) continue;
+          let r = el.getBoundingClientRect();
+          if (el.matches('input[type="checkbox"], input[type="radio"]') && el.labels?.[0]) r = el.labels[0].getBoundingClientRect();
+          if (r.width && (r.width < 43.5 || r.height < 43.5)) out.push(`${el.tagName.toLowerCase()} ${(el.textContent || el.getAttribute('aria-label') || el.id).trim().slice(0, 20)} ${Math.round(r.width)}×${Math.round(r.height)}`);
+        }
+        return out;
+      });
+      check(small.length === 0, `panel: todo control mide al menos 44 × 44 a 390 px (${small.join('; ') || 'ninguno'})`);
+      const fits = await p.evaluate(() => {
+        const r = document.querySelector('dialog#cb').getBoundingClientRect();
+        return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+      });
+      check(fits, 'panel: cabe en la pantalla a 390 px');
+      await p.keyboard.press('Shift+Tab');
+      await p.keyboard.press('Tab');
+      const ring = await p.evaluate(() => {
+        const el = document.activeElement;
+        const s = getComputedStyle(el);
+        return { ok: s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) >= 2, what: `${el.tagName} ${el.getAttribute('name') ?? ''}` };
+      });
+      check(ring.ok, `panel: el foco del teclado se ve (${ring.what})`);
+    }
+    await ctx.close();
+  }
+
+  // Menú móvil abierto: la burbuja se esconde.
+  {
+    const ctx = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    const p = await ctx.newPage();
+    await p.goto(`${base}/`, { waitUntil: 'load' });
+    check(await p.locator('[data-cb-open]').isVisible(), 'burbuja: visible a 375 px');
+    await p.click('[data-menu-toggle]');
+    check(!(await p.locator('[data-cb-open]').isVisible().catch(() => false)), 'burbuja: escondida con el menú móvil abierto');
+    await ctx.close();
+  }
+}
+
 await browser.close();
 server.close();
 

@@ -26,7 +26,7 @@ const items = [
         <h2 id="confianza-title" class="t-label">Cómo trabajamos</h2>
         <ul class="mtrust">
           {items.map((text, i) => (
-            <li>
+            <li class:list={[text.length > 70 && 'mtrust__wide']}>
               <span class="t-label">{String(i + 1).padStart(2, '0')}</span>
               <b>{text}</b>
             </li>
@@ -54,6 +54,10 @@ const items = [
     padding-top: 1rem;
     border-top: 2px solid var(--color-ink-950);
   }
+  /* Una afirmación larga (proveedor inscrito) ocupa el doble: sin esto se partía en seis líneas a 1280 px. */
+  .mtrust li.mtrust__wide {
+    flex: 2 1 19rem;
+  }
   .mtrust b {
     font-size: 1rem;
     font-weight: 600;
@@ -63,6 +67,9 @@ const items = [
   @media (max-width: 639.98px) {
     .mtrust li {
       flex-basis: 44%;
+    }
+    .mtrust li.mtrust__wide {
+      flex-basis: 100%;
     }
   }
 </style>
