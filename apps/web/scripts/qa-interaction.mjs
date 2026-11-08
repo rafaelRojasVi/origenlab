@@ -25,17 +25,12 @@ function check(condition, message) {
 /** Desplaza hasta justo después de la primera pantalla de la página de modelo (`[data-first-screen]`). */
 const pastFirstScreen = async (page) => {
   check((await page.locator('[data-sticky-cta]').count()) > 0, 'la página de modelo tiene la barra fija [data-sticky-cta]');
-  // Un Tab previo puede haber lanzado un desplazamiento suave hacia el elemento enfocado: se espera
-  // a que termine, o seguiría moviendo la página después del salto (hasta el último tramo, donde la
-  // barra se oculta a propósito).
-  let last = -1;
-  for (let i = 0; i < 40; i += 1) {
-    const y = await page.evaluate(() => window.scrollY);
-    if (y === last) break;
-    last = y;
-    await page.waitForTimeout(150);
-  }
-  await page.evaluate(() => {
+  // Un Tab previo puede haber lanzado un desplazamiento suave hacia el elemento enfocado, y bajo
+  // carga empieza tarde: seguiría moviendo la página después del salto (en una historia corta,
+  // hasta el último tramo, donde la barra se oculta a propósito). Se salta sin suavizado y se
+  // repite hasta que la página queda quieta en el destino.
+  const target = await page.evaluate(() => {
+    document.documentElement.style.scrollBehavior = 'auto';
     const first = document.querySelector('[data-first-screen]');
     // En la historia por scroll la primera pantalla es el primer tramo de la columna fija (y sale de
     // cuadro con `display: none`): su fin es el borde superior del espaciador más una ventana.
@@ -44,10 +39,27 @@ const pastFirstScreen = async (page) => {
       story?.dataset.mode === 'scroll'
         ? story.querySelector('[data-story-spacer]').getBoundingClientRect().top + window.scrollY + innerHeight
         : first.getBoundingClientRect().bottom + window.scrollY;
-    window.scrollTo({ top: bottom + 120, behavior: 'instant' });
+    return Math.round(bottom + 120);
   });
+  let still = 0;
+  for (let i = 0; i < 20 && still < 2; i += 1) {
+    const y = await page.evaluate((top) => {
+      if (Math.abs(window.scrollY - top) > 2) window.scrollTo({ top, behavior: 'instant' });
+      return window.scrollY;
+    }, target);
+    still = Math.abs(y - target) <= 2 ? still + 1 : 0;
+    await page.waitForTimeout(250);
+  }
+  await page.evaluate(() => document.documentElement.style.removeProperty('scroll-behavior'));
   // El observador y la transición de 200 ms pueden tardar con el WebGL por software ocupando la página.
-  await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 10000 });
+  await page.waitForFunction(
+    () => {
+      const bar = document.querySelector('[data-sticky-cta]');
+      return bar?.inert === false && getComputedStyle(bar).visibility !== 'hidden';
+    },
+    null,
+    { timeout: 10000 },
+  );
   await page.waitForTimeout(450);
 };
 
