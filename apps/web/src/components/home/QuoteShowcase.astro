@@ -4,6 +4,7 @@ import { consultant } from '../../data/consultation';
 import { site } from '../../config/site';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { qrRows } from './quoteQr';
+import { criterion } from '../../lib/showroom/content/sources';
 
 /**
  * «Así se ve su cotización» (dueño, 2026-11-08): réplica HTML/CSS de la
@@ -28,13 +29,17 @@ import { qrRows } from './quoteQr';
  *   mensaje genérico de `lib/whatsapp.ts`, codificado en el build (SVG).
  * - Firma y contacto: sólo datos ya públicos (`consultation.ts`, `contact.ts`);
  *   sin la dirección de calle, que el sitio no publica.
+ * - Ficha técnica: detrás de la hoja asoma la ficha del fabricante del MB120
+ *   (la primera línea), que acompaña cada cotización; entra al final de la
+ *   animación, sólo con CSS. Póster del estudio blanco fundido con el papel
+ *   (`.pz`) y criterios de `brandModels.ts`. Se oculta en marcos angostos.
  */
 
 const qr = qrRows(buildWhatsAppQuoteUrl());
 const rowPath = qr.rows.join('');
 
 // Momento (s) en que cada parte termina de armarse: las llamadas aparecen ahí.
-const T = { client: 2.35, lines: 3.4, totals: 4.25, terms: 5.05, qr: 5.9, sign: 6.25 };
+const T = { client: 2.35, lines: 3.4, totals: 4.25, terms: 5.05, qr: 5.9, sign: 6.25, ficha: 7.1 };
 
 const callouts = [
   { n: 1, label: 'Su institución y su contacto', at: T.client, y: 22.4, mx: 94.1, my: 16.2 },
@@ -43,7 +48,13 @@ const callouts = [
   { n: 4, label: 'Plazo y condiciones de pago', at: T.terms, y: 71.8, mx: 3.6, my: 64.4 },
   { n: 5, label: 'Un QR para escribirnos por WhatsApp', at: T.qr, y: 83.5, mx: 57.7, my: 83.5 },
   { n: 6, label: 'Firmada por una persona', at: T.sign, y: 92.5, mx: 3.6, my: 87.6 },
+  { n: 7, label: 'Con la ficha técnica del fabricante', at: T.ficha, y: 99.5, mx: 51.6, my: 72.6 },
 ];
+
+const fichaSpecs = ['Capacidad', 'Legibilidad', 'Calentamiento', 'Memoria'].flatMap((label) => {
+  const value = criterion('ohaus-mb120', label);
+  return value ? [{ label, value }] : [];
+});
 
 const lines = [
   {
@@ -100,6 +111,24 @@ const d = (s: number) => `--d:${s}s`;
 <figure class="qs" data-qs aria-labelledby="qs-caption">
   <div class="qs__stage">
     <div class="qs__frame">
+      <div class="qs-ficha qs-a" style={d(6.45)} aria-hidden="true">
+        <div class="qs-fcol">
+          <span class="qs-eyebrow">Ficha técnica · Del fabricante</span>
+          <span class="qs-fname"><small>OHAUS</small>MB120</span>
+          <span class="qs-muted">Analizador de humedad</span>
+          <img class="pz" src="/products/ohaus-mb120-poster.jpg" alt="" width="1200" height="900" loading="lazy" decoding="async" />
+          <dl>
+            {
+              fichaSpecs.map((s) => (
+                <div>
+                  <dt>{s.label}</dt>
+                  <dd>{s.value}</dd>
+                </div>
+              ))
+            }
+          </dl>
+        </div>
+      </div>
       <article class="qs-sheet" style={d(0)} aria-label="Cotización de ejemplo CN09876, con datos ficticios">
         <header class="qs-head">
           <div class="qs-brand qs-a qs-fade" style={d(0.95)}>
@@ -386,6 +415,78 @@ const d = (s: number) => `--d:${s}s`;
     line-height: 1.45;
     text-align: left;
     box-shadow: var(--shadow-sheet);
+  }
+  /* Ficha técnica detrás: misma medida A4 y escala, girada, más abajo y a la
+     izquierda; su contenido va en la franja que asoma. La ficha es su propio
+     contexto de apilamiento con fondo de papel: `.pz` se funde con el blanco. */
+  .qs-ficha {
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    width: 794px;
+    height: 1123px;
+    padding: 48px 30px;
+    scale: var(--k);
+    translate: calc(-215px * var(--k)) calc(34px * var(--k));
+    rotate: -3deg;
+    transform-origin: 0 0;
+    border-radius: 3px;
+    background:
+      repeating-linear-gradient(#eef2f1 0 6px, transparent 6px 22px) 290px 150px / 440px 520px no-repeat,
+      #ffffff;
+    box-shadow: 0 1px 2px rgb(15 90 80 / 0.06), 0 30px 60px -30px rgb(15 90 80 / 0.22);
+  }
+  @container qs (width < 560px) {
+    .qs-ficha {
+      display: none;
+    }
+  }
+  .qs-fcol {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 172px;
+    color: #14201d;
+  }
+  .qs-fcol .qs-eyebrow {
+    padding-bottom: 10px;
+    border-bottom: 3px solid #14201d;
+    line-height: 1.5;
+  }
+  .qs-fname {
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  .qs-fname small {
+    display: block;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+  }
+  .qs-fcol img {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin-block: 6px;
+  }
+  .qs-fcol dl {
+    margin: 0;
+  }
+  .qs-fcol dl div {
+    padding: 8px 0;
+    border-top: 1px solid #d9e2df;
+  }
+  .qs-fcol dt {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #4b5c57;
+  }
+  .qs-fcol dd {
+    margin: 2px 0 0;
+    font-size: 13px;
   }
   /* La línea teal de arriba es un pseudo-elemento para poder dibujarla. */
   .qs-sheet::before {
@@ -712,6 +813,10 @@ const d = (s: number) => `--d:${s}s`;
       --t: 850ms;
       --e: steps(var(--rows), end);
     }
+    .qs-ficha {
+      --an: qs-tuck;
+      --t: 900ms;
+    }
     .qs-pop {
       --an: qs-pop;
       --e: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -726,6 +831,12 @@ const d = (s: number) => `--d:${s}s`;
     from {
       opacity: 0;
       transform: translateY(var(--y, 6px));
+    }
+  }
+  @keyframes qs-tuck {
+    from {
+      opacity: 0;
+      transform: translateX(215px) rotate(3deg);
     }
   }
   @keyframes qs-draw {
