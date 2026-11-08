@@ -1,9 +1,16 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   OrigenLab Website V2 — design tokens
-   Paper, ink, one accent. See docs/design/DESIGN_SYSTEM.md.
-   Every value below is a token; components must not invent colors or radii.
+   OrigenLab Website — design tokens: «showroom oscuro»
+   One dark world (no light theme): graphite ground, light ink, one teal accent.
+   See docs/design/DESIGN_SYSTEM.md. Every value below is a token; components
+   must not invent colors or radii.
+
+   The token NAMES predate the dark redesign and keep their roles, not their
+   lightness: `paper` is still "the page ground" (now near-black graphite) and
+   `ink-*` is still "text and strong lines" (now light). Higher `ink-*` numbers
+   still mean more contrast against the ground. Do not use `ink-950` as a
+   background: dark bands use `--color-band` or `--color-raised`.
    ============================================================================ */
 
 /* --- Self-hosted type (SIL OFL). Provenance: scripts/sync-fonts.mjs -------- */
@@ -52,50 +59,43 @@
   --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Ground and structure */
-  --color-paper: #fafaf7;
-  --color-surface: #f2f2ee;
-  --color-hairline: #e3e3de;
-  --color-hairline-strong: #c8cac6; /* decorativo: subrayados; no es borde de control */
-  --color-pressed: #e9e9e4;
-  --color-raised: #ffffff;
+  /* Ground and structure (dark → lighter). Measured against ink below. */
+  --color-paper: #0d0f10; /* page ground, the 3D studio and every poster */
+  --color-surface: #15181a; /* reading sections, footer */
+  --color-raised: #1c2023; /* cards, raised bands, menus */
+  --color-pressed: #23282b; /* hover/active fill on raised */
+  --color-hairline: #2a2f33; /* decorative dividers (not control edges) */
+  --color-hairline-strong: #3a4045; /* decorativo: subrayados; no es borde de control */
 
-  /* Ink */
-  --color-ink-950: #141617;
-  --color-ink-900: #1d2022;
-  --color-ink-800: #2b2e30;
-  --color-ink-600: #54595d;
-  --color-ink-500: #676d71;
-  --color-ink-disabled: #8a8f92;
+  /* Ink — light on graphite. ≥ 4.5:1 on paper, surface, raised and pressed. */
+  --color-ink-950: #ecedeb; /* headings, strongest text and lines (16.4:1 on paper) */
+  --color-ink-900: #e2e4e2;
+  --color-ink-800: #cfd2d1; /* body text (12.6:1) */
+  --color-ink-600: #a9aeb1; /* secondary text, labels (8.6:1 paper, 7.3:1 raised) */
+  --color-ink-500: #8d9396; /* tertiary text and control edges (6.2:1 paper, 4.8:1 pressed) */
+  --color-ink-disabled: #6b7175;
 
-  /* Ink-on-dark (used only inside the closing band and footer) */
-  --color-onink-100: #ececeb;
-  --color-onink-300: #b9bcbd;
-  --color-onink-500: #8d9295;
-  --color-onink-hairline: #33383a;
-  --color-onink-line: #4b5154;
+  /* Ink on the band (`--color-band`, `.on-ink`): same light family. */
+  --color-onink-100: #ecedeb;
+  --color-onink-300: #b9bdbf;
+  --color-onink-500: #959a9d;
+  --color-onink-hairline: #343a3e;
+  --color-onink-line: #4b5257;
 
-  /* Accent — one teal, used for action, place, and one rule per page */
-  --color-teal-800: #115e59;
-  --color-teal-700: #0f766e;
-  --color-teal-500: #14b8a6;
-  --color-teal-100: #ccfbf1;
-  --color-teal-50: #f0fdfa;
+  /* Accent — one teal, for action, place and one rule per page. The scale is
+     flipped like ink: 800 is the lightest (strongest on graphite). */
+  --color-teal-800: #5eead4; /* links on graphite (13:1) */
+  --color-teal-700: #2dd4bf; /* labels, rules, markers; the accent (10.3:1) */
+  --color-teal-500: #14b8a6; /* dots, LEDs, focus ring on bands (7.7:1) */
+  --color-teal-100: #134e4a; /* selection fill */
+  --color-teal-50: #0f2a28; /* faint teal tint fill */
 
   /*
    * Familias de equipo (`--color-family-*`, declaradas más abajo en
-   * `@theme static`). Seis tintas, y sólo para el punto de color de la tarjeta
-   * de cada familia en la portada.
-   *
-   * El sistema tiene un acento, el teal, y sigue teniéndolo: estas seis no son
-   * un segundo acento suelto sino una escala de identificación, y no aparecen
-   * en ningún otro sitio del sitio. Existen porque la portada tiene que decir
-   * de un vistazo que hay seis capacidades distintas, y seis puntos del mismo
-   * color dicen lo contrario.
-   *
-   * Las seis están medidas: todas superan 5,6:1 sobre papel y sobre superficie,
-   * de modo que pueden teñir texto y no sólo un punto. Centrifugación reutiliza
-   * el teal del sistema en vez de inventar un séptimo verde.
+   * `@theme static`). Seis tintas de identificación (no un segundo acento),
+   * aclaradas y desaturadas para leer sobre grafito: todas superan 6,2:1 sobre
+   * paper, surface, raised y pressed, de modo que pueden teñir texto.
+   * Centrifugación reutiliza el teal del sistema.
    */
 
   /* Page shell */
@@ -107,12 +107,39 @@
 @theme static {
   /* Tintas de familia (ver el comentario de arriba): la portada las pide por
      nombre de propiedad desde datos, así que Tailwind no puede verlas usadas. */
-  --color-family-sonicacion: #1d4f7c;
-  --color-family-dispersion: #6b3f96;
-  --color-family-centrifugacion: #115e59;
-  --color-family-pesaje: #7d5310;
-  --color-family-osmometria: #15697f;
-  --color-family-electroforesis: #8f2f4f;
+  --color-family-sonicacion: #7fb2e5;
+  --color-family-dispersion: #b99ae0;
+  --color-family-centrifugacion: #2dd4bf;
+  --color-family-pesaje: #e0b062;
+  --color-family-osmometria: #6cc5dc;
+  --color-family-electroforesis: #ec8fae;
+
+  /* --- Showroom oscuro: roles nuevos ------------------------------------- */
+  /* Texto sobre cualquier fondo oscuro; no cambia dentro de `.on-ink`. */
+  --color-fg: #ecedeb;
+  --color-fg-muted: #a9aeb1;
+  /* Banda elevada: lo que antes era la banda de tinta (cierre, menú, panel de
+     chat). Grafito con un velo teal profundo; el texto es `onink-*`. */
+  --color-band: #112624;
+  --color-band-line: #24413d;
+  /* Acción primaria: botón teal con texto casi negro (9,2:1). */
+  --color-accent: #2dd4bf;
+  --color-accent-hover: #5eead4;
+  --color-accent-active: #14b8a6;
+  --color-on-accent: #04201c;
+  /* Estudio 3D: el fondo sobre el que se hornean pósteres y tiras de giro.
+     Igual a `paper`; una caja de `Turntable` lo usa para fundirse con ellos. */
+  --color-studio: #0d0f10;
+  /* Caja de luz (`LightBox`): plinto claro para las fotografías de fondo
+     blanco del fabricante. El único sitio claro del sitio. */
+  --color-lightbox-hi: #f4f4f1;
+  --color-lightbox-lo: #d9dbd7;
+  --color-lightbox-ink: #2b2e30; /* texto, si alguna vez va dentro (12:1) */
+  /* Cabecera translúcida (con `backdrop-filter`). */
+  --color-header: rgb(13 15 16 / 0.74);
+  /* Halo del foco de producto (tarjetas iluminadas, escenario). */
+  --color-glow: rgb(45 212 191 / 0.14);
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 48px -24px rgb(0 0 0 / 0.7);
 
   /* Radios: 2 px para etiquetas y tablas, 10 botones, 16 tarjetas. */
   --radius-edge: 2px;
@@ -131,7 +158,8 @@
 
 @layer base {
   html {
-    color-scheme: light;
+    color-scheme: dark;
+    background-color: var(--color-paper);
     -webkit-text-size-adjust: 100%;
     /* La cabecera es fija: sin este margen el navegador deja el elemento
        enfocado o anclado justo debajo de ella y queda invisible. */
@@ -180,7 +208,7 @@
 
   ::selection {
     background-color: var(--color-teal-100);
-    color: var(--color-ink-950);
+    color: var(--color-fg);
   }
 
   :focus-visible {
@@ -188,10 +216,31 @@
     outline-offset: 2px;
   }
 
-  /* Inverted surfaces get a light focus ring so it stays visible. */
+  /* Bands get the deeper teal ring (7.7:1 on the band). */
   .on-ink :focus-visible,
   .on-ink:focus-visible {
     outline-color: var(--color-teal-500);
+  }
+
+  /*
+   * `.on-ink` — compatibility scope for components written for the old light
+   * site, where a dark band was `background: var(--color-ink-950)` with
+   * `color: var(--color-paper)` or `onink-*` text. Inside it those two tokens
+   * keep their OLD meaning (ink-950 = dark ground, paper = light text, teal-700
+   * = dark teal), so a
+   * legacy band stays a dark band instead of turning light. New code should not
+   * rely on it: use `--color-band` / `--color-raised` for the ground and
+   * `--color-fg` / `onink-*` for text.
+   */
+  .on-ink {
+    --color-ink-950: #0d0f10;
+    --color-paper: #ecedeb;
+    /* Lo que pinta `paper` de fondo dentro de la banda queda claro: el teal de
+       contorno vuelve al tono oscuro de antes para seguir midiendo 3:1 ahí. */
+    --color-teal-700: #0f766e;
+    :where(h1, h2, h3, h4) {
+      color: var(--color-onink-100);
+    }
   }
 
   /* Debajo de 1024 px el botón pequeño sube a 44 px (objetivo táctil) y los
@@ -315,9 +364,13 @@
   }
 
   /* --- Actions -------------------------------------------------------------
-   * Sistema de botones. Los bordes de los botones sin relleno miden >= 3:1
-   * (ink-500 sobre claro, onink-300 sobre tinta); qa:contrast lo exige.
-   * Sobre tinta: ancestro `.on-ink` o la propia clase `.on-ink` (tone="ink").
+   * Sistema de botones sobre grafito (un solo mundo: no hay variante clara).
+   * Primario: teal con texto casi negro. Secundario, WhatsApp e icono: sin
+   * relleno, borde ink-500 (>= 4,8:1 incluso sobre `pressed`; qa:contrast exige
+   * 3:1). Los colores salen de roles que `.on-ink` no reasigna (`--color-fg`,
+   * `--color-accent*`), así que el botón se ve igual en cualquier banda.
+   * `tone="ink"` / `.on-ink` en el botón ya no cambia nada; se acepta por
+   * compatibilidad.
    * ------------------------------------------------------------------------- */
   .btn {
     display: inline-flex;
@@ -329,7 +382,7 @@
     border-radius: var(--radius-btn);
     border: 1px solid transparent;
     background: none;
-    color: var(--color-ink-950);
+    color: var(--color-fg);
     font-size: 0.9375rem;
     font-weight: 600;
     line-height: 1;
@@ -342,6 +395,7 @@
       background-color var(--ease-ui),
       border-color var(--ease-ui),
       color var(--ease-ui),
+      box-shadow var(--ease-ui),
       transform var(--ease-ui);
     &:is(:disabled, [aria-disabled='true']) {
       cursor: not-allowed;
@@ -349,10 +403,6 @@
     .arrow {
       flex: none;
       transition: transform var(--ease-ui);
-    }
-    .on-ink &,
-    &.on-ink {
-      color: var(--color-onink-100);
     }
   }
   .btn-sm {
@@ -362,33 +412,24 @@
   }
 
   .btn-primary {
-    background-color: var(--color-ink-950);
-    color: var(--color-onink-100);
+    background-color: var(--color-accent);
+    color: var(--color-on-accent);
     &:hover {
-      background-color: var(--color-ink-800);
+      background-color: var(--color-accent-hover);
+      box-shadow: 0 0 0 4px var(--color-glow);
     }
     &:active {
-      background-color: var(--color-ink-900);
+      background-color: var(--color-accent-active);
     }
     &:is(:disabled, [aria-disabled='true']) {
-      background-color: var(--color-hairline);
+      background-color: var(--color-pressed);
       color: var(--color-ink-disabled);
+      box-shadow: none;
     }
-    .on-ink &,
-    &.on-ink {
-      background-color: var(--color-paper);
-      color: var(--color-ink-950);
-      &:hover {
-        background-color: var(--color-raised);
-      }
-      &:active {
-        background-color: var(--color-hairline);
-      }
-      &:is(:disabled, [aria-disabled='true']) {
-        background-color: var(--color-ink-800);
-        color: var(--color-onink-500);
-      }
-    }
+  }
+  /* Anillo de foco separado del relleno teal: sobre el propio teal no se vería. */
+  .btn-primary:focus-visible {
+    outline-color: var(--color-fg);
   }
 
   .btn-secondary,
@@ -396,34 +437,17 @@
   .btn-icon {
     border-color: var(--color-ink-500);
     &:hover {
-      border-color: var(--color-ink-950);
-      background-color: var(--color-surface);
+      border-color: var(--color-fg);
+      background-color: rgb(255 255 255 / 0.06);
     }
     &:active {
-      border-color: var(--color-ink-950);
-      background-color: var(--color-pressed);
+      border-color: var(--color-fg);
+      background-color: rgb(255 255 255 / 0.12);
     }
     &:is(:disabled, [aria-disabled='true']) {
       border-color: var(--color-hairline);
       background-color: transparent;
       color: var(--color-ink-disabled);
-    }
-    .on-ink &,
-    &.on-ink {
-      border-color: var(--color-onink-300);
-      &:hover {
-        border-color: var(--color-onink-100);
-        background-color: rgb(255 255 255 / 0.06);
-      }
-      &:active {
-        border-color: var(--color-onink-100);
-        background-color: rgb(255 255 255 / 0.12);
-      }
-      &:is(:disabled, [aria-disabled='true']) {
-        border-color: var(--color-onink-hairline);
-        background-color: transparent;
-        color: var(--color-onink-500);
-      }
     }
   }
   .btn-icon {
@@ -445,7 +469,7 @@
     min-height: 1.75rem;
     padding: 0;
     border-radius: var(--radius-edge);
-    color: var(--color-ink-950);
+    color: var(--color-fg);
     font-size: 0.9375rem;
     font-weight: 600;
     line-height: 1.2;
@@ -458,10 +482,6 @@
     .arrow {
       flex: none;
       transition: transform var(--ease-ui);
-    }
-    .on-ink &,
-    &.on-ink {
-      color: var(--color-onink-100);
     }
   }
   .btn-tertiary .lbl {
@@ -547,7 +567,7 @@
     transition: text-decoration-color 150ms, color 150ms;
   }
   .link-plain:hover {
-    color: var(--color-ink-950);
+    color: var(--color-fg);
     text-decoration-color: currentColor;
   }
 
@@ -564,6 +584,41 @@
   }
   .index-row:hover {
     background-color: var(--color-surface);
+  }
+
+  /* --- Showroom oscuro: superficies compartidas ---------------------------
+   * `.surface-reading`  sección de lectura a ancho completo: grafito un tono
+   *                     más claro que la página, con filetes arriba y abajo.
+   * `.surface-band`     banda elevada (lo que antes era una banda de tinta).
+   * `.card-lit`         tarjeta iluminada: `raised`, radio de tarjeta, foco
+   *                     suave arriba y sombra profunda. Sólo para tarjetas de
+   *                     modelo o familia (regla del sistema: no hay tarjetas
+   *                     dentro de tarjetas). El borde se enciende al pasar
+   *                     el mouse o al enfocar algo dentro.
+   * ------------------------------------------------------------------------- */
+  .surface-reading {
+    background-color: var(--color-surface);
+    border-block: 1px solid var(--color-hairline);
+  }
+  .surface-band {
+    background:
+      radial-gradient(60% 90% at 12% 0%, var(--color-glow), transparent 70%),
+      var(--color-band);
+    color: var(--color-onink-100);
+  }
+  .card-lit {
+    position: relative;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+    background:
+      radial-gradient(80% 60% at 50% 0%, rgb(255 255 255 / 0.05), transparent 70%),
+      var(--color-raised);
+    box-shadow: var(--shadow-card);
+    transition: border-color var(--ease-ui), box-shadow 300ms ease-out;
+  }
+  .card-lit:is(:hover, :focus-within) {
+    border-color: var(--color-ink-500);
+    box-shadow: var(--shadow-card), 0 0 0 4px var(--color-glow);
   }
 
   .prose-block p + p {

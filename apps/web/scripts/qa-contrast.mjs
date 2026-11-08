@@ -27,6 +27,9 @@ const ROUTES = [
   '/productos/centrifugas/biocen-22-r/',
   '/productos/sonicacion/',
   '/productos/sonicacion/hielscher-up400st/',
+  '/productos/pesaje-humedad/',
+  '/productos/pesaje-humedad/ohaus-mb32/',
+  '/productos/pesaje-humedad/ohaus-ranger-count-3000/',
   '/productos/centrifugas/digicen-22-r/',
   '/marcas/',
   '/marcas/ortoalresa/',
@@ -74,9 +77,9 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 
 /**
  * WCAG 1.4.11: el borde de un control que no lleva relleno debe separarse del
- * fondo con 3:1. El tablero de diseño usaba hairline-strong (1,58:1 sobre
- * papel); aquí se exige el 3:1 completo, así que el borde es ink-500 sobre
- * claro y onink-300 sobre tinta.
+ * fondo con 3:1. Showroom oscuro: el borde es ink-500 (#8d9396) sobre todos los
+ * grafitos (6,2:1 sobre paper, 4,8:1 sobre pressed, 5,1:1 sobre la banda); el
+ * hairline (1,4:1) nunca sirve de borde de control.
  */
 const CONTROL_EDGE_MIN = 3;
 const FOCUS_RING_MIN = 3;
@@ -194,7 +197,7 @@ for (const route of ROUTES) {
     }
   }
 
-  // La banda de cierre (fondo tinta, botones sobre tinta) debe haberse medido: título, texto y los dos botones.
+  // La banda de cierre (`--color-band`, botones encima) debe haberse medido: título, texto y los dos botones.
   if (result.hasBand) {
     const inBand = result.out.filter((entry) => entry.band).length;
     if (inBand < 4) failures.push(`${route}: la banda de cierre sólo midió ${inBand} textos (mínimo 4: título, texto, dos botones)`);

@@ -2,7 +2,11 @@
 /**
  * Póster de cada modelo con escena 3D: el cuadro de entrada de la historia,
  * quieto, para el nivel bajo («Ver en 3D»), la primera pintura de la página y
- * la imagen social (`og:image`).
+ * la imagen social (`og:image`). Y su tira de giro para las tarjetas del
+ * catálogo (`components/ui/Turntable.astro`): `public/products/<slug>-turntable.webp`,
+ * 24 cuadros de 560x420 en una sola fila (una vuelta completa, 15° por cuadro,
+ * el cuadro 0 es el ángulo del póster), ≤ 120 kB (baja la calidad WebP y, si no
+ * basta, el tamaño del cuadro). Los dos sobre el estudio oscuro (`scene.ts`).
  *
  * Sirve `dist/` en un puerto libre, abre
  * `/productos/<familia>/<slug>/?poster=1` (centrifugación: su ficha en
@@ -16,7 +20,7 @@
  * salta con un aviso y no detiene a los demás. Cada póster pesa ≤ 150 kB (baja
  * la calidad JPEG desde 82 hasta cumplirlo).
  *
- * Ejecutar: npm run build && npm run posters [slug ...]   (sin slugs, todos; no forma parte de `validate`:
+ * Ejecutar: npm run build && npm run posters [slug ...] [--no-turntable]   (sin slugs, todos; no forma parte de `validate`:
  * necesita un navegador con WebGL). Después, `npm run build` otra vez para que
  * las páginas incluyan los pósteres nuevos.
  */
@@ -25,12 +29,22 @@ import { createServer } from 'node:http';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
+import sharp from 'sharp';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const modelsDir = join(root, 'src', 'content', 'modelos');
 const outDir = join(root, 'public', 'products');
 const MAX_BYTES = 150_000;
 const READY_MS = 60_000;
+/* Tira de giro: contrato con `components/ui/Turntable.astro` (24 cuadros, fila única, 4:3). */
+const STRIP_FRAMES = 24;
+const STRIP_MAX_BYTES = 120_000;
+const STRIP_SIZES = [
+  [560, 420],
+  [480, 360],
+];
+const onlyPosters = process.argv.includes('--no-turntable');
+const slugArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 
 if (!existsSync(join(root, 'dist'))) {
   console.error('dist/ no existe: ejecute npm run build antes de npm run posters');
@@ -41,7 +55,7 @@ const models = readdirSync(modelsDir)
   .filter((file) => file.endsWith('.json'))
   .map((file) => JSON.parse(readFileSync(join(modelsDir, file), 'utf8')))
   .filter((entry) => entry.showroom_id)
-  .filter((entry) => process.argv.length <= 2 || process.argv.slice(2).includes(entry.slug));
+  .filter((entry) => slugArgs.length === 0 || slugArgs.includes(entry.slug));
 if (models.length === 0) {
   console.log('Ningún modelo declara showroom_id: nada que generar.');
   process.exit(0);
@@ -170,6 +184,46 @@ try {
       if (buffer.length > MAX_BYTES) {
         console.error(`   x ${entry.slug}: pesa más de ${MAX_BYTES / 1000} kB incluso con calidad 42`);
         failed++;
+      }
+
+      if (!onlyPosters) {
+        // Tira de giro: el equipo gira 15° por cuadro en el acto (`snapYaw`, publicado por
+        // `scene.ts` en `?poster=1`); dos cuadros dibujados y se captura.
+        const hasStudio = await page.evaluate(() => typeof window.__studio?.snapYaw === 'function');
+        if (!hasStudio) throw new Error('la escena no publica window.__studio (¿scene.ts sin el gancho de pósteres?)');
+        const frames = [];
+        for (let i = 0; i < STRIP_FRAMES; i++) {
+          await page.evaluate(
+            (yaw) =>
+              new Promise((resolve) => {
+                window.__studio.snapYaw(yaw);
+                requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+              }),
+            (i * 2 * Math.PI) / STRIP_FRAMES,
+          );
+          frames.push(await page.screenshot({ type: 'png' }));
+        }
+        await page.evaluate(() => window.__studio.snapYaw(0));
+        let strip;
+        let used;
+        search: for (const [w, h] of STRIP_SIZES) {
+          const tiles = await Promise.all(frames.map((frame) => sharp(frame).resize(w, h).toBuffer()));
+          const sheet = sharp({ create: { width: w * STRIP_FRAMES, height: h, channels: 3, background: '#0d0f10' } }).composite(
+            tiles.map((input, i) => ({ input, left: i * w, top: 0 })),
+          );
+          const raw = await sheet.png().toBuffer();
+          for (const quality of [70, 62, 54, 46, 38]) {
+            strip = await sharp(raw).webp({ quality, effort: 6 }).toBuffer();
+            used = `${w}x${h} q${quality}`;
+            if (strip.length <= STRIP_MAX_BYTES) break search;
+          }
+        }
+        writeFileSync(join(outDir, `${entry.slug}-turntable.webp`), strip);
+        console.log(`  ok ${label} → public/products/${entry.slug}-turntable.webp (${STRIP_FRAMES} cuadros, ${used}, ${Math.round(strip.length / 1024)} kB)`);
+        if (strip.length > STRIP_MAX_BYTES) {
+          console.error(`   x ${entry.slug}: la tira pesa más de ${STRIP_MAX_BYTES / 1000} kB`);
+          failed++;
+        }
       }
     } catch (error) {
       console.error(`   x ${label}: ${error.message}`);

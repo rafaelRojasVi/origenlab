@@ -152,6 +152,10 @@ const masters = new Set(rows.filter((row) => row.masterPath).map((row) => row.ma
 // escena 3D propia. No llevan fila de procedencia, pero sí el tamaño y el peso del script.
 const GENERATED = /-poster\.jpg$/;
 const POSTER_MAX_BYTES = 150_000;
+// Tira de giro (`components/ui/Turntable.astro`): 24 cuadros 4:3 en una fila, ≤ 120 kB, junto a su póster.
+const STRIP = /-turntable\.webp$/;
+const STRIP_FRAMES = 24;
+const STRIP_MAX_BYTES = 120_000;
 
 if (existsSync(productsDir)) {
   for (const brandDir of readdirSync(productsDir)) {
@@ -161,8 +165,14 @@ if (existsSync(productsDir)) {
         const meta = await sharp(dir).metadata();
         assert(meta.width === 1200 && meta.height === 900, `/products/${brandDir}: el póster mide ${meta.width}x${meta.height}, no 1200x900`);
         assert(statSync(dir).size <= POSTER_MAX_BYTES, `/products/${brandDir}: el póster pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 150 kB)`);
+      } else if (STRIP.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        const frame = meta.width / STRIP_FRAMES;
+        assert(Number.isInteger(frame) && frame * 3 === meta.height * 4, `/products/${brandDir}: la tira mide ${meta.width}x${meta.height}, no ${STRIP_FRAMES} cuadros 4:3 en una fila`);
+        assert(statSync(dir).size <= STRIP_MAX_BYTES, `/products/${brandDir}: la tira pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 120 kB)`);
+        assert(existsSync(join(productsDir, brandDir.replace(STRIP, '-poster.jpg'))), `/products/${brandDir}: tira de giro sin su póster`);
       } else {
-        assert(false, `/products/${brandDir}: archivo suelto que no es un póster generado`);
+        assert(false, `/products/${brandDir}: archivo suelto que no es un póster ni una tira de giro generados`);
       }
       continue;
     }

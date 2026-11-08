@@ -6,9 +6,13 @@
  * sitio no paga three.js. Con movimiento reducido no se carga nunca; la portada
  * deja la fotografía oficial.
  *
- * El fondo es transparente: el papel lo pone el CSS, de modo que la escena se
- * asienta sobre el mismo `paper` que el resto de la página y no introduce un
- * color propio.
+ * Estudio oscuro (showroom): el fondo del lienzo sigue transparente y el grafito
+ * lo pone el CSS (`--color-studio`, igual a `paper`), de modo que la escena se
+ * asienta sobre el mismo fondo que la página. La escena sólo añade el piso: un
+ * charco de luz suave bajo el equipo (el foco de un lanzamiento de producto) y
+ * la sombra de contacto, más densa que sobre papel para que se lea sobre grafito.
+ * Un contraluz más fuerte separa la silueta del fondo. Sólo cambian luz y
+ * piso: la geometría y los materiales de cada equipo (`models/*.ts`) no se tocan.
  */
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
@@ -68,6 +72,12 @@ export interface Showroom {
   /** Cambia el equipo en el mismo escenario (un solo lienzo, un solo WebGL). */
   setModel(model: BuiltModel): void;
   /**
+   * Fija el giro en el acto, sin seguimiento suave. Sólo para los pósteres y las
+   * tiras de giro (`scripts/generate-posters.mjs`, `?poster=1`): con
+   * `html[data-poster]` la escena se publica en `window.__studio`.
+   */
+  snapYaw(offset: number): void;
+  /**
    * El navegador retiró el contexto WebGL (GPU reiniciada, demasiados
    * contextos, pestaña en segundo plano en un teléfono). El bucle ya se paró;
    * quien monta la escena la libera y vuelve a la imagen fija. No se intenta
@@ -125,11 +135,12 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   const fill = new THREE.DirectionalLight(0xdfe8ff, 0.7);
   fill.position.set(6, 3, 4);
   scene.add(fill);
-  const rim = new THREE.DirectionalLight(0xffffff, 1.2);
+  // Contraluz: sobre grafito separa la silueta del fondo (sobre papel bastaba 1,2).
+  const rim = new THREE.DirectionalLight(0xeaf6ff, 2.2);
   rim.position.set(2, 5, -7);
   scene.add(rim);
 
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.16 }));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.ShadowMaterial({ opacity: 0.5 }));
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
@@ -139,8 +150,8 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   blobCanvas.width = blobCanvas.height = 128;
   const g = blobCanvas.getContext('2d')!;
   const fade = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  fade.addColorStop(0, 'rgba(0,0,0,.32)');
-  fade.addColorStop(0.55, 'rgba(0,0,0,.14)');
+  fade.addColorStop(0, 'rgba(0,0,0,.62)');
+  fade.addColorStop(0.55, 'rgba(0,0,0,.3)');
   fade.addColorStop(1, 'rgba(0,0,0,0)');
   g.fillStyle = fade;
   g.fillRect(0, 0, 128, 128);
@@ -152,6 +163,29 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   blob.rotation.x = -Math.PI / 2;
   blob.position.y = 0.002;
   scene.add(blob);
+
+  // Piso del estudio: un charco de luz que se apaga hacia los bordes, bajo la
+  // sombra. Sin mapa de tonos: es un velo claro sobre el grafito del CSS, no
+  // una superficie iluminada, y así se ve igual en los dos niveles.
+  const poolCanvas = document.createElement('canvas');
+  poolCanvas.width = poolCanvas.height = 256;
+  const pg = poolCanvas.getContext('2d')!;
+  const glow = pg.createRadialGradient(128, 128, 0, 128, 128, 128);
+  glow.addColorStop(0, 'rgba(236,240,238,.16)');
+  glow.addColorStop(0.45, 'rgba(236,240,238,.07)');
+  glow.addColorStop(1, 'rgba(236,240,238,0)');
+  pg.fillStyle = glow;
+  pg.fillRect(0, 0, 256, 256);
+  const poolTexture = new THREE.CanvasTexture(poolCanvas);
+  poolTexture.colorSpace = THREE.SRGBColorSpace;
+  const pool = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({ map: poolTexture, transparent: true, depthWrite: false, toneMapped: false }),
+  );
+  pool.rotation.x = -Math.PI / 2;
+  pool.position.y = -0.002;
+  pool.renderOrder = -1;
+  scene.add(pool);
   const applyTier = () => {
     key.castShadow = tier === 'high';
     ground.visible = tier === 'high';
@@ -193,6 +227,8 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     anchorNames = Object.keys(next.anchors);
     const foot = new THREE.Box3().setFromObject(next.root).getSize(new THREE.Vector3());
     blob.scale.set(foot.x * 1.25, foot.z * 1.25, 1);
+    const reach = Math.max(foot.x, foot.z, foot.y * 0.6) * 3.2;
+    pool.scale.set(reach, reach, 1);
   };
   mount(initial);
 
@@ -355,7 +391,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   document.addEventListener('visibilitychange', onVisibility);
   start();
 
-  return {
+  const api: Showroom = {
     setPower(on) {
       powered = on;
       model.setPower(on);
@@ -382,6 +418,11 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     setYaw(offset) {
       yawOffset = offset;
       if (offset === null) idle = true;
+      start();
+    },
+    snapYaw(offset) {
+      yawOffset = offset;
+      stage.rotation.y = yaw + offset;
       start();
     },
     setControls(enabled) {
@@ -417,9 +458,15 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
       blob.geometry.dispose();
       (blob.material as THREE.Material).dispose();
       blobTexture.dispose();
+      pool.geometry.dispose();
+      (pool.material as THREE.Material).dispose();
+      poolTexture.dispose();
       key.shadow.dispose();
       renderer.dispose();
       if (discard) renderer.forceContextLoss();
     },
   };
+  // Pósteres y tiras de giro: el script de pósteres gira el equipo cuadro a cuadro.
+  if (document.documentElement.hasAttribute('data-poster')) (window as unknown as { __studio?: Showroom }).__studio = api;
+  return api;
 }

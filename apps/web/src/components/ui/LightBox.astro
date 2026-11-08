@@ -1,0 +1,113 @@
+---
+import type { ProductImageRecord } from '../../data/productImages';
+import { imageSourcesFor } from '../../lib/productImage';
+
+/**
+ * Caja de luz: la fotografía de fabricante (fondo blanco) sobre un plinto claro
+ * con degradé radial (`--color-lightbox-hi` → `--color-lightbox-lo`) dentro de
+ * la tarjeta o sección oscura, como un equipo iluminado en una vitrina. Es el
+ * único lugar claro del sitio y la única forma de mostrar una foto de fondo
+ * blanco sobre el showroom oscuro (para los modelos con escena 3D se usa
+ * `Turntable`).
+ *
+ * - No recorta fondos: la foto se funde con el plinto por `mix-blend-mode:
+ *   multiply` (el blanco del fabricante desaparece, el equipo queda).
+ * - Mismo contrato que `ModelPhoto`: recibe una fila de `productImages.ts`, no
+ *   dibuja nada si la fila no está `VERIFIED`, lleva `data-image-id` /
+ *   `data-image-scope` en el `<figure>` y rotula la imagen representativa de
+ *   familia (`validate:images` lo exige).
+ * - Caja de proporción fija (`ratio`), así que no hay salto de diseño mientras
+ *   carga; la imagen nunca se amplía por encima de su tamaño real.
+ * - El plinto tiene su propio radio; no le ponga borde ni sombra encima: el
+ *   contenedor oscuro es el marco.
+ */
+interface Props {
+  image: ProductImageRecord | undefined;
+  /** Nombre del fabricante para el rótulo. */
+  brandName?: string;
+  /** Proporción de la caja: `4 / 3` coincide con `Turntable` (tarjetas). */
+  ratio?: '4 / 3' | '1 / 1' | '4 / 5';
+  /** Ancho aproximado de presentación, para `sizes`. */
+  size?: 'thumb' | 'card' | 'sheet' | 'hero';
+  /** Carga con prioridad (sólo la imagen principal de la primera pantalla). */
+  priority?: boolean;
+  /** Rótulo visible bajo el plinto con modelo y fabricante. */
+  captioned?: boolean;
+  class?: string;
+}
+
+const { image, brandName, ratio = '4 / 3', size = 'card', priority = false, captioned = false, class: className = '' } = Astro.props;
+
+const sources = imageSourcesFor(image);
+const SIZES: Record<NonNullable<Props['size']>, string> = {
+  thumb: '(min-width: 768px) 120px, 30vw',
+  card: '(min-width: 1280px) 400px, (min-width: 768px) 45vw, 92vw',
+  sheet: '(min-width: 1024px) 280px, (min-width: 768px) 32vw, 70vw',
+  hero: '(min-width: 1024px) 560px, (min-width: 768px) 50vw, 92vw',
+};
+const representative = sources?.scope === 'familia-representativa';
+const captionText = sources
+  ? [representative ? `Imagen representativa de la familia ${sources.model}` : sources.model, brandName].filter(Boolean).join(', ')
+  : '';
+---
+
+{
+  sources && (
+    <figure class:list={['lightbox', className]} data-image-id={sources.record.id} data-image-scope={sources.scope}>
+      <div class="lightbox__plinth" style={`aspect-ratio: ${ratio}`}>
+        <picture>
+          <source type="image/avif" srcset={sources.avifSrcset} sizes={SIZES[size]} />
+          <source type="image/webp" srcset={sources.webpSrcset} sizes={SIZES[size]} />
+          <img
+            src={sources.src}
+            alt={sources.alt}
+            width={sources.width}
+            height={sources.height}
+            sizes={SIZES[size]}
+            loading={priority ? 'eager' : 'lazy'}
+            fetchpriority={priority ? 'high' : 'auto'}
+            decoding={priority ? 'sync' : 'async'}
+            style={`max-width: ${sources.width}px; max-height: ${sources.height}px`}
+          />
+        </picture>
+      </div>
+      {captioned && <figcaption class="lightbox__caption t-data">{captionText}</figcaption>}
+      {!captioned && representative && <figcaption class="sr-only">{captionText}</figcaption>}
+    </figure>
+  )
+}
+
+<style>
+  .lightbox {
+    margin: 0;
+  }
+  .lightbox__plinth {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border-radius: calc(var(--radius-card) - 0.25rem);
+    background:
+      radial-gradient(70% 55% at 50% 38%, var(--color-lightbox-hi) 0%, var(--color-lightbox-hi) 40%, transparent 100%),
+      linear-gradient(var(--color-lightbox-hi), var(--color-lightbox-lo));
+    /* El canto inferior del plinto: una sombra interior apenas visible. */
+    box-shadow: inset 0 -28px 40px -32px rgb(0 0 0 / 0.35);
+  }
+  .lightbox__plinth picture {
+    display: contents;
+  }
+  .lightbox__plinth img {
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 100%;
+    height: 100%;
+    padding: 7%;
+    object-fit: contain;
+    mix-blend-mode: multiply;
+  }
+  .lightbox__caption {
+    margin-top: 0.625rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+</style>

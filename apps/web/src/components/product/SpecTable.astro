@@ -129,7 +129,9 @@ const id = (index: number) => `src-${entry.slug}-${index}`;
     max-width: 15.5rem;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
-    background: var(--color-ink-950);
+    /* Showroom oscuro (Task 1): `ink-950` ya es claro; la nota va en grafito elevado. */
+    border: 1px solid var(--color-hairline-strong);
+    background: var(--color-pressed);
     color: var(--color-onink-100);
     font-family: var(--font-mono);
     font-size: 0.75rem;

@@ -129,8 +129,8 @@ console.log('\nMenú móvil (375 px)');
   );
   check(
     (await page.locator('.site-menu__panel').evaluate((el) => getComputedStyle(el).backgroundColor)) ===
-      'rgb(20, 22, 23)',
-    'el panel del menú es de tinta (rgb(20, 22, 23))',
+      'rgb(28, 32, 35)',
+    'el panel del menú es grafito elevado (raised, rgb(28, 32, 35))',
   );
   const menuWa = await page.locator('.site-menu__panel a.btn-whatsapp').evaluate((el) => ({
     height: Math.round(el.getBoundingClientRect().height),
@@ -300,7 +300,8 @@ console.log('\nCabecera (1440 px)');
     const page = await context.newPage();
     await page.goto(`${base}/`, { waitUntil: 'load' });
     const bg = await page.evaluate(() => getComputedStyle(document.querySelector('.site-header')).backgroundColor);
-    check(bg === 'rgb(20, 22, 23)', `en la portada la cabecera es de tinta (${bg})`);
+    // Showroom oscuro: la misma cabecera en todas las páginas, grafito translúcido con desenfoque.
+    check(bg === 'rgba(13, 15, 16, 0.74)', `en la portada la cabecera es grafito translúcido (${bg})`);
     const theme = await page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content);
     check(theme === '#141617', `en la portada theme-color es #141617 (${theme})`);
     const nav = await page.evaluate(() => [...document.querySelectorAll('.site-header__nav a')].map((a) => a.textContent.trim()));
@@ -809,11 +810,11 @@ console.log('\nContacto y pie (1440 px)');
     const style = getComputedStyle(el);
     return `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`;
   });
-  check(ring === '2px solid rgb(15, 118, 110)', `Contacto: el foco del campo es teal-700 de 2 px (${ring})`);
+  check(ring === '2px solid rgb(45, 212, 191)', `Contacto: el foco del campo es teal-700 de 2 px (${ring})`);
 
   await page.goto(`${base}/`, { waitUntil: 'load' });
   const bg = await page.locator('footer').evaluate((el) => getComputedStyle(el).backgroundColor);
-  check(bg === 'rgb(250, 250, 247)', `Pie: fondo papel en la portada (${bg})`);
+  check(bg === 'rgb(21, 24, 26)', `Pie: fondo grafito (surface) en la portada (${bg})`);
   const paddingTop = await page.locator('footer').evaluate((el) => getComputedStyle(el).paddingTop);
   check(paddingTop === '88px', `Pie: 88 px de aire superior (${paddingTop})`);
   await context.close();
@@ -1817,7 +1818,7 @@ console.log('\nBurbuja de conversación');
     });
     check(box.tag === 'BUTTON' && box.popup === 'dialog', `burbuja: es un <button aria-haspopup="dialog"> (${box.tag}, ${box.popup})`);
     check(box.w === 56 && box.h === 56 && box.right >= 8 && box.right <= 40 && box.bottom >= 8 && box.bottom <= 40, `burbuja: 56 px abajo a la derecha (${JSON.stringify(box)})`);
-    check(box.bg === 'rgb(20, 22, 23)', `burbuja: relleno de tinta (${box.bg})`);
+    check(box.bg === 'rgb(45, 212, 191)', `burbuja: relleno teal (accent) (${box.bg})`);
     check((await chatChunks(page)).length === 0, 'burbuja: el código del panel no se carga antes del primer clic');
     await bubble.focus();
     await page.keyboard.press('Enter');

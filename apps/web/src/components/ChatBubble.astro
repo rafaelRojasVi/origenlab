@@ -160,13 +160,13 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     height: 3.5rem;
     border: 0;
     border-radius: 50%;
-    background-color: var(--color-ink-950);
-    color: var(--color-onink-100);
-    box-shadow: 0 6px 20px rgb(20 22 23 / 0.18);
+    background-color: var(--color-accent);
+    color: var(--color-on-accent);
+    box-shadow: 0 6px 24px rgb(0 0 0 / 0.55), 0 0 0 4px var(--color-glow);
     cursor: pointer;
   }
   .cb-btn:hover {
-    background-color: var(--color-ink-800);
+    background-color: var(--color-accent-hover);
   }
   /* Con la barra fija de la página de modelo a la vista, la burbuja se apoya encima. */
   html:has([data-sticky-cta]:not([data-hidden])) .cb-btn {
@@ -190,9 +190,9 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     padding: 0;
     border: 1px solid var(--color-hairline);
     border-radius: var(--radius-card);
-    background-color: var(--color-paper);
+    background-color: var(--color-raised);
     color: var(--color-ink-950);
-    box-shadow: 0 18px 48px rgb(20 22 23 / 0.18);
+    box-shadow: 0 18px 48px rgb(0 0 0 / 0.6);
     overflow: hidden;
   }
   .cb[open] {
@@ -200,7 +200,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     flex-direction: column;
   }
   .cb::backdrop {
-    background-color: rgb(20 22 23 / 0.16);
+    background-color: rgb(0 0 0 / 0.5);
   }
   .cb__hd {
     display: flex;
@@ -313,7 +313,7 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
     padding: 0 0.875rem;
     border: 1px solid var(--color-ink-500);
     border-radius: var(--radius-btn);
-    background-color: var(--color-raised);
+    background-color: var(--color-paper);
     color: var(--color-ink-950);
     font: inherit;
     font-size: 1rem;

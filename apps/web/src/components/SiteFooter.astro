@@ -10,7 +10,7 @@ import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import SiteLogo from './SiteLogo.astro';
 
 /**
- * Pie sobre papel (tablero HomeA): marca, las seis familias, las siete marcas en
+ * Pie en grafito (`surface`, un tono sobre el fondo de página; tablero HomeA): marca, las seis familias, las siete marcas en
  * el orden de la lista cerrada, la empresa y el contacto, y una fila legal.
  * Las marcas se enlazan todas: la regla de la portada que oculta una marca del
  * riel no alcanza al pie.
@@ -111,7 +111,8 @@ const brandLinks = APPROVED_BRAND_IDS.flatMap((id) => {
 
 <style>
   .site-footer {
-    background-color: var(--color-paper);
+    background-color: var(--color-surface);
+    border-top: 1px solid var(--color-hairline);
     padding: 88px 0 40px;
   }
   .site-footer__grid {

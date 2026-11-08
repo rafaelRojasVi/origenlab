@@ -9,7 +9,9 @@ import Icon from './ui/Icon.astro';
 /**
  * Cabecera fija. 72 px arriba, 56 px con scroll (sólo CSS donde existe
  * `animation-timeline: scroll()`; si no, un observador alterna `data-scrolled`).
- * `tone="ink"` la pinta de tinta para la portada.
+ * Una sola apariencia (showroom oscuro): grafito translúcido con desenfoque,
+ * sobre la portada y sobre el resto. `tone` se acepta por compatibilidad y ya
+ * no cambia el color.
  */
 interface Props {
   tone?: 'paper' | 'ink';
@@ -26,11 +28,11 @@ function isActive(href: string, matches?: readonly string[]): boolean {
 }
 ---
 
-<header class:list={['site-header', tone === 'ink' && 'on-ink']}>
+<header class:list={['site-header', `site-header--${tone}`]}>
   <noscript><style>.site-menu__btn{display:none}</style></noscript>
   <div class="site-header__bar shell">
     <a href="/" class="site-header__home" aria-label="OrigenLab, ir al inicio">
-      <SiteLogo motion tone={tone === 'ink' ? 'paper' : 'ink'} />
+      <SiteLogo motion />
     </a>
 
     <nav class="site-header__nav" aria-label="Navegación principal">
@@ -190,21 +192,23 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     --nav: var(--color-ink-600);
     --nav-on: var(--color-ink-950);
     --hd-line: var(--color-hairline);
-    --hd-glow: rgb(20 22 23 / 0.18);
-    --hd-shadow: 0 1px 0 var(--hd-line), 0 10px 24px -14px var(--hd-glow);
+    --hd-glow: rgb(0 0 0 / 0.6);
+    --hd-shadow: 0 1px 0 var(--hd-line), 0 12px 28px -14px var(--hd-glow);
     position: sticky;
     top: 0;
     z-index: 40;
     height: var(--hd-h);
+    /* Sin desenfoque (navegadores viejos) el fondo es grafito opaco: el texto de
+       la cabecera nunca queda sobre el contenido que pasa por debajo. */
     background-color: var(--color-paper);
     border-bottom: 1px solid var(--hd-line);
   }
-  .site-header.on-ink {
-    --nav: var(--color-onink-300);
-    --nav-on: var(--color-onink-100);
-    --hd-line: var(--color-onink-hairline);
-    --hd-glow: rgb(0 0 0 / 0.5);
-    background-color: var(--color-ink-950);
+  @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .site-header {
+      background-color: var(--color-header);
+      -webkit-backdrop-filter: blur(16px) saturate(140%);
+      backdrop-filter: blur(16px) saturate(140%);
+    }
   }
   .site-header__bar {
     display: grid;
@@ -285,7 +289,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     flex-direction: column;
     gap: 2rem;
     padding: 1rem 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
-    background-color: var(--color-ink-950);
+    background-color: var(--color-raised);
     border-top: 1px solid var(--color-onink-hairline);
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -307,7 +311,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     color: var(--color-onink-100);
   }
   .site-menu__panel nav a[aria-current='page'] {
-    color: var(--color-teal-500);
+    color: var(--color-teal-700);
   }
   .site-menu__actions {
     display: flex;

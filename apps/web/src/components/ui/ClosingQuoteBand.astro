@@ -6,9 +6,10 @@ import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { ctaLabels } from '../../lib/ctaLabels';
 
 /**
- * Banda de cierre (tablero HomeA): un bloque de tinta dentro de los márgenes de
- * la página, con el titular a la izquierda y las dos acciones apiladas a la
- * derecha. Es la única superficie invertida de cada página además del pie.
+ * Banda de cierre (tablero HomeA): la banda elevada (`--color-band`, grafito con
+ * velo teal y un foco suave arriba a la izquierda) dentro de los márgenes de la
+ * página, con el titular a la izquierda y las dos acciones apiladas a la
+ * derecha. Conserva `.band` (qa:contrast la mide) y `.on-ink`.
  *
  * El correo y el teléfono ya no se repiten aquí: viven en el pie.
  *
@@ -79,12 +80,15 @@ const whatsappFirst = primary === 'whatsapp';
     gap: 2.5rem;
     align-items: end;
     padding: clamp(3rem, 7vw, 6rem) clamp(1.5rem, 6vw, 5.5rem);
+    border: 1px solid var(--color-band-line);
     border-radius: var(--radius-band);
-    background-color: var(--color-ink-950);
+    background:
+      radial-gradient(60% 90% at 12% 0%, var(--color-glow), transparent 70%),
+      var(--color-band);
     color: var(--color-onink-100);
   }
   .band__title {
-    color: var(--color-raised);
+    color: var(--color-fg);
     font-size: clamp(2.125rem, 4.6vw, 4rem);
     font-weight: 800;
     line-height: 1;
