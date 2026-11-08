@@ -9,7 +9,7 @@ import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ModelHero from '../../../components/product/ModelHero.astro';
 import ProductStory from '../../../components/product/ProductStory.astro';
 import ModelHeroCopy from '../../../components/product/ModelHeroCopy.astro';
-import ModelCard from '../../../components/product/ModelCard.astro';
+import LitCard from '../../../components/ui/LitCard.astro';
 import SpecTable from '../../../components/product/SpecTable.astro';
 import AccessoryCards from '../../../components/product/AccessoryCards.astro';
 import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
@@ -18,6 +18,7 @@ import TrustStrip from '../../../components/product/TrustStrip.astro';
 import { site } from '../../../config/site';
 import { getBrandById } from '../../../lib/catalog';
 import { publicClaim } from '../../../data/claims';
+import { rankModels } from '../../../lib/ranking';
 import { faqJsonLd } from '../../../lib/jsonld';
 import { familyHref, familyInfo, hasCollectionPages, imageForEntry, modelHref, modelSections, relatedFor } from '../../../lib/modelos';
 import { PRODUCT_IMAGE_WIDTHS, imageSourcesFor } from '../../../lib/productImage';
@@ -56,7 +57,8 @@ const story = entry.showroom_id
   : undefined;
 const media = story ? 'story' : entry.showroom_id && showroomEntry(entry.showroom_id) ? 'showroom' : 'photo';
 
-const related = relatedFor(entry, all, 3);
+// Relacionados: los que nombra la ficha y su familia, en el orden comercial (`rankModels`), hasta cuatro.
+const related = rankModels(relatedFor(entry, all, 8).map((other) => ({ id: other.slug, other }))).slice(0, 4).map(({ other }) => other);
 const { applications, accessories, faqs } = modelSections(entry, story);
 const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', {
   day: 'numeric',
@@ -118,15 +120,14 @@ const description =
       applications.length > 0 && (
         <section class="msec msec--alt" aria-labelledby="aplicaciones-title">
           <div class="shell rv">
-            <p class="t-label">Aplicaciones</p>
             <h2 id="aplicaciones-title" class="mh2">
               Para qué se usa el <span translate="no">{entry.name}</span>
             </h2>
             <ol class="model-apps">
               {applications.map((item, i) => (
                 <li>
-                  <span class="t-label">{String(i + 1).padStart(2, '0')}</span>
-                  <h3 class="t-h3-lg">{item}</h3>
+                  <span>{String(i + 1).padStart(2, '0')}</span>
+                  <h3>{item}</h3>
                 </li>
               ))}
             </ol>
@@ -166,8 +167,7 @@ const description =
       accessories.length > 0 && (
         <section class="msec msec--alt" aria-labelledby="accesorios-title">
           <div class="shell rv">
-            <p class="t-label">Accesorios e insumos</p>
-            <h2 id="accesorios-title" class="mh2">Accesorios disponibles</h2>
+            <h2 id="accesorios-title" class="mh2">Accesorios e insumos</h2>
             <AccessoryCards items={accessories} quoteHref={quoteHref} />
           </div>
         </section>
@@ -178,11 +178,10 @@ const description =
       related.length > 0 && (
         <section class="msec" aria-labelledby="relacionados-title">
           <div class="shell rv">
-            <p class="t-label">Modelos relacionados</p>
-            <h2 id="relacionados-title" class="mh2">Otros modelos de la familia</h2>
+            <h2 id="relacionados-title" class="mh2">Otros modelos</h2>
             <div class="model-rel">
               {related.map((other) => (
-                <ModelCard entry={other} variant="related" />
+                <LitCard entry={other} />
               ))}
             </div>
           </div>
@@ -204,36 +203,50 @@ const description =
   </ModelHero>
 
   <ClosingQuoteBand
-    title={sameDay ? `Cuéntenos su muestra. Le cotizamos el ${entry.name} el mismo día hábil.` : `Cuéntenos su muestra y le cotizamos el ${entry.name}.`}
-    body="Indique el volumen y su institución. Respondemos con alternativas y condiciones por escrito."
+    title={sameDay ? `${publicClaim('cotizacion-mismo-dia-habil')}.` : `Le cotizamos el ${entry.name}.`}
+    body={`Cuéntenos su muestra, el volumen y su institución. Le respondemos por el ${entry.name} con alternativas y condiciones por escrito.`}
     productName={entry.name}
     brandName={brandName}
     quoteHref={quoteHref}
     modelo={entry.slug}
-  />
+  >
+    <a href="/como-comprar/#cotizacion" class="model-quote-link">Así se ve su cotización →</a>
+  </ClosingQuoteBand>
 </Layout>
 
 <style is:global>
+  /* Aplicaciones: baldosas blancas con numeral en la tinta de la familia, sobre la franja teal pálida. */
   .model-apps {
     list-style: none;
-    margin: 3.5rem 0 0;
+    margin: 3rem 0 0;
     padding: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 1.5rem;
+    gap: 1rem;
   }
   .model-apps li {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    padding-top: 1.25rem;
-    border-top: 2px solid var(--color-ink-950);
+    gap: 1.5rem;
+    padding: 1.5rem;
+    border-radius: var(--radius-field);
+    background: var(--color-paper);
+    box-shadow: var(--shadow-card);
+  }
+  .model-apps span {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--fam);
+  }
+  .model-apps h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.02em;
   }
   .model-apps-note {
     margin-top: 2rem;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    line-height: 1.5;
     color: var(--color-ink-600);
   }
   .model-spec {
@@ -252,16 +265,9 @@ const description =
     max-width: 21rem;
     color: var(--color-ink-600);
   }
-  .model-rel {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 1.5rem;
-    margin-top: 3.5rem;
-  }
   @media (min-width: 960px) {
-    .model-apps,
-    .model-rel {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+    .model-apps {
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
     }
     .model-spec {
       grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);

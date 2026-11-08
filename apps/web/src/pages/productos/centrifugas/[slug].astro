@@ -4,8 +4,7 @@ import { join } from 'node:path';
 import { getCollection } from 'astro:content';
 import Layout from '../../../layouts/Layout.astro';
 import SpecGroups from '../../../components/ui/SpecGroups.astro';
-import ModelList from '../../../components/ui/ModelList.astro';
-import ModelRow from '../../../components/ui/ModelRow.astro';
+import LitCard from '../../../components/ui/LitCard.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
 import Button from '../../../components/ui/Button.astro';
@@ -19,6 +18,7 @@ import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
 import ModelFaq from '../../../components/product/ModelFaq.astro';
 import TrustStrip from '../../../components/product/TrustStrip.astro';
 import { publicClaim } from '../../../data/claims';
+import { rankModels } from '../../../lib/ranking';
 import { faqJsonLd, productJsonLd } from '../../../lib/jsonld';
 import { familyInfo, modelSections } from '../../../lib/modelos';
 import {
@@ -38,7 +38,6 @@ const product = slug ? getProductByFamilyAndSlug('centrifugas', slug) : undefine
 if (!product) return Astro.redirect('/productos/centrifugas');
 
 const brand = getBrandById(product.brandId);
-const related = getOrtoalresaCentrifuges().filter((item) => item.slug !== product.slug);
 
 /*
  * Centrifugación conserva estas fichas (`lib/modelos.ts`), pero su primera
@@ -49,9 +48,12 @@ const related = getOrtoalresaCentrifuges().filter((item) => item.slug !== produc
  * el build. Quedan aquí las secciones propias de la ficha heredada: ficha por
  * grupos, lista de modelos y condiciones comerciales.
  */
-const entry = (await getCollection('modelos')).map((item) => item.data as Modelo).find((item) => item.slug === product.id);
+const modelos = (await getCollection('modelos')).map((item) => item.data as Modelo);
+const entry = modelos.find((item) => item.slug === product.id);
 if (!entry) throw new Error(`centrifugas/${product.slug}: la centrífuga «${product.id}» no tiene ficha en la colección modelos`);
 const family = familyInfo(entry.family);
+// Las otras centrífugas, como tarjetas (`LitCard`) en el orden comercial (`rankModels`).
+const related = rankModels(modelos.filter((item) => item.family === entry.family && item.slug !== entry.slug).map((item) => ({ id: item.slug, item }))).map(({ item }) => item);
 const quoteHref = `/contacto/?producto=${entry.slug}`;
 const stories = import.meta.glob<{ story: ProductStoryConfig }>('../../../lib/showroom/stories/*.ts', { eager: true });
 const story = entry.showroom_id
@@ -93,7 +95,6 @@ const metaDescription = (
         <section class="msec msec--alt" aria-labelledby="aplicaciones-title">
           <div class="shell product-apps__grid rv">
             <div>
-              <p class="t-label">Aplicaciones</p>
               <h2 id="aplicaciones-title" class="mh2">
                 Para qué se usa el <span translate="no">{entry.name}</span>
               </h2>
@@ -143,8 +144,7 @@ const metaDescription = (
       accessories.length > 0 && (
         <section class="msec msec--alt" aria-labelledby="accesorios-title">
           <div class="shell rv">
-            <p class="t-label">Accesorios e insumos</p>
-            <h2 id="accesorios-title" class="mh2">Accesorios disponibles</h2>
+            <h2 id="accesorios-title" class="mh2">Accesorios e insumos</h2>
             <AccessoryCards items={accessories} quoteHref={quoteHref} />
           </div>
         </section>
@@ -153,11 +153,10 @@ const metaDescription = (
 
     <section class="msec" aria-labelledby="relacionados-title">
       <div class="shell rv">
-        <p class="t-label">Modelos relacionados</p>
-        <h2 id="relacionados-title" class="mh2">Otros modelos de la familia</h2>
-        <ModelList class="mt-10">
-          {related.map((item) => <ModelRow product={item} size="compact" />)}
-        </ModelList>
+        <h2 id="relacionados-title" class="mh2">Otras centrífugas</h2>
+        <div class="model-rel">
+          {related.map((item) => <LitCard entry={item} />)}
+        </div>
         <Button href="/productos/centrifugas/" variant="tertiary" class="mt-8">Ver la familia y la comparativa</Button>
       </div>
     </section>
@@ -172,7 +171,6 @@ const metaDescription = (
 
     <section class="msec msec--alt" aria-labelledby="condiciones-title">
       <div class="shell rv">
-        <p class="t-label">Condiciones</p>
         <h2 id="condiciones-title" class="mh2">Condiciones comerciales</h2>
         <div class="prose-block conditions">
           <p class="t-body">{product.commercialNote}</p>
@@ -186,13 +184,15 @@ const metaDescription = (
   </ModelHero>
 
   <ClosingQuoteBand
-    title={sameDay ? `Cuéntenos su muestra. Le cotizamos el ${entry.name} el mismo día hábil.` : `Cuéntenos su muestra y le cotizamos el ${entry.name}.`}
-    body="Comparta la aplicación, la configuración de rotor que necesita y su institución. Respondemos con alternativas y condiciones por escrito."
+    title={sameDay ? `${publicClaim('cotizacion-mismo-dia-habil')}.` : `Le cotizamos el ${entry.name}.`}
+    body={`Comparta la aplicación, la configuración de rotor que necesita y su institución. Le respondemos por el ${entry.name} con alternativas y condiciones por escrito.`}
     productName={product.name}
     brandName={brand?.name}
     modelo={entry.slug}
     quoteHref={quoteHref}
-  />
+  >
+    <a href="/como-comprar/#cotizacion" class="model-quote-link">Así se ve su cotización →</a>
+  </ClosingQuoteBand>
 </Layout>
 
 <style is:global>
@@ -213,7 +213,7 @@ const metaDescription = (
   }
   .product-apps__motif {
     max-width: 12rem;
-    color: var(--color-ink-800);
+    color: var(--fam);
   }
   .product-docs {
     display: flex;

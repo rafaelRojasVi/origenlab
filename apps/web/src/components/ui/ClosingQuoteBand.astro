@@ -15,6 +15,9 @@ import { ctaLabels } from '../../lib/ctaLabels';
  *
  * `primary` decide cuál de las dos acciones lleva el relleno: el formulario de
  * cotización (por omisión, y siempre en la portada) o WhatsApp.
+ *
+ * Slot opcional: una línea bajo las acciones (la ficha de modelo enlaza ahí
+ * el ejemplo de cotización, `/como-comprar/#cotizacion`).
  */
 interface Props {
   title: string;
@@ -66,6 +69,7 @@ const whatsappFirst = primary === 'whatsapp';
           )
         }
       </div>
+      <slot />
     </div>
   </div>
 </section>

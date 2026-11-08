@@ -2,36 +2,38 @@
 import { publicClaim } from '../../data/claims';
 
 /**
- * Franja «Cómo trabajamos» de la página de modelo: las afirmaciones aprobadas
- * del registro (`claims.ts`), una por columna, con filete de tinta y numeral
- * mono, sin texto de apoyo. Una afirmación sin aprobar no se dibuja; sin
- * ninguna, la franja entera se omite. «Pago», «garantía» y el pilar de
- * distribuidor no están aquí: no son afirmaciones aprobadas.
+ * «Cómo trabajamos» en la página de modelo: las afirmaciones aprobadas del
+ * registro (`claims.ts`), con el soporte primero y a la vista (plan comercial
+ * 11-07: puesta en marcha y capacitación). A la izquierda, sobre el tinte de
+ * la familia (`--tint` de `ModelHero`), la del soporte en grande; a la
+ * derecha, las demás en filas con numeral. Una afirmación sin aprobar no se
+ * dibuja; sin ninguna, la sección entera se omite. «Pago», «garantía» y el
+ * pilar de distribuidor no están aquí: no son afirmaciones aprobadas.
  */
-const items = [
-  'directo-con-el-fabricante',
-  'cotizacion-mismo-dia-habil',
-  'despacho-todo-chile',
-  'puesta-en-marcha-con-fabrica',
-  'proveedor-inscrito',
-]
+const support = publicClaim('puesta-en-marcha-con-fabrica');
+const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despacho-todo-chile', 'proveedor-inscrito']
   .map(publicClaim)
   .filter((text): text is string => Boolean(text));
 ---
 
 {
-  items.length > 0 && (
-    <section class="msec msec--alt" aria-labelledby="confianza-title">
-      <div class="shell rv">
-        <h2 id="confianza-title" class="t-label">Cómo trabajamos</h2>
-        <ul class="mtrust">
-          {items.map((text, i) => (
-            <li class:list={[text.length > 70 && 'mtrust__wide']}>
-              <span class="t-label">{String(i + 1).padStart(2, '0')}</span>
-              <b>{text}</b>
-            </li>
-          ))}
-        </ul>
+  (support || items.length > 0) && (
+    <section class="msec" aria-labelledby="confianza-title">
+      <div class="shell mtrust rv">
+        <div class="mtrust__lead">
+          <h2 id="confianza-title" class="mh2">Cómo trabajamos</h2>
+          {support && <p class="mtrust__support">{support}.</p>}
+        </div>
+        {items.length > 0 && (
+          <ol class="mtrust__list">
+            {items.map((text, i) => (
+              <li>
+                <span>{String(i + 1).padStart(2, '0')}</span>
+                {text}
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
     </section>
   )
@@ -39,37 +41,51 @@ const items = [
 
 <style is:global>
   .mtrust {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
+    display: grid;
+    gap: 2rem 4rem;
+    align-items: start;
   }
-  .mtrust li {
-    flex: 1 1 9.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.625rem;
-    padding-top: 1rem;
-    border-top: 2px solid var(--color-ink-950);
+  .mtrust__lead {
+    padding: clamp(1.75rem, 4vw, 3rem);
+    border-radius: var(--radius-band);
+    background: radial-gradient(70% 90% at 85% 100%, #fff 0%, transparent 70%) var(--tint, var(--color-surface));
   }
-  /* Una afirmación larga (proveedor inscrito) ocupa el doble: sin esto se partía en seis líneas a 1280 px. */
-  .mtrust li.mtrust__wide {
-    flex: 2 1 19rem;
-  }
-  .mtrust b {
-    font-size: 1rem;
-    font-weight: 600;
-    line-height: 1.35;
+  .mtrust__support {
+    margin-top: 1.5rem;
+    max-width: 18ch;
+    font-size: clamp(1.5rem, 2.6vw, 2.125rem);
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
     color: var(--color-ink-950);
   }
-  @media (max-width: 639.98px) {
-    .mtrust li {
-      flex-basis: 44%;
+  .mtrust__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .mtrust__list li {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    padding-block: 1.25rem;
+    border-top: 1px solid var(--color-hairline);
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-ink-950);
+  }
+  .mtrust__list span {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.9;
+    color: var(--color-teal-800);
+  }
+  @media (min-width: 960px) {
+    .mtrust {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
     }
-    .mtrust li.mtrust__wide {
-      flex-basis: 100%;
+    .mtrust__list {
+      margin-top: 1rem;
     }
   }
 </style>
