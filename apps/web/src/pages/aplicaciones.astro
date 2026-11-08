@@ -3,13 +3,11 @@ import { getCollection } from 'astro:content';
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
-import ApplicationList from '../components/ui/ApplicationList.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import LitCard from '../components/ui/LitCard.astro';
+import IndustryTiles from '../components/ui/IndustryTiles.astro';
 import { applications } from '../data/applications';
-import { company } from '../data/company';
 import { ctaLabels } from '../lib/ctaLabels';
 import { familyForScope, familyHref } from '../lib/modelos';
 import { rankFamilies, rankModels } from '../lib/ranking';
@@ -30,7 +28,8 @@ import type { Modelo } from '../content.config';
  * `modelos`, nunca de este archivo; `validate:catalog` comprueba que ninguna
  * aplicación se quede sin familia.
  *
- * Los mercados quedan debajo, en su propia sección, como la otra forma de entrar.
+ * Debajo, las industrias (`IndustryTiles`, las mismas de la portada), cada una
+ * hacia el bloque de su tarea: la otra forma de entrar.
  */
 const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
 const ranked = rankModels(all.map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry);
@@ -42,8 +41,6 @@ const tasks = rankFamilies(applications, (application) => segment(application.fa
   const slugs = application.familyIds.map((id) => familyForScope(id)).filter(Boolean);
   return { application, models: ranked.filter((entry) => slugs.includes(entry.family)) };
 });
-// Plan comercial (2026-11-08): compradores de industria antes que la academia.
-const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test(a)) - Number(/universidad/i.test(b)));
 ---
 
 <Layout
@@ -105,27 +102,10 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
     </div>
   </section>
 
-  <section class="shell section rule-top" aria-labelledby="tipos-title">
-    <SectionIndex index={2} label="Por tipo de laboratorio" />
-    <div class="sectors">
-      <div>
-        <h2 id="tipos-title" class="t-h2">Por tipo de laboratorio</h2>
-        <p class="t-body sectors__intro">{company.homeIntro}</p>
-        <p class="t-small sectors__note">
-          Es la otra forma de entrar: si prefiere partir del entorno de su laboratorio y no de la
-          tarea, estas tres líneas reúnen lo que conviene traer en cada caso.
-        </p>
-      </div>
-      <ul class="sectors__list">
-        {audience.map((item) => <li>{item}</li>)}
-      </ul>
-    </div>
-    <ApplicationList size="lg" class="mt-12" />
-    <Notice class="mt-10">
-      Las seis tareas de arriba y estas tres líneas describen lo mismo desde dos lados. Ninguna
-      lista es un catálogo cerrado de lo que podemos cotizar: si su ensayo no encaja en ninguna,
-      descríbalo y le decimos qué podemos gestionar.
-    </Notice>
+  <section class="shell section rule-top" aria-labelledby="industrias-title">
+    <SectionIndex index={2} label="Por industria" />
+    <h2 id="industrias-title" class="t-h2 industries-title">Por industria</h2>
+    <IndustryTiles />
   </section>
 
   <ClosingQuoteBand
@@ -225,29 +205,8 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
     min-height: 2.75rem;
   }
 
-  .sectors {
-    display: grid;
-    gap: 2.5rem;
-  }
-  .sectors__intro {
-    margin-top: 1.25rem;
-  }
-  .sectors__note {
-    margin-top: 1rem;
-    color: var(--color-ink-500);
-    max-width: 56ch;
-  }
-  .sectors__list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--color-hairline-strong);
-  }
-  .sectors__list li {
-    padding-block: 0.875rem;
-    font-size: 1rem;
-    color: var(--color-ink-800);
-    border-bottom: 1px solid var(--color-hairline);
+  .industries-title {
+    margin-bottom: 2rem;
   }
 
   @media (min-width: 768px) {
@@ -259,11 +218,6 @@ const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test
       grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
       gap: 3rem;
       align-items: baseline;
-    }
-    .sectors {
-      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
-      gap: 4rem;
-      align-items: start;
     }
   }
 </style>
