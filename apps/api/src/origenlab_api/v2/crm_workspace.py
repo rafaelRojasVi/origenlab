@@ -119,11 +119,14 @@ MAIL_QUOTE_NUMBERS_LIMIT = 500
 # operator rejected does not count; any other review state does, because a number sent by email
 # is used whether or not anyone has reviewed the message. `sent_at` is the message's Date header
 # as ISO 8601 (the capture falls back to Gmail's internal date); anything else falls back to
-# when the record was captured, so one odd header cannot fail the read.
+# when the record was captured, so one odd header cannot fail the read. The shape regex says «a
+# timestamp, not a bare day»; `pg_input_is_valid` guards the cast, since a value such as
+# «2026-13-40T99:99» has the shape and its cast would abort the whole read.
 MAIL_QUOTE_NUMBERS_SQL = rf"""
 with seen as (
   select btrim(n.value) as quote_number,
          case when sr.payload->>'sent_at' ~ '^\d{{4}}-\d{{2}}-\d{{2}}T\d{{2}}:\d{{2}}'
+                   and pg_input_is_valid(sr.payload->>'sent_at', 'timestamptz')
               then (sr.payload->>'sent_at')::timestamptz else sr.acquired_at end as seen_at,
          sr.id
     from evidence.source_record sr
