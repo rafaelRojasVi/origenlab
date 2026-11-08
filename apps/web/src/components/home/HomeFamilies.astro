@@ -2,18 +2,15 @@
 import { getCollection } from 'astro:content';
 import Icon from '../ui/Icon.astro';
 import LitCard from '../ui/LitCard.astro';
-import LightBox from '../ui/LightBox.astro';
 import { publicClaim } from '../../data/claims';
 import { isShownOnHome } from '../../data/brands';
-import { getBrandById } from '../../lib/catalog';
-import { ctaLabels } from '../../lib/ctaLabels';
-import { familyInfo, homeFamilyCards, imageForEntry, modelHref } from '../../lib/modelos';
+import { homeFamilyCards, modelHref } from '../../lib/modelos';
 import { rankFamilies, rankModels } from '../../lib/ranking';
 import { turntableFor } from '../../lib/turntable';
 import type { Modelo } from '../../content.config';
 
 /**
- * «Elija el equipo» (portada, «Blanco con color»), en tres tiempos:
+ * «Elija el equipo» (portada, «Blanco con color»), en dos tiempos:
  *
  * 1. Fila de modelos: el primer modelo de cada una de las cuatro primeras
  *    familias en el orden comercial (`rankFamilies` / `rankModels`: 3D primero),
@@ -21,8 +18,6 @@ import type { Modelo } from '../../content.config';
  * 2. Las seis familias en una franja compacta: el verbo (enlace a la familia,
  *    `.home-family-card`) y los dos primeros modelos de la colección, cada uno
  *    enlazado a su ficha (regla del dueño).
- * 3. Un equipo sin 3D, con la foto blanca del fabricante «parada» sobre la
- *    página (sin caja): la Ranger Count 3000, como en la maqueta elegida.
  *
  * La etiqueta de cifras sale del registro de afirmaciones. Con el titular B en
  * la primera pantalla, este bloque lleva «Elija el equipo. Nosotros lo cotizamos.»
@@ -31,9 +26,6 @@ interface Props {
   headlineB: boolean;
 }
 const { headlineB } = Astro.props;
-
-/** El equipo con foto de fabricante que se presenta solo (maqueta «Blanco con color»). */
-const FEATURE_PHOTO = 'ohaus-ranger-count-3000';
 
 const label = [publicClaim('familias-de-equipo'), publicClaim('marcas-con-las-que-trabajamos')]
   .filter(Boolean)
@@ -48,10 +40,6 @@ const row = families
   .map((family) => family.models.find((entry) => turntableFor(entry.slug)) ?? family.models[0])
   .filter((entry): entry is Modelo => Boolean(entry))
   .slice(0, 4);
-const photo = all.find((entry) => entry.slug === FEATURE_PHOTO && isShownOnHome(entry.brand));
-const photoImage = photo ? imageForEntry(photo) : undefined;
-const photoBrand = photo ? (getBrandById(photo.brand)?.name ?? photo.brand) : '';
-const photoLine = photo ? (photo.lead.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? photo.lead) : '';
 ---
 
 <section class="shell home-sec" id="familias" aria-labelledby="familias-title">
@@ -106,27 +94,6 @@ const photoLine = photo ? (photo.lead.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? photo.l
       ))
     }
   </ul>
-
-  {
-    photo && photoImage && (
-      <article class="onwhite rv">
-        <div class="onwhite__txt">
-          <p class="onwhite__fam">{familyInfo(photo.family).short}, {photoBrand}</p>
-          <h3 class="onwhite__name" translate="no">
-            <a href={modelHref(photo)} class="onwhite__link">{photo.name}</a>
-          </h3>
-          <p class="onwhite__line">{photoLine}</p>
-          <p class="onwhite__row">
-            <span class="onwhite__go" aria-hidden="true">{ctaLabels.viewProductDetail} ›</span>
-            <a href={`/contacto/?producto=${photo.slug}`} class="onwhite__quote" data-track="cotizacion_click" data-modelo={photo.slug}>
-              {ctaLabels.cotizar} ›<span class="sr-only"> {photo.name}</span>
-            </a>
-          </p>
-        </div>
-        <LightBox image={photoImage} brandName={photoBrand} size="hero" ratio="4 / 3" class="onwhite__fig" />
-      </article>
-    )
-  }
 </section>
 
 <style>
@@ -219,98 +186,6 @@ const photoLine = photo ? (photo.lead.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? photo.l
     .fam {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 0 1rem;
-    }
-  }
-
-  /* Foto del fabricante sobre la página, sin caja. */
-  .onwhite {
-    position: relative;
-    display: grid;
-    grid-template-columns: 5fr 7fr;
-    align-items: center;
-    gap: 2.5rem;
-    margin-top: clamp(4rem, 7vw, 6rem);
-    padding-top: clamp(2.25rem, 4vw, 3.5rem);
-    border-top: 1px solid var(--color-hairline);
-  }
-  .onwhite__fam {
-    margin-bottom: 0.625rem;
-    font-size: 0.84375rem;
-    font-weight: 500;
-    color: var(--color-ink-500);
-  }
-  .onwhite__name {
-    font-size: clamp(2rem, 3.4vw, 2.75rem);
-    font-weight: 800;
-    line-height: 1;
-    letter-spacing: -0.04em;
-  }
-  .onwhite__link::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-  }
-  .onwhite__link:focus-visible {
-    outline: none;
-  }
-  .onwhite__link:focus-visible::after {
-    outline: 2px solid var(--color-teal-700);
-    outline-offset: 4px;
-    border-radius: var(--radius-card);
-  }
-  .onwhite__line {
-    margin-top: 1rem;
-    max-width: 34ch;
-    font-size: 1.125rem;
-    line-height: 1.55;
-    color: var(--color-ink-600);
-  }
-  .onwhite__row {
-    display: flex;
-    gap: 1.25rem;
-    align-items: center;
-    margin-top: 1.5rem;
-    font-weight: 600;
-  }
-  .onwhite__go {
-    color: var(--color-teal-700);
-  }
-  .onwhite__quote {
-    position: relative;
-    z-index: 2;
-    display: inline-flex;
-    align-items: center;
-    min-height: 2.75rem;
-    color: var(--color-ink-950);
-  }
-  .onwhite__quote:hover,
-  .onwhite:hover .onwhite__go {
-    text-decoration: underline;
-    text-underline-offset: 4px;
-  }
-  .onwhite :global(.onwhite__fig) {
-    width: min(35rem, 100%);
-    justify-self: center;
-  }
-  .onwhite :global(.onwhite__fig img) {
-    transition: transform 800ms var(--ease-out);
-  }
-  .onwhite :global(figcaption) {
-    display: none;
-  }
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    .onwhite:hover :global(.onwhite__fig img) {
-      transform: translateY(-8px) scale(1.02);
-    }
-  }
-  @media (max-width: 899.98px) {
-    .onwhite {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0.5rem;
-    }
-    .onwhite :global(.onwhite__fig) {
-      order: -1;
     }
   }
 </style>
