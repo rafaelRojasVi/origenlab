@@ -8,8 +8,8 @@
  * `navigator.sendBeacon`; la recibe el Worker de Cloudflare que atiende
  * `origenlab.cl/api/stats/event`. El Worker sólo acepta POST del mismo origen,
  * cuerpo JSON de hasta 2048 bytes, un `name` de los seis (los cinco de abajo y `visita`) y, en
- * `props`, `modelo` (el slug del modelo, `[A-Za-z0-9._-]{1,64}`) en las cinco acciones y `origen` y
- * `pagina` en `visita`.
+ * `props`, `modelo` (el slug del modelo, `[A-Za-z0-9._-]{1,64}`) en las cinco acciones y `origen` (una
+ * de siete: google, perfil-google, linkedin, whatsapp, directo, interno, otro) y `pagina` en `visita`.
  *
  * Se envía un `Blob` con `application/json` para que el Worker vea ese tipo;
  * al ser del mismo origen no hay preflight. Sin `sendBeacon` no se hace nada:

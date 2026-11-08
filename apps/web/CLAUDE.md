@@ -60,8 +60,9 @@ variant there when you add a withheld claim. `validate:dist` fails on any hit.
 
 **Six measured events, no cookies.** `src/lib/stats.ts` sends five actions
 (`cotizacion_click`, `whatsapp_click`, `3d_interact`, `form_submit`, `pdf_download`);
-`src/lib/visit.ts` sends the sixth, `visita` (`origen` from six words, `pagina` =
-lowercased path). `npm run test:visit` tests the origin classifier. The Worker only
+`src/lib/visit.ts` sends the sixth, `visita`, once per page view including bfcache
+restores (`origen` from seven words — same-site referrer is `interno`, empty is `directo`;
+`pagina` = lowercased path), and never on pages with `data-noindex` on `<html>`. `npm run test:visit` tests the origin classifier. The Worker only
 accepts the page pattern `^/[a-z0-9/-]{0,80}$` (its allowlist lives on the backend
 plan, not in this repo); a new route outside that pattern sends no beacon.
 `validate:privacy` §6 allows exactly these names.

@@ -348,9 +348,21 @@ form.noValidate=true;
 var errPanel=document.getElementById('solicitud-network-error');
 var summary=form.querySelector('[data-error-summary]');
 var rat=document.getElementById('solicitud-render-at');
-if(rat)rat.value=String(Date.now()/1000);
 var sid=document.getElementById('solicitud-submission-id');
-if(sid)sid.value=crypto.randomUUID();
+var idle=lab.textContent;
+function fresh(){
+  if(rat)rat.value=String(Date.now()/1000);
+  if(sid)sid.value=crypto.randomUUID();
+}
+fresh();
+// Volver con Atrás desde /contacto/enviado/ restaura la página del bfcache con el botón
+// deshabilitado y «Enviando…»: se rehabilita y la solicitud nueva lleva otro id y otra hora.
+addEventListener('pageshow',function(ev){
+  if(!ev.persisted)return;
+  btn.disabled=false;
+  lab.textContent=idle;
+  fresh();
+});
 var prod=new URLSearchParams(location.search).get('producto');
 if(prod){
   prod=prod.trim().slice(0,120);

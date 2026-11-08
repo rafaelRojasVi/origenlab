@@ -21,7 +21,7 @@ const effectiveNoindex = noindex || robots === 'noindex';
 ---
 
 <!doctype html>
-<html lang="es-CL">
+<html lang="es-CL" data-noindex={effectiveNoindex ? '' : undefined}>
   <head>
     <Seo
       title={title}

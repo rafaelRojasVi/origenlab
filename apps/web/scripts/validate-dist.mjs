@@ -107,7 +107,7 @@ for (const file of pages) {
   assert(!html.includes('name="generator"'), at('expone la versión del generador'));
 
   /* -- Cabecera ---------------------------------------------------------- */
-  assert(/<html lang="es-CL">/.test(html), at('falta lang="es-CL"'));
+  assert(/<html lang="es-CL"( data-noindex)?>/.test(html), at('falta lang="es-CL"'));
   assert(/<link rel="canonical" href="https:\/\/origenlab\.cl\/[^"]*"/.test(html), at('canónica ausente o mal formada'));
   const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
   assert(canonical?.endsWith('/'), at(`la canónica debe llevar barra final: ${canonical}`));

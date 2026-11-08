@@ -173,11 +173,21 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
   } else {
     // Con primera pantalla (`[data-first-screen]`, el texto de entrada de la página de modelo) el recorrido
     // de la historia empieza donde ella termina.
+    // Su alto se lee una vez y lo actualiza un ResizeObserver: `lead()` corre en cada cuadro.
     const first = root.querySelector<HTMLElement>('[data-first-screen]');
-    runner = createScrollStory(spacer, scene, beats, {
-      lead: () => first?.offsetHeight ?? 0,
+    let leadPx = first?.offsetHeight ?? 0;
+    const sizes = first && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => (leadPx = first.offsetHeight)) : null;
+    if (first) sizes?.observe(first);
+    const story = createScrollStory(spacer, scene, beats, {
+      lead: () => leadPx,
       onProgress: (progress) => mark(activeBeat(progress, beats)?.beat.id ?? ''),
     });
+    runner = {
+      dispose() {
+        sizes?.disconnect();
+        story.dispose();
+      },
+    };
   }
   return handle;
 }

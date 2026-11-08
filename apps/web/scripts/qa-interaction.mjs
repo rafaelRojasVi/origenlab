@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * QA de interacción sobre `dist/`: teclado, menú móvil, sala 3D del hero,
- * fila de marcas, movimiento reducido y enlaces internos. Complementa
+ * fila de marcas, movimiento reducido y enlaces internos. El clasificador de
+ * origen de `visita` se prueba aparte (`npm run test:visit`), sin navegador. Complementa
  * `qa-screenshots.mjs`, que cubre la parte visual.
  *
  * Ejecutar: node scripts/qa-interaction.mjs
@@ -142,6 +143,44 @@ console.log('\nMenú móvil (375 px)');
     'con el panel cerrado el documento vuelve a desplazarse',
   );
   await context.close();
+}
+
+/* -- 1a. Menú móvil a 390 px: el foco no sale del panel, Atrás no lo reabre -- */
+console.log('\nMenú móvil: foco contenido y bfcache (390 px)');
+{
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await context.newPage();
+  await page.goto(`${base}/`, { waitUntil: 'load' });
+  await page.locator('[data-menu-toggle]').click();
+  const inert = await page.evaluate(() => ({
+    main: document.querySelector('main').inert,
+    footer: document.querySelector('footer')?.inert ?? true,
+    header: document.querySelector('.site-header').inert,
+  }));
+  check(inert.main && inert.footer && !inert.header, `menú abierto: main y pie inert, la cabecera no (${JSON.stringify(inert)})`);
+  await page.locator('.site-menu__panel .btn-whatsapp').focus();
+  const where = [];
+  for (let i = 0; i < 12; i++) {
+    await page.keyboard.press('Tab');
+    where.push(await page.evaluate(() => (document.activeElement?.closest('.site-header') ? 'header' : document.activeElement?.closest('main') ? 'main' : document.activeElement?.tagName ?? 'none')));
+  }
+  check(where.every((w) => w === 'header'), `Tab tras el último elemento del panel da la vuelta dentro de la cabecera (${[...new Set(where)].join(', ')})`);
+  for (let i = 0; i < 12; i++) await page.keyboard.press('Shift+Tab');
+  check(await page.evaluate(() => !!document.activeElement?.closest('.site-header')), 'Shift+Tab tampoco sale de la cabecera');
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+  const after = await page.evaluate(() => ({
+    hidden: document.querySelector('[data-menu-panel]').hidden,
+    overflow: document.documentElement.style.overflow,
+    inert: document.querySelector('main').inert,
+  }));
+  check(after.hidden && after.overflow === '' && !after.inert, `pagehide cierra el panel y libera el documento (${JSON.stringify(after)})`);
+  await context.close();
+}
+
+/* -- 1a'. `visita` no cuenta las páginas noindex: el layout marca <html data-noindex> -- */
+{
+  const html = (file) => readFileSync(join(dist, file), 'utf8').match(/<html[^>]*>/)?.[0] ?? '';
+  check(/data-noindex/.test(html('404.html')) && !/data-noindex/.test(html('index.html')), '404 lleva <html data-noindex> y la portada no');
 }
 
 /* -- 1b. Cabecera: 72 → 56 px, marca animada una vez, tinta en la portada --- */
@@ -690,6 +729,27 @@ console.log('\nFormulario de cotización (/contacto/, 375 px)');
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   check(errors.length === 0, 'formulario: sin errores JS en /contacto/');
+  // Volver con Atrás (bfcache): el botón vuelve a estar activo, con su texto, y la solicitud lleva id y hora nuevos.
+  const before = await page.evaluate(() => {
+    const btn = document.getElementById('solicitud-btn');
+    btn.disabled = true;
+    btn.querySelector('[data-btn-label]').textContent = 'Enviando…';
+    const sid = document.getElementById('solicitud-submission-id').value;
+    document.getElementById('solicitud-render-at').value = '1';
+    dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    return sid;
+  });
+  const restored = await page.evaluate(() => ({
+    disabled: document.getElementById('solicitud-btn').disabled,
+    label: document.querySelector('#solicitud-btn [data-btn-label]').textContent.trim(),
+    sid: document.getElementById('solicitud-submission-id').value,
+    renderAt: Number(document.getElementById('solicitud-render-at').value),
+  }));
+  check(
+    !restored.disabled && restored.label === 'Pedir cotización' && restored.sid && restored.sid !== before && restored.renderAt > 1,
+    `formulario: tras pageshow persistido el botón se rehabilita y la solicitud es nueva (${JSON.stringify({ ...restored, sid: restored.sid !== before })})`,
+  );
+
   await context.close();
 }
 

@@ -54,6 +54,7 @@ function isActive(href: string, matches?: readonly string[]): boolean {
       <Button
         href={site.quoteHref}
         size="sm"
+        track="cotizacion_click"
         class="site-header__cta"
       >
         <span class="site-header__cta-long">{ctaLabels.solicitarCotizacion}</span>
@@ -112,23 +113,39 @@ function isActive(href: string, matches?: readonly string[]): boolean {
 
 <script>
   /* Menú móvil: botón con aria-expanded. Escape y el clic fuera lo cierran y el
-     foco vuelve al botón, que es lo que espera quien navega con teclado. */
+     foco vuelve al botón, que es lo que espera quien navega con teclado. Abierto,
+     todo lo que no es la cabecera queda `inert` y Tab da la vuelta dentro de ella,
+     así el foco nunca cae detrás del panel (WCAG 2.4.11). `pagehide` lo cierra
+     para que volver con Atrás (bfcache) no traiga el panel abierto. */
   const toggle = document.querySelector<HTMLButtonElement>('[data-menu-toggle]');
   const panel = document.querySelector<HTMLElement>('[data-menu-panel]');
-  if (toggle && panel) {
+  const bar = document.querySelector<HTMLElement>('.site-header');
+  if (toggle && panel && bar) {
     const set = (open: boolean, focus = false) => {
       toggle.setAttribute('aria-expanded', String(open));
       panel.hidden = !open;
       document.documentElement.style.overflow = open ? 'hidden' : '';
+      for (const el of document.body.children) if (el !== bar) (el as HTMLElement).inert = open;
       if (focus) toggle.focus();
     };
     toggle.addEventListener('click', () => set(panel.hidden));
-    document.addEventListener('keydown', (e) => e.key === 'Escape' && !panel.hidden && set(false, true));
+    document.addEventListener('keydown', (e) => {
+      if (panel.hidden) return;
+      if (e.key === 'Escape') return set(false, true);
+      if (e.key !== 'Tab') return;
+      const items = [...bar.querySelectorAll<HTMLElement>('a[href], button')].filter((el) => el.offsetParent);
+      const edge = e.shiftKey ? items[0] : items[items.length - 1];
+      if (document.activeElement === edge || !bar.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? items[items.length - 1] : items[0])?.focus();
+      }
+    });
     document.addEventListener('click', (e) => {
       const t = e.target as Node;
       if (!panel.hidden && !toggle.contains(t) && !panel.contains(t)) set(false);
     });
     matchMedia('(min-width: 1024px)').addEventListener('change', (e) => e.matches && set(false));
+    addEventListener('pagehide', () => set(false));
   }
 
   /* Sin `animation-timeline: scroll()` (o con movimiento reducido, donde esa
