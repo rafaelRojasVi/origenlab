@@ -7,9 +7,9 @@ import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { site } from '../../config/site';
 
 /**
- * Portada, primera pantalla (tablero HomeA): sala oscura bajo la cabecera de
- * tinta. Titular, línea de valor, las dos acciones de «Mensaje B» y, debajo, la
- * sala 3D en un marco de papel con las tareas debajo.
+ * Portada, primera pantalla (tablero HomeA): showroom oscuro. Titular, línea
+ * de valor, las dos acciones de «Mensaje B» y, debajo, la sala 3D sobre el
+ * estudio grafito (sin caja ni marco claro) con las tareas debajo.
  *
  * El titular B sólo sale si la promesa «cotización el mismo día hábil» está
  * aprobada en el registro de afirmaciones (`headlineB`, que decide
@@ -30,7 +30,7 @@ const title = headlineB
   : ['Equipos', 'para', 'cada etapa', 'de su muestra.'];
 ---
 
-<section class="hero on-ink" aria-labelledby="hero-title">
+<section class="hero" aria-labelledby="hero-title">
   <div class="shell hero__copy">
     <p class="t-label hero__eyebrow"><i aria-hidden="true"></i>Equipos para laboratorio · todo Chile</p>
     <h1 id="hero-title" class="hero__title">
@@ -47,8 +47,8 @@ const title = headlineB
     </h1>
     <p class="hero__sub">{company.homeHeroLine}</p>
     <div class="hero__cta">
-      <Button href={site.quoteHref} tone="ink" track="cotizacion_click">{ctaLabels.solicitarCotizacion}</Button>
-      <Button href={buildWhatsAppQuoteUrl()} variant="whatsapp" tone="ink" external track="whatsapp_click">
+      <Button href={site.quoteHref} track="cotizacion_click">{ctaLabels.solicitarCotizacion}</Button>
+      <Button href={buildWhatsAppQuoteUrl()} variant="whatsapp" external track="whatsapp_click">
         {ctaLabels.porWhatsapp}
       </Button>
     </div>
@@ -56,7 +56,6 @@ const title = headlineB
 
   <div class="shell hero__scene">
     <Showroom
-      tone="ink"
       frame="wide"
       items={[
         { id: 'hielscher-up400st', task: 'Sonicar' },
@@ -72,9 +71,12 @@ const title = headlineB
 </section>
 
 <style>
+  /* Estudio oscuro: el grafito de la página con un foco cenital muy suave
+     detrás del equipo. Sin `.on-ink`: los tokens tienen aquí su valor normal. */
   .hero {
-    background-color: var(--color-ink-950);
-    color: var(--color-onink-100);
+    background-color: var(--color-paper);
+    background-image: radial-gradient(60rem 34rem at 50% 62%, rgb(255 255 255 / 0.035), transparent 70%);
+    color: var(--color-fg);
     padding: clamp(3rem, 5vw, 4.5rem) 0 clamp(4rem, 9vw, 7.5rem);
     text-align: center;
   }
@@ -82,19 +84,20 @@ const title = headlineB
     display: inline-flex;
     align-items: center;
     gap: 0.625rem;
-    color: var(--color-onink-300);
+    color: var(--color-ink-600);
   }
   .hero__eyebrow i {
     display: block;
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background-color: var(--color-teal-500);
+    background-color: var(--color-teal-700);
+    box-shadow: 0 0 0 4px var(--color-glow);
   }
   .hero__title {
     max-width: 13.5ch;
     margin: 1.5rem auto 0;
-    color: var(--color-paper);
+    color: var(--color-fg);
     font-size: clamp(42px, 5vw, 72px);
     font-weight: 800;
     line-height: 0.98;
@@ -106,13 +109,14 @@ const title = headlineB
   }
   /* El punto del 800 trae un hueco a la izquierda que a 72 px se lee como un espacio. */
   .hero__dot {
+    color: var(--color-teal-700);
     margin-left: -0.09em;
     font-style: normal;
   }
   .hero__sub {
     max-width: 34em;
     margin: 1.5rem auto 0;
-    color: var(--color-onink-300);
+    color: var(--color-ink-600);
     font-size: clamp(17px, 1.6vw, 21px);
     line-height: 1.55;
   }
