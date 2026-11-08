@@ -146,6 +146,7 @@ describe("the case drawer", () => {
     const calls = stub([card({ stage: "quoting", quotes: [historical], quote_numbers: ["00041-26"] })]);
     renderPipeline("admin", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: "Abrir borrador" })).not.toBeInTheDocument();
     // A historical quote is not the Cotizador's.
     expect(within(dialog).queryByRole("link", { name: /Abrir en Cotizador/ })).not.toBeInTheDocument();
@@ -158,6 +159,7 @@ describe("the case drawer", () => {
     const calls = stub([card({ stage: "quoting", quotes: [historical, draft], quote_numbers: ["00041-26", "00042-26"] })]);
     renderPipeline("sales", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: "Nueva cotización" })).not.toBeInTheDocument();
     const links = within(dialog).getAllByRole("link", { name: /Abrir en Cotizador/ });
     expect(links.map((a) => a.getAttribute("href"))).toEqual([`#/ventas/cotizaciones/${DRAFT_QUOTE}`]);
@@ -170,6 +172,7 @@ describe("the case drawer", () => {
     stub([card({ stage: "lost", closed_at: "2026-10-12T12:00:00Z", quotes: [historical, draft], quote_numbers: ["00041-26", "00042-26"] })]);
     renderPipeline("sales", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: /Nueva cotización|Abrir borrador/ })).not.toBeInTheDocument();
     // Its quotes still open in the Cotizador, to read.
     expect(within(dialog).getByRole("link", { name: /Abrir en Cotizador/ })).toHaveAttribute("href", `#/ventas/cotizaciones/${DRAFT_QUOTE}`);
@@ -179,6 +182,7 @@ describe("the case drawer", () => {
     stub([card({ stage: "quoting", quotes: [historical, draft], quote_numbers: ["00041-26", "00042-26"] })]);
     renderPipeline("viewer", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: /Nueva cotización|Abrir borrador/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("link", { name: /Abrir en Cotizador/ })).not.toBeInTheDocument();
   });

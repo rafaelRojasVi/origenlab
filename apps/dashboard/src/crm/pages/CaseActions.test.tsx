@@ -228,8 +228,11 @@ describe("case command helpers", () => {
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("Solicitud de balanza ficticia")).toBeInTheDocument();
     expect(within(dialog).getByText("Persona Ficticia")).toBeInTheDocument();
+    // The case's emails are the drawer's «Correos» tab.
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Correos" }));
     expect(within(dialog).getByRole("link", { name: /Abrir la cadena «Solicitud de balanza ficticia» en Gmail/ })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Resumen" }));
     // «No es una solicitud» is one confirmation, not the whole «Perdida» form (owner 2026-10-19).
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
     const confirm = within(dialog).getByRole("group", { name: "Confirmar «No es una solicitud»" });
@@ -1118,6 +1121,7 @@ describe("case drawer actions", () => {
     const form = within(dialog).getByRole("form", { name: "Mover a «Conversación»" });
     fireEvent.click(within(form).getByRole("button", { name: "Mover" }));
     expect(await within(dialog).findByTestId("drawer-refreshing")).toHaveTextContent("Actualizando…");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Notas y llamadas" }));
     const notesButton = within(dialog).getByRole("button", { name: "Agregar nota" });
     notesButton.focus();
     release();
@@ -1594,7 +1598,9 @@ describe("case origin in the pipeline", () => {
     render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
     const dialog = await screen.findByRole("dialog");
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Origen del caso" }), { target: { value: "llamada" } });
-    fireEvent.change(within(dialog).getByLabelText(/^Nota/), { target: { value: "Fue una llamada, no el formulario." } });
+    // «Notas y llamadas» names a tab panel too: the field is the one in «Resumen».
+    const resumen = within(dialog).getByRole("tabpanel", { name: "Resumen" });
+    fireEvent.change(within(resumen).getByLabelText(/^Nota/), { target: { value: "Fue una llamada, no el formulario." } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Guardar origen" }));
     await waitFor(() => expect(within(dialog).getByTestId("case-origin-badge")).toHaveTextContent("Origen: Llamada"));
     const post = calls.find((c) => c.method === "POST")!;

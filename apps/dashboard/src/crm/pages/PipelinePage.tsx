@@ -1,25 +1,18 @@
-import { CaseDocumentsBlock } from "./CaseDocuments";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchCaseNotes, fetchPipeline } from "../crmApi";
-import { CaseMemory } from "./CaseMemory";
+import { useEffect, useMemo, useState } from "react";
+import { fetchPipeline } from "../crmApi";
 import { crmHash } from "../crmRoute";
 import { CASE_ORIGINS, NO_ORIGIN_LABEL, ORIGIN_LABEL, matchesOrigin, originLabel, type OriginFilter } from "../caseOrigin";
-import { OriginSelect } from "../authoring/OriginSelect";
 import type { OpportunityCardData } from "../crmTypes";
-import { useMayAuthorCrm } from "../authoring/authoring";
-import { NoteList } from "../authoring/NoteList";
-import { CaseActions, type Mode } from "./CaseActions";
-import { CompleteFromMail } from "./CompleteFromMail";
-import { CaseLinks, CaseMoneySummary, QuoteList } from "./CaseQuotes";
-import { CaseThreads } from "./CaseThreads";
+import { CaseDrawer } from "../drawer/CaseDrawer";
+import type { Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
 import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases, reviewableOpenCards } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
-import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
-import { awaitsQuote, endOfDay, isCotizarCase, isFollowUpTask } from "../today";
+import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
+import { awaitsQuote, isCotizarCase } from "../today";
 import { boardViewFromHash, needsFollowUp, type BoardView } from "../goals";
-import { contactLine, isDelivered, systemNotes } from "../caseDisplay";
+import { contactLine, isDelivered } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
   HISTORICAL_STAGE_LABEL,
@@ -34,13 +27,11 @@ import {
 import {
   Badge,
   Button,
-  Drawer,
   EmptyState,
   Modal,
   PageHeader,
   ResourceGate,
   SearchInput,
-  Section,
   Segmented,
   Skeleton,
   StatLine,
@@ -304,7 +295,7 @@ function Pipeline({
         <Board cards={visible} onOpen={(id) => open(id)} onMove={mayDecide ? onMove : undefined} sort={sort} />
       )}
 
-      <OpportunityDrawer
+      <CaseDrawer
         card={openCard}
         onClose={() => open(null)}
         onChanged={onChanged}
@@ -632,238 +623,3 @@ export function OpportunityCard({
     </article>
   );
 }
-
-const CONTACT_LINK =
-  "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-accent-strong";
-
-/** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
-function displayNameOf(address: string): string {
-  // The display part is whatever precedes the «<»; React renders it as text, nothing is sanitised here.
-  const cut = address.indexOf("<");
-  const name = (cut >= 0 ? address.slice(0, cut) : "").trim();
-  const unquoted = name.startsWith('"') && name.endsWith('"') && name.length > 1 ? name.slice(1, -1).trim() : name;
-  return unquoted || address;
-}
-
-/** Gmail's search for one address, in the shared contacto@ mailbox. */
-function gmailSearchUrl(address: string): string {
-  const bare = (address.match(/<([^>]+)>/)?.[1] ?? address).trim();
-  return `https://mail.google.com/mail/?authuser=${encodeURIComponent("contacto@origenlab.cl")}#search/${encodeURIComponent(bare)}`;
-}
-
-function OpportunityDrawer({
-  card,
-  onClose,
-  onChanged,
-  refreshing = false,
-  initial = null,
-}: {
-  card: OpportunityCardData | null;
-  onClose: () => void;
-  onChanged: () => void;
-  refreshing?: boolean;
-  initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
-}) {
-  const mayAuthor = useMayAuthorCrm();
-  const mayQuote = useMayRunCaseCommands();
-  const mayOpenCotizador = useMayOpenCotizador();
-  if (!card) return null;
-  // The case's follow-up reminder («Recordarme…»): when and where it shows, and the note it carries.
-  const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
-  const reminderNote = reminder ? (card.last_note?.body?.trim() ?? null) : null;
-  // Due today or earlier: the case is on today's list now.
-  const reminderDue = reminder ? Date.parse(reminder.due_at) <= endOfDay(new Date()).getTime() : false;
-  const status = STATUS_LABEL[card.status];
-  const stage = stageDisplay(card);
-  return (
-    <Drawer
-      open
-      onClose={onClose}
-      busy={refreshing}
-      title={card.organization?.name ?? "Sin institución"}
-      subtitle={
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="truncate">{card.title}</span>
-        </span>
-      }
-    >
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Badge tone={stage.tone} glyph={false} title={stage.title}>
-          {stage.label}
-        </Badge>
-        {card.status === "ok" ? null : <Badge tone={status.tone}>{status.label}</Badge>}
-        <span data-testid="case-origin-badge">
-          <Badge glyph={false} title="Por dónde llegó el caso">
-            Origen: {originLabel(card.origin)}
-          </Badge>
-        </span>
-      </div>
-
-      <CaseLinks card={card} />
-
-      <CaseMoneySummary card={card} />
-
-      <CaseDocumentsBlock card={card} onChanged={onChanged} />
-
-      <CompleteFromMail card={card} onChanged={onChanged} />
-
-      <CaseActions card={card} initial={initial} onChanged={onChanged} />
-
-      {reminder ? (
-        <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-reminder">
-          {reminderDue ? (
-            <>
-              Está hoy en <strong>Hoy → Seguimientos</strong>
-            </>
-          ) : (
-            <>
-              Te lo recuerdo el <strong>{fmtDate(reminder.due_at)}</strong> en <strong>Hoy → Seguimientos</strong>
-            </>
-          )}
-          {reminderNote ? <span className="block text-[12px] text-ink-muted">{reminderNote}</span> : null}
-        </p>
-      ) : card.next_action.source === "task" ? (
-        <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
-          <span className="text-ink-faint">Próxima tarea: </span>
-          {card.next_action.text}
-          <span className="block text-[11px] text-ink-faint">
-            Para el {fmtDate(card.next_action.due_at)}
-            {card.open_tasks?.[0]?.owner ? `, ${card.open_tasks[0].owner}` : ""}
-            {(card.open_tasks?.length ?? 0) > 1 ? ` (${(card.open_tasks?.length ?? 0) - 1} más)` : ""}
-          </span>
-        </p>
-      ) : (
-        <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
-          <span className="text-ink-faint">Siguiente: </span>
-          {card.next_action.text}
-        </p>
-      )}
-
-      {/* What the conversation says so far, first: the case memory (owner, 2026-10-15). */}
-      <CaseMemory opportunityId={card.opportunity_id} />
-
-      <Section
-        title={card.quotes.length === 1 ? "Cotización" : `Cotizaciones (${card.quotes.length})`}
-        aside={mayQuote && !card.closed_at ? <NewQuoteButton card={card} /> : null}
-      >
-        <QuoteList card={card} mayOpenCotizador={mayOpenCotizador} />
-        <SystemNotes card={card} />
-      </Section>
-
-      <Section title="Contacto">
-        <ul className="space-y-1.5 text-[13px]">
-          <li>
-            {card.organization ? (
-              <a href={crmHash("organizaciones", card.organization.organization_id)} className={CONTACT_LINK} data-testid="case-org-link">
-                <span className="text-ink-faint">Empresa</span>
-                <span className="truncate font-medium">{card.organization.name ?? "Sin nombre"}</span>
-              </a>
-            ) : (
-              <span className="text-bad">Sin institución</span>
-            )}
-          </li>
-          {card.contact ? (
-            <li>
-              {card.contact.person_id ? (
-                <a href={crmHash("personas", card.contact.person_id)} className={CONTACT_LINK} data-testid="case-person-link">
-                  <span className="text-ink-faint">Persona</span>
-                  <span className="truncate font-medium">{card.contact.name ?? "Sin nombre"}</span>
-                </a>
-              ) : card.contact.address ? (
-                <a
-                  href={gmailSearchUrl(card.contact.address)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={CONTACT_LINK}
-                  title="Buscar sus correos en Gmail"
-                  data-testid="case-person-link"
-                >
-                  <span className="text-ink-faint">Persona</span>
-                  <span className="truncate font-medium">{card.contact.name ?? displayNameOf(card.contact.address)}</span>
-                  <span aria-hidden="true" className="text-[10px] text-ink-faint">↗</span>
-                </a>
-              ) : (
-                <span className="text-ink">{card.contact.name}</span>
-              )}
-            </li>
-          ) : null}
-        </ul>
-      </Section>
-
-      <Section title="Origen">
-        <OriginSelect card={card} onChanged={onChanged} />
-      </Section>
-
-      <Section title="Correos del caso">
-        <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
-      </Section>
-
-      {/* Re-read when the case's newest note changes: a reminder from «Recordarme…». */}
-      <CaseNotes key={`${card.opportunity_id}:${card.last_note?.created_at ?? ""}`} opportunityId={card.opportunity_id} mayAuthor={mayAuthor} />
-    </Drawer>
-  );
-}
-
-/**
- * What the system noted about the record, folded away: nothing here is for anyone to do (owner
- * 2026-10-25 — «there's no button to fix it»), so it never reads as a task.
- */
-function SystemNotes({ card }: { card: OpportunityCardData }) {
-  const notes = systemNotes(card);
-  if (!notes.length) return null;
-  return (
-    <details className="group mt-2 text-[12px] text-ink-muted" data-testid="case-system-notes">
-      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-ink-faint hover:text-ink-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
-        <span aria-hidden="true" className="transition-transform group-open:rotate-90">›</span>
-        Notas del sistema ({notes.length})
-      </summary>
-      <ul className="mt-1.5 space-y-1 border-l border-line pl-3">
-        {notes.map((n) => (
-          <li key={n.code}>
-            {n.label}
-            {n.owner === "system" ? <span className="ml-1.5 text-[11px] text-good">· se resuelve solo</span> : null}
-          </li>
-        ))}
-      </ul>
-      <p className="mt-1.5 pl-3 text-[11px] text-ink-faint">No tienes que hacer nada con esto.</p>
-    </details>
-  );
-}
-
-/**
- * The drawer's way into the Cotizador: «Abrir borrador» when the case has an open draft, else
- * «Nueva cotización» (`create-quote`). Whether the case may get one is the API's to say.
- */
-function NewQuoteButton({ card }: { card: OpportunityCardData }) {
-  const quote = useOpenOrCreateQuote();
-  const opensDraft = quoteToOpen(card) !== null;
-  return (
-    <Button variant="primary" busy={quote.busy} busyLabel="Creando…" onClick={() => void quote.run(card)}>
-      {opensDraft ? "Abrir borrador" : "Nueva cotización"}
-    </Button>
-  );
-}
-
-/** The case's notes, read from the API. */
-function CaseNotes({ opportunityId, mayAuthor }: { opportunityId: string; mayAuthor: boolean }) {
-  const load = useCallback(() => fetchCaseNotes(opportunityId), [opportunityId]);
-  const [state, reload] = useResource(load, [opportunityId]);
-  return (
-    <>
-      <NoteList
-        notes={state.kind === "ready" ? state.data.notes : []}
-        subjectKind="opportunity"
-        subjectId={opportunityId}
-        mayAuthor={mayAuthor}
-        onRefresh={reload}
-      />
-      {state.kind === "loading" ? <p className="-mt-2 text-[11px] text-ink-faint">Cargando notas…</p> : null}
-      {state.kind !== "ready" && state.kind !== "loading" ? (
-        <p className="-mt-2 text-[11px] text-warn" data-testid="case-notes-unavailable">
-          No se pudieron leer las notas de este caso{state.kind === "unavailable" ? " (no habilitado en este entorno)" : ""}.
-        </p>
-      ) : null}
-    </>
-  );
-}
-

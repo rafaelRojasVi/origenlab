@@ -69,19 +69,46 @@ interface Outcome {
   lines: string[];
 }
 
+/**
+ * What the case drawer's header and footer offer instead of this block (`hoisted`): each one only
+ * when it can be done now. A disabled action stays here, with its reason.
+ */
+export function hoistedActions(
+  card: OpportunityCardData,
+  mayDecide: boolean,
+  mayAuthor: boolean,
+): { followUp: boolean; call: boolean; won: boolean; lost: boolean } {
+  const closed = TERMINAL_STAGES.has(card.stage) || card.closed_at != null;
+  const decide = mayDecide && typeof card.version === "number" && !closed;
+  return {
+    followUp: mayDecide && mayAuthor && !closed,
+    call: mayAuthor,
+    won: decide && mayBeWonFrom(card.stage) && winnableRevisions(card).length > 0,
+    lost: decide,
+  };
+}
+
 export function CaseActions({
   card,
   onChanged,
   initial = null,
+  hoisted = false,
 }: {
   card: OpportunityCardData;
   /** Refetch the pipeline after any recorded write, or a refusal that says the view is stale. */
   onChanged: () => void;
   /** A form to open on arrival — a card dropped on «Ganada» opens «Marcar ganada». */
   initial?: { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
+  /**
+   * The case drawer's header and footer carry «Recordarme…», «Registrar llamada» and «Marcar
+   * ganada» when they can be done (`hoistedActions`); this block then leaves those buttons out
+   * and opens their forms when `initial` asks.
+   */
+  hoisted?: boolean;
 }) {
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
+  const lifted = hoisted ? hoistedActions(card, mayDecide, mayAuthor) : { followUp: false, call: false, won: false, lost: false };
   const [mode, setMode] = useState<Mode>(initial?.mode ?? null);
   const [crossThreadOpen, setCrossThreadOpen] = useState(false);
   const [purchaseOrderOpen, setPurchaseOrderOpen] = useState(false);
@@ -162,7 +189,7 @@ export function CaseActions({
       {/* The two everyday actions (and «Marcar ganada» when it applies) stay in sight; the rest
           wait under «Más». */}
       <div className="flex flex-wrap gap-2">
-        {followUpReason ? (
+        {lifted.followUp ? null : followUpReason ? (
           <DisabledAction id="drawer-followup" reason={followUpReason}>
             Recordarme…
           </DisabledAction>
@@ -171,7 +198,7 @@ export function CaseActions({
             Recordarme…
           </Button>
         )}
-        {callReason ? (
+        {lifted.call ? null : callReason ? (
           <DisabledAction id="drawer-call" reason={callReason}>
             Registrar llamada
           </DisabledAction>
@@ -190,7 +217,7 @@ export function CaseActions({
           </Button>
         )}
         {notRequestFirst ? notRequest : null}
-        {wonReason ? null : (
+        {wonReason || lifted.won ? null : (
           <Button aria-expanded={mode === "won"} onClick={() => toggle("won")}>
             Marcar ganada
           </Button>
