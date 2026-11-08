@@ -536,14 +536,24 @@ console.log('\nRiel de marcas (1440 px)');
   const brandNames = Object.fromEntries(
     [...brandsSource.matchAll(/\n {4}id: '([\w-]+)',[\s\S]*?\n {4}name: '([^']+)'/g)].map(([, id, name]) => [id, name]),
   );
-  const ORDER = idList('APPROVED_BRAND_IDS').filter((id) => !HIDDEN_ON_HOME.includes(id)).map((id) => brandNames[id]);
+  // Orden comercial (`rankBrands` de lib/ranking.ts, dueño 2026-11-08): IKA al final.
+  const brandSlugOf = Object.fromEntries(
+    [...brandsSource.matchAll(/\n {4}id: '([\w-]+)',[\s\S]*?\n {4}slug: '([\w-]+)'/g)].map(([, id, slug]) => [id, slug]),
+  );
+  const rankingSource = readFileSync(join(root, 'src/lib/ranking.ts'), 'utf8');
+  const BRAND_RANK = [...(rankingSource.match(/BRAND_ORDER = \[([\s\S]*?)\]/)?.[1] ?? '').matchAll(/'([\w-]+)'/g)].map(([, slug]) => slug);
+  const rankOf = (id) => (BRAND_RANK.indexOf(brandSlugOf[id]) + 1 || 99);
+  const ORDER = idList('APPROVED_BRAND_IDS')
+    .filter((id) => !HIDDEN_ON_HOME.includes(id))
+    .sort((a, b) => rankOf(a) - rankOf(b))
+    .map((id) => brandNames[id]);
   const expected = idList('APPROVED_BRAND_IDS').filter((id) => !HIDDEN_ON_HOME.includes(id)).length;
   const links = await brands.locator('.home-rail a').count();
   check(links === expected && links === ORDER.length && ORDER.every(Boolean), `un enlace por marca visible en la portada (${links} de ${expected})`);
   const names = await brands.locator('.home-rail__name').allTextContents();
   check(
     JSON.stringify(names.map((name) => name.trim())) === JSON.stringify(ORDER),
-    `el orden del riel es el de la lista cerrada (${names.join(', ')})`,
+    `el orden del riel es el comercial, IKA al final (${names.join(', ')})`,
   );
   check(
     await brands.locator('.home-rail').evaluate((el) => el.getAnimations({ subtree: true }).length === 0),
@@ -1256,51 +1266,45 @@ console.log(`\nPágina de familia ${FAMILY_PATH}`);
 }
 
 /**
- * Escala de la página de familia: cuatro marcas en sonicación, en el orden de la
- * cifra y con desplazamientos crecientes; ninguna donde no hay cifra que ordene;
- * y cada tarjeta, en todas las familias, con fotografía que carga o marco neutro.
+ * Página de familia («Blanco con color»): tarjetas iluminadas en el orden
+ * comercial (`lib/ranking.ts`: 3D primero), cada una a su ficha; comparativa
+ * compacta en el mismo orden; banda «¿No sabe cuál?». En todas las familias,
+ * cada tarjeta con su póster 3D o su foto cargada.
  */
-console.log('\nEscala y tarjetas de la página de familia');
+console.log('\nTarjetas y comparativa de la página de familia');
 {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   await page.goto(`${base}/productos/sonicacion/`, { waitUntil: 'load' });
-  const marks = await page.locator('[data-family-scale] [data-mark]').evaluateAll((els) =>
-    els.map((el) => ({ text: el.querySelector('.fs__n')?.textContent?.trim(), left: el.getBoundingClientRect().left })),
-  );
-  check(marks.length === 4, `escala de la familia: ${marks.length} marcas`);
-  check(
-    marks.map((mark) => mark.text).join('|') === '100 W|200 W|400 W|2.000 W',
-    `escala de la familia: textos en orden (${marks.map((mark) => mark.text).join(', ')})`,
-  );
-  check(marks.every((mark, i) => i === 0 || mark.left > marks[i - 1].left), 'escala de la familia: desplazamientos crecientes');
-  const order = await page.locator('.mc__name').allTextContents();
-  check(order.map((t) => t.trim()).join('|') === 'UP100H|UP200St|UP400St|UIP2000hdT', `familia: tarjetas en el orden de la escala (${order.join(', ')})`);
-  const small = await page.locator('.mc__acts a').evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().height < 44).length);
-  check(small === 0, `familia: acciones de tarjeta de al menos 44 px (${small} menores)`);
-  const consult = await page.locator('#consulta-title').count();
-  check(consult === 1, 'familia: bloque «¿No sabe cuál?»');
-  await page.goto(`${base}/productos/electroforesis/`, { waitUntil: 'load' });
-  check((await page.locator('[data-family-scale]').count()) === 0, 'electroforesis: sin escala');
+  const order = (await page.locator('.fm .lc__name').allTextContents()).map((t) => t.trim()).join('|');
+  check(order === 'UP400St|UP200St|UP100H|UIP2000hdT', `familia: tarjetas en el orden comercial (${order})`);
+  const rows = (await page.locator('[data-family-compare] tbody th').allTextContents()).map((t) => t.trim()).join('|');
+  check(rows === order, `familia: la comparativa sigue el mismo orden (${rows})`);
+  const toSheet = await page.locator('.fm .lc__link').evaluateAll((els) => els.every((el) => /^\/productos\/sonicacion\/[\w-]+\/$/.test(el.getAttribute('href') ?? '')));
+  check(toSheet, 'familia: cada tarjeta lleva directo a su ficha');
+  const small = await page.locator('.fm .lc__quote').evaluateAll((els) => els.filter((el) => el.getBoundingClientRect().height < 44).length);
+  check(small === 0, `familia: «Cotizar» de al menos 44 px (${small} menores)`);
+  const consult = await page.locator('#band-title', { hasText: '¿No sabe cuál?' }).count();
+  check(consult === 1, 'familia: banda «¿No sabe cuál?»');
 
-  for (const path of ['/productos/sonicacion/', '/productos/dispersion/', '/productos/pesaje-humedad/', '/productos/osmometria/', '/productos/electroforesis/', '/productos/centrifugas/']) {
+  for (const path of ['/productos/', '/productos/sonicacion/', '/productos/dispersion/', '/productos/pesaje-humedad/', '/productos/osmometria/', '/productos/electroforesis/', '/productos/centrifugas/', '/categorias/control-de-calidad/']) {
     await page.goto(`${base}${path}`, { waitUntil: 'load' });
-    await page.evaluate(() => document.querySelectorAll('.model-card img, .mc img').forEach((img) => (img.loading = 'eager')));
-    await page.waitForTimeout(400);
-    const bad = await page.locator('.mc').evaluateAll((cards) =>
+    await page.evaluate(() => document.querySelectorAll('.fm img').forEach((img) => (img.loading = 'eager')));
+    await page.waitForTimeout(500);
+    const bad = await page.locator('.fm .lc').evaluateAll((cards) =>
       cards
         .filter((card) => {
-          const imgs = card.querySelectorAll('img');
-          if (card.querySelector('[data-frame="neutral"]')) return imgs.length !== 0;
-          return imgs.length !== 1 || !(imgs[0].naturalWidth > 0);
+          const img = card.querySelector('.lc__stage img');
+          return !img || !(img.naturalWidth > 0);
         })
-        .map((card) => card.querySelector('h3')?.textContent),
+        .map((card) => card.querySelector('.lc__name')?.textContent),
     );
-    const total = await page.locator('.mc').count();
-    check(total > 0 && bad.length === 0, `${path}: ${total} tarjetas, sin fotografía rota (${bad.join(', ') || 'ninguna'})`);
+    const total = await page.locator('.fm .lc').count();
+    check(total > 0 && bad.length === 0, `${path}: ${total} tarjetas, sin imagen rota (${bad.join(', ') || 'ninguna'})`);
   }
+  check((await page.locator('[data-family-compare]').count()) === 0, '/categorias/: sin comparativa');
   await page.goto(`${base}/productos/centrifugas/`, { waitUntil: 'load' });
-  check((await page.locator('[data-family-scale] [data-mark]').count()) >= 3, 'centrífugas: la misma escala');
+  check((await page.locator('[data-family-compare] tbody tr').count()) >= 3, 'centrífugas: la misma comparativa');
   await context.close();
 }
 /**
@@ -1320,16 +1324,19 @@ console.log('\nEnlaces hacia las páginas de familia y de modelo');
   const hrefOf = (entry) => `/productos/${entry.family}/${entry.slug}/`;
   const collection = entries.filter((entry) => entry.family !== 'centrifugacion');
 
-  const index = [...read('/productos/').matchAll(/<a\b[^>]*\bclass="scope-index__link[^"]*"[^>]*>/g)]
+  const index = [...read('/productos/').matchAll(/<a\b[^>]*\bclass="[^"]*\bpf__fam\b[^"]*"[^>]*>/g)]
     .map(([tag]) => tag.match(/href="([^"]+)"/)?.[1]);
   const families = [...new Set(entries.map((entry) => entry.family))]
     .map((family) => (family === 'centrifugacion' ? '/productos/centrifugas/' : `/productos/${family}/`));
   check(
     index.length === 6 && families.every((href) => index.includes(href)),
-    `/productos/: el índice lleva a las seis páginas de familia (${index.join(', ')})`,
+    `/productos/: cada familia lleva a su página de familia (${index.join(', ')})`,
   );
   // Una cifra visible sólo entra por publicClaim(): el índice no cuenta modelos.
   check(!/scope-index__count/.test(read('/productos/')), '/productos/: el índice no publica conteos de modelos');
+  const catalogue = read('/productos/');
+  const shown = entries.filter((entry) => !catalogue.includes(`href="${entry.family === 'centrifugacion' ? `/productos/centrifugas/${entry.slug.replace(/^ortoalresa-/, '')}/` : hrefOf(entry)}"`));
+  check(shown.length === 0, `/productos/: todos los modelos a la vista, cada uno a su ficha (faltan: ${shown.map((entry) => entry.slug).join(', ') || 'ninguno'})`);
 
   const brandSlugs = Object.fromEntries(
     [...readFileSync(join(root, 'src/data/brands.ts'), 'utf8').matchAll(/\n {4}id: '([\w-]+)',[\s\S]*?\n {4}slug: '([\w-]+)'/g)]

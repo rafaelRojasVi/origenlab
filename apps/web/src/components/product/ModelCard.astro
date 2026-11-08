@@ -3,8 +3,6 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import ModelPhoto from '../ui/ModelPhoto.astro';
 import Icon from '../ui/Icon.astro';
-import Button from '../ui/Button.astro';
-import { ctaLabels } from '../../lib/ctaLabels';
 import { getBrandById } from '../../lib/catalog';
 import { familyInfo, imageForEntry, keyStats, modelHref } from '../../lib/modelos';
 import { imageSourcesFor } from '../../lib/productImage';
@@ -19,13 +17,14 @@ import type { Modelo } from '../../content.config';
  * neutro con el rótulo mono de la familia y ningún `<img>`.
  *
  * `related` (página de modelo): rótulo mono «{familia} · {primera cifra del
- * fabricante}», nombre y «Ver modelo». `family` la usa la página de familia
- * (Tarea 5): no es un enlace entero, porque lleva dos acciones. Marca, nombre,
- * primera frase de la ficha, dos cifras mono, «Ver modelo» y «Cotizar».
+ * fabricante}», nombre y «Ver modelo». El catálogo (familias, `/productos/`)
+ * usa `LitCard`; cuando la ficha pase sus relacionados a `LitCard`, este
+ * componente se borra.
  */
 export interface Props {
   entry: Modelo;
-  variant: 'related' | 'family';
+  /** Sólo queda `related` (la ficha); el catálogo usa `LitCard`. */
+  variant: 'related';
 }
 
 const { entry, variant } = Astro.props;
@@ -35,60 +34,25 @@ const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slu
 const image = imageForEntry(entry);
 const photo = !poster && imageSourcesFor(image) ? image : undefined;
 const stat = keyStats(entry, 1)[0];
-const firstSentence = entry.lead.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? entry.lead;
-const stats = keyStats(entry, 2);
-const kicker = [family.short, variant === 'related' ? stat?.value : brandName].filter(Boolean).join(' · ');
+const kicker = [family.short, stat?.value].filter(Boolean).join(' · ');
 ---
 
-{
-  variant === 'family' ? (
-    <article class="mc mc--family" data-variant={variant}>
-      <div class="mc__frame" data-frame={!poster && !photo ? 'neutral' : undefined}>
-        {poster && <img src={poster} width="1200" height="900" alt="" loading="lazy" decoding="async" />}
-        {photo && <ModelPhoto image={photo} brandName={brandName} size="row" />}
-        {!poster && !photo && <span class="t-label mc__ph">{family.short}</span>}
-      </div>
-      <div class="mc__body">
-        <p class="t-label" translate="no">{brandName}</p>
-        <h3 class="mc__name" translate="no">
-          <a href={modelHref(entry)} class="mc__link">{entry.name}</a>
-        </h3>
-        <p class="mc__lead">{firstSentence}</p>
-        {stats.length > 0 && (
-          <dl class="mc__stats">
-            {stats.map((stat) => (
-              <div>
-                <dt>{stat.label}</dt>
-                <dd>{stat.value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-        <div class="mc__acts">
-          <Button href={modelHref(entry)} variant="tertiary">{ctaLabels.verModelo}</Button>
-          <Button href={`/contacto/?producto=${entry.slug}`} variant="secondary" size="sm" arrow={false}>{ctaLabels.cotizar}</Button>
-        </div>
-      </div>
-    </article>
-  ) : (
-    <a href={modelHref(entry)} class="mc" data-variant={variant}>
-      <div class="mc__frame" data-frame={!poster && !photo ? 'neutral' : undefined}>
-        {poster && <img src={poster} width="1200" height="900" alt="" loading="lazy" decoding="async" />}
-        {photo && <ModelPhoto image={photo} brandName={brandName} size="row" />}
-        {!poster && !photo && <span class="t-label mc__ph">{family.short}</span>}
-      </div>
-      <div class="mc__body">
-        <p class="t-label" translate="no">{kicker}</p>
-        <h3 class="mc__name" translate="no">{entry.name}</h3>
-        <slot />
-        <span class="btn-tertiary mc__go" aria-hidden="true">
-          <span class="lbl">Ver modelo</span>
-          <Icon name="arrow-right" size={16} class="arrow" />
-        </span>
-      </div>
-    </a>
-  )
-}
+<a href={modelHref(entry)} class="mc" data-variant={variant}>
+  <div class="mc__frame" data-frame={!poster && !photo ? 'neutral' : undefined}>
+    {poster && <img src={poster} width="1200" height="900" alt="" loading="lazy" decoding="async" />}
+    {photo && <ModelPhoto image={photo} brandName={brandName} size="row" />}
+    {!poster && !photo && <span class="t-label mc__ph">{family.short}</span>}
+  </div>
+  <div class="mc__body">
+    <p class="t-label" translate="no">{kicker}</p>
+    <h3 class="mc__name" translate="no">{entry.name}</h3>
+    <slot />
+    <span class="btn-tertiary mc__go" aria-hidden="true">
+      <span class="lbl">Ver modelo</span>
+      <Icon name="arrow-right" size={16} class="arrow" />
+    </span>
+  </div>
+</a>
 
 <style is:global>
   .mc {
@@ -148,63 +112,5 @@ const kicker = [family.short, variant === 'related' ? stat?.value : brandName].f
     line-height: 1.25;
     font-weight: 600;
     letter-spacing: -0.01em;
-  }
-  .mc--family {
-    position: relative;
-    height: 100%;
-  }
-  .mc--family .mc__body {
-    flex: 1;
-  }
-  .mc__link::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-  }
-  .mc--family .mc__acts a {
-    min-height: 44px;
-    position: relative;
-    z-index: 1;
-  }
-  .mc__lead {
-    color: var(--color-ink-600);
-    font-size: 1rem;
-    line-height: 1.5;
-  }
-  .mc__stats {
-    width: 100%;
-    margin: 0.5rem 0 0;
-    border-top: 1px solid var(--color-hairline);
-  }
-  .mc__stats div {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.625rem 0;
-    border-bottom: 1px solid var(--color-hairline);
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-  }
-  .mc__stats dt {
-    padding-top: 1px;
-    font-size: 0.71875rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--color-ink-500);
-  }
-  .mc__stats dd {
-    margin: 0;
-    font-weight: 500;
-    text-align: right;
-    color: var(--color-ink-950);
-  }
-  .mc__acts {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    width: 100%;
-    margin-top: auto;
-    padding-top: 1rem;
   }
 </style>

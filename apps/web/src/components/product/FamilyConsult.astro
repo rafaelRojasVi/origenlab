@@ -1,13 +1,13 @@
 ---
-import Button from '../ui/Button.astro';
+import ClosingQuoteBand from '../ui/ClosingQuoteBand.astro';
 import { publicClaim } from '../../data/claims';
-import { ctaLabels } from '../../lib/ctaLabels';
-import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 
 /**
- * «¿No sabe cuál?» (tablero Familia): bloque de consulta al final de la lista de
- * modelos. La promesa del mismo día hábil sólo se escribe con la afirmación
- * aprobada; sin ella la frase termina en la recomendación.
+ * «¿No sabe cuál?» (tablero Familia): la banda de cierre de las páginas de
+ * familia, justo antes del pie. Es la misma `ClosingQuoteBand` del sitio (una
+ * sola banda de cotizar por página, no dos seguidas). La promesa del mismo día
+ * hábil sólo se escribe con la afirmación aprobada; sin ella la frase termina
+ * en la recomendación.
  */
 interface Props {
   /** Marca para el mensaje de WhatsApp; sin ella el mensaje es el genérico. */
@@ -16,64 +16,7 @@ interface Props {
 
 const { brandName } = Astro.props;
 const sameDay = publicClaim('cotizacion-mismo-dia-habil');
-const direct = publicClaim('directo-con-el-fabricante');
-const lead = `Cuéntenos qué muestra procesa y en qué volumen. Le recomendamos el modelo${sameDay ? ' y le enviamos la cotización el mismo día hábil.' : '.'}`;
+const body = `Cuéntenos qué muestra procesa y en qué volumen. Le recomendamos el modelo${sameDay ? ' y le enviamos la cotización el mismo día hábil.' : '.'}`;
 ---
 
-<section class="shell section rule-top" aria-labelledby="consulta-title">
-  <div class="fc rv">
-    <div>
-      <p class="t-label">Consulta</p>
-      <h2 id="consulta-title" class="t-h2 fc__h2">¿No sabe cuál?</h2>
-      <p class="t-lead fc__lead">{lead}</p>
-    </div>
-    <div class="fc__btns">
-      <Button href="/contacto/" track="cotizacion_click">{ctaLabels.cuentenosAplicacion}</Button>
-      <Button href={buildWhatsAppQuoteUrl({ brandName })} variant="whatsapp" external track="whatsapp_click">
-        {ctaLabels.escribirWhatsapp}
-      </Button>
-      {direct && <p class="t-small fc__note">{direct}</p>}
-    </div>
-  </div>
-</section>
-
-<style>
-  .fc {
-    display: grid;
-    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    gap: 2rem 8.33%;
-    align-items: center;
-    padding: 3.5rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-card);
-  }
-  .fc__h2 {
-    margin-top: 0.875rem;
-  }
-  .fc__lead {
-    margin-top: 1.125rem;
-    max-width: 35rem;
-  }
-  .fc__btns {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    align-items: stretch;
-  }
-  .fc__note {
-    margin-top: 0.25rem;
-    color: var(--color-ink-600);
-  }
-  @media (max-width: 1099.98px) {
-    .fc {
-      padding: 2.5rem;
-    }
-  }
-  @media (max-width: 759.98px) {
-    .fc {
-      grid-template-columns: 1fr;
-      padding: 1.75rem 1.25rem;
-    }
-  }
-</style>
+<ClosingQuoteBand title="¿No sabe cuál?" body={body} brandName={brandName} />

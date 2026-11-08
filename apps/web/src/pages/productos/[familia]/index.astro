@@ -2,22 +2,22 @@
 import { getCollection } from 'astro:content';
 import Layout from '../../../layouts/Layout.astro';
 import PageIntro from '../../../components/ui/PageIntro.astro';
-import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import Icon from '../../../components/ui/Icon.astro';
-import FamilyScale from '../../../components/product/FamilyScale.astro';
 import FamilyModels from '../../../components/product/FamilyModels.astro';
 import FamilyConsult from '../../../components/product/FamilyConsult.astro';
-import { publicClaim } from '../../../data/claims';
+import CompareTable from '../../../components/ui/CompareTable.astro';
 import { site } from '../../../config/site';
 import { getBrandsByFamilyId } from '../../../lib/catalog';
-import { byBrandAndName, familyInfo, familyOrder, hasCollectionPages, modelHref, type FamilySlug } from '../../../lib/modelos';
+import { rankModels } from '../../../lib/ranking';
+import { familyInfo, hasCollectionPages, modelHref, type FamilySlug } from '../../../lib/modelos';
 import type { Modelo } from '../../../content.config';
 
 /**
  * Página de familia: una por familia con modelos en la colección, en
- * `/productos/{family}/`. Escala de comparación (si la familia tiene una cifra
- * que ordene sus modelos), tarjetas de modelo, bloque «¿No sabe cuál?» y las
- * marcas que los fabrican. Centrifugación tiene su página propia en
+ * `/productos/{family}/`. Intro con las marcas que los fabrican, las tarjetas
+ * iluminadas (cada una a su ficha, orden comercial de `lib/ranking.ts`), una
+ * comparativa compacta con las cifras del fabricante y la banda «¿No sabe
+ * cuál?». Centrifugación tiene su página propia en
  * `/productos/centrifugas/` y no se genera aquí (ver `lib/modelos.ts`).
  */
 export async function getStaticPaths() {
@@ -25,7 +25,7 @@ export async function getStaticPaths() {
   const families = [...new Set(all.map((entry) => entry.family))].filter(hasCollectionPages);
   return families.map((slug) => ({
     params: { familia: slug },
-    props: { slug, models: familyOrder(all.filter((entry) => entry.family === slug).sort(byBrandAndName), slug) },
+    props: { slug, models: rankModels(all.filter((entry) => entry.family === slug).map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry) },
   }));
 }
 
@@ -34,10 +34,6 @@ const family = familyInfo(slug);
 const brands = getBrandsByFamilyId(family.scopeId);
 const brandNames = brands.map((brand) => brand.name).join(' y ');
 
-const modelsTitle = slug === 'sonicacion' ? 'Elija por volumen de muestra.' : 'Modelos de la familia';
-const bandTitle = publicClaim('cotizacion-mismo-dia-habil')
-  ? 'Cuéntenos su aplicación. Cotizamos el mismo día hábil.'
-  : 'Cuéntenos su aplicación.';
 
 const itemList = {
   '@context': 'https://schema.org',
@@ -63,9 +59,6 @@ const description =
       lead={family.purpose}
       crumbs={[{ label: 'Productos', href: '/productos/' }, { label: family.short }]}
     />
-    <p class="t-label fam-meta">
-      {models.length} modelos{brandNames && <> · <span translate="no">{brandNames}</span></>}
-    </p>
     {
       brands.length > 0 && (
         <ul class="link-row fam-brands" aria-label="Quién los fabrica">
@@ -82,22 +75,33 @@ const description =
     }
   </div>
 
-  <FamilyScale models={models} slug={slug} />
-  <FamilyModels models={models} title={modelsTitle} />
-  <FamilyConsult brandName={brands.length === 1 ? brands[0].name : undefined} />
+  <section class="shell fam-sec" aria-labelledby="modelos-title">
+    <h2 id="modelos-title" class="sr-only">Modelos de {family.short.toLowerCase()}</h2>
+    <FamilyModels models={models} eager={4} label={`Modelos de ${family.short.toLowerCase()}`} />
+  </section>
 
-  <ClosingQuoteBand
-    title={bandTitle}
-    body="Despacho a todo Chile, puesta en marcha y capacitación con fábrica. También vendemos por Mercado Público."
-    brandName={brands.length === 1 ? brands[0].name : undefined}
-  />
+  <section class="shell fam-sec fam-cmp" aria-labelledby="comparar-title">
+    <h2 id="comparar-title" class="t-h2">Compárelos<span class="dot">.</span></h2>
+    <p class="lede fam-cmp__lede">Las cifras del fabricante, lado a lado. El detalle completo está en cada ficha.</p>
+    <CompareTable models={models} family={slug} caption={`Comparativa de ${family.short.toLowerCase()}`} />
+  </section>
+
+  <FamilyConsult brandName={brands.length === 1 ? brands[0].name : undefined} />
 </Layout>
 
 <style>
-  .fam-meta {
-    margin-top: 1.5rem;
-  }
   .fam-brands {
-    margin-top: 0.5rem;
+    margin-top: 1rem;
+  }
+  .fam-sec {
+    padding-block: 2.5rem 3rem;
+  }
+  .fam-cmp__lede {
+    margin: 0.75rem 0 2rem;
+  }
+  @media (min-width: 768px) {
+    .fam-sec {
+      padding-block: 3rem 4.5rem;
+    }
   }
 </style>
