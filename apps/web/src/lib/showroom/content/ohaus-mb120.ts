@@ -27,7 +27,7 @@ export const entry: ShowroomEntry = {
       anchor: 'tapa',
       view: 'tapa',
       title: 'Tapa articulada',
-      body: lines(c('Tipo'), 'La tapa se abre hacia atrás sobre una bisagra trasera para cargar la muestra y se cierra para secarla.'),
+      body: lines(c('Tipo')),
     },
     {
       anchor: 'lampara',
