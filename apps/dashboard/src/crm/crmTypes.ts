@@ -1,3 +1,4 @@
+import type { CallOutcome } from "./callOutcome";
 import type { SupplierCandidate } from "./supplierCandidates";
 import type { AudienceInterest } from "./marketing/marketingTypes";
 
@@ -229,6 +230,11 @@ export interface OpportunityCardData {
   /** The case version a case command compares against. Absent from an older API. */
   version?: number | null;
   created_at: string | null;
+  /**
+   * When the client asked: the origin email's `sent_at` when the case came from one, else
+   * `created_at` (Hoy's «Solicitud → cotización»). Absent from an older API — read `created_at`.
+   */
+  requested_at?: string | null;
   updated_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
@@ -294,8 +300,8 @@ export interface OpportunityCardData {
   last_note?: { created_at: string; body: string; author: string | null } | null;
   /**
    * The newest active «Llamada» note on the case that reached the client (outcome `contesto` or
-   * `reunion`): a follow-up touch like an email of ours (owner ruling 2026-11-08). Not yet sent
-   * by the API; absent, only emails count.
+   * `reunion`): a follow-up touch like an email of ours (owner ruling 2026-11-08). `at` is when the
+   * call was first logged. Absent from an older API; then only emails count.
    */
   last_call?: { at: string; outcome: string } | null;
   /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
@@ -321,6 +327,15 @@ export interface PipelineResponse {
   drive_casos_url?: string | null;
   /** Tenders that close tomorrow (Hoy's only tender signal); absent from an older API. */
   tenders_closing?: { id: string; code: string | null; title: string; closes_at: string | null }[];
+  /** The team's live calls per Santiago day and outcome, the last 35 days (Hoy's «Alcance»); absent from an older API. */
+  calls?: CallDay[];
+}
+
+/** One day's calls with one outcome: `day` is `YYYY-MM-DD` in Santiago. */
+export interface CallDay {
+  day: string;
+  outcome: CallOutcome;
+  count: number;
 }
 
 export interface SupplierDirectoryEntry {

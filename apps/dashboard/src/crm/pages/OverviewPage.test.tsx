@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthSessionState } from "../../api/authClient";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import type { FxResponse } from "../fx";
 import { OverviewPage } from "./OverviewPage";
@@ -255,7 +257,7 @@ describe("Resumen", () => {
     expect(within(paraTi).queryByText("Universidad del Valle")).not.toBeInTheDocument();
     expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
     // The header counts by section: one follow-up, nothing else due.
-    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 seguimiento");
+    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 llamada");
     expect(screen.queryByTestId("today-stats")).not.toBeInTheDocument();
   });
 
@@ -364,3 +366,40 @@ describe("Hoy · housekeeping", () => {
   });
 });
 
+
+describe("Hoy · franja de metas y «Mi cola»", () => {
+  function as(profileId: string, name: string): AuthSessionState {
+    return {
+      kind: "signed_in",
+      method: "google_profile",
+      operator: { operatorId: "op-1", email: "contacto@example.cl", displayName: "Contacto", role: "sales" },
+      caseCommandsEnabled: true,
+      crmAuthoringEnabled: true,
+      profile: { id: profileId, displayName: name, roleLabel: "Ventas", homeFilter: "llamadas" },
+    };
+  }
+  const page = (s: AuthSessionState) => (
+    <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
+      <OverviewPage navigate={() => undefined} />
+    </AuthSessionContext.Provider>
+  );
+
+  it("the goal strip sits between the greeting and today's queue", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
+    render(<OverviewPage navigate={() => undefined} />);
+    const strip = await screen.findByTestId("goal-strip");
+    const hero = screen.getByTestId("hero-header");
+    expect(hero.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(strip).getByRole("link", { name: /Seguimiento/ })).toBeInTheDocument();
+  });
+
+  it("«Mi cola» / «Todo el equipo» is in the header", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
+    render(page(as("p-ana", "Ana")));
+    const hero = await screen.findByTestId("hero-header");
+    fireEvent.click(within(hero).getByRole("button", { name: "Todo el equipo" }));
+    expect(within(hero).getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
+    // Only one switch on the page.
+    expect(screen.getAllByTestId("today-scope")).toHaveLength(1);
+  });
+});

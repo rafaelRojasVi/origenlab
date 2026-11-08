@@ -188,8 +188,9 @@ export function TodayBody({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
 
-          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue ─── */}
-          {homeFilter !== "todo" ? (
+          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue; a page
+              that holds the scope (OverviewPage) shows it in its header instead ─── */}
+          {homeFilter !== "todo" && scopeProp === undefined ? (
             <div data-testid="today-scope">
               <Segmented<TodayScope>
                 label="Qué cola ver"

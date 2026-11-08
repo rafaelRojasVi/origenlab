@@ -232,7 +232,7 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
 export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion"]);
 
 /** When OrigenLab last reached the client by phone after the quote went out, or null. */
-function callTouch(card: OpportunityCardData): string | null {
+export function callTouch(card: OpportunityCardData): string | null {
   const call = card.last_call;
   const sent = card.latest_revision?.sent_at ?? null;
   if (!call?.at || !CALL_TOUCH_OUTCOMES.has(call.outcome) || Number.isNaN(Date.parse(call.at))) return null;
@@ -358,6 +358,20 @@ export function awaitsQuote(card: OpportunityCardData): boolean {
 }
 
 /**
+ * «Cotizar»: an open case with no quote sent yet (pre-quote, or a first quote still in the
+ * Cotizador), not paused and not blocked. Hoy's Cotizar section and the Pipeline's «Por cotizar»
+ * view both read this.
+ */
+export function isCotizarCase(card: OpportunityCardData, now: Date): boolean {
+  if (!isOpenCase(card)) return false;
+  // A first quote still in the Cotizador is «Cotizar» at any stage: finishing it is the job.
+  if (!PRE_QUOTE_STAGES.has(card.stage) && card.latest_revision === null) return false;
+  if (!awaitsQuote(card)) return false;
+  if (pausedUntil(card, now) !== null) return false;
+  return !card.attention.some((a) => a.blocking);
+}
+
+/**
  * ONE merged list of what the operator needs to act on today, deduplicated by `opportunity_id`.
  * Priority per case: cotizar > reply > overdue task > due task > follow-up due today; shown in the
  * order Cotizar · Responder · Llamar (follow-ups) · Tareas.
@@ -371,12 +385,7 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   // 0. Cotizar — open pre-quote cases with no sent quote, not paused, not blocked.
   //    Cotizar takes priority over Responder: a new request that still needs a quote goes here.
   for (const card of items) {
-    if (!isOpenCase(card)) continue;
-    // A first quote still in the Cotizador is «Cotizar» at any stage: finishing it is the job.
-    if (!PRE_QUOTE_STAGES.has(card.stage) && card.latest_revision === null) continue;
-    if (!awaitsQuote(card)) continue;
-    if (pausedUntil(card, now) !== null) continue;
-    if (card.attention.some((a) => a.blocking)) continue;
+    if (!isCotizarCase(card, now)) continue;
     const id = card.opportunity_id;
     const startAt = card.last_contact?.inbound?.at ?? card.created_at ?? null;
     const waitMs = startAt ? Math.max(0, now.getTime() - Date.parse(startAt)) : 0;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { SANTIAGO } from "./marketing/calendar";
 
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -17,12 +17,15 @@ function santiagoParts(now: Date): { date: string; time: string } {
  * «Hoy»'s greeting: the OrigenLab charcoal card with the logo's two teals, who is working, the
  * Santiago date and time and today's counts. Gmail, Drive and the website are in the top bar,
  * on every page, so they are not repeated here.
- * `counts` breaks down the queue by section: cotizar, responder, seguimientos, hechas.
+ * `counts` breaks down the queue by section: cotizar, responder, seguimientos (the «Llamar»
+ * section, read as «llamadas»), hechas. `actions` sits on the right: the «Mi cola» / «Todo el
+ * equipo» switch.
  */
-export function HeroHeader({ name, counts, now }: {
+export function HeroHeader({ name, counts, now, actions }: {
   name: string;
   counts: { cotizar: number; responder: number; seguimientos: number; hechas: number } | null;
   now?: Date;
+  actions?: ReactNode;
 }) {
   const [tick, setTick] = useState(() => now ?? new Date());
   useEffect(() => {
@@ -46,20 +49,21 @@ export function HeroHeader({ name, counts, now }: {
             {counts ? ` · ${countLine(counts)}` : null}
           </p>
         </div>
+        {actions ? <div className="crm-hero-text min-w-0">{actions}</div> : null}
       </div>
     </header>
   );
 }
 
 /**
- * «6 por cotizar · 4 por responder · 8 seguimientos · 3 hechas» — the operator's daily
- * breakdown by section and how many they cleared this session.
+ * «6 por cotizar · 4 por responder · 8 llamadas · 3 hechas» — the operator's daily breakdown by
+ * section (the follow-ups are the «Llamar» section) and how many they cleared this session.
  */
 export function countLine(c: { cotizar: number; responder: number; seguimientos: number; hechas: number }): string {
   const parts = [
     c.cotizar ? `${c.cotizar} por cotizar` : null,
     c.responder ? `${c.responder} por responder` : null,
-    c.seguimientos ? `${c.seguimientos} ${c.seguimientos === 1 ? "seguimiento" : "seguimientos"}` : null,
+    c.seguimientos ? `${c.seguimientos} ${c.seguimientos === 1 ? "llamada" : "llamadas"}` : null,
     c.hechas ? `${c.hechas} ${c.hechas === 1 ? "hecha" : "hechas"}` : null,
   ].filter(Boolean);
   return parts.length ? parts.join(" · ") : "todo al día";

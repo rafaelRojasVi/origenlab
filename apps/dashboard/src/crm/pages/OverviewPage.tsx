@@ -2,12 +2,13 @@ import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } f
 import { fetchFx, fetchPipeline } from "../crmApi";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
-import { ResourceGate } from "../ui";
+import { ResourceGate, Segmented } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { PendientesPanel } from "../todos/PendientesPanel";
 import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
 import { TodayBody, type TodayScope } from "./TodayBody";
+import { GoalStrip } from "./GoalStrip";
 import { HeroHeader } from "../HeroHeader";
 import { todayHeaderCounts, useHomeFilter } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
@@ -42,8 +43,27 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
       <HeroHeader
         name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
         counts={headerCounts !== null ? { ...headerCounts, hechas } : null}
+        actions={
+          // Only a profile with its own queue has a «Mi cola»; in the header, as on the canvas.
+          homeFilter !== "todo" ? (
+            <div data-testid="today-scope">
+              <Segmented<TodayScope>
+                label="Qué cola ver"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  { value: "mine", label: me ? `Mi cola · ${me}` : "Mi cola" },
+                  { value: "team", label: "Todo el equipo" },
+                ]}
+              />
+            </div>
+          ) : null
+        }
       />
-      {/* Slot for «Franja de metas» (Task 4b): between the greeting and today's queue. */}
+      {/* «Franja de metas»: the four goals, first on Hoy, each a link into the view that acts on it. */}
+      {pipeline.kind === "ready" ? (
+        <GoalStrip items={pipeline.data.items} calls={pipeline.data.calls ?? []} navigate={navigate} />
+      ) : null}
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (
           <TodayBody

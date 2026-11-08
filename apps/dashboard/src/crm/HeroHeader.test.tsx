@@ -12,14 +12,14 @@ describe("HeroHeader", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Hola, Tatiana");
     expect(screen.getByText(/Viernes 9 de octubre/)).toBeInTheDocument();
     expect(screen.getByText("15:47")).toBeInTheDocument();
-    expect(screen.getByText(/6 por cotizar · 4 por responder · 8 seguimientos · 2 hechas/)).toBeInTheDocument();
+    expect(screen.getByText(/6 por cotizar · 4 por responder · 8 llamadas · 2 hechas/)).toBeInTheDocument();
   });
 
   it("omits zero segments and says «todo al día» when all are zero", () => {
-    expect(countLine({ cotizar: 3, responder: 0, seguimientos: 2, hechas: 0 })).toBe("3 por cotizar · 2 seguimientos");
+    expect(countLine({ cotizar: 3, responder: 0, seguimientos: 2, hechas: 0 })).toBe("3 por cotizar · 2 llamadas");
     expect(countLine({ cotizar: 0, responder: 2, seguimientos: 0, hechas: 1 })).toBe("2 por responder · 1 hecha");
     expect(countLine({ cotizar: 0, responder: 0, seguimientos: 0, hechas: 0 })).toBe("todo al día");
-    expect(countLine({ cotizar: 1, responder: 1, seguimientos: 1, hechas: 1 })).toBe("1 por cotizar · 1 por responder · 1 seguimiento · 1 hecha");
+    expect(countLine({ cotizar: 1, responder: 1, seguimientos: 1, hechas: 1 })).toBe("1 por cotizar · 1 por responder · 1 llamada · 1 hecha");
   });
 
   it("does not repeat the top bar's Gmail, Drive and website links", () => {

@@ -17,7 +17,8 @@ import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases, reviewableOpenCards } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
-import { awaitsQuote, endOfDay, isFollowUpTask } from "../today";
+import { awaitsQuote, endOfDay, isCotizarCase, isFollowUpTask } from "../today";
+import { boardViewFromHash, needsFollowUp, type BoardView } from "../goals";
 import { contactLine, isDelivered, systemNotes } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
@@ -129,18 +130,27 @@ function Pipeline({
     setMoving({ id: card.opportunity_id, to });
   }
 
+  // `?vista=seguimiento|cotizar` (Hoy's goal tiles): only the cases that tile counts, in Tablero
+  // and Tarjetas alike, until «Quitar filtro».
+  const vista = useBoardView();
+  const viewItems = useMemo(() => {
+    if (vista === null) return items;
+    const now = new Date();
+    return items.filter((c) => (vista === "seguimiento" ? needsFollowUp(c, now) : isCotizarCase(c, now)));
+  }, [items, vista]);
+
   const counts = useMemo(() => {
-    const c = { all: items.length, blocked: 0, pending: 0, ok: 0 };
-    for (const i of items) c[i.status] += 1;
+    const c = { all: viewItems.length, blocked: 0, pending: 0, ok: 0 };
+    for (const i of viewItems) c[i.status] += 1;
     return c;
-  }, [items]);
+  }, [viewItems]);
 
   const visible = useMemo(
     () =>
-      items
+      viewItems
         .filter((i) => (status === "all" || i.status === status) && matchesOrigin(i, origin) && matchesQuery(i, q))
         .sort(byLatestActivity),
-    [items, status, origin, q],
+    [viewItems, status, origin, q],
   );
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
@@ -264,6 +274,21 @@ function Pipeline({
         </div>
       </div>
 
+      {vista !== null ? (
+        <div className="flex flex-wrap items-center gap-2" data-testid="pipeline-vista">
+          <span className="inline-flex items-center rounded-full bg-warn-bg px-2.5 py-1 text-xs font-semibold text-warn">
+            {VISTA_LABEL[vista]} · <span className="ml-1 tabular-nums">{viewItems.length}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => { window.location.hash = crmHash("oportunidades"); }}
+            className="inline-flex min-h-11 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          >
+            Quitar filtro
+          </button>
+        </div>
+      ) : null}
+
       {deciding ? (
         <DecideCases
           cards={deciding === "open" ? openCards : historicalCards}
@@ -307,6 +332,19 @@ function Pipeline({
       ) : null}
     </>
   );
+}
+
+const VISTA_LABEL: Record<BoardView, string> = { seguimiento: "Seguimiento vencido", cotizar: "Por cotizar" };
+
+/** The `?vista=` on the address, kept in step with it. */
+function useBoardView(): BoardView | null {
+  const [hash, setHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return boardViewFromHash(hash);
 }
 
 /** Every case as a card, drawn in slices: the list holds closed cases too. */
