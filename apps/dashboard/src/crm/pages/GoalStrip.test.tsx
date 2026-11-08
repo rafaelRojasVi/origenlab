@@ -171,6 +171,10 @@ describe("GoalStrip", () => {
     expect(tile).toHaveTextContent("1solicitudes sin cotizar · la más antigua: 2 días");
     expect(tile).toHaveTextContent("Solicitud → cotización: 1 día (30 días) · antes —");
     expect(tile).toHaveTextContent("Meta: mismo día hábil");
+    // The median line is compared with no goal: never warn-coloured.
+    const detail = screen.getByTestId("goal-cotizar-detail");
+    expect(detail).toHaveClass("text-ink-muted");
+    expect(detail).not.toHaveClass("text-warn");
   });
 
   it("Alcance reads «15 / 125 llamadas»", () => {

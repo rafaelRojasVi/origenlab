@@ -48,7 +48,7 @@ export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardDa
     <section aria-label="Metas" data-testid="goal-strip" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {seesMoney ? <SoldTile today={today} navigate={navigate} /> : null}
       <Tile
-        href="#/ventas/pipeline?vista=seguimiento"
+        href={`${crmHash("oportunidades")}?vista=seguimiento`}
         testId="goal-seguimiento"
         label="Seguimiento"
         met={followUps === 0}
@@ -58,7 +58,7 @@ export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardDa
         action="Ver en el pipeline"
       />
       <Tile
-        href="#/ventas/pipeline?vista=cotizar"
+        href={`${crmHash("oportunidades")}?vista=cotizar`}
         testId="goal-cotizar"
         label="Cotizar"
         met={backlog.count === 0}
@@ -71,6 +71,7 @@ export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardDa
         }
         detail={`Solicitud → cotización: ${speed.current.n && speed.current.medianMs !== null ? formatWait(speed.current.medianMs) : "—"} (30 días) · antes ${
           speed.previous.n && speed.previous.medianMs !== null ? formatWait(speed.previous.medianMs) : "—"}`}
+        detailTone={false}
         foot="Meta: mismo día hábil"
         action="Ver en el pipeline"
       />
@@ -147,10 +148,10 @@ function SoldTile({ today, navigate }: { today: string; navigate: Navigate }) {
 }
 
 const TILE =
-  "crm-rise flex min-h-11 flex-col rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)]";
+  "crm-rise flex min-h-11 flex-col rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-(--tile-shadow)";
 const LABEL = "text-[12px] font-medium text-ink-muted";
 
-function Tile({ href, onClick, testId, label, met, value, mean, bar, detail, foot, action }: {
+function Tile({ href, onClick, testId, label, met, value, mean, bar, detail, detailTone = true, foot, action }: {
   href: string;
   /** Navigate in-app (a plain click); the `href` still serves a new tab. */
   onClick?: () => void;
@@ -162,6 +163,8 @@ function Tile({ href, onClick, testId, label, met, value, mean, bar, detail, foo
   /** 0–100: how far toward the goal. */
   bar?: number;
   detail?: string;
+  /** Colour `detail` good/warn by `met`. Off for a line that is compared with no goal. */
+  detailTone?: boolean;
   foot: string;
   action: string;
 }) {
@@ -175,7 +178,7 @@ function Tile({ href, onClick, testId, label, met, value, mean, bar, detail, foo
         e.preventDefault();
         onClick();
       }}
-      className={`${TILE} group transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-[0_6px_16px_-8px_rgb(13_148_136/0.25)] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1`}
+      className={`${TILE} group transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-(--tile-shadow-hover) focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1`}
     >
       <span className="flex items-center justify-between gap-2">
         <span className={LABEL}>{label}</span>
@@ -193,7 +196,14 @@ function Tile({ href, onClick, testId, label, met, value, mean, bar, detail, foo
           <span className={`block h-full rounded-full ${met ? "bg-good" : "bg-warn"}`} style={{ width: `${bar}%` }} />
         </span>
       ) : null}
-      {detail ? <span className={`mt-2 text-[12px] leading-4 ${met ? "text-good" : "text-warn"}`}>{detail}</span> : null}
+      {detail ? (
+        <span
+          data-testid={`${testId}-detail`}
+          className={`mt-2 text-[12px] leading-4 ${!detailTone ? "text-ink-muted" : met ? "text-good" : "text-warn"}`}
+        >
+          {detail}
+        </span>
+      ) : null}
       <span className="mt-auto flex items-end justify-between gap-2 pt-2.5 text-[11px] leading-4">
         <span className="text-ink-faint">{foot}</span>
         <span className="shrink-0 font-medium text-accent group-hover:underline">{action} →</span>

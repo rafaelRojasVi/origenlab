@@ -67,6 +67,11 @@
    every status text on its own -bg. Screen only: printing a quote is always on white. */
 :root {
   color-scheme: light;
+  /* Hoy's goal tiles (`shadow-(--tile-shadow)`): a hairline lift, a teal glow on hover. Plain
+     variables, not `@theme` shadows: Tailwind inlines a theme shadow's value into the utility,
+     so the dark override below would never reach it. */
+  --tile-shadow: 0 1px 2px rgb(28 25 23 / 0.04);
+  --tile-shadow-hover: 0 6px 16px -8px rgb(13 148 136 / 0.25);
 }
 
 @media screen {
@@ -105,6 +110,8 @@
     --color-scrim: rgb(0 0 0 / 0.6);
     --color-skeleton-a: #232120;
     --color-skeleton-b: #2e2b29;
+    --tile-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+    --tile-shadow-hover: 0 6px 16px -8px rgb(45 212 191 / 0.3);
 
     --chart-ok: #14a394;
     --chart-bounce: #d9363e;

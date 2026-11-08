@@ -147,12 +147,16 @@ export function cotizarBacklog(queue: QueueItem[]): { count: number; oldestMs: n
   return { count, oldestMs };
 }
 
-/** When the case's first quote went out: the earliest `sent_at` of a revision not imported from history. */
+/**
+ * When the case's first quote went out: the earliest `sent_at` of a revision that is not void.
+ * Every origin counts — `case_quotation.py` records each sent quote the Gmail sync finds as
+ * `historical_import`, so skipping that origin would leave only Cotizador quotes.
+ */
 export function firstSentAt(card: OpportunityCardData): string | null {
   let first: string | null = null;
   for (const q of card.quotes ?? []) {
     for (const r of q.revisions ?? []) {
-      if (r.origin === "historical_import" || !r.sent_at || Number.isNaN(Date.parse(r.sent_at))) continue;
+      if (r.status === "void" || !r.sent_at || Number.isNaN(Date.parse(r.sent_at))) continue;
       if (!first || Date.parse(r.sent_at) < Date.parse(first)) first = r.sent_at;
     }
   }
@@ -169,7 +173,8 @@ function median(values: number[]): number | null {
 /**
  * «Solicitud → cotización»: the median time from the client's request (`requested_at`, else
  * `created_at`) to the first quote sent, over the cases whose first quote went out in the last 30
- * days (`current`) and the 30 before (`previous`).
+ * days (`current`) and the 30 before (`previous`). A case whose first quote was sent no later
+ * than the case was created is left out.
  */
 export function quoteSpeed(cards: OpportunityCardData[], now: Date): {
   current: { medianMs: number | null; n: number };
@@ -183,6 +188,10 @@ export function quoteSpeed(cards: OpportunityCardData[], now: Date): {
     const asked = card.requested_at ?? card.created_at;
     if (!sent || !asked) continue;
     const sentMs = Date.parse(sent);
+    // A case whose first quote went out before (or as) the case was opened was built from an
+    // already-sent quote (the September import): it says nothing about how fast we quote. This
+    // compares with `created_at`, not `requested_at`, which is never after it.
+    if (card.created_at && sentMs <= Date.parse(card.created_at)) continue;
     const duration = sentMs - Date.parse(asked);
     if (Number.isNaN(duration) || duration < 0) continue;
     if (sentMs >= t - 30 * DAY_MS && sentMs < t) current.push(duration);

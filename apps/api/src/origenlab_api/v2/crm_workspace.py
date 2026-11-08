@@ -274,10 +274,12 @@ _SQL_PIPELINE_OPPS = f"""
            -- from these when no client email on the case does.
            fr.payload->>'original_email' as forwarded_email, fr.payload->>'company' as forwarded_company,
            -- When the client asked (Hoy's «Solicitud → cotización»): the origin email's `sent_at`
-           -- when it reads as a timestamp, else when it was captured; never after the case opened
-           -- (`least` ignores a null, so a case with no origin record keeps `created_at`).
+           -- when it is a valid timestamp, else when it was captured; never after the case opened
+           -- (`least` ignores a null, so a case with no origin record keeps `created_at`). The
+           -- check is `pg_input_is_valid`, not a shape regex: one `2026-13-40T99:99` passes a
+           -- regex and its cast would abort the whole /pipeline read.
            least(op.created_at,
-                 case when osr.payload->>'sent_at' ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}T[0-9]{{2}}:[0-9]{{2}}'
+                 case when pg_input_is_valid(osr.payload->>'sent_at', 'timestamptz')
                       then (osr.payload->>'sent_at')::timestamptz else osr.acquired_at end)::text as requested_at
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
@@ -388,7 +390,7 @@ _SQL_PIPELINE_CALLS = """
 """
 # The newest live call on each case the client answered (contestó · reunión): a follow-up touch
 # on Hoy, like an email we sent. `at` is when the call was first logged (the root's time), so an
-# edit does not move the clock.
+# edit does not move the clock. Live cases only (open, or won), like `_SQL_PIPELINE_NOTES`.
 _SQL_PIPELINE_LAST_CALLS = """
     select distinct on (n.subject_id)
            n.subject_id::text as opportunity_id,
@@ -396,7 +398,9 @@ _SQL_PIPELINE_LAST_CALLS = """
            n.call_outcome as outcome
       from crm.note n
       left join crm.note r on r.id = n.root_note_id
+      join crm.opportunity op on op.id = n.subject_id
      where n.subject_kind = 'opportunity' and n.status = 'active'
+       and (op.closed_at is null or op.stage = 'won')
        and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion')
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
      order by n.subject_id, coalesce(r.created_at, n.created_at) desc, n.id desc

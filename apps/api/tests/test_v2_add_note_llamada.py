@@ -326,3 +326,41 @@ def test_an_unanswered_call_is_not_the_cards_last_call(db, operator) -> None:
     reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
     [card] = [c for c in reads.pipeline()["items"] if c["opportunity_id"] == cid]
     assert card["last_call"] is None
+
+
+@needs_db
+def test_a_malformed_origin_sent_at_falls_back_to_acquired_at(db, operator) -> None:
+    """`2026-13-40T99:99` has a timestamp's shape but is no date: the pipeline still answers, and
+    the case's `requested_at` is when the origin email was captured."""
+    from datetime import datetime
+
+    tag = uuid.uuid4().hex[:10]
+    [(sr_id,)] = _owner(
+        db,
+        "insert into evidence.source_record (kind, dedupe_key, payload, source_uri, acquired_at)"
+        " values ('gmail_message', %s, %s::jsonb, %s, '2026-01-02T03:04:05+00:00') returning id::text",
+        (f"pytest-bad-date:{tag}", '{"sent_at": "2026-13-40T99:99", "subject_raw": "Consulta"}',
+         f"gmail://msg/{tag}"),
+    )
+    [(cid,)] = _owner(
+        db,
+        "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id)"
+        " values ('Equipo con fecha rota', 'lead', %s, %s) returning id::text",
+        (operator.operator_id, sr_id),
+    )
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    [card] = [c for c in reads.pipeline()["items"] if c["opportunity_id"] == cid]
+    assert datetime.fromisoformat(card["requested_at"]) == datetime.fromisoformat("2026-01-02T03:04:05+00:00")
+
+
+@needs_db
+def test_a_closed_cases_call_is_not_its_last_call(db, operator) -> None:
+    """Only live cases carry a last call, like their last note."""
+    cid = _case(db, operator)
+    _add(db, operator, subject_kind="opportunity", subject_id=cid, body="Contestó.",
+         note_kind="llamada", call_outcome="contesto")
+    _owner(db, "update crm.opportunity set stage = 'abandoned', closed_at = now(),"
+               " close_reason = 'Sin respuesta' where id = %s", (cid,))
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    cards = [c for c in reads.pipeline()["items"] if c["opportunity_id"] == cid]
+    assert all(c["last_call"] is None for c in cards)

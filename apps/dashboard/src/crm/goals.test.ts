@@ -155,10 +155,22 @@ describe("firstSentAt and quoteSpeed", () => {
   const asked = (msAgo: number, tookMs: number) =>
     card({ requested_at: ago(msAgo + tookMs), created_at: ago(msAgo + tookMs) }, [rev(ago(msAgo))]);
 
-  it("firstSentAt is the earliest revision that is not the historical import", () => {
-    const c = card({}, [rev(ago(10 * DAY), { origin: "historical_import" }), rev(ago(5 * DAY)), rev(ago(2 * DAY), { revision_no: 2 })]);
-    expect(firstSentAt(c)).toBe(ago(5 * DAY));
+  it("firstSentAt is the earliest sent revision that is not void, whatever its origin", () => {
+    const c = card({}, [rev(ago(12 * DAY), { status: "void" }), rev(ago(10 * DAY), { origin: "historical_import" }), rev(ago(5 * DAY)), rev(ago(2 * DAY), { revision_no: 2 })]);
+    expect(firstSentAt(c)).toBe(ago(10 * DAY));
     expect(firstSentAt(card({}, [rev(null)]))).toBeNull();
+  });
+
+  it("counts a Gmail-synced (historical_import) quote sent after the case opened", () => {
+    const c = card({ created_at: ago(DAY + 8 * HOUR), requested_at: ago(DAY + 8 * HOUR) }, [rev(ago(DAY), { origin: "historical_import" })]);
+    expect(quoteSpeed([c], NOW).current).toEqual({ medianMs: 8 * HOUR, n: 1 });
+  });
+
+  it("skips a case whose first quote went out no later than the case was created", () => {
+    // Built by the September import from an already-sent quote: requested_at is older, created_at is not.
+    const imported = card({ requested_at: ago(10 * DAY), created_at: ago(DAY) }, [rev(ago(2 * DAY), { origin: "historical_import" })]);
+    const same = card({ created_at: ago(DAY) }, [rev(ago(DAY))]);
+    expect(quoteSpeed([imported, same], NOW).current).toEqual({ medianMs: null, n: 0 });
   });
 
   it("takes the median of the last 30 days and of the 30 before", () => {
@@ -168,9 +180,9 @@ describe("firstSentAt and quoteSpeed", () => {
       asked(10 * DAY, 36 * HOUR),
       asked(35 * DAY, 48 * HOUR),
       asked(40 * DAY, 72 * HOUR),
-      // Ignored: sent before it was asked, imported from history, never sent.
+      // Ignored: sent before it was asked, sent before the case was created (the import), never sent.
       card({ requested_at: ago(2 * DAY) }, [rev(ago(3 * DAY))]),
-      card({ requested_at: ago(4 * DAY) }, [rev(ago(2 * DAY), { origin: "historical_import" })]),
+      card({ requested_at: ago(4 * DAY), created_at: ago(DAY) }, [rev(ago(2 * DAY), { origin: "historical_import" })]),
       card({ requested_at: ago(4 * DAY) }, [rev(null)]),
       // A later rev 2 does not move the first quote: 6 h, inside the current window.
       card({ requested_at: ago(20 * DAY + 6 * HOUR) }, [rev(ago(20 * DAY)), rev(ago(DAY), { revision_no: 2 })]),
