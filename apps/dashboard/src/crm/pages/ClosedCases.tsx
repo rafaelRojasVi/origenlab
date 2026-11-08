@@ -146,8 +146,8 @@ function MonthTable({ month, onOpen }: { month: ClosedMonth; onOpen: (id: string
           <tr>
             <th scope="col" className="w-auto px-3 py-1.5 font-medium sm:px-4">Institución</th>
             <th scope="col" className="hidden w-24 px-2 py-1.5 font-medium sm:table-cell">CN</th>
-            <th scope="col" className="w-28 px-2 py-1.5 text-right font-medium sm:w-32">Neto</th>
-            <th scope="col" className="w-28 px-2 py-1.5 font-medium sm:w-40">Motivo</th>
+            <th scope="col" className="w-28 px-3 py-1.5 text-right font-medium sm:w-32 sm:px-2">Neto</th>
+            <th scope="col" className="hidden w-40 px-2 py-1.5 font-medium sm:table-cell lg:w-56">Motivo</th>
             <th scope="col" className="hidden w-28 px-3 py-1.5 font-medium sm:table-cell sm:px-4">Cerrada el</th>
           </tr>
         </thead>
@@ -189,17 +189,18 @@ function ClosedRow({ card, onOpen }: { card: OpportunityCardData; onOpen: (id: s
         >
           {name}
         </button>
-        {/* On a phone the CN and the date ride under the name. */}
+        {/* On a phone the motivo, the CN and the date ride under the name. */}
+        <span className="block truncate text-[11.5px] text-ink-muted sm:hidden">{reason}</span>
         <span className="block truncate text-[11.5px] tabular-nums text-ink-faint sm:hidden">
           {money.cn ? `${money.cn} · ` : ""}
           {closed}
         </span>
       </td>
       <td className="hidden px-2 py-2 tabular-nums text-ink-muted sm:table-cell">{money.cn ?? "—"}</td>
-      <td className={`px-2 py-2 text-right tabular-nums ${money.text === "sin leer" ? "text-ink-faint" : "text-ink"}`}>
+      <td className={`px-3 py-2 text-right tabular-nums sm:px-2 ${money.text === "sin leer" ? "text-ink-faint" : "text-ink"}`}>
         {money.text || "—"}
       </td>
-      <td className={`truncate px-2 py-2 ${reason === NO_REASON ? "text-ink-faint" : "text-ink-muted"}`} title={reason}>
+      <td className={`hidden truncate px-2 py-2 sm:table-cell ${reason === NO_REASON ? "text-ink-faint" : "text-ink-muted"}`} title={reason}>
         {reason}
       </td>
       <td className="hidden px-3 py-2 tabular-nums text-ink-muted sm:table-cell sm:px-4">{closed}</td>
