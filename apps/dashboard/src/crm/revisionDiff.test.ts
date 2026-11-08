@@ -77,4 +77,9 @@ describe("revisionChanges", () => {
     const c = contents("12400000", [equipo, sonotrodo]);
     expect(revisionChanges(rev(1, c), rev(2, { ...c, lines: [{ ...sonotrodo }, { ...equipo }] }))).toEqual(["Sin cambios en líneas ni neto"]);
   });
+  it("keeps a line with no model, item or description, by its number", () => {
+    const unnamed = line({ line_no: 3, unit_price: "250000", line_total: "250000" });
+    const out = revisionChanges(rev(1, contents("12400000", [equipo, sonotrodo])), rev(2, contents("12650000", [equipo, sonotrodo, unnamed])));
+    expect(out).toEqual(["Neto $ 12.400.000 → $ 12.650.000", "+ Línea 3"]);
+  });
 });

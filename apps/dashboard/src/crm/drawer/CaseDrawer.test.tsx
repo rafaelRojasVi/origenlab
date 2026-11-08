@@ -240,6 +240,38 @@ describe("CaseDrawer", () => {
     expect(within(dialog).queryByTestId("case-drawer-footer")).toBeNull();
   });
 
+  it("a case with a future «Seguimiento» reminder shows the chip with that date", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
+    try {
+      stub();
+      const task = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-11T12:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer("sales", card({ open_tasks: [task] }));
+      // Rev 2 went out 28 Oct: on 11 Nov the rhythm is on its second follow-up.
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 2 de 3 · miércoles 11");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads the contact's phones only once Contacto is opened, and keeps them", async () => {
+    const paths = stub();
+    const dialog = renderDrawer("sales");
+    await waitFor(() => expect(paths.some((p) => p.endsWith("/timeline"))).toBe(true));
+    expect(paths).not.toContain(`/v2/workspace/people/${PERSON}`);
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Contacto" }));
+    await within(dialog).findByTestId("person-phones");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Resumen" }));
+    expect(within(dialog).getByTestId("person-phones")).toBeInTheDocument();
+    expect(paths.filter((p) => p === `/v2/workspace/people/${PERSON}`)).toHaveLength(1);
+  });
+
+  it("each tab panel takes focus", () => {
+    stub();
+    const dialog = renderDrawer("sales");
+    expect(within(dialog).getByRole("tabpanel", { name: "Resumen" })).toHaveAttribute("tabindex", "0");
+  });
+
   it("timeline error shows «No se pudo cargar la línea de tiempo» with Reintentar", async () => {
     stub({ timeline: [{ status: 500, body: { detail: "boom" } }, { status: 200, body: { opportunity_id: CASE, entries: TIMELINE } }] });
     const dialog = renderDrawer("sales");

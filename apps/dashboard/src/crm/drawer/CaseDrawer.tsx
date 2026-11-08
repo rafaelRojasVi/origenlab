@@ -53,6 +53,29 @@ function shortDay(value: string | Date): string {
   return d.toLocaleDateString("es-CL", { weekday: "short", day: "numeric", month: "short" });
 }
 
+/** «miércoles 11»: the canvas's day for a follow-up chip, in the browser's zone. */
+function weekdayDay(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return `${d.toLocaleDateString("es-CL", { weekday: "long" })} ${d.getDate()}`;
+}
+
+/**
+ * «Seguimiento N de 3 · …» for the header: with a «Seguimiento …» reminder open, its step and its
+ * day — the step the rhythm will be on that day, read from `followUpsDue` as of then; otherwise,
+ * when the case is due today by the rhythm alone, «hoy». Null when neither.
+ */
+function followUpChip(card: OpportunityCardData, now: Date): { step: 1 | 2 | 3; day: string } | null {
+  const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
+  const dueNow = followUpsDue([card], now)[0] ?? null;
+  if (reminder) {
+    const at = Math.max(now.getTime(), Date.parse(reminder.due_at));
+    const onItsDay = dueNow ?? followUpsDue([card], new Date(Number.isNaN(at) ? now.getTime() : at))[0] ?? null;
+    return { step: onItsDay ? followUpStep(onItsDay) : 1, day: weekdayDay(reminder.due_at) };
+  }
+  return dueNow ? { step: followUpStep(dueNow), day: "hoy" } : null;
+}
+
 /** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
 function displayNameOf(address: string): string {
   // The display part is whatever precedes the «<»; React renders it as text, nothing is sanitised here.
@@ -132,8 +155,10 @@ function CaseDrawerBody({
   const product = quoteProduct(card);
   const money = card.money?.[0];
   const net = money && money.currency !== "unread" ? formatMoney(money.net_total, money.currency) : null;
-  const followUp = followUpsDue([card], new Date())[0] ?? null;
-  const followUpDay = followUp ? (followUp.task ? shortDay(followUp.task.task.due_at) : "hoy") : null;
+  const followUp = followUpChip(card, new Date());
+  // The Contacto tab reads the person's phones only once it has been opened, then keeps them.
+  const [contactSeen, setContactSeen] = useState(false);
+  if (tab === "contacto" && !contactSeen) setContactSeen(true);
   const reply = replyUrl(card);
   const reminder = [...(card.open_tasks ?? [])].filter(isFollowUpTask).sort((a, b) => a.due_at.localeCompare(b.due_at))[0] ?? null;
   const nextStep = reminder
@@ -154,7 +179,7 @@ function CaseDrawerBody({
             className="inline-flex items-center rounded-full border border-warn/30 bg-warn-bg px-1.5 py-px text-[11px] font-semibold leading-4 text-warn"
             data-testid="case-drawer-followup"
           >
-            Seguimiento {followUpStep(followUp)} de 3 · {followUpDay}
+            Seguimiento {followUp.step} de 3 · {followUp.day}
           </span>
         ) : null}
         {net ? (
@@ -251,7 +276,7 @@ function CaseDrawerBody({
       </TabPanel>
 
       <TabPanel base={base} tab="contacto" current={tab}>
-        <CaseContact card={card} />
+        <CaseContact card={card} showPhones={contactSeen} />
       </TabPanel>
 
       <TabPanel base={base} tab="notas" current={tab}>
@@ -316,7 +341,7 @@ function Tabs({ base, tab, onChange }: { base: string; tab: DrawerTab; onChange:
 function TabPanel({ base, tab, current, children }: { base: string; tab: DrawerTab; current: DrawerTab; children: ReactNode }) {
   const ids = tabIds(base, tab);
   return (
-    <div role="tabpanel" id={ids.panel} aria-labelledby={ids.tab} hidden={tab !== current} className="space-y-5">
+    <div role="tabpanel" id={ids.panel} aria-labelledby={ids.tab} tabIndex={0} hidden={tab !== current} className="space-y-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
       {children}
     </div>
   );
@@ -414,7 +439,7 @@ function NewQuoteButton({ card }: { card: OpportunityCardData }) {
 const CONTACT_LINK =
   "flex min-w-0 items-baseline gap-2 rounded-md px-2 py-1 -mx-2 text-ink hover:bg-canvas-sunken hover:text-accent-strong";
 
-function CaseContact({ card }: { card: OpportunityCardData }) {
+function CaseContact({ card, showPhones }: { card: OpportunityCardData; showPhones: boolean }) {
   return (
     <Section title="Contacto">
       <ul className="space-y-1.5 text-[13px]">
@@ -451,7 +476,7 @@ function CaseContact({ card }: { card: OpportunityCardData }) {
             ) : (
               <span className="text-ink">{card.contact.name}</span>
             )}
-            {card.contact.person_id ? <PersonPhones personId={card.contact.person_id} /> : null}
+            {card.contact.person_id && showPhones ? <PersonPhones personId={card.contact.person_id} /> : null}
           </li>
         ) : null}
       </ul>

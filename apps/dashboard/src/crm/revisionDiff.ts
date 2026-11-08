@@ -1,6 +1,7 @@
 /**
  * «Qué cambió» between two revisions of one quotation, read from what each PDF says
- * (`RevisionCard.contents`). Lines are matched by `model ?? item ?? description`, ignoring case;
+ * (`RevisionCard.contents`). Lines are matched by `model ?? item ?? description`, ignoring case
+ * (a line with none of them by its `line_no`, shown as «Línea N»);
  * amounts are decimal strings, compared as numbers and only formatted here.
  */
 import type { QuoteLine, RevisionCard } from "./crmTypes";
@@ -14,8 +15,14 @@ function present(s: string | null | undefined): string | null {
   return t ? t : null;
 }
 
-function lineName(l: QuoteLine): string | null {
-  return present(l.model) ?? present(l.item) ?? present(l.description);
+function lineName(l: QuoteLine): string {
+  return present(l.model) ?? present(l.item) ?? present(l.description) ?? `Línea ${l.line_no}`;
+}
+
+/** The matching key: the name, ignoring case; an unnamed line by its number. */
+function lineKey(l: QuoteLine): string {
+  const name = present(l.model) ?? present(l.item) ?? present(l.description);
+  return name ? `n:${name.toLowerCase()}` : `#${l.line_no}`;
 }
 
 function differs(a: string | null, b: string | null): boolean {
@@ -39,9 +46,7 @@ function money(amount: string | null, currency: string | null): string {
 function byName(lines: QuoteLine[]): Map<string, QuoteLine[]> {
   const out = new Map<string, QuoteLine[]>();
   for (const l of lines) {
-    const name = lineName(l);
-    if (!name) continue;
-    const key = name.toLowerCase();
+    const key = lineKey(l);
     out.set(key, [...(out.get(key) ?? []), l]);
   }
   return out;
@@ -68,7 +73,7 @@ export function revisionChanges(prev: RevisionCard, next: RevisionCard): string[
     const prevLines = before.get(key) ?? [];
     nextLines.forEach((l, i) => {
       const old = prevLines[i];
-      const name = lineName(l) as string;
+      const name = lineName(l);
       if (!old) {
         added.push(`+ ${name}`);
         return;
@@ -81,7 +86,7 @@ export function revisionChanges(prev: RevisionCard, next: RevisionCard): string[
   }
   for (const [key, prevLines] of before) {
     const kept = after.get(key)?.length ?? 0;
-    prevLines.slice(kept).forEach((l) => removed.push(`− ${lineName(l) as string}`));
+    prevLines.slice(kept).forEach((l) => removed.push(`− ${lineName(l)}`));
   }
 
   const out = [...neto, ...added, ...removed, ...qty, ...price];
