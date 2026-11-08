@@ -71,6 +71,7 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
     canvas.hidden = true;
     throw error;
   }
+  scene.addViews(story.views);
   scene.bindOverlays(root);
 
   const marked = [...root.querySelectorAll<HTMLElement>('[data-beats]')];
@@ -185,6 +186,8 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
       },
     };
   } else {
+    // La primera pantalla (`[data-first-screen]`) es el primer tramo de la columna fija: el
+    // recorrido empieza con el espaciador, sin `lead`.
     runner = createScrollStory(spacer, scene, beats, {
       onProgress: (progress) => mark(activeBeat(progress, beats)?.beat.id ?? ''),
     });

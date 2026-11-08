@@ -27,19 +27,24 @@ export const site = {
   ogImageAlt: 'OrigenLab, equipos para laboratorio en Chile',
   phone: contact.phoneDisplay,
   whatsapp: contact.phoneDisplay,
-  /** Color de la barra del navegador: igual al fondo del header. */
+  /** Color de la barra del navegador: igual al fondo del header (en la portada, tinta: ver Seo). */
   themeColor: '#fafaf7',
   /**
    * Navegación principal. Cinco destinos y un CTA; no ampliar sin quitar otro.
+   * «Servicios» vive en el pie.
    * "Aplicaciones" agrupa las rutas /categorias/* existentes (sin migrar URLs).
    */
   nav: [
     { href: '/productos/', label: 'Productos' },
     { href: '/aplicaciones/', label: 'Aplicaciones', matches: ['/categorias/'] },
     { href: '/marcas/', label: 'Marcas' },
-    { href: '/servicios/', label: 'Servicios' },
+    { href: '/como-comprar/', label: 'Cómo comprar' },
     { href: '/nosotros/', label: 'Nosotros' },
   ] as readonly NavItem[],
   /** Destino único del CTA primario en todo el sitio. */
   quoteHref: '/contacto/',
+  /** Perfil de LinkedIn. Vacío hasta que el negocio lo confirme: el pie sólo dibuja el enlace si hay valor. */
+  linkedinUrl: '' as string,
+  /** Perfil de empresa en Google. Vacío hasta que el negocio lo confirme: sólo entra en `sameAs` del JSON-LD si hay valor. */
+  googleProfileUrl: '' as string,
 } as const;

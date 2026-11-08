@@ -1,159 +1,58 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import Hero from '../components/home/Hero.astro';
-import BrandRail from '../components/home/BrandRail.astro';
-import EquipmentFamilies from '../components/home/EquipmentFamilies.astro';
-import ConsultationSection from '../components/home/ConsultationSection.astro';
-import ProcessSection from '../components/home/ProcessSection.astro';
-import AudienceSection from '../components/home/AudienceSection.astro';
+import HomeHero from '../components/home/HomeHero.astro';
+import HomeFamilies from '../components/home/HomeFamilies.astro';
+import HomeIndustries from '../components/home/HomeIndustries.astro';
+import HomeSteps from '../components/home/HomeSteps.astro';
+import HomeBrands from '../components/home/HomeBrands.astro';
+import HomeNotes from '../components/home/HomeNotes.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import Icon from '../components/ui/Icon.astro';
-import { getCollection } from 'astro:content';
 import { site } from '../config/site';
-import { organizationJsonLd, websiteJsonLd } from '../lib/jsonld';
+import { publicClaim } from '../data/claims';
+import { websiteJsonLd } from '../lib/jsonld';
 
 /**
- * Portada.
+ * Portada (tablero HomeA).
  *
- * La portada no lleva índice numerado de secciones. En las páginas interiores
- * el numeral funciona como el índice de un manual, pero encadenado de 01 a 05
- * en la portada convertía la página en un documento formateado y no en un
- * primer encuentro comercial. Aquí la identidad de cada sección la da la
- * etiqueta mono y, sobre todo, el cambio de fondo, de escala y de densidad.
+ * Ritmo de la página:
  *
- * Ritmo de la página, deliberadamente desigual:
+ *   tinta     primera pantalla: titular, acciones y sala 3D, bajo la cabecera de tinta
+ *   papel     familias: seis tarjetas con sus modelos, desde la colección
+ *   papel     industrias, en una fila
+ *   blanco    cómo comprar en cuatro pasos
+ *   papel     marcas, una fila fija
+ *   papel     notas de aplicación, sólo si la colección tiene notas
+ *   tinta     banda de cierre
  *
- *   papel     hero: titular, sala 3D, línea de valor e índice de familias
- *   superficie riel de marcas, una sola altura, gris y en movimiento lento
- *   papel     familias: cuatro composiciones, cada una con su página
- *   superficie   dentro de ellas, la banda de preparación cambia de fondo
- *   papel     a quién atendemos: seis entradas por sector, en tabla
- *   papel     asesoría técnica, aire y preguntas a gran escala
- *   superficie hechos y cómo comprar en cuatro pasos, denso
- *   papel     notas de aplicación destacadas, sólo si hay notas
- *   tinta     banda de cierre, con WhatsApp como acción
+ * El titular B (cotización el mismo día, directo con el fabricante) sólo sale
+ * si la promesa está aprobada en `claims.ts`. Con él en la primera pantalla, el
+ * titular antiguo pasa a las familias; sin él, ocurre al revés. El
+ * revelado al desplazarse es CSS puro (`.rv` en global.css), sin script.
  *
- * Las notas destacadas leen la colección `aplicaciones`: con la colección
- * vacía la sección no se dibuja, ni siquiera su título. Todavía no hay una
- * ruta por nota, así que cada una lleva al índice de aplicaciones.
- *
- * Las preguntas frecuentes se movieron a /contacto/, junto con su JSON-LD:
- * el acordeón de la portada repetía lo que la sección de asesoría ya resuelve
- * mejor, y los datos estructurados tienen que vivir donde está el contenido
- * visible que describen.
+ * Las preguntas frecuentes viven en /contacto/, junto con su JSON-LD.
  */
-/* `getCollection` avisa en cada build si la colección está vacía; el glob
-   evita pedirla mientras no haya ninguna nota. */
-const hasNotes = Object.keys(import.meta.glob('../content/aplicaciones/*.md')).length > 0;
-const notes = hasNotes
-  ? (await getCollection('aplicaciones'))
-      .sort((a, b) => a.data.title.localeCompare(b.data.title, 'es'))
-      .slice(0, 3)
-  : [];
+const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
+const headlineB = sameDay;
+const bandBody = sameDay
+  ? 'Le respondemos con una cotización el mismo día hábil, con la ficha técnica del fabricante.'
+  : 'Le respondemos con una cotización por escrito, con la ficha técnica del fabricante.';
 ---
 
 <Layout
   title={`${site.name} | ${site.tagline}`}
   description={site.description}
   isHome
-  jsonLd={[organizationJsonLd(), websiteJsonLd()]}
+  jsonLd={[websiteJsonLd()]}
 >
-  <Hero />
-  <BrandRail />
-  <EquipmentFamilies />
-  <AudienceSection />
-  <ConsultationSection />
-  <ProcessSection />
-
-  {
-    notes.length > 0 && (
-      <section class="shell section notes" aria-labelledby="notas-title" data-home-notes>
-        <p class="t-label">Notas de aplicación</p>
-        <h2 id="notas-title" class="t-h2 notes__title">Cómo se resuelve en el laboratorio</h2>
-        <ul class="notes__list">
-          {notes.map((note) => (
-            <li class="notes__item">
-              <h3 class="notes__name">
-                <a href="/aplicaciones/">{note.data.title}</a>
-              </h3>
-            </li>
-          ))}
-        </ul>
-        <a href="/aplicaciones/" class="link-arrow notes__link">
-          Ver todas las aplicaciones
-          <Icon name="arrow-right" size={18} class="arrow" />
-        </a>
-      </section>
-    )
-  }
-
+  <HomeHero headlineB={headlineB} />
+  <HomeFamilies headlineB={headlineB} />
+  <HomeIndustries />
+  <HomeSteps tone="raised" />
+  <HomeBrands />
+  <HomeNotes />
   <ClosingQuoteBand
-    title="¿Tiene un requerimiento hoy? Escríbanos por WhatsApp."
-    body="Con la aplicación, la institución y su ciudad acotamos alternativas y preparamos una cotización con configuración y condiciones por escrito."
-    primary="whatsapp"
+    title="Cuéntenos qué necesita hacer con la muestra."
+    body={bandBody}
+    primary="quote"
   />
 </Layout>
-
-<style>
-  .notes__title {
-    margin-top: 1rem;
-  }
-  .notes__list {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .notes__item {
-    padding-block: 1.25rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .notes__name {
-    font-size: clamp(1.125rem, 1.05rem + 0.4vw, 1.375rem);
-    font-weight: 600;
-    letter-spacing: -0.012em;
-  }
-  .notes__link {
-    margin-top: 2rem;
-  }
-</style>
-
-<script>
-  /**
-   * Revelado al desplazarse. Mejora progresiva estricta.
-   *
-   * Sin este script no se oculta nada: el estado inicial de `[data-reveal]`
-   * sólo existe mientras el documento lleva `data-reveal-ready`, que se pone
-   * aquí. Con movimiento reducido no se pone y la portada se pinta completa.
-   *
-   * No hay parallax, no hay secuestro del desplazamiento y ningún contenido
-   * depende del movimiento para leerse. Cada elemento se observa una sola vez.
-   */
-  const targets = document.querySelectorAll<HTMLElement>('[data-reveal]');
-  const motionOk = window.matchMedia('(prefers-reduced-motion: no-preference)');
-
-  if (targets.length > 0 && motionOk.matches && 'IntersectionObserver' in window) {
-    document.documentElement.setAttribute('data-reveal-ready', '');
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (!entry.isIntersecting) continue;
-          entry.target.classList.add('is-revealed');
-          observer.unobserve(entry.target);
-        }
-      },
-      { rootMargin: '0px 0px -10% 0px', threshold: 0.08 },
-    );
-
-    for (const target of targets) observer.observe(target);
-
-    /* Si alguien pide movimiento reducido con la página abierta, se descarta el
-       estado oculto en lugar de dejar contenido invisible. */
-    motionOk.addEventListener('change', (event) => {
-      if (event.matches) return;
-      observer.disconnect();
-      document.documentElement.removeAttribute('data-reveal-ready');
-    });
-  }
-</script>

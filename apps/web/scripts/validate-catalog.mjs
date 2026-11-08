@@ -319,6 +319,11 @@ for (const block of claimBlocks) {
     assert(!/approvedBy: null/.test(block), `claims.ts ${id}: aprobada sin responsable`);
     assert(!/approvedOn: null/.test(block), `claims.ts ${id}: aprobada sin fecha de aprobación`);
     assert(!/text: '',/.test(block), `claims.ts ${id}: aprobada sin redacción pública`);
+    // Una cifra en la redacción exige su valor: si no, el registro dice «50 %» y declara que no hay número.
+    const claimText = block.match(/text: '([^']*)'/)?.[1] ?? '';
+    if (/\d/.test(claimText)) {
+      assert(!/value: null/.test(block), `claims.ts ${id}: la redacción aprobada lleva una cifra y value es null`);
+    }
   } else {
     assert(
       /visibility: 'internal'/.test(block),

@@ -1,0 +1,203 @@
+---
+import { familyScale, type FamilySlug, type FamilyScalePoint } from '../../lib/modelos';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Escala de comparación de una familia (tablero Familia): los modelos sobre una
+ * línea, ordenados por la cifra del fabricante que los distingue (`SCALE_SPEC`).
+ * Sin esa cifra en tres modelos no se dibuja nada. Con poco ancho la línea pasa
+ * a filas con una barra proporcional. Dos modelos con la misma cifra comparten
+ * marca. Los puntos «saltan» al entrar y las barras crecen, sólo con movimiento
+ * permitido.
+ */
+interface Props {
+  models: readonly Modelo[];
+  slug: FamilySlug;
+  /** Ancla del titular. */
+  id?: string;
+}
+
+const { models, slug, id = 'escala-title' } = Astro.props;
+const scale = familyScale(models, slug);
+
+const WORDS: Record<number, string> = { 3: 'Tres', 4: 'Cuatro', 5: 'Cinco', 6: 'Seis', 7: 'Siete', 8: 'Ocho', 9: 'Nueve' };
+const count = scale?.points.length ?? 0;
+const palabra = WORDS[count] ?? String(count);
+
+const marks: { x: number; display: string; names: string[] }[] = [];
+for (const point of scale?.points ?? []) {
+  const last = marks[marks.length - 1];
+  if (last && last.x === point.x && last.display === point.display) last.names.push(point.name);
+  else marks.push({ x: point.x, display: point.display, names: [point.name] });
+}
+const first = scale?.points[0];
+const end = scale?.points[count - 1];
+const color = slug === 'pesaje-humedad' ? 'pesaje' : slug;
+---
+
+{
+  scale && first && end && (
+    <section class="shell section rule-top" aria-labelledby={id} data-family-scale style={`--fam: var(--color-family-${color})`}>
+      <p class="t-label">Comparar</p>
+      <h2 id={id} class="t-h2 fs__h2">{palabra} equipos, una escala.</h2>
+      <p class="t-lead mt-5">
+        Ordenados por {scale.label.toLowerCase()}, de {first.display} a {end.display}.
+      </p>
+      <div class="fs__track">
+        {marks.map((mark, i) => (
+          <div
+            class:list={['fs__mk', i === 0 && 'is-first', i === marks.length - 1 && 'is-last']}
+            style={`--x:${mark.x};--i:${i}`}
+            data-mark
+          >
+            <span class="fs__n">{mark.display}</span>
+            <span class="fs__d"></span>
+            <span class="fs__t" translate="no">{mark.names.join(' · ')}</span>
+          </div>
+        ))}
+      </div>
+      <ol class="fs__rows">
+        {scale.points.map((point: FamilyScalePoint) => (
+          <li style={`--x:${point.x}`}>
+            <p class="fs__row-top">
+              <span translate="no">{point.name}</span>
+              <span class="fs__row-n">{point.display}</span>
+            </p>
+            <span class="fs__bar"></span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+<style>
+  .fs__h2 {
+    margin-top: 0.875rem;
+  }
+  .fs__track {
+    position: relative;
+    height: 84px;
+    margin: 3.5rem 7px 0;
+  }
+  .fs__track::before {
+    content: '';
+    position: absolute;
+    inset: 42px 0 auto;
+    height: 1px;
+    background: var(--color-ink-950);
+  }
+  .fs__mk {
+    position: absolute;
+    top: 0;
+    left: calc(var(--x) * 100%);
+    width: 0;
+    height: 84px;
+  }
+  .fs__n,
+  .fs__t {
+    position: absolute;
+    left: 0;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  .fs__n {
+    bottom: 56px;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--color-ink-950);
+  }
+  .fs__t {
+    top: 58px;
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+  }
+  .is-first .fs__n,
+  .is-first .fs__t {
+    transform: translateX(-7px);
+  }
+  .is-last .fs__n,
+  .is-last .fs__t {
+    transform: translateX(calc(-100% + 7px));
+  }
+  .fs__d {
+    position: absolute;
+    top: 35px;
+    left: -7px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--fam);
+    box-shadow: 0 0 0 3px var(--color-paper);
+  }
+  .fs__rows {
+    display: none;
+    list-style: none;
+    padding: 0;
+    margin-top: 2rem;
+    border-top: 1px solid var(--color-ink-950);
+  }
+  .fs__rows li {
+    padding: 0.875rem 0;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .fs__row-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    font-weight: 600;
+  }
+  .fs__row-n {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 0.9375rem;
+  }
+  .fs__bar {
+    display: block;
+    height: 4px;
+    margin-top: 0.625rem;
+    width: max(4px, calc(var(--x) * 100%));
+    background: var(--fam);
+    border-radius: 2px;
+    transform-origin: left;
+  }
+  @media (max-width: 759.98px) {
+    .fs__track {
+      display: none;
+    }
+    .fs__rows {
+      display: block;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .fs__d {
+      animation: fs-pop 520ms cubic-bezier(0.3, 1.7, 0.5, 1) both;
+      animation-delay: calc(450ms + var(--i) * 180ms);
+    }
+    .fs__bar {
+      animation: fs-grow 600ms ease-out both;
+    }
+  }
+  @keyframes fs-pop {
+    0% {
+      transform: scale(0);
+      opacity: 0;
+    }
+    60% {
+      transform: scale(1.35);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+  @keyframes fs-grow {
+    from {
+      transform: scaleX(0);
+    }
+  }
+</style>

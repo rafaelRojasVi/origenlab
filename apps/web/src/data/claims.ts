@@ -44,6 +44,12 @@ export interface Claim {
   visibility: 'public' | 'internal';
   /** Por qué no se publica, cuando corresponda. */
   note?: string;
+  /**
+   * Otras redacciones públicas de la misma afirmación. Cuando la afirmación no
+   * está aprobada, `validate:dist` vigila cada variante igual que `text`, para
+   * que una paráfrasis no la publique por la puerta de atrás.
+   */
+  variants?: readonly string[];
 }
 
 export const claims: readonly Claim[] = [
@@ -121,6 +127,113 @@ export const claims: readonly Claim[] = [
     visibility: 'public',
   },
   {
+    id: 'cotizacion-mismo-dia-habil',
+    text: 'Cotización el mismo día hábil',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; canvas «Sitio OrigenLab 2027»',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    variants: ['Cotización el mismo día', 'mismo día hábil'],
+    note:
+      'Promesa de servicio aprobada por el titular. Distinta de la entrega: no declara plazo de despacho ni de puesta en marcha.',
+  },
+  {
+    id: 'pago-50-50',
+    text: 'Pago 50 % al pedido, 50 % contra entrega',
+    value: 50,
+    source: null,
+    measuredOn: null,
+    approvedBy: null,
+    approvedOn: null,
+    status: 'proposed',
+    visibility: 'internal',
+    variants: [
+      '50 % al pedido',
+      '50 % contra entrega',
+      '50/50',
+      '50%',
+      '50 por ciento',
+      'mitad al pedido',
+      'la mitad al confirmar',
+      'anticipo del pedido',
+      '50 % de anticipo',
+      'abono al pedido',
+      'saldo contra entrega',
+    ],
+    note:
+      'Propuesta del brief, NO aprobada para el sitio público (titular, 2026-11-07). Mientras tanto el sitio dice «Condiciones de pago en la cotización». Además falta confirmar que la proporción rija también en las órdenes de compra de Mercado Público.',
+  },
+  {
+    id: 'directo-con-el-fabricante',
+    text: 'Trabajamos directo con el fabricante',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; company.valueLine ya publicada con esa redacción desde 2026-11-07',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Nunca «distribuidor oficial» ni «exclusivo»: no aparece en la franja de la ficha (TrustStrip ya no tiene pilar de distribuidor); sólo se diría para una marca con commercialScopeConfirmed.',
+  },
+  {
+    id: 'despacho-todo-chile',
+    text: 'Despacho a todo Chile',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; ya publicada en ProcessSection',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Cobertura, no plazo ni stock.',
+  },
+  {
+    id: 'puesta-en-marcha-con-fabrica',
+    text: 'Puesta en marcha y capacitación con fábrica',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; company.valueLine ya publicada con esa redacción',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, canvas «Sitio OrigenLab 2027», 2026-11-07',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'No es una garantía ni un plazo; las condiciones quedan en la cotización.',
+  },
+  {
+    id: 'vende-mercado-publico',
+    text: 'Vendemos por Mercado Público y participamos en licitaciones',
+    value: null,
+    source:
+      'origenlab-v2-migration/specs/2026-11-07-web-brief-diseno.md, «What we may claim»; redacción fijada por el titular el 2026-11-07',
+    measuredOn: '2026-11-07',
+    approvedBy: 'Titular del negocio, decisión escrita del 2026-11-07 sobre el canvas «Sitio OrigenLab 2027»',
+    approvedOn: '2026-11-07',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Sin calificar: no declara orden de compra ni condiciones de pago propias de Mercado Público.',
+  },
+  {
+    id: 'proveedor-inscrito',
+    text: 'Proveedor inscrito en universidades, laboratorios farmacéuticos y empresas agroindustriales · Acreditado en ChileProveedores',
+    value: null,
+    source:
+      'origenlab-v2-migration/insights-20261107/study/gaps/proveedor-registrations.md (privado, fuera del repositorio): confirmaciones de portal de proveedores y órdenes de compra del buzón de negocio, y la acreditación vigente en el Registro Oficial de ChileProveedores',
+    measuredOn: '2026-11-08',
+    approvedBy: 'dueño, 2026-11-08',
+    approvedOn: '2026-11-08',
+    status: 'approved',
+    visibility: 'public',
+    note:
+      'Sólo tipos de institución, nunca nombres: ninguna institución se nombra en el sitio sin su permiso escrito. Sin conteo, para que la frase no quede desactualizada. Si la acreditación en ChileProveedores vence sin renovarse, retirar o reescribir esta afirmación.',
+  },
+  {
     id: 'respuesta-inicial-un-dia-habil',
     text: 'Respuesta inicial en 1 día hábil',
     value: 1,
@@ -131,7 +244,7 @@ export const claims: readonly Claim[] = [
     status: 'proposed',
     visibility: 'internal',
     note:
-      'Promesa de servicio propuesta, no aprobada. Requiere que el negocio la asuma por escrito y defina qué cuenta como respuesta inicial. Hasta entonces el sitio usa la redacción cualitativa de respuesta-agil. Es distinta del plazo de la cotización formal, que depende de precio de fábrica, configuración, flete y confirmación de entrega.',
+      'Promesa de servicio propuesta, no aprobada: la respuesta inicial en 1 día hábil. Requiere que el negocio la asuma por escrito y defina qué cuenta como respuesta inicial. Hasta entonces el sitio usa la redacción cualitativa de respuesta-agil. Es distinta de la promesa aprobada en cotizacion-mismo-dia-habil, que cubre la cotización, y del plazo de entrega, que depende de precio de fábrica, flete y confirmación de fábrica y no se promete.',
   },
   {
     id: 'clientes-atendidos',

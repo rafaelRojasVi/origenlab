@@ -1,27 +1,21 @@
 ---
+import Button from './Button.astro';
 import Icon from './Icon.astro';
 import { site } from '../../config/site';
-import { contact, telUrl } from '../../data/contact';
 import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
 import { ctaLabels } from '../../lib/ctaLabels';
-import SectionIndex from './SectionIndex.astro';
 
 /**
- * El número aparece una sola vez y en un solo formato: junto al icono de
- * teléfono. Antes se repetía dentro de la etiqueta de WhatsApp, de modo que la
- * misma banda mostraba dos veces la misma cifra con dos aspectos distintos y el
- * visitante tenía que decidir cuál era la buena. WhatsApp se nombra por su
- * canal; el número lo lleva el enlace.
+ * Banda de cierre (tablero HomeA): un bloque de tinta dentro de los márgenes de
+ * la página, con el titular a la izquierda y las dos acciones apiladas a la
+ * derecha. Es la única superficie invertida de cada página además del pie.
  *
- * Banda de cierre. Única superficie invertida de cada página (además del pie).
- * Un solo botón primario; los canales de apoyo van como enlaces de texto.
+ * El correo y el teléfono ya no se repiten aquí: viven en el pie.
+ *
+ * `primary` decide cuál de las dos acciones lleva el relleno: el formulario de
+ * cotización (por omisión, y siempre en la portada) o WhatsApp.
  */
 interface Props {
-  /**
-   * Numeral del índice de sección. Se omite en la portada, que no se numera:
-   * es una portada, no un capítulo del documento.
-   */
-  index?: number;
   title: string;
   body: string;
   /** Contexto para prellenar el mensaje de WhatsApp. */
@@ -29,11 +23,6 @@ interface Props {
   brandName?: string;
   /** Destino del botón; las páginas de modelo llevan el modelo (`/contacto/?producto=<slug>`). */
   quoteHref?: string;
-  /**
-   * Qué canal lleva el botón. Por defecto el formulario de cotización; la
-   * portada y `/como-comprar/` cierran con WhatsApp, y entonces el formulario
-   * pasa a la lista de canales. Sigue habiendo un solo botón.
-   */
   primary?: 'quote' | 'whatsapp';
   /**
    * Slug del modelo en las páginas de modelo. Sólo ahí el escucha de clics de
@@ -42,148 +31,78 @@ interface Props {
   modelo?: string;
 }
 
-const {
-  index,
-  title,
-  body,
-  productName,
-  brandName,
-  quoteHref = site.quoteHref,
-  primary = 'quote',
-  modelo,
-} = Astro.props;
+const { title, body, productName, brandName, quoteHref = site.quoteHref, primary = 'quote', modelo } = Astro.props;
 const whatsappHref = buildWhatsAppQuoteUrl({ productName, brandName });
+const whatsappFirst = primary === 'whatsapp';
 ---
 
-<section class="band on-ink" aria-labelledby="band-title">
-  <div class="shell band__inner">
-    {index === undefined ? (
-      <p class="t-label band__label">Solicitar cotización</p>
-    ) : (
-      <SectionIndex index={index} label="Solicitar cotización" class="band__index" />
-    )}
-    <div class="band__grid">
-      <div>
-        <h2 id="band-title" class="t-h2 band__title">{title}</h2>
-        <p class="t-body band__body">{body}</p>
-      </div>
-      <div class="band__actions">
-        {primary === 'whatsapp' ? (
-          <a href={whatsappHref} class="btn btn-invert" target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={modelo}>
-            <Icon name="whatsapp" size={18} />
-            {ctaLabels.whatsapp}
-            <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
-          </a>
+<section class="shell band-wrap" aria-labelledby="band-title">
+  <div class="band on-ink rv">
+    <div>
+      <h2 id="band-title" class="band__title">{title}</h2>
+      <p class="band__body">{body}</p>
+    </div>
+    <div class="band__actions">
+      {
+        whatsappFirst ? (
+          <>
+            <Button href={whatsappHref} tone="ink" external arrow={false} track="whatsapp_click" modelo={modelo}>
+              <Icon name="whatsapp" size={18} />
+              {ctaLabels.escribirWhatsapp}
+            </Button>
+            <Button href={quoteHref} variant="secondary" tone="ink" track="cotizacion_click" modelo={modelo}>
+              {ctaLabels.solicitarCotizacion}
+            </Button>
+          </>
         ) : (
-          <a href={quoteHref} class="btn btn-invert" data-track="cotizacion_click" data-modelo={modelo}>{ctaLabels.solicitarCotizacion}</a>
-        )}
-        <ul class="band__channels">
-          <li>
-            {primary === 'whatsapp' ? (
-              <a href={quoteHref} data-track="cotizacion_click" data-modelo={modelo}>
-                <Icon name="arrow-right" size={18} />
-                {ctaLabels.solicitarCotizacion}
-              </a>
-            ) : (
-              <a href={whatsappHref} target="_blank" rel="noopener noreferrer" data-track="whatsapp_click" data-modelo={modelo}>
-                <Icon name="whatsapp" size={18} />
-                WhatsApp
-                <span class="sr-only">(abre WhatsApp en una pestaña nueva)</span>
-              </a>
-            )}
-          </li>
-          <li>
-            <a href={`mailto:${contact.email}`}>
-              <Icon name="mail" size={18} />
-              {contact.email}
-            </a>
-          </li>
-          <li>
-            <a href={telUrl()}>
-              <Icon name="phone" size={18} />
-              {contact.phoneDisplay}
-            </a>
-          </li>
-        </ul>
-      </div>
+          <>
+            <Button href={quoteHref} tone="ink" track="cotizacion_click" modelo={modelo}>
+              {ctaLabels.solicitarCotizacion}
+            </Button>
+            <Button href={whatsappHref} variant="whatsapp" tone="ink" external track="whatsapp_click" modelo={modelo}>
+              {ctaLabels.escribirWhatsapp}
+            </Button>
+          </>
+        )
+      }
     </div>
   </div>
 </section>
 
 <style>
+  .band-wrap {
+    margin-top: clamp(4rem, 8vw, 8rem);
+  }
   .band {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 2.5rem;
+    align-items: end;
+    padding: clamp(3rem, 7vw, 6rem) clamp(1.5rem, 6vw, 5.5rem);
+    border-radius: var(--radius-band);
     background-color: var(--color-ink-950);
     color: var(--color-onink-100);
-    margin-top: 6rem;
-  }
-  .band__inner {
-    padding-block: 4rem;
-  }
-  .band__index :global(.section-index__rule) {
-    background-color: var(--color-onink-hairline);
-  }
-  .band__index :global(.section-index__numeral) {
-    color: var(--color-teal-500);
-  }
-  .band__index {
-    color: var(--color-onink-500);
-  }
-  .band__label {
-    margin-bottom: 1.5rem;
-    color: var(--color-onink-500);
-  }
-  @media (min-width: 768px) {
-    .band__label {
-      margin-bottom: 2rem;
-    }
   }
   .band__title {
-    color: #fff;
+    color: var(--color-raised);
+    font-size: clamp(2.125rem, 4.6vw, 4rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.03em;
   }
   .band__body {
-    margin-top: 1rem;
+    max-width: 30em;
+    margin-top: 1.25rem;
     color: var(--color-onink-300);
-    max-width: 46ch;
-  }
-  .band__grid {
-    display: grid;
-    gap: 2.5rem;
   }
   .band__actions {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 1.75rem;
+    gap: 0.75rem;
   }
-  .band__channels {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 0.25rem;
-  }
-  .band__channels a {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.625rem;
-    min-height: 2.5rem;
-    font-size: 0.9375rem;
-    color: var(--color-onink-300);
-    transition: color 150ms;
-  }
-  .band__channels a:hover {
-    color: #fff;
-  }
-  @media (min-width: 768px) {
+  @media (max-width: 1023.98px) {
     .band {
-      margin-top: 8rem;
-    }
-    .band__inner {
-      padding-block: 5.5rem;
-    }
-    .band__grid {
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 4rem;
+      grid-template-columns: 1fr;
       align-items: start;
     }
   }

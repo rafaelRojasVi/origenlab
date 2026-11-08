@@ -14,45 +14,41 @@ export const entry: ShowroomEntry = {
   views: [
     { id: 'general',     label: 'Vista general' },
     { id: 'panel',       label: 'Panel de control' },
-    { id: 'herramienta', label: 'Herramienta dispersora' },
-    { id: 'lateral',     label: 'Lateral' },
+    { id: 'acople',      label: 'Collarín y soporte' },
+    { id: 'herramienta', label: 'Rotor y estátor' },
+    { id: 'muestra',     label: 'En la muestra' },
   ],
+  // El texto de cada nota sale sólo de la ficha con fuente (`brandModels.ts`).
   hotspots: [
     {
       anchor: 'display',
       view: 'panel',
       title: 'Indicación digital de velocidad',
-      body: lines(
-        c('Indicación'),
-        c('Revoluciones'),
-      ),
+      body: lines(c('Indicación'), c('Revoluciones')),
     },
     {
       anchor: 'knob',
       view: 'panel',
       title: 'Control de velocidad',
-      body: lines(
-        c('Revoluciones'),
-        c('Volumen de trabajo (H₂O)'),
-      ),
+      body: lines(c('Revoluciones')),
+    },
+    {
+      anchor: 'collar',
+      view: 'acople',
+      title: 'Collarín de acople',
+      body: lines(c('Herramienta dispersora')),
+    },
+    {
+      anchor: 'mount',
+      view: 'acople',
+      title: 'Motor',
+      body: lines(c('Potencia')),
     },
     {
       anchor: 'herramienta',
       view: 'herramienta',
-      title: 'Herramienta dispersora S 25',
-      body: lines(
-        c('Herramienta dispersora'),
-        c('Viscosidad máxima'),
-      ),
-    },
-    {
-      anchor: 'mount',
-      view: 'general',
-      title: 'Potencia y montaje',
-      body: lines(
-        c('Potencia'),
-        'Se fija a la varilla del soporte con un collarín; el cabezal queda centrado sobre el vaso.',
-      ),
+      title: 'Rotor y estátor',
+      body: lines(c('Herramienta dispersora'), c('Viscosidad máxima')),
     },
   ],
 };

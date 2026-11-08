@@ -1,0 +1,170 @@
+---
+import { getCollection } from 'astro:content';
+import Icon from '../ui/Icon.astro';
+import { publicClaim } from '../../data/claims';
+import { homeFamilyCards } from '../../lib/modelos';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Las seis familias como tarjetas (tablero HomeA). Cada tarjeta dice qué hace
+ * el laboratorio con la muestra (el verbo) y nombra hasta dos modelos que salen
+ * de la colección `modelos`, nunca de este archivo.
+ *
+ * La etiqueta de cifras sale del registro de afirmaciones: si alguien retira la
+ * aprobación, esa parte desaparece sola. Con el titular B en la primera
+ * pantalla, el titular «Equipos para cada etapa de su muestra» baja aquí.
+ */
+interface Props {
+  headlineB: boolean;
+}
+const { headlineB } = Astro.props;
+
+const label = [publicClaim('familias-de-equipo'), publicClaim('marcas-con-las-que-trabajamos')]
+  .filter(Boolean)
+  .join(' · ');
+const cards = homeFamilyCards((await getCollection('modelos')).map((item) => item.data as Modelo));
+---
+
+<section class="shell home-sec" id="familias" aria-labelledby="familias-title">
+  <div class="home-head rv">
+    {label && <p class="t-label">{label}</p>}
+    <h2 id="familias-title" class="home-h2">
+      {headlineB ? 'Equipos para cada etapa de su muestra' : 'Qué hace su laboratorio con la muestra'}
+    </h2>
+  </div>
+  <ul class="fam">
+    {
+      cards.map((card) => (
+        <li>
+          <a class="home-family-card rv" href={card.href}>
+            <span class="t-label fam__top">
+              <b><i aria-hidden="true" style={`background-color:var(${card.colorVar})`} />{card.short}</b>
+              <span aria-hidden="true">{card.numeral}</span>
+            </span>
+            <h3 class="fam__verb">{card.verb}</h3>
+            <p class="fam__line">{card.cardLine}</p>
+            <span class="fam__foot">
+              <span class="t-data fam__models">{card.models.join(' · ')}</span>
+              <Icon name="arrow-right" size={18} class="arrow" />
+            </span>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</section>
+
+<style>
+  .fam {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  @media (max-width: 1023.98px) {
+    .fam {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 639.98px) {
+    .fam {
+      grid-template-columns: 1fr;
+    }
+  }
+  .home-family-card {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 16.25rem;
+    padding: 1.75rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-card);
+    background-color: var(--color-surface);
+    transition:
+      transform 200ms ease-out,
+      background-color 200ms ease-out,
+      border-color 200ms ease-out;
+  }
+  @media (min-width: 640px) {
+    .home-family-card {
+      min-height: 20rem;
+    }
+  }
+  .home-family-card:hover {
+    transform: translateY(-2px);
+    background-color: var(--color-raised);
+    border-color: var(--color-hairline);
+  }
+  .fam__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .fam__top b {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 500;
+  }
+  .fam__top i {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .fam__verb {
+    margin-top: auto;
+    font-size: 2.125rem;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  .fam__line {
+    margin-top: 0.75rem;
+    color: var(--color-ink-600);
+    font-size: 1.03125rem;
+    line-height: 1.5;
+  }
+  .fam__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .fam__models {
+    color: var(--color-ink-500);
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+    line-height: 1.4;
+  }
+  /* Los nombres de la colección pueden ocupar dos líneas: se reservan las dos
+     para que el verbo quede a la misma altura en todas las tarjetas de la fila. */
+  @media (min-width: 640px) {
+    .fam__foot {
+      min-height: 5.25rem;
+    }
+  }
+  .fam__foot :global(.arrow) {
+    flex: none;
+    color: var(--color-ink-950);
+    transition: transform 150ms ease-out;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .home-family-card:hover .fam__foot :global(.arrow) {
+      transform: translateX(4px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .home-family-card {
+      transition: none;
+    }
+    .home-family-card:hover {
+      transform: none;
+    }
+  }
+</style>

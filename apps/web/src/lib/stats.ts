@@ -1,11 +1,15 @@
 /**
- * Medición propia: cinco eventos, sin cookies, sin almacenamiento, sin terceros.
+ * Medición propia: seis eventos (cinco acciones y la `visita`), sin cookies, sin almacenamiento, sin terceros.
+ *
+ * Este archivo manda las cinco acciones (`StatsEventName`); la `visita` (origen y página) vive en
+ * `visit.ts`, un trozo aparte que carga toda página sin arrastrar el escucha de clics.
  *
  * El navegador envía el evento a una ruta del propio dominio con
  * `navigator.sendBeacon`; la recibe el Worker de Cloudflare que atiende
  * `origenlab.cl/api/stats/event`. El Worker sólo acepta POST del mismo origen,
- * cuerpo JSON de hasta 2048 bytes, un `name` de la lista de abajo y, en
- * `props`, únicamente `modelo` (el slug del modelo, `[A-Za-z0-9._-]{1,64}`).
+ * cuerpo JSON de hasta 2048 bytes, un `name` de los seis (los cinco de abajo y `visita`) y, en
+ * `props`, `modelo` (el slug del modelo, `[A-Za-z0-9._-]{1,64}`) en las cinco acciones y `origen` (una
+ * de siete: google, perfil-google, linkedin, whatsapp, directo, interno, otro) y `pagina` en `visita`.
  *
  * Se envía un `Blob` con `application/json` para que el Worker vea ese tipo;
  * al ser del mismo origen no hay preflight. Sin `sendBeacon` no se hace nada:

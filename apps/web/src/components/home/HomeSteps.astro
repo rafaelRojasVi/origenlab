@@ -1,0 +1,132 @@
+---
+import { buyingSteps } from '../../data/consultation';
+import { publicClaim } from '../../data/claims';
+
+/**
+ * Cómo comprar en cuatro pasos (tablero HomeA). Los pasos salen de
+ * `buyingSteps()`, que ya aplica el registro de afirmaciones; la fila de abajo
+ * lleva sólo las promesas aprobadas que la guía completa también dice. No hay
+ * ítem de garantía: nadie la ha aprobado.
+ *
+ * `tone="raised"` es la banda blanca de la portada, con filetes arriba y abajo;
+ * `tone="paper"` la deja sobre el papel de la página (`/como-comprar/`), donde
+ * además se cambian la etiqueta y el titular, se da un `id` de ancla y se omite
+ * la fila de promesas (la página las dice en su propia franja).
+ */
+interface Props {
+  tone?: 'raised' | 'paper';
+  id?: string;
+  label?: string;
+  title?: string;
+  claims?: boolean;
+}
+const { tone = 'raised', id, label = 'Cómo comprar', title = 'Cuatro pasos, sin vueltas', claims = true } = Astro.props;
+
+const steps = buyingSteps();
+const pay = claims ? [publicClaim('despacho-todo-chile'), publicClaim('vende-mercado-publico')].filter(Boolean) : [];
+---
+
+<section
+  id={id}
+  class:list={['home-steps', 'home-sec', { 'home-steps--raised': tone === 'raised' }]}
+  aria-labelledby="pasos-title"
+>
+  <div class="shell home-steps__inner">
+    <div class="home-head rv">
+      <p class="t-label">{label}</p>
+      <h2 id="pasos-title" class="home-h2">{title}</h2>
+    </div>
+    <ol class="steps">
+      {
+        steps.map((step, index) => (
+          <li class="rv" data-step>
+            <span class="steps__n" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+            <h3>{step.title}</h3>
+            <p>{step.body}</p>
+          </li>
+        ))
+      }
+    </ol>
+    {
+      pay.length > 0 && (
+        <ul class="t-label steps__pay rv">
+          {pay.map((item) => <li>{item}</li>)}
+        </ul>
+      )
+    }
+  </div>
+</section>
+
+<style>
+  .home-steps {
+    padding-bottom: clamp(5rem, 10vw, 9rem);
+  }
+  .home-steps--raised {
+    background-color: var(--color-raised);
+    border-block: 1px solid var(--color-hairline);
+  }
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  @media (max-width: 1023.98px) {
+    .steps {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 639.98px) {
+    .steps {
+      grid-template-columns: 1fr;
+    }
+  }
+  .steps li {
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--color-hairline);
+  }
+  .steps__n {
+    display: block;
+    color: var(--color-ink-950);
+    font-family: var(--font-mono);
+    font-size: 3.5rem;
+    font-weight: 400;
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  .steps h3 {
+    margin-top: 1.75rem;
+    font-size: 1.375rem;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .steps p {
+    margin-top: 0.625rem;
+    color: var(--color-ink-600);
+    font-size: 1rem;
+    line-height: 1.5;
+  }
+  .steps__pay {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 2rem;
+    margin: 3rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .steps__pay li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .steps__pay li::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--color-teal-700);
+  }
+</style>

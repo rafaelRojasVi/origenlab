@@ -1,0 +1,156 @@
+---
+import Breadcrumbs from '../ui/Breadcrumbs.astro';
+import Button from '../ui/Button.astro';
+import { publicClaim } from '../../data/claims';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { familyHref, type FamilyInfo } from '../../lib/modelos';
+import type { Brand } from '../../data/brands';
+import type { Modelo } from '../../content.config';
+
+/**
+ * El texto de la primera pantalla de una página de modelo (tablero Modelo): ruta,
+ * supratítulo mono, el nombre como H1 al tamaño de display, la frase del
+ * equipo, las dos acciones y una línea mono con las afirmaciones aprobadas.
+ *
+ * Con historia por scroll lo monta la página en el slot `intro` de
+ * `ProductStory` (es el tramo de entrada); sin ella lo pone `ModelHero` junto
+ * a la foto o a la sala. Cada hijo sube 400 ms con 60 ms de escalón.
+ */
+interface Props {
+  entry: Modelo;
+  brand: Brand | undefined;
+  family: FamilyInfo;
+  quoteHref: string;
+}
+
+const { entry, brand, family, quoteHref } = Astro.props;
+const brandName = brand?.name ?? entry.brand;
+const whatsappHref = buildWhatsAppQuoteUrl({ productName: entry.name, brandName });
+const fine = [publicClaim('directo-con-el-fabricante'), publicClaim('cotizacion-mismo-dia-habil')].filter(Boolean).join(' · ');
+// Los nombres largos («T 25 digital ULTRA-TURRAX») no caben al tamaño de «UP400St».
+const size = entry.name.length > 14 ? 'l' : entry.name.length > 8 ? 'm' : 's';
+---
+
+<div class="mh">
+  <Breadcrumbs
+    items={[
+      { label: 'Productos', href: '/productos/' },
+      { label: family.short, href: familyHref(family.slug) },
+      { label: entry.name },
+    ]}
+  />
+  <div class="mh__copy">
+    <p class="t-label">{family.short} · <span translate="no">{brandName}</span></p>
+    <h1 id="modelo-titulo" class="mh__h1" data-size={size} translate="no">{entry.name}</h1>
+    <p class="mh__lead">{entry.lead}</p>
+    <div class="mh__cta">
+      <Button href={quoteHref} track="cotizacion_click" modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</Button>
+      <Button href={whatsappHref} variant="whatsapp" external track="whatsapp_click" modelo={entry.slug}>{ctaLabels.whatsappCorto}</Button>
+    </div>
+    {fine && <p class="mh__fine">{fine}</p>}
+  </div>
+</div>
+
+<style is:global>
+  .mh {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding-block: 1.75rem 2rem;
+  }
+  .mh .breadcrumbs {
+    margin: 0;
+  }
+  .mh__copy {
+    margin-block: auto;
+    padding-top: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
+    max-width: 32.5rem;
+  }
+  .mh__h1 {
+    --k: 1;
+    margin-left: -0.25rem;
+    font-size: calc(clamp(4rem, 12vw, 6rem) * var(--k));
+    line-height: 0.95;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+  .mh__h1[data-size='m'] {
+    --k: 0.7;
+  }
+  .mh__h1[data-size='l'] {
+    --k: 0.5;
+  }
+  .mh__lead {
+    max-width: 27.5rem;
+    font-size: 1.125rem;
+    line-height: 1.45;
+    color: var(--color-ink-600);
+  }
+  .mh__cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+  .mh__fine {
+    max-width: 26rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    letter-spacing: 0.04em;
+    color: var(--color-ink-600);
+  }
+  @media (max-width: 639.98px) {
+    .mh__cta > * {
+      flex: 1 1 100%;
+    }
+  }
+  @media (min-width: 640px) {
+    .mh__lead {
+      font-size: 1.25rem;
+    }
+  }
+  /* Con el escenario a la derecha el nombre sigue a la columna, no a la ventana. */
+  @media (min-width: 760px) {
+    .mh {
+      padding-block: 2.75rem 5.5rem;
+    }
+    .mh__h1 {
+      font-size: calc(clamp(2.75rem, 6.6vw, 6rem) * var(--k));
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .mh__copy > *,
+    .mh .breadcrumbs {
+      animation: mh-rise 0.4s ease-out both;
+    }
+    .mh__copy > :nth-child(2) {
+      animation-delay: 60ms;
+    }
+    .mh__copy > :nth-child(3) {
+      animation-delay: 120ms;
+    }
+    .mh__copy > :nth-child(4) {
+      animation-delay: 180ms;
+    }
+    .mh__copy > :nth-child(5) {
+      animation-delay: 240ms;
+    }
+  }
+  @keyframes mh-rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+</style>

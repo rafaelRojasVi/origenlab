@@ -56,6 +56,9 @@
   --color-paper: #fafaf7;
   --color-surface: #f2f2ee;
   --color-hairline: #e3e3de;
+  --color-hairline-strong: #c8cac6; /* decorativo: subrayados; no es borde de control */
+  --color-pressed: #e9e9e4;
+  --color-raised: #ffffff;
 
   /* Ink */
   --color-ink-950: #141617;
@@ -63,12 +66,14 @@
   --color-ink-800: #2b2e30;
   --color-ink-600: #54595d;
   --color-ink-500: #676d71;
+  --color-ink-disabled: #8a8f92;
 
   /* Ink-on-dark (used only inside the closing band and footer) */
   --color-onink-100: #ececeb;
   --color-onink-300: #b9bcbd;
   --color-onink-500: #8d9295;
   --color-onink-hairline: #33383a;
+  --color-onink-line: #4b5154;
 
   /* Accent — one teal, used for action, place, and one rule per page */
   --color-teal-800: #115e59;
@@ -78,19 +83,30 @@
   --color-teal-50: #f0fdfa;
 
   /*
-   * Familias de equipo. Seis tintas, y sólo para la constelación del hero y la
-   * fila del índice que le corresponde.
+   * Familias de equipo (`--color-family-*`, declaradas más abajo en
+   * `@theme static`). Seis tintas, y sólo para el punto de color de la tarjeta
+   * de cada familia en la portada.
    *
    * El sistema tiene un acento, el teal, y sigue teniéndolo: estas seis no son
    * un segundo acento suelto sino una escala de identificación, y no aparecen
-   * en ningún otro sitio del sitio. Existen porque el hero tiene que decir de
-   * un vistazo que hay seis capacidades distintas, y seis puntos del mismo
+   * en ningún otro sitio del sitio. Existen porque la portada tiene que decir
+   * de un vistazo que hay seis capacidades distintas, y seis puntos del mismo
    * color dicen lo contrario.
    *
    * Las seis están medidas: todas superan 5,6:1 sobre papel y sobre superficie,
    * de modo que pueden teñir texto y no sólo un punto. Centrifugación reutiliza
    * el teal del sistema en vez de inventar un séptimo verde.
    */
+
+  /* Page shell */
+  --spacing-gutter: 1.25rem;
+}
+
+/* Estáticos: Tailwind poda las variables de @theme que ningún utilitario usa, y
+   estos las usan los componentes de fases posteriores. */
+@theme static {
+  /* Tintas de familia (ver el comentario de arriba): la portada las pide por
+     nombre de propiedad desde datos, así que Tailwind no puede verlas usadas. */
   --color-family-sonicacion: #1d4f7c;
   --color-family-dispersion: #6b3f96;
   --color-family-centrifugacion: #115e59;
@@ -98,11 +114,19 @@
   --color-family-osmometria: #15697f;
   --color-family-electroforesis: #8f2f4f;
 
-  /* Radius: one step, everywhere */
+  /* Radios: 2 px para etiquetas y tablas, 10 botones, 16 tarjetas. */
   --radius-edge: 2px;
+  --radius-btn: 0.625rem;
+  --radius-card: 1rem;
+  --radius-band: 1.75rem;
+  --radius-scene: 1.5rem;
 
-  /* Page shell */
-  --spacing-gutter: 1.25rem;
+  /* Botones (tablero Sistema) */
+  --btn-h: 3rem;
+  --btn-h-sm: 2.5rem;
+  --btn-px: 1.25rem;
+  --btn-px-sm: 1rem;
+  --ease-ui: 150ms ease-out;
 }
 
 @layer base {
@@ -117,6 +141,15 @@
   @media (prefers-reduced-motion: no-preference) {
     html {
       scroll-behavior: smooth;
+    }
+  }
+  /* Red de seguridad: con movimiento reducido ninguna transición corre, sea cual sea el componente. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
     }
   }
 
@@ -153,12 +186,26 @@
   :focus-visible {
     outline: 2px solid var(--color-teal-700);
     outline-offset: 2px;
-    border-radius: var(--radius-edge);
   }
 
   /* Inverted surfaces get a light focus ring so it stays visible. */
-  .on-ink :focus-visible {
+  .on-ink :focus-visible,
+  .on-ink:focus-visible {
     outline-color: var(--color-teal-500);
+  }
+
+  /* Debajo de 1024 px el botón pequeño sube a 44 px (objetivo táctil) y los
+     radios grandes se acortan. */
+  @media (max-width: 1023.98px) {
+    :root {
+      --btn-h-sm: 2.75rem;
+    }
+  }
+  @media (max-width: 639.98px) {
+    :root {
+      --radius-band: 1.25rem;
+      --radius-scene: 1rem;
+    }
   }
 }
 
@@ -196,26 +243,48 @@
   }
 
   /* --- Type roles ---------------------------------------------------------- */
+  /* Display: 800, -0.02em. Escritorio / teléfono, interpolado entre 390 y 1280 px. */
+  .t-d1,
+  .t-d2,
+  .t-d3,
   .t-display {
-    font-size: clamp(2rem, 1.45rem + 2.2vw, 3rem);
-    line-height: 1.06;
-    letter-spacing: -0.022em;
-    font-weight: 600;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+  .t-d1 {
+    font-size: clamp(3rem, 1.686rem + 5.393vw, 6rem);
+    line-height: 0.98;
+  }
+  .t-d2 {
+    font-size: clamp(2.5rem, 1.624rem + 3.596vw, 4.5rem);
+    line-height: 1;
+  }
+  .t-d3,
+  .t-display {
+    font-size: clamp(2.125rem, 1.523rem + 2.472vw, 3.5rem);
+    line-height: 1.0357;
   }
   .t-h2 {
-    font-size: clamp(1.5rem, 1.24rem + 1.05vw, 2rem);
-    line-height: 1.15;
-    letter-spacing: -0.014em;
-    font-weight: 600;
+    font-size: clamp(2rem, 1.78rem + 0.9vw, 2.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    font-weight: 700;
   }
   .t-h3 {
     font-size: clamp(1.125rem, 1.08rem + 0.2vw, 1.25rem);
     line-height: 1.3;
     font-weight: 600;
   }
+  /* Rol h3 del tablero Sistema (28/34, 700): los títulos de sección a tres columnas; `.t-h3` queda para títulos de tarjeta. */
+  .t-h3-lg {
+    font-size: clamp(1.375rem, 1.1rem + 1.1vw, 1.75rem);
+    line-height: 1.21;
+    font-weight: 700;
+  }
   .t-lead {
-    font-size: clamp(1.0625rem, 1.02rem + 0.2vw, 1.25rem);
-    line-height: 1.5;
+    font-size: 1.125rem;
+    line-height: 1.5556;
     color: var(--color-ink-600);
     max-width: 58ch;
   }
@@ -230,11 +299,12 @@
   /* Mono label: the only place uppercase tracking is allowed. */
   .t-label {
     font-family: var(--font-mono);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    line-height: 1.3333;
     font-weight: 500;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--color-ink-500);
+    color: var(--color-ink-600);
   }
   /* Mono data: measurements, model codes, item numbers. */
   .t-data {
@@ -244,76 +314,210 @@
     color: var(--color-ink-800);
   }
 
-  /* --- Actions ------------------------------------------------------------- */
+  /* --- Actions -------------------------------------------------------------
+   * Sistema de botones. Los bordes de los botones sin relleno miden >= 3:1
+   * (ink-500 sobre claro, onink-300 sobre tinta); qa:contrast lo exige.
+   * Sobre tinta: ancestro `.on-ink` o la propia clase `.on-ink` (tone="ink").
+   * ------------------------------------------------------------------------- */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    min-height: 2.875rem;
-    padding: 0.75rem 1.375rem;
-    border-radius: var(--radius-edge);
+    height: var(--btn-h);
+    padding-inline: var(--btn-px);
+    border-radius: var(--radius-btn);
     border: 1px solid transparent;
+    background: none;
+    color: var(--color-ink-950);
     font-size: 0.9375rem;
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
     text-align: center;
+    cursor: pointer;
     touch-action: manipulation;
-    transition-property: background-color, border-color, color;
-    transition-duration: 150ms;
+    transition:
+      background-color var(--ease-ui),
+      border-color var(--ease-ui),
+      color var(--ease-ui),
+      transform var(--ease-ui);
+    &:is(:disabled, [aria-disabled='true']) {
+      cursor: not-allowed;
+    }
+    .arrow {
+      flex: none;
+      transition: transform var(--ease-ui);
+    }
+    .on-ink &,
+    &.on-ink {
+      color: var(--color-onink-100);
+    }
   }
-  .btn-primary {
-    background-color: var(--color-teal-700);
-    color: #fff;
-  }
-  .btn-primary:hover {
-    background-color: var(--color-teal-800);
-  }
-  .btn-secondary {
-    border-color: var(--color-ink-950);
-    color: var(--color-ink-950);
-  }
-  .btn-secondary:hover {
-    background-color: var(--color-ink-950);
-    color: var(--color-paper);
-  }
-  /* On the inverted band only. */
-  .btn-invert {
-    background-color: var(--color-paper);
-    color: var(--color-ink-950);
-  }
-  .btn-invert:hover {
-    background-color: #fff;
-  }
-  .btn-invert-outline {
-    border-color: var(--color-onink-hairline);
-    color: var(--color-onink-100);
-  }
-  .btn-invert-outline:hover {
-    border-color: var(--color-onink-500);
-    background-color: rgb(255 255 255 / 0.06);
+  .btn-sm {
+    height: var(--btn-h-sm);
+    padding-inline: var(--btn-px-sm);
+    font-size: 0.875rem;
   }
 
-  /* Quiet action: text plus arrow. Never competes with the primary button. */
+  .btn-primary {
+    background-color: var(--color-ink-950);
+    color: var(--color-onink-100);
+    &:hover {
+      background-color: var(--color-ink-800);
+    }
+    &:active {
+      background-color: var(--color-ink-900);
+    }
+    &:is(:disabled, [aria-disabled='true']) {
+      background-color: var(--color-hairline);
+      color: var(--color-ink-disabled);
+    }
+    .on-ink &,
+    &.on-ink {
+      background-color: var(--color-paper);
+      color: var(--color-ink-950);
+      &:hover {
+        background-color: var(--color-raised);
+      }
+      &:active {
+        background-color: var(--color-hairline);
+      }
+      &:is(:disabled, [aria-disabled='true']) {
+        background-color: var(--color-ink-800);
+        color: var(--color-onink-500);
+      }
+    }
+  }
+
+  .btn-secondary,
+  .btn-whatsapp,
+  .btn-icon {
+    border-color: var(--color-ink-500);
+    &:hover {
+      border-color: var(--color-ink-950);
+      background-color: var(--color-surface);
+    }
+    &:active {
+      border-color: var(--color-ink-950);
+      background-color: var(--color-pressed);
+    }
+    &:is(:disabled, [aria-disabled='true']) {
+      border-color: var(--color-hairline);
+      background-color: transparent;
+      color: var(--color-ink-disabled);
+    }
+    .on-ink &,
+    &.on-ink {
+      border-color: var(--color-onink-300);
+      &:hover {
+        border-color: var(--color-onink-100);
+        background-color: rgb(255 255 255 / 0.06);
+      }
+      &:active {
+        border-color: var(--color-onink-100);
+        background-color: rgb(255 255 255 / 0.12);
+      }
+      &:is(:disabled, [aria-disabled='true']) {
+        border-color: var(--color-onink-hairline);
+        background-color: transparent;
+        color: var(--color-onink-500);
+      }
+    }
+  }
+  .btn-icon {
+    width: var(--btn-h);
+    padding: 0;
+    &.btn-sm {
+      width: var(--btn-h-sm);
+    }
+  }
+
+  /* Terciario: sin relleno; el subrayado de la etiqueta crece de 0 a 100 %.
+     `.link-arrow` es un alias para los enlaces con flecha ya existentes. */
+  .btn-tertiary,
   .link-arrow {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.5rem;
+    height: auto;
     min-height: 1.75rem;
-    font-weight: 600;
-    font-size: 0.9375rem;
-    color: var(--color-teal-800);
-    transition: color 150ms;
-  }
-  .link-arrow:hover {
+    padding: 0;
+    border-radius: var(--radius-edge);
     color: var(--color-ink-950);
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color var(--ease-ui);
+    /* 44 px de alto en pantallas táctiles (WCAG 2.5.8 va más allá; el tablero pide 44). */
+    @media (width < 1024px) {
+      min-height: 2.75rem;
+    }
+    .arrow {
+      flex: none;
+      transition: transform var(--ease-ui);
+    }
+    .on-ink &,
+    &.on-ink {
+      color: var(--color-onink-100);
+    }
   }
-  .link-arrow > .arrow {
-    transition: transform 150ms;
+  .btn-tertiary .lbl {
+    padding-bottom: 3px;
+    background:
+      linear-gradient(currentColor, currentColor) 0 100% / 0% 2px no-repeat,
+      linear-gradient(var(--color-hairline-strong), var(--color-hairline-strong)) 0 100% / 100% 1px
+        no-repeat;
+    transition: background-size var(--ease-ui);
   }
+  .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .lbl {
+    background-size: 100% 2px, 100% 1px;
+  }
+  .btn-tertiary:is(:disabled, [aria-disabled='true']) {
+    color: var(--color-ink-disabled);
+    cursor: not-allowed;
+    .lbl {
+      background-size: 0% 2px, 100% 1px;
+    }
+  }
+  .on-ink .btn-tertiary .lbl,
+  .btn-tertiary.on-ink .lbl {
+    background-image:
+      linear-gradient(currentColor, currentColor),
+      linear-gradient(var(--color-onink-line), var(--color-onink-line));
+  }
+  /* Alias sobre texto suelto (sin `.lbl`): el subrayado es el del texto. */
+  .link-arrow {
+    text-decoration: underline 1px var(--color-hairline-strong);
+    text-underline-offset: 0.3em;
+    transition: color var(--ease-ui), text-decoration-color var(--ease-ui);
+    &:hover:not([aria-disabled='true']) {
+      text-decoration-color: currentColor;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn,
+    .btn .arrow,
+    .btn-tertiary,
+    .btn-tertiary .arrow,
+    .btn-tertiary .lbl,
+    .link-arrow,
+    .link-arrow .arrow {
+      transition: none;
+    }
+  }
+  /* El desplazamiento de la flecha y el escalado al pulsar sólo con movimiento. */
   @media (prefers-reduced-motion: no-preference) {
-    .link-arrow:hover > .arrow {
-      transform: translateX(2px);
+    .btn:active:not(:is(:disabled, [aria-disabled='true'])) {
+      transform: scale(0.98);
+    }
+    .btn:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow,
+    .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow,
+    .link-arrow:hover:not([aria-disabled='true']) .arrow {
+      transform: translateX(4px);
     }
   }
 
@@ -366,49 +570,58 @@
     margin-top: 1rem;
   }
 
-  /* --- Revelado al desplazarse --------------------------------------------
-   * Mejora progresiva estricta. El estado inicial oculto sólo existe cuando el
-   * script ha marcado el documento con `data-reveal-ready`, de modo que sin
-   * JavaScript no se oculta nada nunca y la portada se lee entera. Todo el
-   * bloque vive bajo `prefers-reduced-motion: no-preference`, así que con
-   * movimiento reducido tampoco llega a aplicarse.
-   *
-   * Es una transición, no una animación en bucle: no hay parallax, no hay
-   * secuestro del desplazamiento y ningún contenido depende del movimiento
-   * para entenderse. Ningún elemento de la primera pantalla lleva la marca,
-   * porque ahí el script llegaría después del primer pintado y se vería el
-   * parpadeo.
-   */
+  /* --- Portada: ritmo de secciones y revelado -----------------------------
+   * `.home-sec` pone el aire superior de cada sección; `.home-head` es el par
+   * etiqueta mono + titular que abre cada una. `.rv` revela al entrar en
+   * cuadro con una animación ligada al desplazamiento (CSS puro, sin script):
+   * sin soporte de `animation-timeline` o con movimiento reducido no hace nada y
+   * el contenido está siempre pintado. `backwards` y no `both`: al terminar el
+   * rango la animación deja de aplicarse y el hover de la tarjeta sigue
+   * pudiendo moverla. Nada de la primera pantalla lleva `.rv`.
+   * ------------------------------------------------------------------------- */
+  .home-sec {
+    padding-top: clamp(5rem, 10vw, 9rem);
+  }
+  .home-head {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: clamp(2.5rem, 5vw, 4rem);
+    .t-label {
+      color: var(--color-teal-700);
+    }
+  }
+  .home-h2 {
+    font-size: clamp(2.125rem, 4.6vw, 3.75rem);
+    line-height: 1.04;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+  }
   @media (prefers-reduced-motion: no-preference) {
-    [data-reveal-ready] [data-reveal] {
-      opacity: 0;
-      transform: translateY(0.75rem);
-      transition:
-        opacity 500ms cubic-bezier(0.22, 0.61, 0.36, 1),
-        transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
-    }
-    [data-reveal-ready] [data-reveal].is-revealed {
-      opacity: 1;
-      transform: none;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='1'] {
-      transition-delay: 70ms;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='2'] {
-      transition-delay: 140ms;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='3'] {
-      transition-delay: 210ms;
-    }
-
-    /* Al imprimir no hay desplazamiento que dispare nada: sin esto, una sección
-       aún sin revelar saldría en blanco sobre el papel. */
-    @media print {
-      [data-reveal-ready] [data-reveal] {
-        opacity: 1;
-        transform: none;
-        transition: none;
+    @supports (animation-timeline: view()) {
+      .rv {
+        animation-name: rv;
+        animation-timing-function: linear;
+        animation-fill-mode: backwards;
+        animation-timeline: view();
+        animation-range: entry 0% entry 35%;
+      }
+      @media print {
+        .rv {
+          animation: none;
+        }
       }
     }
+  }
+}
+
+@keyframes rv {
+  from {
+    opacity: 0.15;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

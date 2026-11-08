@@ -183,6 +183,31 @@ test('createScrollStory: enter/tick/leave y progreso; renderOverlays en cada cua
     story.dispose();
   });
 });
+test('createScrollStory: `lead` desplaza el progreso 0 esos píxeles; sin él, el resultado de siempre', () => {
+  const run = (lead) => {
+    const env = fakeWindow();
+    const state = { scrolled: 0 };
+    return withWindow(env, () => {
+      const story = createScrollStory(spacerAt(state), fakeScene(), recorder([]), lead === undefined ? {} : { lead: () => lead });
+      const at = (px) => {
+        state.scrolled = px;
+        env.emit('scroll');
+        env.flush();
+        return story.progress();
+      };
+      const out = { atLead: at(900), later: at(900 + 2500), start: at(0) };
+      story.dispose();
+      return out;
+    });
+  };
+  const plain = run();
+  assert.ok(Math.abs(plain.atLead - 900 / 5000) < 1e-9, 'sin lead: el progreso cuenta desde el borde del espaciador');
+  const led = run(900);
+  assert.equal(led.atLead, 0, 'con lead, el progreso sigue en 0 al terminar la primera pantalla');
+  assert.equal(led.start, 0);
+  // Espaciador de 6000 px, ventana de 1000 y lead de 900: recorrido útil de 4100 px.
+  assert.ok(Math.abs(led.later - 2500 / 4100) < 1e-9, 'con lead, el recorrido empieza `lead` px más abajo y mide `lead` px menos');
+});
 test('createScrollStory: con movimiento reducido informa el progreso pero no anima', () => {
   const env = fakeWindow({ reduced: true });
   const state = { scrolled: 0 };

@@ -370,12 +370,14 @@ export const brands: Brand[] = [
  */
 export const brandsWallHeading = 'Marcas con las que trabajamos' as const;
 
-/** Orden público del riel y de toda lista de marcas. Es el de la lista cerrada. */
 /**
- * Marcas publicadas que no aparecen en la portada (franja de marcas ni tarjetas de familia):
- * decisión del dueño, 19 oct 2026, para OHAUS. Siguen con su página en /marcas/.
+ * Marcas publicadas que no aparecen en la portada (franja de marcas ni tarjetas
+ * de familia). Vacía desde la decisión del titular de volver a mostrar OHAUS en
+ * la portada (2026-11-07); el mecanismo se conserva por si hace falta ocultar otra.
  */
-export const HOME_HIDDEN_BRAND_IDS: readonly ApprovedBrandId[] = ['ohaus'];
+export const HOME_HIDDEN_BRAND_IDS: readonly ApprovedBrandId[] = [];
+
+/** Orden público del riel y de toda lista de marcas. Es el de la lista cerrada. */
 
 export const isShownOnHome = (id: string): boolean =>
   !(HOME_HIDDEN_BRAND_IDS as readonly string[]).includes(id);

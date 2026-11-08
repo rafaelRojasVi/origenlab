@@ -1,10 +1,11 @@
 ---
 import { site } from '../config/site';
+import { organizationJsonLd } from '../lib/jsonld';
 
 /**
  * Cabecera del documento. Un solo patrón de título («Página | OrigenLab»),
  * canónica con barra final coherente con `trailingSlash: 'always'`, previsualización
- * social en PNG y un hueco para JSON-LD por página.
+ * social en PNG y un hueco para JSON-LD por página. `Organization` va en toda página (una sola vez).
  */
 interface Props {
   title: string;
@@ -39,7 +40,7 @@ const ogImageUrl = `${site.baseUrl}${ogImagePath ?? site.ogImagePath}`;
 <meta name="description" content={description} />
 <link rel="canonical" href={canonicalUrl} />
 {noindex && <meta name="robots" content="noindex, nofollow" />}
-<meta name="theme-color" content={site.themeColor} />
+<meta name="theme-color" content={isHome ? '#141617' : site.themeColor} />
 
 <link rel="icon" href="/favicon.ico" sizes="32x32" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -75,4 +76,5 @@ const ogImageUrl = `${site.baseUrl}${ogImagePath ?? site.ogImagePath}`;
 <meta name="twitter:description" content={description} />
 <meta name="twitter:image" content={ogImageUrl} />
 
+<script type="application/ld+json" set:html={JSON.stringify(organizationJsonLd())} is:inline />
 {jsonLd.map((entry) => <script type="application/ld+json" set:html={JSON.stringify(entry)} is:inline />)}

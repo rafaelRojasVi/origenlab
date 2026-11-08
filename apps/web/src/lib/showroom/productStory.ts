@@ -13,6 +13,7 @@
  *
  * Sin acceso al DOM al importarlo.
  */
+import { Vector3 } from 'three';
 import { createShowroom, type AnchorPositions, type Showroom, type ShowroomOptions } from './scene';
 import type { Beat } from './scrollStory';
 import type { BuiltModel } from './types';
@@ -50,6 +51,12 @@ export interface StoryScene extends Showroom {
    * devuelve la pantalla a su animación propia.
    */
   setReadout(fraction: number | null): void;
+  /**
+   * Suma las vistas propias de la historia (`ProductStoryConfig.views`) a las
+   * del modelo, sin pisar ninguna. Una vista cuya ancla el modelo no tenga se
+   * omite: `tweenTo` cae entonces en la general.
+   */
+  addViews(views?: Record<string, StoryView>): void;
   /** Recoge los elementos `[data-anchor="nombre"]` de `root` para posicionarlos sobre las anclas. */
   bindOverlays(root: HTMLElement): void;
   /**
@@ -127,6 +134,12 @@ function fits(n: Note, side: NoteSide, px: number, py: number, gap: number, widt
 
 export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, options: ShowroomOptions = {}): StoryScene {
   const showroom = createShowroom(canvas, model, options);
+  // Las partículas (burbujas de cavitación) son mallas instanciadas cuyos límites se calculan
+  // al construir, con todas las instancias plegadas: en una vista cercana la escena las
+  // descartaba por fuera de cuadro aunque estuvieran a la vista. Son pocas; se dibujan siempre.
+  model.root.traverse((object) => {
+    if ((object as { isInstancedMesh?: boolean }).isInstancedMesh) object.frustumCulled = false;
+  });
 
   let root: HTMLElement | null = null;
   let readouts: HTMLElement[] = [];
@@ -143,16 +156,26 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
   let stageWidth = -1;
   let stageHeight = -1;
   let navTop = Infinity;
+  let barCut = 0;
   let remeasure = true;
   let stageObserver: ResizeObserver | null = null;
   let positions: AnchorPositions = {};
   let userFrame: ((anchors: AnchorPositions) => void) | null = null;
 
+  /**
+   * Posición del ancla sobre el lienzo, o nada si cae fuera de él: una nota cuyo
+   * punto quedó fuera de cuadro no se muestra (su hilo cruzaría la columna de texto).
+   */
+  const anchorAt = (name: string) => {
+    const p = positions[name];
+    return p && p.x >= 0 && p.y >= 0 && p.x <= stageWidth && p.y <= stageHeight ? p : undefined;
+  };
+
   /** ¿Taparía la nota, puesta en `side`, el ancla de otra nota visible? */
   const coversOtherAnchor = (n: Note, side: NoteSide, px: number, py: number, gap: number): boolean => {
     placeAt(n, side, px, py, gap);
     for (const o of overlays) {
-      const q = positions[o.anchor];
+      const q = anchorAt(o.anchor);
       if (o === n || !q || !o.on) continue;
       if (q.x > n.x - 6 && q.x < n.x + n.w + 6 && q.y > n.y - 6 && q.y < n.y + n.h + 6) return true;
     }
@@ -188,7 +211,7 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
     const height = stageHeight;
     let changed = remeasure || width !== seenWidth || height !== seenHeight || mode !== seenMode;
     for (const n of overlays) {
-      const p = positions[n.anchor];
+      const p = anchorAt(n.anchor);
       const shown = Boolean(p);
       const on = n.el.hasAttribute('data-on');
       if (shown !== n.seenShown || on !== n.seenOn || (p && (Math.abs(p.x - n.seenX) > 1 || Math.abs(p.y - n.seenY) > 1))) changed = true;
@@ -202,14 +225,20 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
     if (remeasure) {
       const nav = tap ? root?.querySelector<HTMLElement>('[data-story-nav]:not([hidden])') : null;
       navTop = nav ? nav.offsetTop : Infinity;
+      // La barra fija de cotización (`[data-sticky-cta]`, al pie de la ventana) tapa el pie
+      // del escenario fijo: lo que el escenario, pegado a su `top`, baja de su borde superior.
+      // Se descuenta aunque la barra esté escondida, para que las notas no salten al entrar.
+      const bar = document.querySelector<HTMLElement>('[data-sticky-cta]');
+      const box = stage.closest<HTMLElement>('.story__stage');
+      barCut = bar && box && mode !== 'static' ? Math.max(0, (parseFloat(getComputedStyle(box).top) || 0) + height - (window.innerHeight - bar.offsetHeight)) : 0;
     }
-    // Franja inferior de los controles de toque: de su borde superior (menos aire) hacia abajo.
-    const floorY = navTop !== Infinity ? Math.min(height, navTop) - NOTE_MARGIN : height;
+    // Franja inferior de los controles de toque y de la barra fija: de su borde superior (menos aire) hacia abajo.
+    const floorY = Math.min(height, navTop, height - barCut) - (navTop !== Infinity || barCut > 0 ? NOTE_MARGIN : 0);
     const baseGap = tap ? NOTE_GAP_TAP : NOTE_GAP;
 
     stack.length = 0;
     for (const n of overlays) {
-      const p = positions[n.anchor];
+      const p = anchorAt(n.anchor);
       n.seenShown = Boolean(p);
       n.seenOn = n.on = n.el.hasAttribute('data-on');
       n.shown = Boolean(p);
@@ -229,7 +258,7 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
       stack.forEach((n, i) => (n.forced = i < stack.length / 2 ? 'top' : 'bottom'));
     }
     for (const n of overlays) {
-      const p = positions[n.anchor];
+      const p = anchorAt(n.anchor);
       if (!p) continue;
       if (n.el.dataset.occluded !== 'false') n.el.dataset.occluded = 'false';
       if (remeasure || n.measuredOn !== n.on) {
@@ -287,7 +316,7 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
     }
     for (const n of overlays) {
       if (!n.shown) continue;
-      const p = positions[n.anchor]!;
+      const p = anchorAt(n.anchor)!;
       // Tras acotar y apilar, la nota no puede cubrir su propio punto ni quedar a menos
       // de MIN_LEAD: se pasa al lado más cercano que lo cumpla (o al de más hilo).
       if (leadLength(n, n.side, p.x, p.y) < MIN_LEAD) {
@@ -384,6 +413,17 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
       // Otra cifra puede cambiar el ancho de la nota que la lleva.
       if (readouts.length) remeasure = true;
     },
+    addViews(views = {}) {
+      for (const [name, view] of Object.entries(views)) {
+        if (model.views[name]) continue;
+        const base = view.from ? model.views[view.from] : undefined;
+        const target = view.anchor ? model.anchors[view.anchor] : base?.target;
+        const direction = view.direction ? new Vector3(...view.direction) : base?.direction.clone();
+        const distance = (view.distance ?? base?.distance ?? 0) * (view.scale ?? 1);
+        if (!target || !direction || !(distance > 0)) continue;
+        model.views[name] = { target, direction, distance };
+      }
+    },
     bindOverlays(next) {
       root = next;
       readouts = [...next.querySelectorAll<HTMLElement>('[data-readout]')];
@@ -426,6 +466,28 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
 }
 
 /* ── configuración de una historia ── */
+
+/**
+ * Vista de cámara propia de una historia, sobre un ancla del modelo: para
+ * encuadrar lo que un beat describe cuando el modelo no trae esa vista (el
+ * matraz de muestra, el sonotrodo de tres cuartos) sin tocar su geometría.
+ */
+export interface StoryView {
+  /**
+   * Vista con nombre del modelo de la que parte (objetivo, dirección y
+   * distancia); lo que se indique abajo la reemplaza. Sirve para abrir una
+   * vista del modelo pensada para un lienzo más estrecho que el de la historia.
+   */
+  from?: string;
+  /** Ancla del modelo (`model.anchors`) a la que mira la cámara. */
+  anchor?: string;
+  /** Desde dónde se mira, en el marco del modelo (se normaliza). */
+  direction?: [number, number, number];
+  /** Distancia al ancla, en milímetros. */
+  distance?: number;
+  /** Factor sobre la distancia (más de 1: más lejos, se ve más del equipo). */
+  scale?: number;
+}
 
 export interface BeatSpec {
   id: string;
@@ -487,6 +549,8 @@ export interface ProductStoryConfig {
   /** Igual al nombre del archivo en `models/` y en `stories/`. */
   modelId: string;
   beats: BeatSpec[];
+  /** Vistas propias de la historia (además de las del modelo), por nombre: `cameraView` las usa como a las otras. */
+  views?: Record<string, StoryView>;
   specs: SpecGroup[];
   applications: string[];
   accessories: AccessorySpec[];

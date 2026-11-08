@@ -3,6 +3,7 @@ import '../styles/global.css';
 import Seo from '../components/Seo.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import SiteFooter from '../components/SiteFooter.astro';
+import ChatBubble from '../components/ChatBubble.astro';
 
 interface Props {
   title: string;
@@ -21,7 +22,7 @@ const effectiveNoindex = noindex || robots === 'noindex';
 ---
 
 <!doctype html>
-<html lang="es-CL">
+<html lang="es-CL" data-noindex={effectiveNoindex ? '' : undefined}>
   <head>
     <Seo
       title={title}
@@ -35,11 +36,17 @@ const effectiveNoindex = noindex || robots === 'noindex';
   </head>
   <body>
     <a href="#contenido" class="skip-link">Ir al contenido</a>
-    <SiteHeader />
+    <div data-hd-sentinel aria-hidden="true"></div>
+    <SiteHeader tone={isHome ? 'ink' : 'paper'} />
     <main id="contenido" tabindex="-1">
       <slot />
     </main>
     <SiteFooter />
+    {!effectiveNoindex && !Astro.url.pathname.startsWith('/contacto') && <ChatBubble />}
+    <script>
+      import { trackVisit } from '../lib/visit';
+      trackVisit();
+    </script>
 
     <style is:global>
       .skip-link {
@@ -56,6 +63,14 @@ const effectiveNoindex = noindex || robots === 'noindex';
         color: var(--color-paper);
         border-radius: var(--radius-edge);
         font-weight: 600;
+      }
+      [data-hd-sentinel] {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        pointer-events: none;
       }
       main:focus {
         outline: none;

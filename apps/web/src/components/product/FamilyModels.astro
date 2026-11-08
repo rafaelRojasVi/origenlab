@@ -1,0 +1,54 @@
+---
+import ModelCard from './ModelCard.astro';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Rejilla de modelos de una familia (tablero Familia): tarjetas «family», cuatro
+ * por fila, dos bajo 1100 px y una bajo 760 px. El titular que invita a elegir
+ * por volumen sólo lo lleva sonicación, la única donde la muestra ordena la
+ * elección.
+ */
+interface Props {
+  models: readonly Modelo[];
+  title: string;
+  id?: string;
+}
+
+const { models, title, id = 'modelos-title' } = Astro.props;
+---
+
+{
+  models.length > 0 && (
+    <section class="shell section rule-top" aria-labelledby={id}>
+      <p class="t-label">Modelos</p>
+      <h2 id={id} class="t-h2 fm__h2">{title}</h2>
+      <div class="fm__grid">
+        {models.map((model) => (
+          <ModelCard entry={model} variant="family" />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+<style>
+  .fm__h2 {
+    margin-top: 0.875rem;
+  }
+  .fm__grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1.5rem;
+    margin-top: 2.5rem;
+  }
+  @media (max-width: 1099.98px) {
+    .fm__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 759.98px) {
+    .fm__grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

@@ -29,7 +29,16 @@ import type { ShowroomEntry } from '../../lib/showroom/content/types';
 interface Props {
   id?: string;
   items?: { id: string; task: string }[];
+  /** Fondo sobre el que se coloca: decide el color de las tareas y del pie. */
+  tone?: 'paper' | 'ink';
+  /**
+   * `wide`: escenario 16/9 (4/3 en teléfono) en un marco de papel de hasta
+   * 1120 px, con las tareas debajo. `portrait`: el 4/5 de las fichas de modelo.
+   */
+  frame?: 'portrait' | 'wide';
 }
+const { tone = 'paper', frame = 'portrait' } = Astro.props;
+const wide = frame === 'wide';
 const picks = Astro.props.items ?? (Astro.props.id ? [{ id: Astro.props.id, task: '' }] : []);
 const entries = picks
   .map((pick) => ({ pick, entry: showroomEntry(pick.id) }))
@@ -49,12 +58,12 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
 {
   first && (
     <figure
-      class:list={['showroom', { 'showroom--selector': selector }]}
+      class:list={['showroom', { 'showroom--selector': selector, 'showroom--wide': wide, 'showroom--ink': tone === 'ink' }]}
       data-showroom={selector ? 'selector' : first.entry.id}
       data-active={first.entry.id}
       aria-labelledby={domId(first.entry.id, 'pie')}
     >
-      {selector && (
+      {selector && !wide && (
         <div class="showroom__tasks" role="group" aria-label="Elija una tarea de laboratorio">
           {entries.map((item, index) => (
             <button type="button" class="showroom__task" data-pick={item.entry.id} aria-pressed={index === 0 ? 'true' : 'false'}>
@@ -111,6 +120,16 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
           </div>
         </div>
       ))}
+
+      {selector && wide && (
+        <div class="showroom__tasks" role="group" aria-label="Elija una tarea de laboratorio">
+          {entries.map((item, index) => (
+            <button type="button" class="showroom__task" data-pick={item.entry.id} aria-pressed={index === 0 ? 'true' : 'false'}>
+              {item.task}
+            </button>
+          ))}
+        </div>
+      )}
 
       {entries.map((item, index) => (
         <figcaption class="showroom__caption t-data" id={domId(item.entry.id, 'pie')} data-entry={item.entry.id} hidden={index > 0}>
@@ -314,43 +333,110 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     }
   }
 
-  /* --- selector de tareas -------------------------------------------------- */
+  /* --- selector de tareas: control segmentado ------------------------------ */
   .showroom__tasks {
+    --seg-edge: var(--color-hairline);
+    --seg-text: var(--color-ink-600);
+    --seg-hover: var(--color-ink-950);
+    --seg-on: var(--color-ink-950);
+    --seg-on-text: var(--color-paper);
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-    margin-bottom: 1rem;
+    gap: 2px;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto 1rem;
+    padding: 4px;
+    border: 1px solid var(--seg-edge);
+    border-radius: 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .showroom__tasks::-webkit-scrollbar {
+    display: none;
+  }
+  .showroom--ink .showroom__tasks {
+    --seg-edge: var(--color-onink-hairline);
+    --seg-text: var(--color-onink-500);
+    --seg-hover: var(--color-onink-100);
+    --seg-on: var(--color-onink-100);
+    --seg-on-text: var(--color-ink-950);
   }
   .showroom__task {
-    min-height: 2.25rem;
-    padding: 0 0.875rem;
-    border: 1px solid var(--color-hairline);
-    border-radius: 999px;
-    background: var(--color-paper);
-    color: var(--color-ink-600);
-    font-size: 0.875rem;
+    flex: none;
+    height: 2.75rem;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--seg-text);
+    font-size: 0.9375rem;
     font-weight: 500;
+    line-height: 1;
     cursor: pointer;
-    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    transition: background-color 150ms ease-out, color 150ms ease-out;
+  }
+  @media (min-width: 1024px) {
+    .showroom__task {
+      height: 2.5rem;
+    }
   }
   .showroom__task:hover {
-    color: var(--color-ink-950);
-    border-color: var(--color-ink-600);
+    color: var(--seg-hover);
   }
   .showroom__task[aria-pressed='true'] {
-    background: var(--color-ink-950);
-    border-color: var(--color-ink-950);
-    color: var(--color-paper);
-  }
-  .showroom__task:focus-visible {
-    outline: 2px solid var(--color-teal-700);
-    outline-offset: 2px;
+    background: var(--seg-on);
+    color: var(--seg-on-text);
   }
   .showroom__canvas {
     transition: opacity 0.35s ease;
   }
   .showroom[data-swapping] .showroom__canvas {
     opacity: 0 !important;
+  }
+
+  /* --- marco ancho (portada): escenario 16/9, controles dentro, tareas debajo */
+  .showroom--wide {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 70rem;
+    margin-inline: auto;
+  }
+  .showroom--wide .showroom__stage {
+    grid-area: 1 / 1;
+    aspect-ratio: 4 / 3;
+    max-height: none;
+    overflow: hidden;
+    background: var(--color-paper);
+    border: 1px solid var(--color-onink-hairline);
+    border-radius: var(--radius-scene);
+  }
+  @media (min-width: 640px) {
+    .showroom--wide .showroom__stage {
+      aspect-ratio: 16 / 9;
+    }
+  }
+  /* La barra de vistas flota sobre el escenario: al aparecer no mueve la página. */
+  .showroom--wide .showroom__bar {
+    grid-area: 1 / 1;
+    align-self: end;
+    z-index: 1;
+    margin: 0.75rem;
+    padding: 0;
+    border-top: 0;
+  }
+  .showroom--wide .showroom__tasks {
+    margin: 1.75rem auto 0;
+  }
+  .showroom--wide .showroom__caption {
+    justify-content: center;
+    margin-top: 1rem;
+    text-align: center;
+  }
+  .showroom--ink .showroom__caption {
+    color: var(--color-onink-500);
+  }
+  .showroom--ink .showroom__model {
+    color: var(--color-onink-100);
   }
 </style>
 

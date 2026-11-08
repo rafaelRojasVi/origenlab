@@ -14,7 +14,8 @@ export const entry: ShowroomEntry = {
   views: [
     { id: 'general', label: 'Vista general' },
     { id: 'pantalla', label: 'Pantalla y perilla' },
-    { id: 'tapa', label: 'Tapa y calefactor' },
+    { id: 'tapa', label: 'Tapa y cámara' },
+    { id: 'calefactor', label: 'Calefactor' },
   ],
   hotspots: [
     {
@@ -23,7 +24,7 @@ export const entry: ShowroomEntry = {
       title: 'Pantalla LCD',
       body: lines(
         c('Legibilidad') && `Legibilidad: ${c('Legibilidad')}`,
-        'Pantalla LCD de segmentos, sin función táctil: la humedad en porcentaje arriba y el peso en una segunda línea.',
+        'LCD retroiluminada, sin función táctil: la cifra grande arriba (peso o humedad en %MC) y una segunda línea con indicaciones.',
       ),
     },
     {
@@ -31,7 +32,7 @@ export const entry: ShowroomEntry = {
       view: 'pantalla',
       title: 'Perilla y teclas',
       body: lines(
-        'Una perilla y unas pocas teclas recorren el menú y lanzan el método de secado.',
+        'La perilla, bajo la pantalla, recorre el menú y elige el programa; las teclas de la franja inferior encienden, detienen y taran.',
         c('Programas') && `Programas de secado: ${c('Programas')!.toLowerCase()}`,
         c('Interfaces') && `Salidas: ${c('Interfaces')}`,
       ),
@@ -39,12 +40,12 @@ export const entry: ShowroomEntry = {
     {
       anchor: 'tapa',
       view: 'tapa',
-      title: 'Tapa con bisagra trasera',
-      body: ['La tapa articulada se levanta hacia atrás para cargar la muestra y, cerrada, encierra el calor sobre el plato.'],
+      title: 'Tapa con cubierta del calefactor',
+      body: ['La tapa articulada se levanta hacia atrás para cargar la muestra; arriba lleva la cubierta negra del calefactor, con aletas.'],
     },
     {
       anchor: 'calefactor',
-      view: 'tapa',
+      view: 'calefactor',
       title: 'Calefactor de fibra de carbono',
       body: lines(c('Calentamiento'), 'Varillas calefactoras en la cara interior de la tapa: calientan la muestra desde arriba.'),
     },

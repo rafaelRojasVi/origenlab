@@ -75,6 +75,54 @@ function catalogIds() {
   return [...source.matchAll(/from '\.\/content\/([a-z0-9-]+)'/g)].map((m) => m[1]).filter((id) => id !== 'types');
 }
 
+/* Lectura de cifras de la ficha para la escala de la página de familia. */
+{
+  const { parseSpecNumber, familyScale } = await import(pathToFileURL(join(root, 'src/lib/modelos.ts')).href);
+  const cases = [
+    ['2.000 W', 2000, '2.000 W'],
+    ['0,1 a 500 ml', 0.1, '0,1 a 500 ml'],
+    ['0,1–2 l', 0.1, '0,1–2 l'],
+    ['1.5 kW', 1.5, '1.5 kW'],
+    ['125 W de entrada, 75 W de salida', 125, '125 W'],
+    ['18.100 RPM / 31.865 ×g', 18100, '18.100 RPM'],
+    ['Formato de gel', null, null],
+    // Número chileno: `1.500` es 1500 y `1,5` es 1.5.
+    ['1.500 W', 1500, '1.500 W'],
+    ['1,5 kW', 1.5, '1,5 kW'],
+  ];
+  for (const [input, n, display] of cases) {
+    const got = typeof parseSpecNumber === 'function' ? parseSpecNumber(input) : undefined;
+    const ok = n === null ? got === null : got && got.n === n && got.display === display;
+    if (!ok) {
+      console.error(`  x   parseSpecNumber(${JSON.stringify(input)}) = ${JSON.stringify(got)}, se esperaba ${n}`);
+      process.exit(1);
+    }
+  }
+  const spec = (value) => [{ label: 'Potencia', value, source: 's' }];
+  const model = (slug, value) => ({ slug, name: slug, family: 'sonicacion', specs: spec(value) });
+  const scale = familyScale([model('a', '100 W'), model('b', '200 W'), model('c', '2.000 W')], 'sonicacion');
+  const xs = scale?.points.map((point) => point.x.toFixed(3)).join(',');
+  if (xs !== '0.000,0.231,1.000') {
+    console.error(`  x   familyScale: x = ${xs}, se esperaba 0.000,0.231,1.000`);
+    process.exit(1);
+  }
+  if (familyScale([model('a', '100 W'), model('b', '200 W')], 'sonicacion') !== null || familyScale([model('a', 'x')], 'osmometria') !== null) {
+    console.error('  x   familyScale: debe ser null con menos de 3 cifras o sin escala');
+    process.exit(1);
+  }
+  // Un máximo se ordena por el extremo alto del rango: «0,1 a 500 ml» (máx. 500) va después de «300 ml».
+  const maxed = (slug, value) => ({ slug, name: slug, family: 'centrifugacion', brand: 'x', specs: [{ label: 'Velocidad máxima', value, source: 's' }] });
+  const order = (await import(pathToFileURL(join(root, 'src/lib/modelos.ts')).href)).familyOrder(
+    [maxed('rango', '1.000 a 5.000 RPM'), maxed('medio', '4.000 RPM'), maxed('bajo', '2.000 RPM'), maxed('alto', '6.000 RPM')],
+    'centrifugacion',
+  ).map((m) => m.slug).join(',');
+  if (order !== 'bajo,medio,rango,alto') {
+    console.error(`  x   familyOrder (máximo): ${order}, se esperaba bajo,medio,rango,alto`);
+    process.exit(1);
+  }
+  console.log('  ok  parseSpecNumber y familyScale');
+}
+
 // Cuenta de creación y liberación. three numera cada geometría, material y
 // textura con un id correlativo por clase: un objeto de prueba antes y otro
 // después de `build()` acotan los creados; los `dispose` se anotan por id.

@@ -154,7 +154,7 @@ for (const file of scripts) {
 
 /* -- 6. La medición propia es de primera mano ------------------------------
  *
- * `src/lib/stats.ts` envía cinco eventos con `navigator.sendBeacon` a una ruta
+ * `src/lib/stats.ts` envía seis nombres de evento (cinco acciones y la `visita`) con `navigator.sendBeacon` a una ruta
  * del propio dominio (`/api/stats/event`). La medición sólo es compatible con
  * lo que dicen `/privacidad/` y `/cookies/` si ese archivo no guarda nada en el
  * navegador y no habla con nadie más: aquí se busca el archivo construido que
@@ -176,6 +176,17 @@ for (const file of statsFiles) {
   assert(hosts.length === 0, `${rel}: la medición no nombra dominios ajenos`);
   assert(/sendBeacon/.test(body), `${rel}: la medición usa sendBeacon`);
 }
+// El sexto nombre es `visita`: origen y página, nunca el referente entero ni la query (vive en visit.ts).
+// Astro incrusta en el HTML el guion de visita (es pequeño): se busca en los JavaScript construidos y en los guiones en línea de la portada.
+const inlineScripts = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+const visitBodies = [...statsFiles.map((file) => readFileSync(file, 'utf8')), ...inlineScripts].filter((body) => body.includes('visita'));
+assert(visitBodies.length > 0, 'el sexto nombre de evento, visita, está en un JavaScript construido o en línea');
+for (const body of visitBodies) {
+  for (const word of ['localStorage', 'sessionStorage', 'document.cookie', 'indexedDB']) assert(!body.includes(word), `el guion de visita no usa ${word}`);
+  assert(/sendBeacon/.test(body), 'el guion de visita usa sendBeacon');
+}
+const visitSource = readFileSync(join(root, 'src/lib/visit.ts'), 'utf8');
+assert(/const body = JSON\.stringify\(\{ name: 'visita', props: \{ origen: classifyOrigin\([^)]*\), pagina \} \}\)/.test(visitSource), 'visit.ts: la carga útil es sólo origen y página; el referente entra por el clasificador');
 
 if (failed) {
   console.error('\nvalidate:privacy FALLÓ');

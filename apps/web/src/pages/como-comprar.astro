@@ -1,58 +1,90 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
-import SectionIndex from '../components/ui/SectionIndex.astro';
 import StepList from '../components/ui/StepList.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import Icon from '../components/ui/Icon.astro';
+import Button from '../components/ui/Button.astro';
+import FaqList from '../components/ui/FaqList.astro';
+import HomeSteps from '../components/home/HomeSteps.astro';
 import { consultationProcess } from '../data/consultation';
+import { buyingFaqs } from '../data/faq';
 import { contact } from '../data/contact';
 import { publicClaim } from '../data/claims';
 import { site } from '../config/site';
+import { faqJsonLd } from '../lib/jsonld';
 
 /**
- * Cómo se compra: los cuatro pasos que aprobó el titular, lo que pasa dentro
- * del primero y la vía de las compras públicas.
+ * Cómo se compra: los cuatro pasos de `buyingSteps()` (los mismos de la
+ * portada), lo que pasa dentro del primero, la vía de las compras públicas y
+ * las preguntas de `buyingFaqs()`.
  *
- * Sin precios y sin cifras. El plazo de la cotización y la proporción del
- * abono no están aprobados en `claims.ts`; la rapidez se dice con la redacción
- * cualitativa aprobada (`respuesta-agil`), y si se retira, la frase desaparece.
+ * Sin precios y sin cifras. Cada frase que es una afirmación sale de
+ * `publicClaim`: si el registro la retira, la frase desaparece. La forma de
+ * pago se dice en neutro («condiciones de pago en la cotización»): la
+ * proporción del abono no está aprobada para el sitio público, y tampoco que
+ * rija en las órdenes de compra de Mercado Público.
  *
  * La nota de datos repite, en prosa, lo que la casilla de consentimiento del
  * formulario de `/contacto/` pide aceptar, para que nadie llegue al formulario
  * sin saberlo.
  */
-const speedClaim = publicClaim('respuesta-agil');
+const trust = [
+  'directo-con-el-fabricante',
+  'cotizacion-mismo-dia-habil',
+  'despacho-todo-chile',
+  'puesta-en-marcha-con-fabrica',
+  'vende-mercado-publico',
+]
+  .map((id) => publicClaim(id))
+  .filter((text): text is string => Boolean(text));
+
+// Junto a la vía de Mercado Público: dónde estamos inscritos como proveedor, por tipo
+// de institución y sin nombres. Si el registro la retira, el párrafo desaparece.
+const registered = publicClaim('proveedor-inscrito');
+
+const faqs = buyingFaqs();
+// La descripción promete el plazo sólo si el registro de afirmaciones lo aprueba.
+const description = publicClaim('cotizacion-mismo-dia-habil')
+  ? 'Cómo comprar: cuéntenos su aplicación, reciba la cotización el mismo día hábil y coordine entrega y puesta en marcha.'
+  : 'Cómo comprar: cuéntenos su aplicación, reciba la cotización por escrito y coordine entrega y puesta en marcha.';
 ---
 
 <Layout
   title="Cómo comprar"
-  description="Cómo comprar con OrigenLab: cotización con asesoría técnica, abono al pedido, puesta en marcha con fábrica y saldo contra entrega. También por Mercado Público."
+  description={description}
+  jsonLd={[faqJsonLd(faqs.map((item) => ({ question: item.q, answer: item.a })))]}
 >
   <div class="shell">
     <PageIntro
       title="Cómo comprar"
       lead="De la primera consulta a la entrega del equipo, con las condiciones por escrito en cada paso. No publicamos precios: cada cotización se arma con la configuración, los accesorios y el flete que su caso pide."
       crumbs={[{ label: 'Cómo comprar' }]}
-    />
+    >
+      {
+        trust.length > 0 && (
+          <ul class="t-label trust" aria-label="Lo que ofrecemos">
+            {trust.map((text) => <li>{text}</li>)}
+          </ul>
+        )
+      }
+    </PageIntro>
   </div>
 
-  <section id="pasos" class="shell section rule-top" aria-labelledby="pasos-title">
-    <SectionIndex index={1} label="Los pasos" />
-    <div class="guide">
-      <div>
-        <h2 id="pasos-title" class="t-h2">Cuatro pasos, de la cotización al saldo</h2>
-        {speedClaim && <p class="t-lead guide__speed">{speedClaim}.</p>}
-      </div>
-      <StepList />
-    </div>
-  </section>
+  <HomeSteps
+    tone="paper"
+    id="pasos"
+    label="Los pasos"
+    title="Cuatro pasos, de la cotización a la entrega"
+    claims={false}
+  />
 
-  <section class="shell section rule-top" aria-labelledby="asesoria-title">
-    <SectionIndex index={2} label="El primer paso" />
+  <section class="shell home-sec" aria-labelledby="asesoria-title">
     <div class="guide">
       <div>
-        <h2 id="asesoria-title" class="t-h2">Qué pasa antes de la cotización</h2>
+        <div class="home-head">
+          <p class="t-label">El primer paso</p>
+          <h2 id="asesoria-title" class="t-h2">Qué pasa antes de la cotización</h2>
+        </div>
         <p class="t-body guide__body">
           No hace falta traer un modelo ni una especificación cerrada. Con la aplicación, la muestra
           y el volumen de trabajo acotamos las alternativas antes de hablar de precio.
@@ -68,10 +100,12 @@ const speedClaim = publicClaim('respuesta-agil');
     </div>
   </section>
 
-  <section id="compras-publicas" class="shell section rule-top" aria-labelledby="publicas-title">
-    <SectionIndex index={3} label="Compras públicas" />
+  <section id="compras-publicas" class="shell home-sec" aria-labelledby="publicas-title">
     <div class="guide">
-      <h2 id="publicas-title" class="t-h2">Mercado Público y Compra Ágil</h2>
+      <div class="home-head">
+        <p class="t-label">Compras públicas</p>
+        <h2 id="publicas-title" class="t-h2">Mercado Público y Compra Ágil</h2>
+      </div>
       <div>
         <p class="t-body guide__body guide__body--flush">
           Cotizamos también para licitaciones y para Compra Ágil en Mercado Público. Si su
@@ -79,20 +113,27 @@ const speedClaim = publicClaim('respuesta-agil');
           Compra Ágil y preparamos la oferta con lo que piden sus bases: equipo, configuración,
           accesorios y puesta en marcha.
         </p>
+        {registered && <p class="t-body guide__body guide__registered">{registered}.</p>}
         <p class="t-body guide__body">
           En una compra pública, la forma de pago y los plazos son los que fijan las bases o la orden
           de compra, no los pasos de esta página. La asesoría técnica previa es la misma.
         </p>
-        <a href={site.quoteHref} class="link-arrow guide__link">
-          Escribirnos por una licitación
-          <Icon name="arrow-right" size={18} class="arrow" />
-        </a>
+        <p class="guide__link">
+          <Button href={site.quoteHref} variant="tertiary">Escribirnos por una licitación</Button>
+        </p>
       </div>
     </div>
   </section>
 
+  <section class="shell home-sec faq-sec" aria-labelledby="faq-title">
+    <div class="home-head">
+      <p class="t-label">Preguntas frecuentes</p>
+      <h2 id="faq-title" class="t-h2">Lo que más preguntan antes de comprar</h2>
+    </div>
+    <FaqList items={faqs} />
+  </section>
+
   <ClosingQuoteBand
-    index={4}
     title="¿Tiene un requerimiento hoy?"
     body="Cuéntenos la aplicación, la institución y la ciudad. Le respondemos con alternativas y, cuando corresponde, con una cotización formal por escrito."
     primary="whatsapp"
@@ -100,19 +141,41 @@ const speedClaim = publicClaim('respuesta-agil');
 </Layout>
 
 <style>
+  .trust {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 2rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .trust li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .trust li::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--color-teal-700);
+  }
   .guide {
     display: grid;
     gap: 2.5rem;
-    margin-top: 1rem;
   }
-  .guide__speed {
-    margin-top: 1.25rem;
-    color: var(--color-teal-800);
+  .guide .home-head {
+    margin-bottom: 0;
   }
   .guide__body {
-    margin-top: 1.25rem;
+    margin-top: 1.5rem;
     color: var(--color-ink-600);
     max-width: 60ch;
+  }
+  .guide__registered {
+    color: var(--color-ink-950);
+    font-weight: 600;
   }
   .guide__body--flush {
     margin-top: 0;
@@ -126,6 +189,12 @@ const speedClaim = publicClaim('respuesta-agil');
   }
   .guide__link {
     margin-top: 2rem;
+  }
+  .faq-sec {
+    padding-bottom: clamp(5rem, 10vw, 9rem);
+  }
+  .faq-sec :global(.faq) {
+    margin-top: 0;
   }
   @media (min-width: 1024px) {
     .guide {

@@ -10,6 +10,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hiddenCopySurfaces, publishesClaimText, withheldClaimTexts } from './lib/claim-variants.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -80,15 +81,7 @@ const NO_APP_STORAGE_CLAIM = 'La aplicación de OrigenLab no fija cookies ni alm
  * `validate:catalog`.
  */
 const claimsSrc = readFileSync(join(root, 'src/data/claims.ts'), 'utf8');
-const withheldTexts = claimsSrc
-  .split(/\n  \{\n/)
-  .slice(1)
-  .filter((block) => !/status: 'approved'/.test(block))
-  .map((block) => ({
-    id: block.match(/id: '([^']+)'/)?.[1] ?? '(sin id)',
-    text: block.match(/text: '([^']*)'/)?.[1] ?? '',
-  }))
-  .filter((claim) => claim.text.length > 0);
+const withheldTexts = withheldClaimTexts(claimsSrc);
 assert(withheldTexts.length > 0, 'claims.ts: se esperaba al menos una afirmación redactada sin aprobar');
 
 for (const file of pages) {
@@ -114,11 +107,39 @@ for (const file of pages) {
   assert(!html.includes('name="generator"'), at('expone la versión del generador'));
 
   /* -- Cabecera ---------------------------------------------------------- */
-  assert(/<html lang="es-CL">/.test(html), at('falta lang="es-CL"'));
+  assert(/<html lang="es-CL"( data-noindex)?>/.test(html), at('falta lang="es-CL"'));
   assert(/<link rel="canonical" href="https:\/\/origenlab\.cl\/[^"]*"/.test(html), at('canónica ausente o mal formada'));
   const canonical = html.match(/<link rel="canonical" href="([^"]+)"/)?.[1];
   assert(canonical?.endsWith('/'), at(`la canónica debe llevar barra final: ${canonical}`));
   assert(/<meta name="theme-color"/.test(html), at('falta theme-color'));
+  // Organization: exactamente una por página, JSON válido, sameAs sólo con URL https reales (nunca vacías)
+  // y un contactPoint de ventas con el correo y nada más.
+  const orgs = [...html.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)]
+    .map((match) => {
+      try {
+        return JSON.parse(match[1]);
+      } catch {
+        assert(false, at('JSON-LD que no es JSON válido'));
+        return null;
+      }
+    })
+    .filter((entry) => entry?.['@type'] === 'Organization');
+  assert(orgs.length === 1, at(`debe haber un solo Organization en JSON-LD (hay ${orgs.length})`));
+  const org = orgs[0];
+  if (org) {
+    assert(org.url === 'https://origenlab.cl/' && org.name, at('Organization sin url o name'));
+    if ('sameAs' in org) {
+      assert(
+        Array.isArray(org.sameAs) && org.sameAs.length > 0 && org.sameAs.every((u) => typeof u === 'string' && /^https:\/\/[^\s]+$/.test(u)),
+        at('Organization.sameAs vacío o con una URL no válida'),
+      );
+    }
+    const point = org.contactPoint?.[0];
+    assert(
+      org.contactPoint?.length === 1 && point.contactType === 'sales' && point.email && !('telephone' in point),
+      at('Organization.contactPoint: sólo contactType sales y correo'),
+    );
+  }
   // Sólo una página de modelo (`productos/<familia>/<slug>/`) puede llevar su póster 3D
   // (scripts/generate-posters.mjs), y exactamente `/products/<slug>-poster.jpg`; el resto, el PNG del sitio.
   // Las fichas heredadas de centrifugación (`productos/centrifugas/<slug>/`) usan el id de la colección: `ortoalresa-<slug>`.
@@ -188,9 +209,17 @@ for (const file of pages) {
   const flat = visible.replace(/\s+/g, ' ');
   for (const claim of withheldTexts) {
     assert(
-      !flat.includes(claim.text),
+      !publishesClaimText(flat, claim.text),
       at(`publica la afirmación sin aprobar "${claim.text}" (claims.ts: ${claim.id})`),
     );
+    // Meta description, og/twitter, alt, aria-label y JSON-LD: el análisis del
+    // cuerpo los descarta al quitar las etiquetas.
+    for (const surface of hiddenCopySurfaces(html)) {
+      assert(
+        !publishesClaimText(surface.text, claim.text),
+        at(`publica la afirmación sin aprobar "${claim.text}" en ${surface.where} (claims.ts: ${claim.id}): ${surface.text.slice(0, 80)}`),
+      );
+    }
   }
 
   /* -- Superficies internas --------------------------------------------- */
@@ -336,13 +365,21 @@ for (const route of SUPPRESSED_ROUTES) {
  * y se comprueba que ningún HTML lo enlace directamente.
  */
 const onDemand = (file) => /^scene-[\w-]+\.[\w-]+\.js$/.test(file.split(/[\\/]/).pop());
+// La burbuja de conversación (`ChatBubble.astro`) carga con la página sólo un
+// arranque mínimo; el resto (`lib/chat.ts`, paquete propio) llega al primer clic.
+// Como la sala 3D, no es carga de ninguna página: se mide aparte, con techo
+// propio, y ningún HTML puede enlazarlo. No es un `scene-*`.
+const chatChunk = (file) => /^chat[.-][\w-]+\.js$/.test(file.split(/[\\/]/).pop());
 const jsFiles = walk(dist, '.js');
-const js = jsFiles.filter((file) => !onDemand(file)).reduce((total, file) => total + statSync(file).size, 0);
+const js = jsFiles.filter((file) => !onDemand(file) && !chatChunk(file)).reduce((total, file) => total + statSync(file).size, 0);
+const chat = jsFiles.filter(chatChunk).reduce((total, file) => total + statSync(file).size, 0);
 const scene = jsFiles.filter(onDemand).reduce((total, file) => total + statSync(file).size, 0);
 for (const file of walk(dist, '.html')) {
   const html = readFileSync(file, 'utf8');
   assert(!/<script[^>]+src="[^"]*\/scene-[\w-]+\.[\w-]+\.js"/.test(html) && !/rel="modulepreload"[^>]+scene-/.test(html),
     `${relative(dist, file)}: la sala 3D se enlaza en la carga inicial`);
+  assert(!/<script[^>]+src="[^"]*\/chat[.-][\w-]+\.js"/.test(html) && !/rel="modulepreload"[^>]+\/chat[.-]/.test(html),
+    `${relative(dist, file)}: el panel de la burbuja se enlaza en la carga inicial`);
 }
 const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).size, 0);
 // Bytes, informados en kB de 1.000 para que el mensaje y el límite usen la misma unidad.
@@ -352,6 +389,7 @@ const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).si
 const CSS_BUDGET = 80_000;
 const kb = (bytes) => (bytes / 1000).toFixed(1);
 assert(js < 15_000, `dist: ${kb(js)} kB de JavaScript (presupuesto 15 kB)`);
+assert(chat < 2_500, `dist: ${kb(chat)} kB en el panel de la burbuja bajo demanda (techo 2,5 kB)`);
 // three.js pesa ~560 kB; cada modelo, decenas. El techo cubre la biblioteca y
 // los siete modelos juntos, aunque una página sólo pide los que muestra.
 assert(scene < 900_000, `dist: ${kb(scene)} kB en la sala 3D bajo demanda (techo 900 kB)`);
@@ -361,4 +399,4 @@ if (failed) {
   console.error('\nvalidate:dist FALLÓ');
   process.exit(1);
 }
-console.log(`validate:dist OK (${pages.length} páginas, ${kb(js)} kB JS, ${kb(css)} kB CSS)`);
+console.log(`validate:dist OK (${pages.length} páginas, ${kb(js)} kB JS, ${kb(chat)} kB burbuja bajo demanda, ${kb(css)} kB CSS)`);

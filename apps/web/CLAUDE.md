@@ -38,7 +38,43 @@ Two hard constraints beyond the content rules:
   enforces it.
 - **One design system.** Colors, radii, spacing and type roles come from the
   tokens in `src/styles/global.css`; group with hairlines and space, not cards.
+  Radii: 10 px controls, 16 px cards, 2 px tags/tables; cards only for model/family tiles.
   Read `docs/design/DESIGN_SYSTEM.md` before adding a component.
+
+**Adding a page in the system.** Start from `Layout` + `PageIntro` (breadcrumbs, H1,
+context line), build sections with hairlines and `.t-d3`/`.t-h2`/`.t-label`, put every
+action in `ui/Button.astro` (labels from `src/lib/ctaLabels.ts`, never typed by hand),
+close with one `ClosingQuoteBand`, add `.rv` to sections below the first screen (never
+in it), and keep CSS under the 80 kB budget by deleting what you replace. Any visible
+figure or promise comes from `publicClaim(id)`; the WhatsApp number is the single
+constant `contact.whatsappE164` (`src/data/contact.ts`) and links go through
+`src/lib/whatsapp.ts`.
+
+**Claims register and variants.** `src/data/claims.ts` holds each claim with status
+(`approved`/`proposed`/`internal`). Same-day quote is approved; 50/50 payment is not
+on the public site; Mercado Público reads «Vendemos por Mercado Público y participamos
+en licitaciones»; no warranty claims anywhere. `scripts/lib/claim-variants.mjs` expands
+every withheld claim into its spoken variants, and `npm run test:message` checks that
+the scanner catches them in visible text, meta, alt, aria-label and JSON-LD. Add a
+variant there when you add a withheld claim. `validate:dist` fails on any hit.
+
+**Six measured events, no cookies.** `src/lib/stats.ts` sends five actions
+(`cotizacion_click`, `whatsapp_click`, `3d_interact`, `form_submit`, `pdf_download`);
+`src/lib/visit.ts` sends the sixth, `visita`, once per page view including bfcache
+restores (`origen` from seven words — same-site referrer is `interno`, empty is `directo`;
+`pagina` = lowercased path), and never on pages with `data-noindex` on `<html>`. `npm run test:visit` tests the origin classifier. The Worker only
+accepts the page pattern `^/[a-z0-9/-]{0,80}$` (its allowlist lives on the backend
+plan, not in this repo); a new route outside that pattern sends no beacon.
+`validate:privacy` §6 allows exactly these names.
+
+**Presence slots.** `site.linkedinUrl` (footer link) and `site.googleProfileUrl` stay
+empty until the business confirms the URLs; each renders, and enters the
+`Organization` JSON-LD `sameAs` (every page, via `Seo.astro`), only when set.
+`validate:dist` fails on an empty `sameAs` string or invalid JSON-LD.
+
+**Posters, in order.** After adding or changing a model scene (or its `frameMargin`):
+`npm run build`, then `npm run posters` (needs Chromium with WebGL), then
+`npm run build` again so the page and its `og:image` use the new poster.
 
 **Las marcas son una lista cerrada de siete.** `APPROVED_BRAND_IDS` en
 `src/data/brands.ts` es la única lista que el sitio público puede mostrar, y

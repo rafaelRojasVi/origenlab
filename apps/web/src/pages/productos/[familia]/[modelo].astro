@@ -3,17 +3,23 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { getCollection } from 'astro:content';
 import Layout from '../../../layouts/Layout.astro';
-import SectionIndex from '../../../components/ui/SectionIndex.astro';
-import ExternalLink from '../../../components/ui/ExternalLink.astro';
+import Button from '../../../components/ui/Button.astro';
+import Icon from '../../../components/ui/Icon.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ModelHero from '../../../components/product/ModelHero.astro';
 import ProductStory from '../../../components/product/ProductStory.astro';
-import RelatedModels from '../../../components/product/RelatedModels.astro';
+import ModelHeroCopy from '../../../components/product/ModelHeroCopy.astro';
+import ModelCard from '../../../components/product/ModelCard.astro';
+import SpecTable from '../../../components/product/SpecTable.astro';
+import AccessoryCards from '../../../components/product/AccessoryCards.astro';
+import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
+import ModelFaq from '../../../components/product/ModelFaq.astro';
 import TrustStrip from '../../../components/product/TrustStrip.astro';
 import { site } from '../../../config/site';
 import { getBrandById } from '../../../lib/catalog';
+import { publicClaim } from '../../../data/claims';
 import { faqJsonLd } from '../../../lib/jsonld';
-import { familyHref, familyInfo, hasCollectionPages, imageForEntry, modelHref, relatedFor } from '../../../lib/modelos';
+import { familyHref, familyInfo, hasCollectionPages, imageForEntry, modelHref, modelSections, relatedFor } from '../../../lib/modelos';
 import { PRODUCT_IMAGE_WIDTHS, imageSourcesFor } from '../../../lib/productImage';
 import { showroomEntry } from '../../../lib/showroom/catalog';
 import type { ProductStoryConfig } from '../../../lib/showroom/productStory';
@@ -24,11 +30,11 @@ import type { Modelo } from '../../../content.config';
  * `/productos/{family}/{slug}/` (centrifugación conserva sus fichas de
  * `/productos/centrifugas/`, ver `lib/modelos.ts`).
  *
- * Orden (plan del sitio, anatomía de la página de modelo): hero → aplicaciones
- * → ficha técnica → accesorios → preguntas → relacionados → cómo se compra →
- * banda de cierre. Con historia por scroll (`stories/<showroom_id>.ts`) la
- * historia cuenta aplicaciones, ficha, accesorios y preguntas, y la página
- * sigue con relacionados. Una sección sin contenido no se dibuja.
+ * Orden (tablero Modelo): primera pantalla (con historia por scroll,
+ * `stories/<showroom_id>.ts`, el escenario 3D con el texto de entrada en su
+ * slot `intro`) → resto de la historia → aplicaciones → ficha técnica →
+ * accesorios → relacionados → cómo trabajamos → preguntas → banda de cierre →
+ * barra fija. Una sección sin contenido no se dibuja.
  */
 export async function getStaticPaths() {
   const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
@@ -50,30 +56,14 @@ const story = entry.showroom_id
   : undefined;
 const media = story ? 'story' : entry.showroom_id && showroomEntry(entry.showroom_id) ? 'showroom' : 'photo';
 
-const related = relatedFor(entry, all);
-const faqs = [...entry.faqs, ...(story?.faqs ?? [])];
-const sources = [...new Set(entry.specs.map((spec) => spec.source))].filter((url) => url !== entry.official_url);
+const related = relatedFor(entry, all, 3);
+const { applications, accessories, faqs } = modelSections(entry, story);
 const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', {
   day: 'numeric',
   month: 'long',
   year: 'numeric',
   timeZone: 'UTC',
 });
-
-/* Numeración de las secciones que se dibujan, en orden; la banda lleva el último. */
-const shown = {
-  apps: !story && entry.applications.length > 0,
-  specs: !story && entry.specs.length > 0,
-  accessories: !story && entry.accessories.length > 0,
-  faqs: !story && faqs.length > 0,
-  related: related.length > 0,
-  trust: true,
-};
-let counter = 0;
-const index = Object.fromEntries(
-  Object.entries(shown).map(([key, on]) => [key, on ? ++counter : undefined]),
-) as Record<keyof typeof shown, number | undefined>;
-const bandIndex = counter + 1;
 
 /* Datos estructurados: el equipo, sin oferta (no se publica precio). */
 const photo = imageSourcesFor(imageForEntry(entry));
@@ -104,6 +94,7 @@ const jsonLd = [
   ...(faqs.length > 0 ? [faqJsonLd(faqs.map((faq) => ({ question: faq.q, answer: faq.a })))] : []),
 ];
 
+const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
 const longTitle = `${entry.name} de ${brandName} en Chile`;
 const title = longTitle.length + ' | OrigenLab'.length <= 70 ? longTitle : entry.name;
 const fullDescription = `Cotice el ${entry.name} de ${brandName} en Chile. ${entry.lead}`;
@@ -113,111 +104,108 @@ const description =
 
 <Layout title={title} description={description} jsonLd={jsonLd} ogImagePath={ogImage} ogImageSize={poster || !photo ? undefined : { width: photo.width, height: photo.height }}>
   <ModelHero entry={entry} brand={brand} family={family} media={media} quoteHref={quoteHref}>
-    {story && <ProductStory config={story} entry={entry} />}
-
     {
-      shown.apps && (
-        <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
-          <SectionIndex index={index.apps!} label="Aplicaciones" />
-          <h2 id="aplicaciones-title" class="t-h2">
-            ¿Para qué se usa el <span translate="no">{entry.name}</span>?
-          </h2>
-          <ul class="model-apps">
-            {entry.applications.map((item) => (
-              <li class="rule-top">{item}</li>
-            ))}
-          </ul>
-          <p class="t-body mt-8">
-            ¿No sabe qué modelo necesita?{' '}
-            <a href={familyHref(entry.family)} class="link-plain">Compare la familia</a> o cuéntenos su aplicación al
-            cotizar.
-          </p>
-        </section>
+      story && (
+        <ProductStory config={story} entry={entry}>
+          <Fragment slot="intro">
+            <ModelHeroCopy entry={entry} brand={brand} family={family} quoteHref={quoteHref} />
+          </Fragment>
+        </ProductStory>
       )
     }
 
     {
-      shown.specs && (
-        <section class="shell section rule-top" aria-labelledby="ficha-title">
-          <SectionIndex index={index.specs!} label="Ficha técnica" />
-          <h2 id="ficha-title" class="t-h2">Especificaciones técnicas</h2>
-          <dl class="model-specs">
-            {entry.specs.map((spec) => (
-              <div class="rule-top">
-                <dt>{spec.label}</dt>
-                <dd class="t-data">{spec.value}</dd>
-              </div>
-            ))}
-          </dl>
-          <p class="t-small model-note">
-            Especificaciones según el fabricante <span translate="no">{brandName}</span>, verificadas el {verified}. Se
-            confirman en la cotización.
-          </p>
-          <ul class="link-row mt-8">
-            {entry.official_pdf_url && (
-              <li>
-                <ExternalLink href={entry.official_pdf_url} context="ficha técnica del fabricante, PDF" data-track="pdf_download" data-modelo={entry.slug}>
-                  Ficha técnica del fabricante (PDF)
-                </ExternalLink>
-              </li>
-            )}
-            <li>
-              <ExternalLink href={entry.official_url} context="página del modelo en el sitio del fabricante">
-                Ver en el sitio del fabricante
-              </ExternalLink>
-            </li>
-            {sources.map((url) => (
-              <li>
-                <ExternalLink href={url} context="fuente de las cifras">
-                  Fuente de las cifras
-                </ExternalLink>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )
-    }
-
-    {
-      shown.accessories && (
-        <section class="shell section rule-top" aria-labelledby="accesorios-title">
-          <SectionIndex index={index.accessories!} label="Accesorios" />
-          <h2 id="accesorios-title" class="t-h2">Accesorios disponibles</h2>
-          <ul class="model-apps">
-            {entry.accessories.map((item) => (
-              <li class="rule-top">{item}</li>
-            ))}
-          </ul>
-          <p class="t-small model-note">Consulte disponibilidad en la cotización.</p>
-        </section>
-      )
-    }
-
-    {
-      shown.faqs && (
-        <section class="shell section rule-top" aria-labelledby="preguntas-title">
-          <SectionIndex index={index.faqs!} label="Preguntas" />
-          <h2 id="preguntas-title" class="t-h2">Preguntas frecuentes</h2>
-          <div class="mt-8">
-            {faqs.map((faq) => (
-              <details class="rule-top model-faq">
-                <summary>{faq.q}</summary>
-                <p class="t-body">{faq.a}</p>
-              </details>
-            ))}
+      applications.length > 0 && (
+        <section class="msec msec--alt" aria-labelledby="aplicaciones-title">
+          <div class="shell rv">
+            <p class="t-label">Aplicaciones</p>
+            <h2 id="aplicaciones-title" class="mh2">
+              Para qué se usa el <span translate="no">{entry.name}</span>
+            </h2>
+            <ol class="model-apps">
+              {applications.map((item, i) => (
+                <li>
+                  <span class="t-label">{String(i + 1).padStart(2, '0')}</span>
+                  <h3 class="t-h3-lg">{item}</h3>
+                </li>
+              ))}
+            </ol>
+            <p class="model-apps-note">
+              ¿No sabe qué modelo necesita? <a href={familyHref(entry.family)} class="link-plain">Compare la familia</a> o cuéntenos su aplicación al cotizar.
+            </p>
           </div>
         </section>
       )
     }
 
-    <RelatedModels models={related} title="También de la misma familia" index={index.related} />
-    <TrustStrip brand={brand} index={index.trust} />
+    {
+      entry.specs.length > 0 && (
+        <section class="msec" aria-labelledby="ficha-title">
+          <div class="shell model-spec rv">
+            <div class="model-spec__aside">
+              <div>
+                <p class="t-label">Ficha técnica</p>
+                <h2 id="ficha-title" class="mh2">Datos del fabricante</h2>
+              </div>
+              <p>Cada valor indica su fuente en el ícono de información. Verificado el {verified}.</p>
+              {entry.official_pdf_url && (
+                <Button href={entry.official_pdf_url} variant="secondary" arrow={false} external track="pdf_download" modelo={entry.slug}>
+                  <Icon name="file" size={18} />
+                  Ficha técnica del fabricante (PDF)
+                </Button>
+              )}
+              <Button href={entry.official_url} variant="tertiary" external>Ver en el sitio del fabricante</Button>
+            </div>
+            <SpecTable entry={entry} />
+          </div>
+        </section>
+      )
+    }
+
+    {
+      accessories.length > 0 && (
+        <section class="msec msec--alt" aria-labelledby="accesorios-title">
+          <div class="shell rv">
+            <p class="t-label">Accesorios e insumos</p>
+            <h2 id="accesorios-title" class="mh2">Accesorios disponibles</h2>
+            <AccessoryCards items={accessories} quoteHref={quoteHref} />
+          </div>
+        </section>
+      )
+    }
+
+    {
+      related.length > 0 && (
+        <section class="msec" aria-labelledby="relacionados-title">
+          <div class="shell rv">
+            <p class="t-label">Modelos relacionados</p>
+            <h2 id="relacionados-title" class="mh2">Otros modelos de la familia</h2>
+            <div class="model-rel">
+              {related.map((other) => (
+                <ModelCard entry={other} variant="related" />
+              ))}
+            </div>
+          </div>
+        </section>
+      )
+    }
+
+    <TrustStrip />
+
+    {
+      faqs.length > 0 && (
+        <section class="msec" aria-labelledby="preguntas-title">
+          <div class="shell rv">
+            <ModelFaq faqs={faqs} whatsappHref={buildWhatsAppQuoteUrl({ productName: entry.name })} modelo={entry.slug} />
+          </div>
+        </section>
+      )
+    }
   </ModelHero>
 
   <ClosingQuoteBand
-    index={bandIndex}
-    title={`Solicite cotización del ${entry.name}`}
-    body="Cuéntenos su muestra, el volumen y su institución. Respondemos con alternativas y condiciones por escrito, y despachamos a todo Chile."
+    title={sameDay ? `Cuéntenos su muestra. Le cotizamos el ${entry.name} el mismo día hábil.` : `Cuéntenos su muestra y le cotizamos el ${entry.name}.`}
+    body="Indique el volumen y su institución. Respondemos con alternativas y condiciones por escrito."
     productName={entry.name}
     brandName={brandName}
     quoteHref={quoteHref}
@@ -225,51 +213,63 @@ const description =
   />
 </Layout>
 
-<style>
+<style is:global>
   .model-apps {
     list-style: none;
-    margin: 2rem 0 0;
+    margin: 3.5rem 0 0;
     padding: 0;
-    max-width: 48rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
   }
   .model-apps li {
-    padding-block: 0.875rem;
-    color: var(--color-ink-800);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding-top: 1.25rem;
+    border-top: 2px solid var(--color-ink-950);
   }
-  .model-specs {
-    margin: 2rem 0 0;
-    max-width: 48rem;
-  }
-  .model-specs > div {
-    display: grid;
-    gap: 0.25rem 1.5rem;
-    padding-block: 0.75rem;
-  }
-  .model-specs dt {
+  .model-apps-note {
+    margin-top: 2rem;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.5;
     color: var(--color-ink-600);
   }
-  .model-specs dd {
-    margin: 0;
-    color: var(--color-ink-950);
+  .model-spec {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
   }
-  .model-note {
-    margin-top: 1.5rem;
-    color: var(--color-ink-500);
-    max-width: 62ch;
+  .model-spec__aside {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
   }
-  .model-faq {
-    padding-block: 1rem;
+  .model-spec__aside p:not(.t-label) {
+    max-width: 21rem;
+    color: var(--color-ink-600);
   }
-  .model-faq summary {
-    font-weight: 600;
-    cursor: pointer;
+  .model-rel {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+    margin-top: 3.5rem;
   }
-  .model-faq p {
-    margin-top: 0.75rem;
-  }
-  @media (min-width: 768px) {
-    .model-specs > div {
-      grid-template-columns: 14rem minmax(0, 1fr);
+  @media (min-width: 960px) {
+    .model-apps,
+    .model-rel {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .model-spec {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+      gap: 3rem;
+    }
+    .model-spec__aside {
+      position: sticky;
+      top: calc(var(--hd-h, 56px) + 2rem);
     }
   }
 </style>

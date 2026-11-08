@@ -1,0 +1,167 @@
+---
+import type { Modelo } from '../../content.config';
+
+/**
+ * Ficha técnica en tabla: característica, valor (mono) y la fuente de cada
+ * cifra detrás de un botón de información de 44 × 44 px. Con el cursor o el
+ * foco encima, el botón muestra «Fuente: {sitio} · verificado el {fecha}»
+ * (`role="tooltip"`, enlazado por `aria-describedby`). La tabla se desplaza
+ * dentro de su caja en pantallas estrechas y no ensancha la página.
+ */
+interface Props {
+  entry: Modelo;
+}
+
+const { entry } = Astro.props;
+const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+const host = (url: string) => new URL(url).hostname.replace(/^www\./, '');
+const id = (index: number) => `src-${entry.slug}-${index}`;
+---
+
+<div class="spec-wrap" role="region" aria-label="Ficha técnica, desplazable" tabindex="0">
+  <table class="spec">
+    <thead>
+      <tr>
+        <th scope="col">Característica</th>
+        <th scope="col">Valor</th>
+        <th scope="col"><span class="sr-only">Fuente</span><span aria-hidden="true">Fuente</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        entry.specs.map((spec, index) => (
+          <tr>
+            <th scope="row">{spec.label}</th>
+            <td class="spec__v">{spec.value}</td>
+            <td class="spec__s">
+              <button type="button" class="info" aria-describedby={id(index)} aria-label={`Fuente de ${spec.label}`}>
+                <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+                  <circle cx="9" cy="9" r="7.25" fill="none" stroke="currentColor" stroke-width="1.5" />
+                  <path d="M9 8.2v4.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  <circle cx="9" cy="5.6" r=".95" fill="currentColor" />
+                </svg>
+              </button>
+              <span role="tooltip" id={id(index)} class="tip" aria-hidden="true">Fuente: {host(spec.source)} · verificado el {verified}</span>
+            </td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</div>
+
+<style is:global>
+  .spec-wrap {
+    position: relative;
+    overflow-x: auto;
+    border-top: 2px solid var(--color-ink-950);
+  }
+  .spec {
+    width: 100%;
+    min-width: 520px;
+    border-collapse: collapse;
+  }
+  .spec thead th {
+    padding: 0.875rem 0.5rem 0.875rem 0;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-600);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .spec tbody th {
+    width: 34%;
+    padding: 0.75rem 1rem 0.75rem 0;
+    text-align: left;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-ink-600);
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .spec td {
+    padding: 0.75rem 0.5rem 0.75rem 0;
+    vertical-align: middle;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .spec__v {
+    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.45;
+    color: var(--color-ink-950);
+  }
+  .spec__s {
+    position: relative;
+    width: 3.5rem;
+    padding: 0 !important;
+    text-align: right;
+  }
+  .spec-wrap .info {
+    display: inline-grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 0;
+    border-radius: var(--radius-btn);
+    background: transparent;
+    color: var(--color-ink-500);
+    cursor: help;
+  }
+  .spec-wrap .info:hover,
+  .spec-wrap .info:focus-visible {
+    color: var(--color-ink-950);
+  }
+  .spec-wrap .tip {
+    position: absolute;
+    right: 3.25rem;
+    top: 50%;
+    translate: 0 -50%;
+    z-index: 2;
+    width: max-content;
+    max-width: 15.5rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--color-ink-950);
+    color: var(--color-onink-100);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    text-align: left;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--ease-ui);
+  }
+  .spec__s:not([data-dismissed]):hover .tip,
+  .spec__s:not([data-dismissed]):focus-within .tip {
+    opacity: 1;
+  }
+</style>
+
+<script>
+  /** Escape cierra la nota de fuente abierta (WCAG 1.4.13): la oculta hasta que el cursor o el foco vuelvan. */
+  addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const open = document.querySelector<HTMLElement>('.spec__s:hover, .spec__s:focus-within');
+    if (!open || open.hasAttribute('data-dismissed')) return;
+    open.dataset.dismissed = '';
+    // Vuelve sólo cuando ya no quedan ni cursor ni foco dentro; un Escape repetido no apila escuchas.
+    const clear = () =>
+      setTimeout(() => {
+        if (!open.matches(':hover, :focus-within')) {
+          delete open.dataset.dismissed;
+          open.removeEventListener('mouseleave', clear);
+          open.removeEventListener('focusout', clear);
+        }
+      }, 0);
+    open.addEventListener('mouseleave', clear);
+    open.addEventListener('focusout', clear);
+  });
+</script>
