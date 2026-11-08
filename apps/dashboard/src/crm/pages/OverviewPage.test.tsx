@@ -393,12 +393,14 @@ describe("Hoy · franja de metas y «Mi cola»", () => {
     expect(within(strip).getByRole("link", { name: /Seguimiento/ })).toBeInTheDocument();
   });
 
-  it("«Mi cola» / «Todo el equipo» is in the header", async () => {
+  it("«Mi cola» / «Todo el equipo» is in the header, and another profile starts on its own queue", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
-    render(page(as("p-ana", "Ana")));
+    const { rerender } = render(page(as("p-ana", "Ana")));
     const hero = await screen.findByTestId("hero-header");
     fireEvent.click(within(hero).getByRole("button", { name: "Todo el equipo" }));
     expect(within(hero).getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
+    rerender(page(as("p-beto", "Beto")));
+    expect(within(screen.getByTestId("hero-header")).getByRole("button", { name: "Mi cola · Beto" })).toHaveAttribute("aria-pressed", "true");
     // Only one switch on the page.
     expect(screen.getAllByTestId("today-scope")).toHaveLength(1);
   });

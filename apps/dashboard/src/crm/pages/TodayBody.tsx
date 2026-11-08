@@ -179,9 +179,13 @@ export function TodayBody({
     onCleared?.();
   }, [onCleared]);
 
-  const tenderLines = useMemo(() => tenderClosingLines(tendersClosing), [tendersClosing]);
+  // A tender closing tomorrow is quoting work, and the empty state's preview is the next calls:
+  // each shows only in a view that holds that work, like the queue.
+  const showTenders = HOME_FILTER_KINDS[view].has("licitacion");
+  const tenderLines = useMemo(() => (showTenders ? tenderClosingLines(tendersClosing) : []), [tendersClosing, showTenders]);
   const totalQueue = queue.length + forwards.length + tenderLines.length;
-  const nextFollowUps = useMemo(() => followUpsDue(items, at).slice(0, 3), [items, at]);
+  const showPreview = HOME_FILTER_KINDS[view].has("followup");
+  const nextFollowUps = useMemo(() => (showPreview ? followUpsDue(items, at).slice(0, 3) : []), [items, at, showPreview]);
 
   return (
     <div className="space-y-4" aria-busy={refreshing || undefined}>
@@ -1064,10 +1068,13 @@ function FollowUpQueueRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: «Registrar llamada» — until calls are logged from Hoy (Task 8) it opens the case. */}
-        <Button variant="primary" onClick={() => navigate("oportunidades", f.card.opportunity_id)}>
-          Registrar llamada
-        </Button>
+        {/* Primary: «Registrar llamada» — until calls are logged from Hoy (Task 8) it opens the case.
+            A viewer gets no action buttons. */}
+        {mayDecide ? (
+          <Button variant="primary" onClick={() => navigate("oportunidades", f.card.opportunity_id)}>
+            Registrar llamada
+          </Button>
+        ) : null}
         {/* Secondary: «Escribir» — open the Gmail thread («mejor por correo») */}
         <a
           href={write}

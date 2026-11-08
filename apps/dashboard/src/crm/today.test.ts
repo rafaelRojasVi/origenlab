@@ -6,6 +6,7 @@ import { AuthSessionContext } from "../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import {
   buildParaTiQueue,
+  callTouch,
   filterQueue,
   followUpsDue,
   followUpStep,
@@ -85,9 +86,10 @@ describe("home filter", () => {
   it("todo keeps everything", () => {
     const q = mixed();
     expect(filterQueue(q, "todo")).toEqual(q);
-    expect([...HOME_FILTER_KINDS.todo].sort()).toEqual(["cotizar", "decidir", "followup", "reply", "task"]);
+    expect([...HOME_FILTER_KINDS.todo].sort()).toEqual(["cotizar", "decidir", "followup", "licitacion", "reply", "task"]);
     expect(HOME_FILTER_KINDS.llamadas.has("decidir")).toBe(false);
     expect(HOME_FILTER_KINDS.cotizar.has("decidir")).toBe(true);
+    expect(HOME_FILTER_KINDS.llamadas.has("licitacion")).toBe(false);
   });
 
   it("unknown or missing home_filter reads as todo", () => {
@@ -148,5 +150,14 @@ describe("a call is a follow-up touch (owner ruling 2026-11-08)", () => {
     expect(followUpsDue([emailLater], NOW).map((f) => f.days)).toEqual([4]);
     expect(followUpsDue([callLater], NOW).map((f) => f.days)).toEqual([5]);
     expect(followUpsDue([callBefore], NOW).map((f) => f.days)).toEqual([20]);
+  });
+});
+
+describe("callTouch (Task 4 review fix)", () => {
+  it("an unsent newest revision has no clock: an older answered call is not a touch", () => {
+    const draft: RevisionCard = { ...rev(ago(10)), status: "draft", origin: "authored", sent_at: null, revision_no: 2 };
+    const c = card({ latest_revision: draft, last_call: { at: ago(2), outcome: "contesto" } });
+    expect(callTouch(c)).toBeNull();
+    expect(callTouch(card({ last_call: { at: ago(2), outcome: "contesto" } }))).toBe(ago(2));
   });
 });

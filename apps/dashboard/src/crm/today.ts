@@ -231,8 +231,13 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
 /** Outcomes of a call that count as a follow-up touch: the client was reached. */
 export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion"]);
 
-/** When OrigenLab last reached the client by phone after the quote went out, or null. */
+/**
+ * When OrigenLab last reached the client by phone after the quote went out, or null. A newest
+ * revision still in the Cotizador (`lastTouch` → «none») has no clock yet, so an older call is
+ * not a touch on it.
+ */
 export function callTouch(card: OpportunityCardData): string | null {
+  if (lastTouch(card).by === "none") return null;
   const call = card.last_call;
   const sent = card.latest_revision?.sent_at ?? null;
   if (!call?.at || !CALL_TOUCH_OUTCOMES.has(call.outcome) || Number.isNaN(Date.parse(call.at))) return null;
@@ -441,11 +446,14 @@ export function paraTiCount(items: OpportunityCardData[], now: Date, me: string 
 
 /* ─────────────────────────────────────────────────────── per-profile view ── */
 
-/** The sections each «Hoy» view shows; «decidir» is the forwarded requests. */
-export const HOME_FILTER_KINDS: Record<HomeFilter, ReadonlySet<QueueItem["kind"] | "decidir">> = {
-  todo: new Set(["cotizar", "reply", "followup", "task", "decidir"]),
+/**
+ * The sections each «Hoy» view shows; «decidir» is the forwarded requests and «licitacion» the
+ * «Licitación cierra mañana» lines (preparing an offer is quoting work).
+ */
+export const HOME_FILTER_KINDS: Record<HomeFilter, ReadonlySet<QueueItem["kind"] | "decidir" | "licitacion">> = {
+  todo: new Set(["cotizar", "reply", "followup", "task", "decidir", "licitacion"]),
   llamadas: new Set(["followup", "task"]),
-  cotizar: new Set(["cotizar", "reply", "task", "decidir"]),
+  cotizar: new Set(["cotizar", "reply", "task", "decidir", "licitacion"]),
 };
 
 /** The queue as a profile's view shows it: only the sections that view holds, order kept. */

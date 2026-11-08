@@ -30,9 +30,13 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [hechas, setHechas] = useState(0);
   const onCleared = useCallback(() => setHechas((n) => n + 1), []);
   const [, setForwardCount] = useState(0);
-  // «Mi cola» / «Todo el equipo»: held here so the header's counts follow the list. Session-only.
+  // «Mi cola» / «Todo el equipo»: held here so the header's counts follow the list. Session-only,
+  // and per profile: another profile on the shared login starts on its own queue again.
   const homeFilter = useHomeFilter();
-  const [scope, setScope] = useState<TodayScope>("mine");
+  const profileKey = session.kind === "signed_in" ? `${session.operator.operatorId}|${session.profile?.id ?? ""}` : "";
+  const [held, setHeld] = useState<{ profile: string; scope: TodayScope }>({ profile: profileKey, scope: "mine" });
+  const scope: TodayScope = held.profile === profileKey ? held.scope : "mine";
+  const setScope = useCallback((next: TodayScope) => setHeld({ profile: profileKey, scope: next }), [profileKey]);
   const view = scope === "team" ? "todo" : homeFilter;
 
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;

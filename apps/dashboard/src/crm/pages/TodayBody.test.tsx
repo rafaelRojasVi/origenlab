@@ -838,3 +838,45 @@ describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
     expect(screen.queryByTestId("today-housekeeping")).toBeNull();
   });
 });
+
+describe("Task 4 review fixes", () => {
+  function as(role: string, homeFilter: HomeFilter | null): AuthSessionState {
+    const base = session(role);
+    if (base.kind !== "signed_in") throw new Error("unreachable");
+    return { ...base, profile: { id: "p-ana", displayName: "Ana", roleLabel: "Ventas", homeFilter } };
+  }
+  function renderBody(s: AuthSessionState, items: OpportunityCardData[], tendersClosing?: { id: string; title: string }[]) {
+    stub();
+    render(
+      <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
+        <TodayBody items={items} navigate={vi.fn()} onChanged={() => undefined} now={NOW} tendersClosing={tendersClosing} />
+      </AuthSessionContext.Provider>,
+    );
+  }
+  const TENDER = [{ id: "55555555-5555-4555-8555-555555555556", title: "Compra de balanzas de ejemplo" }];
+
+  it("a viewer gets no «Registrar llamada»", () => {
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    renderBody(as("viewer", "llamadas"), [silent14]);
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    expect(within(row).queryByRole("button", { name: "Registrar llamada" })).toBeNull();
+  });
+
+  it("«Licitación cierra mañana» is quoting work: not in a llamadas view, shown in cotizar", () => {
+    renderBody(as("sales", "llamadas"), [], TENDER);
+    expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
+    cleanup();
+    renderBody(as("sales", "cotizar"), [], TENDER);
+    expect(screen.getByText(/Licitación cierra mañana/)).toBeInTheDocument();
+  });
+
+  it("the empty state's «Próximos seguimientos» shows only in a view with calls", () => {
+    // Five days since the quote: a follow-up coming up, not due today.
+    const soon = card({}, "2026-10-01T15:00:00Z");
+    renderBody(as("sales", null), [soon]);
+    expect(screen.getByTestId("today-empty")).toHaveTextContent("Próximos seguimientos");
+    cleanup();
+    renderBody(as("sales", "cotizar"), [soon]);
+    expect(screen.getByTestId("today-empty")).not.toHaveTextContent("Próximos seguimientos");
+  });
+});
