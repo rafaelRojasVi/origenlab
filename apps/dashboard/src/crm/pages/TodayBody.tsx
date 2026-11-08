@@ -190,10 +190,12 @@ export function TodayBody({
   // A case opens in its drawer over Hoy (no trip to the Pipeline): a row's «Abrir caso», its name,
   // «Resolver», «Registrar llamada». An id Hoy does not hold yet (a case just created from a
   // forwarded request) still goes to the case page.
-  const [drawer, setDrawer] = useState<{ id: string; mode: Exclude<Mode, null> | null } | null>(null);
+  // The form request is kept with the id, not rebuilt each render: the drawer's effects watch it, so
+  // a fresh object on every Hoy reload would reset the tab and reopen a form the operator closed.
+  const [drawer, setDrawer] = useState<{ id: string; initial: { mode: Exclude<Mode, null> } | null } | null>(null);
   const drawerCard = drawer ? (items.find((c) => c.opportunity_id === drawer.id) ?? null) : null;
   const openCase = useCallback<OpenCase>((id, mode) => {
-    if (items.some((c) => c.opportunity_id === id)) setDrawer({ id, mode: mode ?? null });
+    if (items.some((c) => c.opportunity_id === id)) setDrawer({ id, initial: mode ? { mode } : null });
     else navigate("oportunidades", id);
   }, [items, navigate]);
   const inPlace = useCallback<Navigate>((...args) => {
@@ -302,7 +304,7 @@ export function TodayBody({
         onClose={() => setDrawer(null)}
         onChanged={onChanged}
         refreshing={refreshing}
-        initial={drawer?.mode ? { mode: drawer.mode } : null}
+        initial={drawer?.initial ?? null}
       />
     </div>
     </OpenCaseContext.Provider>

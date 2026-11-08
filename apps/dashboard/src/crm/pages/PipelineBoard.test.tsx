@@ -403,7 +403,8 @@ describe("Tablero · board rules (Task 8)", () => {
     expect(screen.getByTestId("board-count-silenciosas")).toHaveTextContent("1");
     const b = within(column).getByTestId(`board-card-${silent.opportunity_id}`);
     expect(within(b).getByTestId("board-followup-step")).toHaveTextContent("Seguimiento 2 de 3");
-    const lose = within(b).getByRole("button", { name: "¿Marcar perdida?" });
+    const lose = within(b).getByRole("button", { name: `¿Marcar perdida? ${silent.organization?.name}` });
+    expect(lose).toHaveTextContent("¿Marcar perdida?");
     expect(lose.className).toContain("min-h-11");
     fireEvent.click(lose);
     expect(onLose).toHaveBeenCalledWith(silent);
@@ -412,7 +413,7 @@ describe("Tablero · board rules (Task 8)", () => {
   it("offers no «¿Marcar perdida?» on a read-only board, and an empty Silenciosas says how it fills", () => {
     const silent = silentCard();
     const { unmount } = render(<Board cards={[silent]} onOpen={() => undefined} onLose={() => undefined} now={NOW} />);
-    expect(screen.queryByRole("button", { name: "¿Marcar perdida?" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^¿Marcar perdida\?/ })).toBeNull();
     unmount();
     render(<Board cards={[card()]} onOpen={() => undefined} now={NOW} />);
     expect(screen.getByTestId("board-column-silenciosas")).toHaveTextContent("Ninguna cotización lleva más de 21 días sin respuesta");
@@ -563,7 +564,7 @@ describe("Pipeline page · Silenciosas (Task 8)", () => {
   it("¿Marcar perdida? opens the lost reasons for that case", async () => {
     renderPage([silentNow()]);
     const b = await screen.findByTestId("board-card-44444444-4444-4444-8444-444444444444");
-    fireEvent.click(within(b).getByRole("button", { name: "¿Marcar perdida?" }));
+    fireEvent.click(within(b).getByRole("button", { name: /^¿Marcar perdida\?/ }));
     const dialog = await screen.findByRole("dialog", { name: "Mover a «Perdida»" });
     expect(dialog).toHaveTextContent("Laboratorio Callado");
     expect(within(dialog).getByRole("button", { name: "Sin respuesta" })).toBeInTheDocument();

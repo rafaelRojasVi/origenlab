@@ -932,3 +932,31 @@ describe("Hoy opens the case drawer in place (Task 8)", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 });
+
+describe("Task 8 review fixes", () => {
+  function body(items: OpportunityCardData[]) {
+    return (
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <TodayBody items={items} navigate={() => undefined} onChanged={() => undefined} now={NOW} />
+      </AuthSessionContext.Provider>
+    );
+  }
+
+  it("a Hoy reload keeps the drawer's tab and does not reopen a form the operator closed", async () => {
+    stubDrawer();
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const { rerender } = render(body([silent14]));
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
+    const dialog = await screen.findByRole("dialog");
+    // The operator closes the call form (as after saving it), then reads «Contacto».
+    fireEvent.click(within(await within(dialog).findByTestId("log-call")).getByRole("button", { name: "Cancelar" }));
+    expect(within(dialog).queryByTestId("log-call")).toBeNull();
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Contacto" }));
+    // Hoy reloads: new items, same case.
+    rerender(body([{ ...silent14 }]));
+    expect(within(screen.getByRole("dialog")).getByRole("tab", { name: "Contacto" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("tab", { name: "Resumen" }));
+    expect(within(screen.getByRole("dialog")).queryByTestId("log-call")).toBeNull();
+  });
+});

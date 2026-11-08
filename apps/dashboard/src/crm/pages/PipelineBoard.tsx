@@ -559,6 +559,7 @@ export function BoardCard({
         <button
           type="button"
           onClick={() => onLose(card)}
+          aria-label={`¿Marcar perdida? ${name}`}
           className="mt-1.5 inline-flex min-h-11 w-full items-center justify-center rounded-md border border-line bg-canvas-raised px-2 text-[11.5px] font-medium text-ink hover:border-bad/50 hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           ¿Marcar perdida?
