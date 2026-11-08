@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AREAS } from "./nav";
 import { COTIZADOR_PREFERENCES, COTIZADOR_RENTABILIDAD, CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
 import { LEGACY_REDIRECTS, parseShellHash, redirectHash, SHELL_HOME_HASH } from "./shellRoute";
 
@@ -93,14 +94,11 @@ describe("Cotizador route", () => {
     expect(parseShellHash("#/crm/catalogo/rentabilidad")).toEqual({ section: "catalogo", id: null });
   });
 
-  it("is in the navigation between Oportunidades and Organizaciones, titled «Cotizador», for sales and admin", () => {
-    const ids = CRM_NAV.map((n) => n.id);
-    expect(ids.indexOf("cotizador")).toBe(ids.indexOf("oportunidades") + 1);
-    expect(ids.indexOf("licitaciones")).toBe(ids.indexOf("cotizador") + 1);
-    expect(ids.indexOf("prospectos")).toBe(ids.indexOf("licitaciones") + 1);
-    expect(ids.indexOf("pagos")).toBe(ids.indexOf("prospectos") + 1);
-    expect(ids.indexOf("organizaciones")).toBe(ids.indexOf("pagos") + 1);
-    expect(sectionTitle("cotizador")).toBe("Cotizador");
+  it("is Ventas' second tab, «Cotizaciones», for sales and admin", () => {
+    const ventas = AREAS.find((a) => a.key === "ventas")!;
+    expect(ventas.tabs.map((t) => t.label)).toEqual(["Pipeline", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(ventas.tabs[1]).toMatchObject({ sections: ["cotizador"], quoting: true });
+    expect(sectionTitle("cotizador")).toBe("Cotizaciones");
     expect(CRM_NAV.find((n) => n.id === "cotizador")?.quoting).toBe(true);
   });
 
@@ -158,19 +156,31 @@ describe("five-area redirects", () => {
     expect(SHELL_HOME_HASH).toBe("#/hoy");
   });
 
-  it("sends an area root to its first page, and an unknown path in an area to Hoy", () => {
+  it("sends an area root, and a path no page of the area has, to the area's first page", () => {
     expect(redirectHash("#/ventas")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/ventas/")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/finanzas")).toBe("#/finanzas/por-cobrar");
     expect(redirectHash("#/ajustes")).toBe("#/ajustes/operaciones");
     expect(redirectHash("#/hoy")).toBeNull();
     expect(redirectHash("#/catalogo")).toBeNull();
-    expect(redirectHash("#/ventas/nope")).toBe("#/hoy");
-    expect(redirectHash("#/finanzas/nope")).toBe("#/hoy");
+    expect(redirectHash("#/ventas/nope")).toBe("#/ventas/pipeline");
+    expect(redirectHash("#/ventas/foo/bar")).toBe("#/ventas/pipeline");
+    expect(redirectHash("#/finanzas/mes")).toBe("#/finanzas/por-cobrar");
+    expect(redirectHash("#/ajustes/perfiles")).toBe("#/ajustes/operaciones");
     // Every redirect target is itself final.
-    for (const h of ["#/ventas", "#/finanzas", "#/ajustes", "#/ventas/nope", "#/crm/catalogo?q=x", "#/today"]) {
+    for (const h of ["#/ventas", "#/finanzas", "#/ajustes", "#/ventas/nope", "#/finanzas/mes", "#/Ventas/Nope", "#/crm/catalogo?q=x", "#/today"]) {
       expect(redirectHash(redirectHash(h)!), h).toBeNull();
     }
+  });
+
+  it("reads an area path without regard to case, keeping the query as typed", () => {
+    expect(redirectHash("#/Ventas/Pipeline")).toBe("#/ventas/pipeline");
+    expect(redirectHash("#/VENTAS")).toBe("#/ventas/pipeline");
+    expect(redirectHash("#/Finanzas/Mes")).toBe("#/finanzas/por-cobrar");
+    expect(redirectHash("#/HOY")).toBe("#/hoy");
+    expect(redirectHash("#/Catalogo?q=UP400St")).toBe("#/catalogo?q=UP400St");
+    expect(redirectHash(`#/Ventas/Clientes/Personas/${id}`)).toBe(`#/ventas/clientes/personas/${id}`);
+    expect(parseShellHash("#/Ventas/Licitaciones")).toEqual({ section: "licitaciones", id: null });
   });
 
   it("reads an old address as the page it redirects to, before the redirect lands", () => {

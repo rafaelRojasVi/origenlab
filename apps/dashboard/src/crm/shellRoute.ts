@@ -5,7 +5,8 @@ import { AREA_HOME, crmHash, isShellHash, legacyCrmTarget, matchSectionPath, par
  * One dashboard, one navigation, one sign-in: five areas, `#/hoy`, `#/ventas/…`, `#/finanzas/…`,
  * `#/catalogo…` and `#/ajustes/…`. The bare root opens Hoy. Old `#/crm/…` links, and bookmarks
  * from the earlier operator panel, are redirected to the page that now covers the same ground
- * (keeping the record and the query), and to Hoy when nothing does.
+ * (keeping the record and the query), and to Hoy when nothing does; a path no page of an area
+ * has opens that area's first page.
  */
 export const SHELL_HOME_HASH = "#/hoy";
 
@@ -61,11 +62,15 @@ function legacyCaseId(query: string | undefined): string | null {
 
 /**
  * The hash an address should be replaced with, or null when it is already final. A new hash is
- * final unless it is a bare area root (→ that area's first page) or a path no page has (→ Hoy);
- * an old `#/crm/…` → `legacyCrmTarget`; anything else → `LEGACY_REDIRECTS`. Every target is final.
+ * final unless it is a bare area root (→ that area's first page) or a path no page of the area has
+ * (→ the area's first page too); the path is read without regard to case (`#/Ventas/Pipeline`).
+ * An old `#/crm/…` → `legacyCrmTarget`; anything else → `LEGACY_REDIRECTS`. Every target is final.
  */
 export function redirectHash(hash: string): string | null {
   const [path, query] = hash.replace(/^#\/?/, "").split("?");
+  const lowered = `#/${path.toLowerCase()}${query !== undefined ? `?${query}` : ""}`;
+  // Only the path is lowered: a page's own `?query` (the catalog's search) keeps its case.
+  if (lowered !== hash && path !== path.toLowerCase() && isShellHash(lowered)) return redirectHash(lowered) ?? lowered;
   if (isShellHash(hash)) {
     const parts = path.split("/").filter(Boolean);
     if (parts.length === 1) {
@@ -75,7 +80,7 @@ export function redirectHash(hash: string): string | null {
       // An earlier-panel `#/ventas?opportunity=<uuid>` keeps its case.
       return crmHash(home, home === "oportunidades" ? legacyCaseId(query) : null);
     }
-    return matchSectionPath(hash) ? null : SHELL_HOME_HASH;
+    return matchSectionPath(hash) ? null : crmHash(AREA_HOME[parts[0] as AreaKey]);
   }
   const legacy = legacyCrmTarget(hash);
   if (legacy) return legacy;

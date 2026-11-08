@@ -357,24 +357,101 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("shows an admin the thirteen sections in order and marks the current one", async () => {
+  const AREA_NAMES = ["Hoy", "Ventas", "Finanzas", "Catálogo", "Ajustes"];
+  const sideNav = () => screen.findByRole("navigation", { name: "Secciones del panel" });
+
+  it("renders five areas in order, each opening its first page", async () => {
     signedInAt(`#/ventas/pipeline`);
-    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
+    const nav = await sideNav();
     const links = within(nav).getAllByRole("link");
-    expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/hoy", "#/ventas/pipeline", "#/ventas/cotizaciones", "#/ventas/licitaciones", "#/ventas/listas", "#/finanzas/por-cobrar", "#/ventas/clientes", "#/ventas/clientes/personas",
-      "#/catalogo", "#/catalogo/web", "#/ventas/listas/campanas", "#/ajustes/historial", "#/ajustes/operaciones",
-    ]);
-    expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
-      "Oportunidades",
-    ]);
+    const areas = AREA_NAMES.map((name) => within(nav).getByRole("link", { name }));
+    expect(areas.map((a) => links.indexOf(a))).toEqual([...areas.map((a) => links.indexOf(a))].sort((x, y) => x - y));
+    expect(areas.map((a) => a.getAttribute("href"))).toEqual(["#/hoy", "#/ventas/pipeline", "#/finanzas/por-cobrar", "#/catalogo", "#/ajustes/operaciones"]);
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveAttribute("aria-current", "true");
+    expect(within(nav).getByRole("link", { name: "Hoy" })).not.toHaveAttribute("aria-current");
   });
 
-  it("hides «Datos» from a sales user", async () => {
-    signedInAt(`#/ventas/pipeline`, "sales");
-    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
-    expect(within(nav).queryByRole("link", { name: /Datos/ })).not.toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: /Historial/ })).toBeInTheDocument();
+  it("Ventas shows its five tabs and marks Pipeline current", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
+    const links = tabs.getAllByRole("link");
+    expect(links.map((a) => a.textContent)).toEqual(["Pipeline", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "#/ventas/pipeline", "#/ventas/cotizaciones", "#/ventas/clientes", "#/ventas/listas", "#/ventas/licitaciones",
+    ]);
+    expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual(["Pipeline"]);
+    // The side nav lists the same tabs under the open area.
+    const nav = within(await sideNav());
+    expect(nav.getByRole("link", { name: "Pipeline" })).toHaveAttribute("aria-current", "page");
+    expect(nav.queryByRole("link", { name: "Por cobrar" })).not.toBeInTheDocument();
+    expect(document.title).toBe("Pipeline · OrigenLab");
+  });
+
+  it("viewer sees no Cotizaciones tab", async () => {
+    signedInAt(`#/ventas/pipeline`, "viewer");
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Pipeline", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(within(await sideNav()).queryByRole("link", { name: "Cotizaciones" })).not.toBeInTheDocument();
+  });
+
+  it("sales sees no Catálogo web", async () => {
+    signedInAt(`#/catalogo`, "sales");
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Catálogo" }));
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Productos"]);
+    expect(within(await sideNav()).queryByRole("link", { name: "Catálogo web" })).not.toBeInTheDocument();
+  });
+
+  it("admin sees Catálogo web", async () => {
+    signedInAt(`#/catalogo/web`);
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Catálogo" }));
+    expect(tabs.getByRole("link", { name: "Catálogo web" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("sales finds Operaciones and Historial under Ajustes", async () => {
+    signedInAt(`#/ajustes/historial`, "sales");
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ajustes" }));
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Operaciones", "Historial"]);
+    expect(tabs.getByRole("link", { name: "Historial" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Clientes shows Organizaciones · Personas", async () => {
+    signedInAt(`#/ventas/clientes/personas`);
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
+    expect(tabs.getByRole("link", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
+    const pair = within(screen.getByRole("group", { name: "Clientes" }));
+    const links = pair.getAllByRole("link");
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Organizaciones", "#/ventas/clientes"],
+      ["Personas", "#/ventas/clientes/personas"],
+    ]);
+    expect(pair.getByRole("link", { name: "Personas" })).toHaveAttribute("aria-current", "page");
+    expect(document.title).toBe("Personas · OrigenLab");
+  });
+
+  it("lights Organizaciones on both of its addresses", async () => {
+    signedInAt(`#/ventas/clientes/organizaciones`);
+    const pair = within(await screen.findByRole("group", { name: "Clientes" }));
+    expect(pair.getByRole("link", { name: "Organizaciones" })).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByRole("navigation", { name: "Pestañas de Ventas" })).getByRole("link", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Listas y llamadas shows Prospectos · Campañas", async () => {
+    signedInAt(`#/ventas/listas`);
+    const pair = within(await screen.findByRole("group", { name: "Listas y llamadas" }));
+    expect(pair.getAllByRole("link").map((a) => a.textContent)).toEqual(["Prospectos", "Campañas"]);
+    expect(pair.getByRole("link", { name: "Prospectos" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("lights Prospectos on #/ventas/listas/prospectos too", async () => {
+    signedInAt(`#/ventas/listas/prospectos`);
+    const pair = within(await screen.findByRole("group", { name: "Listas y llamadas" }));
+    expect(pair.getByRole("link", { name: "Prospectos" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Hoy has no tabs", async () => {
+    signedInAt(`#/hoy`);
+    await sideNav();
+    expect(screen.queryByRole("navigation", { name: /^Pestañas de/ })).not.toBeInTheDocument();
   });
 
   it("opens the «Datos» tab a link asks for, also when already on «Datos»", async () => {
@@ -392,7 +469,7 @@ describe("dashboard shell", () => {
     const toggle = within(nav).getByRole("button", { name: "Contraer menú" });
     fireEvent.click(toggle);
     expect(within(nav).getByRole("button", { name: "Expandir menú" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(nav).getByRole("link", { name: "Oportunidades" })).toHaveAttribute("title", "Oportunidades");
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveAttribute("title", "Ventas");
     expect(window.localStorage.getItem("crm.nav.collapsed")).toBe("1");
     window.localStorage.removeItem("crm.nav.collapsed");
   });

@@ -19,10 +19,11 @@ export type CrmSection =
 export type DatosTab = "bloqueos" | "no_importadas" | "evidencia" | "estado" | "acciones" | "proveedores" | "drive" | "decidir";
 const DATOS_TABS = new Set<string>(["bloqueos", "no_importadas", "evidencia", "estado", "acciones", "proveedores", "drive", "decidir"]);
 
+/** Every page, in the order of the five areas (`nav.ts` groups them into tabs). */
 export interface CrmNavItem {
   id: CrmSection;
+  /** The page's title: its tab, or its link inside a two-page tab («Organizaciones», «Personas»). */
   label: string;
-  group: "comercial" | "control";
   /** Shown only to an admin; anyone else who opens it sees «Sólo administración». */
   adminOnly?: boolean;
   /** Shown only to those who may quote (sales and admin); anyone else who opens it is told so. */
@@ -30,25 +31,20 @@ export interface CrmNavItem {
 }
 
 export const CRM_NAV: CrmNavItem[] = [
-  { id: "resumen", label: "Hoy", group: "comercial" },
-  { id: "oportunidades", label: "Oportunidades", group: "comercial" },
-  { id: "cotizador", label: "Cotizador", group: "comercial", quoting: true },
-  { id: "licitaciones", label: "Licitaciones", group: "comercial" },
-  { id: "prospectos", label: "Prospectos", group: "comercial" },
-  { id: "pagos", label: "Pagos", group: "comercial" },
-  { id: "organizaciones", label: "Organizaciones", group: "comercial" },
-  { id: "personas", label: "Personas", group: "comercial" },
-  { id: "catalogo", label: "Catálogo", group: "comercial" },
-  { id: "catalogo-web", label: "Catálogo web", group: "comercial", adminOnly: true },
-  { id: "marketing", label: "Marketing", group: "comercial" },
-  { id: "historial", label: "Historial", group: "control" },
-  { id: "datos", label: "Operaciones", group: "control" },
+  { id: "resumen", label: "Hoy" },
+  { id: "oportunidades", label: "Pipeline" },
+  { id: "cotizador", label: "Cotizaciones", quoting: true },
+  { id: "organizaciones", label: "Organizaciones" },
+  { id: "personas", label: "Personas" },
+  { id: "prospectos", label: "Prospectos" },
+  { id: "marketing", label: "Campañas" },
+  { id: "licitaciones", label: "Licitaciones" },
+  { id: "pagos", label: "Por cobrar" },
+  { id: "catalogo", label: "Productos" },
+  { id: "catalogo-web", label: "Catálogo web", adminOnly: true },
+  { id: "datos", label: "Operaciones" },
+  { id: "historial", label: "Historial" },
 ];
-
-export const CRM_GROUP_LABEL: Record<CrmNavItem["group"], string> = {
-  comercial: "Comercial",
-  control: "Control",
-};
 
 /** Old `#/crm/<segment>` names that moved: an old link still lands where its content lives now. */
 const MOVED: Record<string, { section: CrmSection; tab?: DatosTab }> = {
