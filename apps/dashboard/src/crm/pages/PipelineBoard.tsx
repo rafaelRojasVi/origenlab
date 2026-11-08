@@ -46,6 +46,7 @@ const LINE_TONE: Record<string, string> = {
 const COLUMN_DOT: Record<BoardColumnKey, string> = {
   solicitada: "bg-ink-faint",
   enviada: "bg-brand-600",
+  silenciosas: "bg-warn",
   conversacion: "bg-warn",
   pausa: "bg-violet-600",
   ganada: "bg-good",

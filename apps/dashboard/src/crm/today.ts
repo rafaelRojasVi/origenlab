@@ -22,8 +22,7 @@
  */
 import type { HomeFilter } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
-import { conversation, lastTouch } from "./caseDisplay";
-import type { CallOutcome } from "./callOutcome";
+import { callTouch, conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
 
@@ -228,22 +227,8 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
   return out.sort((a, b) => b.days - a.days);
 }
 
-/** Outcomes of a call that count as a follow-up touch: the client was reached. */
-export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion"]);
-
-/**
- * When OrigenLab last reached the client by phone after the quote went out, or null. A newest
- * revision still in the Cotizador (`lastTouch` → «none») has no clock yet, so an older call is
- * not a touch on it.
- */
-export function callTouch(card: OpportunityCardData): string | null {
-  if (lastTouch(card).by === "none") return null;
-  const call = card.last_call;
-  const sent = card.latest_revision?.sent_at ?? null;
-  if (!call?.at || !CALL_TOUCH_OUTCOMES.has(call.outcome) || Number.isNaN(Date.parse(call.at))) return null;
-  if (sent && Date.parse(call.at) <= Date.parse(sent)) return null;
-  return call.at;
-}
+// `callTouch` lives in caseDisplay.ts (stage.ts needs it for Silenciosas); re-exported here.
+export { CALL_TOUCH_OUTCOMES, callTouch } from "./caseDisplay";
 
 function later(a: string | null, b: string | null): string | null {
   if (!a) return b;

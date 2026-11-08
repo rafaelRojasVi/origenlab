@@ -460,7 +460,8 @@ describe("case drawer actions", () => {
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
     const picker = within(dialog).getByRole("group", { name: "Nuevo estado" });
-    // Every state but the one the case is in; «Ganada» is «Marcar ganada».
+    // Every state but the one the case is in; «Ganada» is «Marcar ganada». The fixture is silent
+    // (quoted 2026-09-25, no answer), so «Enviada» — its stage — is not offered either.
     expect(within(picker).getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Solicitada / En estudio",
       "Conversación",
@@ -518,7 +519,8 @@ describe("case drawer actions", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Solicitada / En estudio" }));
     const form = within(dialog).getByRole("form", { name: "Mover a «Solicitada / En estudio»" });
     expect(within(form).getByTestId("case-move-steps")).toHaveTextContent("3 pasos");
-    expect(within(form).getByLabelText(/^Nota/)).toHaveValue("Movido de «Enviada» a «Solicitada / En estudio».");
+    // The fixture's quote went out 2026-09-25 with no answer: by the wall clock it is «Silenciosas».
+    expect(within(form).getByLabelText(/^Nota/)).toHaveValue("Movido de «Silenciosas» a «Solicitada / En estudio».");
     fireEvent.click(within(form).getByRole("button", { name: "Mover" }));
     await within(dialog).findByText(/3\/3 · Estado → Solicitada: registrado/);
     const posts = calls.filter((c) => c.method === "POST");

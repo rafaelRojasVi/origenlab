@@ -1,4 +1,4 @@
-import { lastTouch } from "./caseDisplay";
+import { callTouch, isDelivered, lastTouch } from "./caseDisplay";
 import type { OpportunityCardData } from "./crmTypes";
 import type { Tone } from "./ui";
 
@@ -16,6 +16,8 @@ export const STAGE_ORDER = ["lead", "qualifying", "qualified", "quoting", "negot
  * | Perdida | `lost`, `abandoned` |
  *
  * «En pausa» is not a stage: an open case whose earliest open task is due later (`pausedUntil`).
+ * «Silenciosas» is not a stage either: an Enviada case the client has not answered for more than
+ * `SILENT_AFTER_DAYS` (`isSilent`).
  */
 export const STAGE_LABEL: Record<string, string> = {
   lead: "Solicitada",
@@ -41,15 +43,17 @@ export const STAGE_TONE: Record<string, Tone> = {
   abandoned: "neutral",
 };
 
-export type BoardColumnKey = "solicitada" | "enviada" | "conversacion" | "pausa" | "ganada" | "perdida";
+export type BoardColumnKey = "solicitada" | "enviada" | "silenciosas" | "conversacion" | "pausa" | "ganada" | "perdida";
 
 /**
  * The Tablero's columns, one per state. `target` is the stage a card dropped there moves to;
- * «En pausa» has none (a drop asks for a date and writes a task), «Ganada» asks for the revision.
+ * «En pausa» has none (a drop asks for a date and writes a task), «Ganada» asks for the revision,
+ * «Silenciosas» takes no drop: it fills by itself (`isSilent`).
  */
 export const BOARD_COLUMNS: { key: BoardColumnKey; label: string; stages: string[]; target: string | null }[] = [
   { key: "solicitada", label: "Solicitada / En estudio", stages: ["lead", "qualifying", "qualified"], target: "lead" },
   { key: "enviada", label: "Enviada", stages: ["quoting"], target: "quoting" },
+  { key: "silenciosas", label: "Silenciosas", stages: [], target: null },
   { key: "conversacion", label: "Conversación", stages: ["negotiating"], target: "negotiating" },
   { key: "pausa", label: "En pausa", stages: [], target: null },
   { key: "ganada", label: "Ganada", stages: ["won"], target: "won" },
@@ -74,9 +78,89 @@ export function pausedUntil(card: OpportunityCardData, now: Date = new Date()): 
 
 const TERMINAL: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
 
-/** The Tablero column a card sits in. */
+/** Owner ruling 2026-11-08: an Enviada case moves to «Silenciosas» after this many days without an answer. */
+export const SILENT_AFTER_DAYS = 21;
+/** Owner ruling 2026-11-08: a lost case stays on the board this many days after closing, then only in «Cerradas». */
+export const LOST_ON_BOARD_DAYS = 7;
+
+const DAY_MS = 86_400_000;
+
+/** Whole days from `iso` to `now`, or null when `iso` is not a date. */
+function wholeDaysSince(iso: string | null | undefined, now: Date): number | null {
+  const t = iso ? Date.parse(iso) : Number.NaN;
+  return Number.isNaN(t) ? null : Math.floor((now.getTime() - t) / DAY_MS);
+}
+
+/**
+ * «Silenciosas»: an open `quoting` case, not paused, whose latest revision reached the client more
+ * than `SILENT_AFTER_DAYS` whole days ago and the client has not engaged since — no email from them
+ * (a «gracias, te aviso» counts as an answer: `lastTouch` → «settled») and no call that reached
+ * them after the quote (`callTouch`: contestó or reunión). Our own follow-up emails do not break
+ * the silence. A historical-import case is counted like any other.
+ */
+export function isSilent(card: OpportunityCardData, now: Date = new Date()): boolean {
+  if (card.closed_at || TERMINAL.has(card.stage) || card.stage !== "quoting") return false;
+  if (pausedUntil(card, now)) return false;
+  const latest = card.latest_revision;
+  if (!isDelivered(latest)) return false;
+  const by = lastTouch(card).by;
+  if (by !== "us" && by !== "quote") return false;
+  if (callTouch(card)) return false;
+  const days = wholeDaysSince(latest?.sent_at, now);
+  return days !== null && days > SILENT_AFTER_DAYS;
+}
+
+/** When the case closed: `closed_at`, else — for a terminal stage an older record left without it — `updated_at`. */
+export function closedAt(card: OpportunityCardData): string | null {
+  return card.closed_at ?? (TERMINAL.has(card.stage) ? card.updated_at : null);
+}
+
+/**
+ * Whether the Tablero shows the card. Everything does except a `lost`/`abandoned` case closed more
+ * than `LOST_ON_BOARD_DAYS` ago (it lives under «Cerradas»). A won case always stays.
+ */
+export function isOnBoard(card: OpportunityCardData, now: Date = new Date()): boolean {
+  if (card.stage !== "lost" && card.stage !== "abandoned") return true;
+  const days = wholeDaysSince(closedAt(card), now);
+  // No closing date at all: nothing says it is old, so it stays visible.
+  return days === null || days <= LOST_ON_BOARD_DAYS;
+}
+
+/** The dividers of the «Enviada» column, by whole days since the latest revision went out. */
+export const ENVIADA_BANDS = [
+  { key: "d0_7", label: "0–7 días" },
+  { key: "d8_21", label: "8–21 días" },
+] as const;
+
+export type EnviadaBandKey = (typeof ENVIADA_BANDS)[number]["key"];
+
+/**
+ * Which `ENVIADA_BANDS` entry a card falls in: 0–7 or 8–21 whole days since its latest revision
+ * reached the client. Null for a revision not delivered yet, or one older than `SILENT_AFTER_DAYS`
+ * (a case the client answered can sit in Enviada past day 21; it has no band).
+ */
+export function enviadaBand(card: OpportunityCardData, now: Date = new Date()): EnviadaBandKey | null {
+  const latest = card.latest_revision;
+  if (!isDelivered(latest)) return null;
+  const days = wholeDaysSince(latest?.sent_at, now);
+  if (days === null || days > SILENT_AFTER_DAYS) return null;
+  return days <= 7 ? "d0_7" : "d8_21";
+}
+
+const SANTIAGO_MONTH = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit" });
+
+/** `YYYY-MM` of an instant on Santiago's clock: a loss at 23:30 on 31 October is October's. */
+export function monthKeySantiago(iso: string): string {
+  const parts = SANTIAGO_MONTH.formatToParts(new Date(iso));
+  const year = parts.find((p) => p.type === "year")?.value ?? "";
+  const month = parts.find((p) => p.type === "month")?.value ?? "";
+  return `${year}-${month}`;
+}
+
+/** The Tablero column a card sits in: «En pausa» first, then «Silenciosas», then the stage's column. */
 export function boardColumnOf(card: OpportunityCardData, now: Date = new Date()): BoardColumnKey {
   if (pausedUntil(card, now)) return "pausa";
+  if (isSilent(card, now)) return "silenciosas";
   return BOARD_COLUMNS.find((c) => c.stages.includes(card.stage))?.key ?? "solicitada";
 }
 

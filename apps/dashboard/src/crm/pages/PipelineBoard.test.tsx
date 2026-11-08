@@ -142,7 +142,9 @@ describe("Tablero", () => {
 
   it("shows every card of a long column, newest first, with a thin divider per age band", () => {
     const recent = Array.from({ length: 3 }, () => card({}, "2026-09-25T12:00:00Z"));
-    const old = Array.from({ length: 8 }, () => card({}, "2025-01-10T12:00:00Z"));
+    // The client answered each old quote, so they stay in «Enviada» rather than «Silenciosas».
+    const answered = { last_contact: { inbound: { at: "2025-01-10T14:00:00Z", subject: "Re: cotización", url: null }, outbound: null } };
+    const old = Array.from({ length: 8 }, () => card(answered, "2025-01-10T12:00:00Z"));
     const none = card({}, null);
     render(<Board cards={[...old, none, ...recent]} onOpen={() => undefined} now={NOW} />);
     const column = screen.getByTestId("board-column-enviada");

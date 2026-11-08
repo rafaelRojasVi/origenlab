@@ -38,7 +38,7 @@ import {
 import type { OpportunityCardData } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
-import { STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
+import { BOARD_COLUMNS, STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, NotRequestConfirm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
 import { FollowUpReminder } from "./FollowUpReminder";
@@ -128,7 +128,9 @@ export function CaseActions({
   const reopenable = closed && isReopenable(card);
   const hasVersion = typeof card.version === "number";
   const here = boardColumnOf(card);
-  const targets = MOVE_TARGETS.filter((t) => t !== here || t === "pausa");
+  // A silent case is still `quoting`: «Enviada» is where it already is, not a move.
+  const stageColumn = here === "silenciosas" ? BOARD_COLUMNS.find((c) => c.stages.includes(card.stage))?.key : undefined;
+  const targets = MOVE_TARGETS.filter((t) => (t !== here && t !== stageColumn) || t === "pausa");
   const until = pausedUntil(card);
   const revisions = winnableRevisions(card);
   // A closed case never asks to choose a revision (owner 2026-10-12): it is done.
