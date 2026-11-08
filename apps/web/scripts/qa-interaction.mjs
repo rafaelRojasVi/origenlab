@@ -25,9 +25,26 @@ function check(condition, message) {
 /** Desplaza hasta justo después de la primera pantalla de la página de modelo (`[data-first-screen]`). */
 const pastFirstScreen = async (page) => {
   check((await page.locator('[data-sticky-cta]').count()) > 0, 'la página de modelo tiene la barra fija [data-sticky-cta]');
+  // Un Tab previo puede haber lanzado un desplazamiento suave hacia el elemento enfocado: se espera
+  // a que termine, o seguiría moviendo la página después del salto (hasta el último tramo, donde la
+  // barra se oculta a propósito).
+  let last = -1;
+  for (let i = 0; i < 40; i += 1) {
+    const y = await page.evaluate(() => window.scrollY);
+    if (y === last) break;
+    last = y;
+    await page.waitForTimeout(150);
+  }
   await page.evaluate(() => {
     const first = document.querySelector('[data-first-screen]');
-    window.scrollTo({ top: first.getBoundingClientRect().bottom + window.scrollY + 120, behavior: 'instant' });
+    // En la historia por scroll la primera pantalla es el primer tramo de la columna fija (y sale de
+    // cuadro con `display: none`): su fin es el borde superior del espaciador más una ventana.
+    const story = first.closest('[data-story]');
+    const bottom =
+      story?.dataset.mode === 'scroll'
+        ? story.querySelector('[data-story-spacer]').getBoundingClientRect().top + window.scrollY + innerHeight
+        : first.getBoundingClientRect().bottom + window.scrollY;
+    window.scrollTo({ top: bottom + 120, behavior: 'instant' });
   });
   // El observador y la transición de 200 ms pueden tardar con el WebGL por software ocupando la página.
   await page.waitForFunction(() => document.querySelector('[data-sticky-cta]')?.inert === false, null, { timeout: 10000 });
@@ -844,7 +861,7 @@ for (const story of STORY_PAGES) {
       heading: el.querySelector('h1, h2')?.textContent?.trim() ?? '',
       shown: el.getBoundingClientRect().height > 0 && getComputedStyle(el).display !== 'none',
     })));
-    check(beats.length === 10, `ProductStory: diez tramos en el HTML (${beats.length})`);
+    check(beats.length === 9, `ProductStory: nueve tramos en el HTML (${beats.length})`);
     check(
       beats.length > 0 && beats.every((beat) => beat.heading && beat.shown),
       `ProductStory: cada tramo se lee sin 3D (faltan: ${beats.filter((b) => !b.heading || !b.shown).map((b) => b.id).join(', ') || 'ninguno'})`,
@@ -870,24 +887,25 @@ for (const story of STORY_PAGES) {
     });
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${base}${story.path}`, { waitUntil: 'load' });
-    // El recorrido de la historia empieza donde termina la primera pantalla (`lead`).
-    const top = await page.locator('[data-story-spacer]').evaluate((el) => el.getBoundingClientRect().top + window.scrollY + el.querySelector('[data-first-screen]').offsetHeight);
-    await page.evaluate((y) => window.scrollTo(0, y + 1500), top);
+    // El recorrido empieza en el borde superior del espaciador: la primera pantalla es el primer tramo de la columna fija.
+    const { top, run } = await page.locator('[data-story-spacer]').evaluate((el) => ({ top: el.getBoundingClientRect().top + window.scrollY, run: el.offsetHeight - innerHeight }));
+    const at = (progress) => page.evaluate((y) => window.scrollTo(0, y), Math.round(top + progress * run));
+    await at(0.3);
     const ready = await waitReady(page);
     check(ready, 'ProductStory: canvas initialises on scroll (canvas[data-ready="1"])');
     const tier = await page.locator('[data-story] canvas').getAttribute('data-tier');
     check(['high', 'medium', 'low'].includes(tier ?? ''), `ProductStory: canvas[data-tier] es high, medium o low (${tier})`);
     if (ready) {
-      // 1500 px dentro de un recorrido de 5000 px: progreso 0,3, el marcador de la pantalla.
-      await page.evaluate((y) => window.scrollTo(0, y + 1520), top);
+      // Progreso 0,26: el tramo de la pantalla, con su marcador.
+      await at(0.26);
       await page.waitForTimeout(400);
       const beat = await page.locator('[data-story]').getAttribute('data-beat');
-      check(beat === 'screen-hs', `ProductStory: el scroll marca el tramo activo (${beat})`);
+      check(beat === 'screen', `ProductStory: el scroll marca el tramo activo (${beat})`);
       check(
         await page.locator('[data-story] .story-spot[data-anchor="screen"]').evaluate((el) => el.hasAttribute('data-on')),
         'ProductStory: el marcador de la pantalla se abre en su tramo',
       );
-      await page.evaluate((y) => window.scrollTo(0, y + 2900), top);
+      await at(0.53);
       await page.waitForTimeout(400);
       const level = await page.locator('[data-story]').evaluate((el) => el.style.getPropertyValue('--story-level'));
       check(Number(level) > 0.2, `ProductStory: el tramo de amplitud publica el nivel (${level})`);
@@ -981,6 +999,71 @@ for (const story of STORY_PAGES) {
     }
     await context.close();
   }
+}
+
+/*
+ * Columna de texto de la historia (escritorio): una sola columna fija con los
+ * textos de todos los tramos apilados. Cada ~200 px del recorrido se lee
+ * exactamente un tramo, el activo, entero dentro de la ventana, debajo de la
+ * cabecera y encima de la barra fija de cotización cuando ésta se ve. Antes,
+ * los tramos cortos del UP400St dejaban la columna vacía a mitad de beat y la
+ * primera pantalla dejaba una franja vacía. Se prueba el UP400St (guion propio)
+ * y una historia de tres beats.
+ */
+const COPY_PAGES = ['/productos/sonicacion/hielscher-up400st/', '/productos/pesaje-humedad/ohaus-mb120/'];
+for (const path of COPY_PAGES) {
+  console.log(`\nColumna de texto de la historia ${path} (1440 × 900, ?tier=high)`);
+  if (!existsSync(join(dist, path, 'index.html'))) {
+    check(false, `Columna de texto: falta ${path}`);
+    continue;
+  }
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(`${base}${path}?tier=high`, { waitUntil: 'load' });
+  const live = await page
+    .waitForFunction(() => document.querySelector('[data-story]')?.hasAttribute('data-live'), null, { timeout: 30000 })
+    .then(() => true, () => false);
+  check(live, 'Columna de texto: la historia arranca (data-live)');
+  if (live) {
+    const end = await page.locator('[data-story-spacer]').evaluate((el) => el.getBoundingClientRect().top + window.scrollY + el.offsetHeight - innerHeight);
+    const bad = [];
+    let samples = 0;
+    for (let y = 0; y <= end; y += 200) {
+      await page.evaluate((top) => window.scrollTo(0, top), y);
+      samples += 1;
+      // El tramo activo cambia en el cuadro siguiente y el fundido dura 0,4 s; con WebGL por software, más.
+      const ok = await page
+        .waitForFunction(
+          () => {
+            const root = document.querySelector('[data-story]');
+            const shown = [...root.querySelectorAll('.story__beat')].filter((el) => getComputedStyle(el).display !== 'none');
+            return shown.length === 1 && shown[0].dataset.beat === root.dataset.beat && Number(getComputedStyle(shown[0]).opacity) > 0.99;
+          },
+          null,
+          { timeout: 4000, polling: 100 },
+        )
+        .then(() => true, () => false);
+      const state = await page.evaluate(() => {
+        const root = document.querySelector('[data-story]');
+        const header = document.querySelector('.site-header')?.getBoundingClientRect().bottom ?? 0;
+        const bar = document.querySelector('[data-sticky-cta]');
+        const barBox = bar?.getBoundingClientRect();
+        const barTop = bar && !bar.inert && getComputedStyle(bar).visibility !== 'hidden' && barBox.top < innerHeight ? barBox.top : innerHeight;
+        const shown = [...root.querySelectorAll('.story__beat')].filter((el) => getComputedStyle(el).display !== 'none');
+        const boxes = shown.map((el) => {
+          // El texto de entrada ocupa la columna entera; se mide su contenido.
+          const box = (el.querySelector('.story__text') ?? el).getBoundingClientRect();
+          return { id: el.dataset.beat, top: box.top, bottom: box.bottom, height: box.height };
+        });
+        return { beat: root.dataset.beat, header, barTop, boxes };
+      });
+      const one = state.boxes.length === 1 ? state.boxes[0] : null;
+      const inside = one && one.height > 0 && one.top >= state.header - 1 && one.bottom <= state.barTop + 1;
+      if (!ok || !inside) bad.push(`${y}px ${state.beat}: ${state.boxes.map((b) => `${b.id}[${Math.round(b.top)}..${Math.round(b.bottom)}]`).join(' ') || 'vacía'}`);
+    }
+    check(bad.length === 0, `Columna de texto: un tramo entero a la vista en las ${samples} muestras (${bad.slice(0, 4).join('; ') || 'todas bien'})`);
+  }
+  await context.close();
 }
 
 /*
@@ -1511,9 +1594,9 @@ for (const path of FIRST_SCREEN_PAGES) {
     const el = document.activeElement;
     const style = getComputedStyle(el);
     const rect = el.getBoundingClientRect();
-    return { ring: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2, inView: rect.top >= 0 && rect.bottom <= innerHeight };
+    return { ring: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 2, inView: rect.top >= 0 && rect.bottom <= innerHeight, at: `${el.tagName} ${Math.round(rect.top)}..${Math.round(rect.bottom)} y=${Math.round(scrollY)} beat=${document.querySelector('[data-story]')?.dataset.beat}` };
   });
-  check(ring.ring && ring.inView, 'pasada la primera pantalla el foco de teclado se ve en la barra fija');
+  check(ring.ring && ring.inView, `pasada la primera pantalla el foco de teclado se ve en la barra fija (${ring.at})`);
 
   const ids = await page.evaluate((wanted) => [...document.querySelectorAll('main [id]')].map((el) => el.id).filter((id) => wanted.includes(id)), SECTION_ORDER);
   const expectedIds = SECTION_ORDER.filter((id) => id !== 'accesorios-title' || !NO_ACCESSORIES.includes(path));

@@ -5,7 +5,8 @@ export const story = threeBeatStory({
   modelId: 'ortoalresa-digicen-22-r',
   hero: { headline: 'Centrifugación refrigerada', body: 'Centrífuga universal Digicen 22 R · {Velocidad máxima}' },
   reveal: {
-    view: 'general',
+    view: 'pantalla',
+    scale: 2.6,
     anchors: ['screen', 'lid'],
     headline: 'Control táctil, cámara refrigerada',
     body: 'Pantalla: {Pantalla}. Temperatura: {Temperatura}.',

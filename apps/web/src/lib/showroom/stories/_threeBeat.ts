@@ -1,10 +1,13 @@
 /**
  * Historia por scroll de tres beats, común a los equipos sin guion propio:
  *
- *   hero    vuelta completa al equipo en la vista general, en reposo
- *   reveal  el equipo en marcha, la cámara en la vista elegida y una nota sobre
- *           cada ancla (el texto de cada nota sale del marcador de la sala)
- *   close   vuelta al reposo, «Solicitar cotización» y paso a la ficha técnica
+ *   hero    vuelta completa al equipo en la vista general, en reposo (en la
+ *           página de modelo es la primera pantalla: su texto es la entrada)
+ *   reveal  el equipo en marcha, la cámara en una vista propia del modelo (no
+ *           la general del hero) y una nota sobre cada ancla (el texto de cada
+ *           nota sale del marcador de la sala)
+ *   close   en reposo, de tres cuartos por el otro lado (no el encuadre del
+ *           hero), «Solicitar cotización» y paso a la ficha técnica
  *
  * Cada `stories/<id>.ts` es sólo la configuración (textos, vista, anclas y
  * grupos de la ficha) y su propio fragmento `scene-story-<id>`. Las cifras no se
@@ -26,8 +29,14 @@ export interface ThreeBeatOptions {
   modelId: string;
   hero: { headline: string; body: string };
   reveal: {
-    /** Vista del modelo que encuadra las anclas. */
+    /** Vista con nombre del modelo (`model.views`) que encuadra las anclas; nunca `general`, que es la del hero. */
     view: string;
+    /**
+     * Factor sobre la distancia de esa vista: las del modelo se pensaron para la
+     * sala, más estrecha que el lienzo de la historia, y de cerca dejan las anclas
+     * fuera de cuadro. Sin valor, la vista tal cual.
+     */
+    scale?: number;
     /** Anclas con nota (2–3), con el nombre de `content/<id>.ts`. */
     anchors: string[];
     /**
@@ -47,28 +56,36 @@ export interface ThreeBeatOptions {
   extra?: (scene: StoryScene, stage: ThreeBeatStage, t: number) => void;
 }
 
+/** Giro del cierre sobre el de presentación, en radianes. */
+const CLOSE_YAW = -0.9;
+
 export function threeBeatStory(options: ThreeBeatOptions): ProductStoryConfig {
   const { modelId, hero, reveal, extra } = options;
+  if (reveal.view === 'general') throw new Error(`${modelId}: el beat «reveal» necesita una vista propia del modelo, no la general del hero`);
   const close = options.close ?? {
-    headline: 'Ficha técnica',
-    body: 'Especificaciones con su fuente, aplicaciones y descargas, a continuación.',
+    headline: 'Pida su cotización',
+    body: 'Le enviamos una propuesta formal para su laboratorio. La ficha técnica con su fuente sigue a continuación.',
   };
 
   const pose = (scene: StoryScene, stage: ThreeBeatStage, t: number) => {
     scene.setPower(stage === 'reveal');
     scene.setLevel(null);
     // Vuelta entera: termina en la pose de presentación y el beat siguiente parte de ahí.
-    scene.setYaw(stage === 'hero' ? smoothstep(t) * Math.PI * 2 : stage === 'reveal' ? 0 : null);
+    // El cierre gira el equipo a tres cuartos por el otro lado: no repite el encuadre del hero.
+    scene.setYaw(stage === 'hero' ? smoothstep(t) * Math.PI * 2 : stage === 'reveal' ? 0 : CLOSE_YAW);
     extra?.(scene, stage, t);
   };
 
+  // La vista del beat 2, abierta por `scale` si hace falta (`StoryView.from`).
+  const revealView = reveal.scale ? `${reveal.view}-historia` : reveal.view;
   return {
     modelId,
+    views: reveal.scale ? { [revealView]: { from: reveal.view, scale: reveal.scale } } : undefined,
     beats: [
       {
         id: 'hero',
         progressStart: 0,
-        progressEnd: 0.3,
+        progressEnd: 0.2,
         cameraView: 'general',
         textHeadline: hero.headline,
         textBody: hero.body,
@@ -76,9 +93,9 @@ export function threeBeatStory(options: ThreeBeatOptions): ProductStoryConfig {
       },
       {
         id: 'reveal',
-        progressStart: 0.3,
-        progressEnd: 0.75,
-        cameraView: reveal.view,
+        progressStart: 0.2,
+        progressEnd: 0.7,
+        cameraView: revealView,
         textHeadline: reveal.headline,
         textBody: reveal.body,
         animationHook: (scene, t) => pose(scene, 'reveal', t),
@@ -88,7 +105,7 @@ export function threeBeatStory(options: ThreeBeatOptions): ProductStoryConfig {
       },
       {
         id: 'close',
-        progressStart: 0.75,
+        progressStart: 0.7,
         progressEnd: 1,
         cameraView: 'general',
         textHeadline: close.headline,

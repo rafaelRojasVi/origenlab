@@ -5,7 +5,8 @@ export const story = threeBeatStory({
   modelId: 'ohaus-pioneer-px',
   hero: { headline: 'Pesaje analítico', body: 'Balanza Pioneer PX · legibilidad {Legibilidad}' },
   reveal: {
-    view: 'general',
+    view: 'protector',
+    scale: 1.4,
     anchors: ['display', 'pan'],
     placement: { pan: 'left:90' },
     headline: 'Del plato a la pantalla',
