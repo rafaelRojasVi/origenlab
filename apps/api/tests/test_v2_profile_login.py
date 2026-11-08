@@ -1203,3 +1203,67 @@ def test_pins_are_never_accepted_as_arguments() -> None:
     source = (API_DIR / "scripts" / "profile_roster.py").read_text()
     assert '"--pin"' not in source and "'--pin'" not in source
     assert "getpass" in source
+
+
+# --------------------------------------------------------------------- home_filter (the «Hoy» view)
+
+
+def _with_home_filter(roster, filters: dict[str, str | None]):
+    """SHARED_ROSTER with a home_filter set on the named profiles (fictitious values)."""
+    from dataclasses import replace
+
+    return replace(roster, profiles=tuple(
+        replace(p, home_filter=filters.get(p.slug, p.home_filter)) for p in roster.profiles))
+
+
+def test_roster_parses_home_filter() -> None:
+    from origenlab_api.v2.profile_roster import ProfileRosterRefused
+
+    roster = _roster(SHARED, [{"key": "ana", "display_name": "Ana", "role": "admin", "home_filter": "llamadas"},
+                              {"key": "bruno", "display_name": "Bruno", "role": "admin"}])
+    assert [p.home_filter for p in roster.profiles] == ["llamadas", None]
+    for bad in ("x", "", 3, "Todo"):
+        with pytest.raises(ProfileRosterRefused, match="home_filter"):
+            _roster(SHARED, [{"key": "ana", "display_name": "Ana", "role": "admin", "home_filter": bad}])
+
+
+def test_plan_reports_home_filter_change() -> None:
+    from origenlab_api.v2.profile_roster import compute_plan
+
+    row = {"operator_id": "x", "display_name": "Ana", "role": "admin", "operator_status": "active",
+           "profile_status": "active", "sort_order": 1, "home_filter": None}
+    roster = _roster(SHARED, [{"key": "ana", "display_name": "Ana", "role": "admin", "sort_order": 1,
+                               "home_filter": "cotizar"}])
+    result = compute_plan(roster, {}, database="d", principal_row=None, profile_rows={"ana": row})
+    assert [c for c in result.changes if c.subject == "profile ana"][0].fields == ("home_filter",)
+    same = compute_plan(roster, {}, database="d", principal_row=None,
+                        profile_rows={"ana": {**row, "home_filter": "cotizar"}})
+    assert "profile ana" in same.unchanged
+
+
+def test_session_home_filter_null_by_default(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "ana")
+    me = api.client.get("/auth/session").json()
+    assert me["profile"] == {"id": ids["ana"], "display_name": "Ana", "role_label": "Administración",
+                             "home_filter": None}
+
+
+def test_session_returns_home_filter(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "carla")
+    _provision(db, _with_home_filter(SHARED_ROSTER, {"carla": "cotizar"}), {})
+    try:
+        # Outside the version trigger: setting the filter does not end the open session.
+        me = api.client.get("/auth/session").json()
+        assert me["state"] == "signed_in"
+        assert me["profile"]["home_filter"] == "cotizar"
+        assert _sql(db, "select home_filter from platform.operator_profile where operator_id = %s",
+                    (ids["carla"],)) == [("cotizar",)]
+    finally:
+        _provision(db, SHARED_ROSTER, {})
+    assert api.client.get("/auth/session").json()["profile"]["home_filter"] is None
+
+
+def test_an_individual_session_has_no_profile_home_filter(monkeypatch, db, ids) -> None:
+    api = Api(monkeypatch, db)
+    api.google(INDIVIDUAL)
+    assert api.client.get("/auth/session").json()["profile"] is None
