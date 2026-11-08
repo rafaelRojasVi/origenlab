@@ -386,9 +386,12 @@ const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).si
 // CSS 80 kB: Astro 7.4 dejó el CSS en 60.012 bytes (2026-10-22), 12 sobre el límite anterior
 // (64 kB); las plantillas de modelo y de familia (2026-11-07), con la historia de producto,
 // suman una hoja propia que ya no cabe en la incrustación automática de Astro.
-const CSS_BUDGET = 80_000;
+// CSS 92 kB y JS 16,5 kB (2026-11-08): el sitio entero pasa a showroom oscuro con tarjetas
+// iluminadas y el giro de cada modelo (~1,4 kB); los rediseños de página borran el CSS claro
+// que reemplazan.
+const CSS_BUDGET = 92_000;
 const kb = (bytes) => (bytes / 1000).toFixed(1);
-assert(js < 15_000, `dist: ${kb(js)} kB de JavaScript (presupuesto 15 kB)`);
+assert(js < 16_500, `dist: ${kb(js)} kB de JavaScript (presupuesto 16,5 kB)`);
 assert(chat < 2_500, `dist: ${kb(chat)} kB en el panel de la burbuja bajo demanda (techo 2,5 kB)`);
 // three.js pesa ~560 kB; cada modelo, decenas. El techo cubre la biblioteca y
 // los siete modelos juntos, aunque una página sólo pide los que muestra.
