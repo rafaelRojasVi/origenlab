@@ -28,6 +28,9 @@ export const LEGACY_REDIRECTS: Record<string, CrmSection | "proveedores" | "driv
   deals: "oportunidades",
   cotizaciones: "oportunidades",
   casos: "oportunidades",
+  // The pre-09-27 panel's «Prospectos» was its institution list, so its bare `#/prospectos` opens
+  // «Clientes». The newer `#/crm/prospectos` (the prospect lists) goes to «ventas/listas» instead,
+  // through `legacyCrmTarget` (crmRoute.ts) — two different pages that shared a name.
   prospectos: "organizaciones",
   instituciones: "organizaciones",
   contacts: "personas",

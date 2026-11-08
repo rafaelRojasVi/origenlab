@@ -41,7 +41,7 @@ function session(): AuthSessionState {
   return {
     kind: "signed_in",
     method: "google_profile",
-    operator: { operatorId: "op-1", email: "ventas@example.cl", displayName: "Ventas", role: "sales" },
+    operator: { operatorId: "op-1", email: "ventas@ejemplo.invalid", displayName: "Ventas", role: "sales" },
     caseCommandsEnabled: true,
     crmAuthoringEnabled: true,
   };

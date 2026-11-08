@@ -10,7 +10,7 @@ import { PipelinePage } from "./PipelinePage";
 import { stagePath } from "../caseCommands";
 import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
 import { moveRefusal } from "./CaseMove";
-import { Board, cardMoney, columnMoney, sortCards } from "./PipelineBoard";
+import { Board, cardMoney, columnMoney, silentFollowUpStep, sortCards } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -459,32 +459,42 @@ describe("Tablero · board rules (Task 8)", () => {
     ]);
   });
 
+  it("a silent card's step counts from our last touch, an answered call included (one rhythm with the drawer)", () => {
+    // A historical import `followUpsDue` leaves out: the board falls back to the same rhythm.
+    const quietSince = card({}, "2026-08-01T12:00:00Z");
+    const called = card({ last_call: { at: "2026-09-26T12:00:00Z", outcome: "contesto" } }, "2026-08-01T12:00:00Z");
+    const fortnight = card({ last_call: { at: "2026-09-22T12:00:00Z", outcome: "contesto" } }, "2026-08-01T12:00:00Z");
+    expect(silentFollowUpStep(quietSince, NOW)).toBe(3);
+    expect(silentFollowUpStep(called, NOW)).toBe(1);
+    expect(silentFollowUpStep(fortnight, NOW)).toBe(2);
+  });
+
   it("no Enviada dividers when sorted by name", () => {
     render(<Board cards={[card({}, "2026-10-03T12:00:00Z"), card({}, "2026-09-24T12:00:00Z")]} onOpen={() => undefined} sort="name" now={NOW} />);
     expect(within(screen.getByTestId("board-column-enviada")).queryAllByTestId(/^board-band-/)).toHaveLength(0);
   });
 
-  it("card shows CN01318, «rev 2» and only the current neto", () => {
+  it("card shows CN09318, «rev 2» and only the current neto", () => {
     const c = card({
       money: [
-        { currency: "CLP", net_total: "1180000", quote_number: "CN01318", revision_no: 2, quote_count: 2 },
-        { currency: "CLP", net_total: "990000", quote_number: "CN01317", revision_no: 1 },
+        { currency: "CLP", net_total: "1180000", quote_number: "CN09318", revision_no: 2, quote_count: 2 },
+        { currency: "CLP", net_total: "990000", quote_number: "CN09317", revision_no: 1 },
       ],
-      quote_numbers: ["CN01318", "CN01317"],
+      quote_numbers: ["CN09318", "CN09317"],
     });
-    expect(cardMoney(c)).toEqual({ text: "$ 1.180.000", cn: "CN01318", rev: 2 });
+    expect(cardMoney(c)).toEqual({ text: "$ 1.180.000", cn: "CN09318", rev: 2 });
     render(<Board cards={[c]} onOpen={() => undefined} now={NOW} />);
     const b = screen.getByTestId(`board-card-${c.opportunity_id}`);
-    expect(b).toHaveTextContent("CN01318");
+    expect(b).toHaveTextContent("CN09318");
     expect(within(b).getByTestId("board-rev")).toHaveTextContent("rev 2");
     expect(within(b).getByTestId("board-money")).toHaveTextContent("$ 1.180.000");
     expect(b).not.toHaveTextContent("990.000");
   });
 
   it("an unread quote reads «sin leer»; a case with no money shows no amount", () => {
-    expect(cardMoney(card({ money: [{ currency: "unread", net_total: "1", quote_number: "CN01319", revision_no: 1 }] }))).toEqual({
+    expect(cardMoney(card({ money: [{ currency: "unread", net_total: "1", quote_number: "CN09319", revision_no: 1 }] }))).toEqual({
       text: "sin leer",
-      cn: "CN01319",
+      cn: "CN09319",
       rev: 1,
     });
     expect(cardMoney(card({ money: [] }))).toEqual({ text: "", cn: "01239-26", rev: null });
@@ -536,7 +546,7 @@ describe("Pipeline page · Silenciosas (Task 8)", () => {
     const session: AuthSessionState = {
       kind: "signed_in",
       method: "google_profile",
-      operator: { operatorId: "op-1", email: "ventas@example.cl", displayName: "Ventas", role: "sales" },
+      operator: { operatorId: "op-1", email: "ventas@ejemplo.invalid", displayName: "Ventas", role: "sales" },
       caseCommandsEnabled: true,
       crmAuthoringEnabled: true,
     };

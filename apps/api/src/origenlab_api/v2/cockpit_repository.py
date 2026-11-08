@@ -18,6 +18,9 @@ from origenlab_api.v2.cockpit_schemas import TIMELINE_PAYLOAD_KEYS, TIMELINE_SKI
 #: Maximum number of search hits returned; truncated flag set when reached.
 MAX_SEARCH_HITS = 50
 
+#: The case timeline reads at most this many events: the newest ones, returned oldest first.
+TIMELINE_MAX_EVENTS = 500
+
 #: All stages in the canonical vocabulary.
 _ALL_STAGES = (
     "lead",
@@ -916,9 +919,11 @@ class CockpitRepository:
                     left join platform.operator op on op.id = de.actor_operator_id
                     where de.aggregate_id in ({placeholders})
                       and de.event_type <> all(%s::text[])
-                    order by de.recorded_at, de.stream_position
-                """, [*agg_list, skipped])
-                for r in cur.fetchall():
+                    order by de.recorded_at desc, de.stream_position desc
+                    limit %s
+                """, [*agg_list, skipped, TIMELINE_MAX_EVENTS])
+                # Newest first to cap; back to oldest first, the order the route documents.
+                for r in reversed(cur.fetchall()):
                     entries.append({
                         "entry_kind": "domain_event",
                         "occurred_at": r[5],

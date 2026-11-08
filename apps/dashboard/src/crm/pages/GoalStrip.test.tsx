@@ -82,7 +82,7 @@ function session(role: string, homeFilter: HomeFilter | null = null): AuthSessio
   return {
     kind: "signed_in",
     method: "google_profile",
-    operator: { operatorId: "op-1", email: "ventas@example.cl", displayName: "Ventas", role },
+    operator: { operatorId: "op-1", email: "ventas@ejemplo.invalid", displayName: "Ventas", role },
     caseCommandsEnabled: true,
     crmAuthoringEnabled: true,
     ...(homeFilter ? { profile: { id: "p-ana", displayName: "Ana", roleLabel: "Ventas", homeFilter } } : {}),

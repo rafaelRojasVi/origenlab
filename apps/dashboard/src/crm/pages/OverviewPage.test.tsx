@@ -382,7 +382,7 @@ describe("Hoy · franja de metas y «Mi cola»", () => {
     return {
       kind: "signed_in",
       method: "google_profile",
-      operator: { operatorId: "op-1", email: "contacto@example.cl", displayName: "Contacto", role: "sales" },
+      operator: { operatorId: "op-1", email: "contacto@ejemplo.invalid", displayName: "Contacto", role: "sales" },
       caseCommandsEnabled: true,
       crmAuthoringEnabled: true,
       profile: { id: profileId, displayName: name, roleLabel: "Ventas", homeFilter: "llamadas" },

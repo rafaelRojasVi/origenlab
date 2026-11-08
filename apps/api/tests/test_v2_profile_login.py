@@ -1263,6 +1263,20 @@ def test_session_returns_home_filter(monkeypatch, db, ids) -> None:
     assert api.client.get("/auth/session").json()["profile"]["home_filter"] is None
 
 
+def test_session_survives_a_home_filter_failure(monkeypatch, db, ids) -> None:
+    api = _selected(monkeypatch, db, ids, "ana")
+
+    def broken(_operator_id: str) -> str | None:
+        raise RuntimeError('column "home_filter" does not exist')
+
+    monkeypatch.setattr(api.app.state.v2_profile_login.profiles, "home_filter", broken)
+    response = api.client.get("/auth/session")
+    assert response.status_code == 200
+    me = response.json()
+    assert me["state"] == "signed_in"
+    assert me["profile"]["home_filter"] is None
+
+
 def test_an_individual_session_has_no_profile_home_filter(monkeypatch, db, ids) -> None:
     api = Api(monkeypatch, db)
     api.google(INDIVIDUAL)

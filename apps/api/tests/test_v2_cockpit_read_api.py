@@ -795,6 +795,30 @@ def test_timeline_skips_draft_saved(world, timeline_events) -> None:
 
 
 @needs_db
+def test_timeline_caps_at_the_newest_events(world, timeline_events, monkeypatch) -> None:
+    """A long-lived case reads only its newest TIMELINE_MAX_EVENTS events, still oldest first."""
+    import psycopg
+
+    from origenlab_api.v2 import cockpit_repository
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    assert cockpit_repository.TIMELINE_MAX_EVENTS == 500
+
+    def events() -> list[dict]:
+        entries = repo.opportunity_timeline(world["opportunity_id"])["entries"]
+        return [e for e in entries if e["entry_kind"] == "domain_event"]
+
+    full = events()
+    assert len(full) >= 2
+    monkeypatch.setattr(cockpit_repository, "TIMELINE_MAX_EVENTS", 1)
+    capped = events()
+    assert [e["event_type"] for e in capped] == [full[-1]["event_type"]]
+    monkeypatch.setattr(cockpit_repository, "TIMELINE_MAX_EVENTS", 2)
+    assert [e["event_type"] for e in events()] == [e["event_type"] for e in full[-2:]]
+
+
+@needs_db
 def test_timeline_db_payload_is_whitelisted(world, timeline_events) -> None:
     import psycopg
 

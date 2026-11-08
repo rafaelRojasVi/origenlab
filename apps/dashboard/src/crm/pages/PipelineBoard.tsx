@@ -25,7 +25,7 @@ import { Fragment, useMemo, useState, type DragEvent, type MouseEvent } from "re
 import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
 import { originLabel } from "../caseOrigin";
-import { ageTone, contactLine, conversation, displayName, isDelivered, lastTouch, quoteProduct } from "../caseDisplay";
+import { ageTone, contactLine, conversation, displayName, isDelivered, quoteProduct } from "../caseDisplay";
 import {
   AGE_BUCKETS,
   BOARD_COLUMNS,
@@ -40,7 +40,7 @@ import {
   type BoardColumnKey,
   type EnviadaBandKey,
 } from "../stage";
-import { followUpStep, followUpsDue } from "../today";
+import { followUpStep, followUpsDue, ourLastTouch, stepForDays } from "../today";
 import { fmtDate } from "../ui";
 import { GrowingListEnd } from "../GrowingListEnd";
 import { useGrowingList } from "../useGrowingList";
@@ -137,14 +137,15 @@ function enviadaBandOf(card: OpportunityCardData, at: Date): EnviadaBandKey {
 /**
  * «Seguimiento N de 3» for a silent card: the step `followUpsDue` gives it, or — for a case that
  * list leaves out (an undecided historical import, a follow-up written in the last days) — the same
- * 3 · 14 · 30 mapping over the days since OrigenLab's last touch.
+ * rhythm (`stepForDays`) over the days since OrigenLab's last touch (`ourLastTouch`: our email or
+ * a call that reached the client), so the card and the drawer chip agree.
  */
 export function silentFollowUpStep(card: OpportunityCardData, at: Date): 1 | 2 | 3 {
   const due = followUpsDue([card], at)[0];
   if (due) return followUpStep(due);
-  const since = Date.parse(lastTouch(card).at ?? card.latest_revision?.sent_at ?? "");
+  const since = Date.parse(ourLastTouch(card) ?? card.latest_revision?.sent_at ?? "");
   const days = Number.isNaN(since) ? 0 : Math.floor((at.getTime() - since) / 86_400_000);
-  return days >= 30 ? 3 : days >= 14 ? 2 : 1;
+  return stepForDays(days);
 }
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];

@@ -394,7 +394,15 @@ def current_session(request: Request) -> JSONResponse:
     if profile_session:
         profile_login = getattr(request.app.state, "v2_profile_login", None)
         if profile_login is not None:
-            home_filter = profile_login.profiles.home_filter(operator.operator_id)
+            # A preference, not identity: a failed lookup (a database without the column, a
+            # transient error) opens «Hoy» on its default view instead of signing the user out.
+            # Kept as its own call so the identity lookup never depends on this column.
+            try:
+                home_filter = profile_login.profiles.home_filter(operator.operator_id)
+            except Exception as exc:  # noqa: BLE001 - never fail the session check on it
+                logger.warning("dashboard session: home_filter lookup failed: %s",
+                               exc.__class__.__name__)
+                home_filter = None
     return JSONResponse(content={
         "authenticated": True,
         "state": "signed_in",

@@ -220,7 +220,7 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.
     if (!task && days < RHYTHM[0].from) continue;
-    const rhythm = days >= RHYTHM[2].from ? "cerrar" : days >= RHYTHM[1].from ? "segundo" : "primero";
+    const rhythm = RHYTHM[stepForDays(days) - 1].key;
     out.push({ card, days, rhythm, byEmail, task });
   }
   return out.sort((a, b) => b.days - a.days);
@@ -236,7 +236,7 @@ function later(a: string | null, b: string | null): string | null {
 }
 
 /** OrigenLab's last touch after the quote that can meet a follow-up: our email, or a call that reached the client. */
-function ourLastTouch(card: OpportunityCardData): string | null {
+export function ourLastTouch(card: OpportunityCardData): string | null {
   const touch = lastTouch(card);
   return later(touch.by === "us" ? touch.at : null, callTouch(card));
 }
@@ -252,6 +252,15 @@ export function pendingFollowUpTasks(card: OpportunityCardData): OpenTask[] {
   return (card.open_tasks ?? [])
     .filter((t) => isFollowUpTask(t) && !followUpMet(t, touch))
     .sort((a, b) => a.due_at.localeCompare(b.due_at));
+}
+
+/**
+ * The rhythm step for a number of days since OrigenLab's last touch: 3 from `RHYTHM[2].from`
+ * (30), 2 from `RHYTHM[1].from` (14), else 1. The one mapping the board card, the drawer chip and
+ * `followUpsDue` share.
+ */
+export function stepForDays(days: number): 1 | 2 | 3 {
+  return days >= RHYTHM[2].from ? 3 : days >= RHYTHM[1].from ? 2 : 1;
 }
 
 /** «Seguimiento N de 3»: the rhythm step a follow-up is on (1 from day 3, 2 from 14, 3 from 30). */

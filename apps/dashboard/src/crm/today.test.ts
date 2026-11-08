@@ -11,6 +11,8 @@ import {
   followUpsDue,
   followUpStep,
   HOME_FILTER_KINDS,
+  RHYTHM,
+  stepForDays,
   todayHeaderCounts,
   useHomeFilter,
   type QueueItem,
@@ -97,7 +99,7 @@ describe("home filter", () => {
       ({
         kind: "signed_in",
         method: "google_profile",
-        operator: { operatorId: "op-1", email: "equipo@example.cl", displayName: "Equipo", role: "sales" },
+        operator: { operatorId: "op-1", email: "equipo@ejemplo.invalid", displayName: "Equipo", role: "sales" },
         profile,
       }) as AuthSessionState;
     const read = (session: AuthSessionState) =>
@@ -159,5 +161,24 @@ describe("callTouch (Task 4 review fix)", () => {
     const c = card({ latest_revision: draft, last_call: { at: ago(2), outcome: "contesto" } });
     expect(callTouch(c)).toBeNull();
     expect(callTouch(card({ last_call: { at: ago(2), outcome: "contesto" } }))).toBe(ago(2));
+  });
+});
+
+describe("stepForDays (final review: one rhythm for the board card and the drawer chip)", () => {
+  it("is built on RHYTHM[].from, at the boundaries", () => {
+    expect(stepForDays(0)).toBe(1);
+    expect(stepForDays(RHYTHM[1].from - 1)).toBe(1);
+    expect(stepForDays(RHYTHM[1].from)).toBe(2);
+    expect(stepForDays(RHYTHM[2].from - 1)).toBe(2);
+    expect(stepForDays(RHYTHM[2].from)).toBe(3);
+    expect(stepForDays(400)).toBe(3);
+    expect([RHYTHM[1].from, RHYTHM[2].from]).toEqual([14, 30]);
+  });
+
+  it("agrees with followUpStep on the step followUpsDue assigns", () => {
+    for (const d of [3, 13, 14, 29, 30, 45]) {
+      const [f] = followUpsDue([card({}, ago(d))], NOW);
+      expect(followUpStep(f)).toBe(stepForDays(d));
+    }
   });
 });
