@@ -88,6 +88,8 @@ interface Note {
   gap: number;
   on: boolean;
   shown: boolean;
+  /** Estado `on` con que se midieron `w` y `h` (`null`: sin medir). */
+  measuredOn: boolean | null;
   /** En pantallas de toque, lado impuesto por el orden vertical de las anclas. */
   forced: NoteSide | '';
 }
@@ -135,6 +137,14 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
   let seenWidth = -1;
   let seenHeight = -1;
   let seenMode = '';
+  // Medidas del lienzo, de los controles de toque y de cada nota: se toman sólo al
+  // cambiar de tamaño, de modo o de beat, no en cada cuadro (leerlas tras escribir
+  // `transform` forzaría un cálculo de estilo y de layout por nota).
+  let stageWidth = -1;
+  let stageHeight = -1;
+  let navTop = Infinity;
+  let remeasure = true;
+  let stageObserver: ResizeObserver | null = null;
   let positions: AnchorPositions = {};
   let userFrame: ((anchors: AnchorPositions) => void) | null = null;
 
@@ -161,16 +171,22 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
    * `--gap` (largo real del hilo), `--lead-x` y `--lead-y` (dónde cae el ancla
    * respecto de la nota) los usa el CSS del hilo y del punto.
    *
-   * Corre en cada cuadro, pero sólo recalcula si algún ancla se movió más de
-   * 1 px, cambió el conjunto de notas visibles o el tamaño del lienzo.
+   * Corre una vez por cuadro de la escena, pero sólo recalcula si algún ancla
+   * se movió más de 1 px, cambió el conjunto de notas visibles o el tamaño del
+   * lienzo; y sólo mide (layout) si cambió el tamaño, el modo o el beat.
    */
   const apply = () => {
     const stage = overlays[0]?.el.parentElement;
     if (!stage) return;
-    const width = stage.clientWidth;
-    const height = stage.clientHeight;
     const mode = root?.dataset.mode ?? '';
-    let changed = width !== seenWidth || height !== seenHeight || mode !== seenMode;
+    if (mode !== seenMode) remeasure = true;
+    if (remeasure || stageWidth < 0) {
+      stageWidth = stage.clientWidth;
+      stageHeight = stage.clientHeight;
+    }
+    const width = stageWidth;
+    const height = stageHeight;
+    let changed = remeasure || width !== seenWidth || height !== seenHeight || mode !== seenMode;
     for (const n of overlays) {
       const p = positions[n.anchor];
       const shown = Boolean(p);
@@ -183,9 +199,12 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
     seenMode = mode;
 
     const tap = mode === 'tap';
-    const nav = tap ? root?.querySelector<HTMLElement>('[data-story-nav]:not([hidden])') : null;
+    if (remeasure) {
+      const nav = tap ? root?.querySelector<HTMLElement>('[data-story-nav]:not([hidden])') : null;
+      navTop = nav ? nav.offsetTop : Infinity;
+    }
     // Franja inferior de los controles de toque: de su borde superior (menos aire) hacia abajo.
-    const floorY = nav ? Math.min(height, nav.offsetTop) - NOTE_MARGIN : height;
+    const floorY = navTop !== Infinity ? Math.min(height, navTop) - NOTE_MARGIN : height;
     const baseGap = tap ? NOTE_GAP_TAP : NOTE_GAP;
 
     stack.length = 0;
@@ -213,8 +232,11 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
       const p = positions[n.anchor];
       if (!p) continue;
       if (n.el.dataset.occluded !== 'false') n.el.dataset.occluded = 'false';
-      const w = n.el.offsetWidth;
-      const h = n.el.offsetHeight;
+      if (remeasure || n.measuredOn !== n.on) {
+        n.measuredOn = n.on;
+        n.w = n.el.offsetWidth;
+        n.h = n.el.offsetHeight;
+      }
       const hint = (n.el.dataset.place ?? '').split(':');
       const gap = Math.min(Number(hint[1]) || baseGap, tap ? NOTE_GAP_TAP + 8 : Infinity);
       let side = (n.forced || hint[0]) as NoteSide;
@@ -224,8 +246,6 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
         side = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'top' : 'bottom';
       }
       n.gap = gap;
-      n.w = w;
-      n.h = h;
       // Lado pedido; si no cabe con su hilo entero, con un hilo más corto (hasta MIN_LEAD)
       // y, si tampoco, el opuesto y luego los otros dos, en ese orden.
       const order = side === 'left' || side === 'right' ? [side, OPPOSITE[side], 'top', 'bottom'] : [side, OPPOSITE[side], p.x < width / 2 ? 'right' : 'left', p.x < width / 2 ? 'left' : 'right'];
@@ -313,6 +333,7 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
       el.style.setProperty('--lead-y', `${leadY.toFixed(1)}px`);
       el.style.setProperty('--lead-x', `${leadX.toFixed(1)}px`);
     }
+    remeasure = false;
   };
 
   showroom.onFrame((anchors) => {
@@ -324,6 +345,11 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
   return {
     ...showroom,
     model,
+    dispose(discard) {
+      stageObserver?.disconnect();
+      stageObserver = null;
+      showroom.dispose(discard);
+    },
     onFrame(callback) {
       userFrame = callback;
     },
@@ -355,6 +381,8 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
       if (text === shownReadout) return;
       shownReadout = text;
       for (const el of readouts) el.textContent = text;
+      // Otra cifra puede cambiar el ancho de la nota que la lleva.
+      if (readouts.length) remeasure = true;
     },
     bindOverlays(next) {
       root = next;
@@ -375,9 +403,15 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
         gap: 0,
         on: false,
         shown: false,
+        measuredOn: null,
         forced: '' as const,
       }));
       seenWidth = -1;
+      remeasure = true;
+      stageObserver?.disconnect();
+      const stage = overlays[0]?.el.parentElement;
+      stageObserver = stage ? new ResizeObserver(() => (remeasure = true)) : null;
+      if (stage) stageObserver!.observe(stage);
       apply();
     },
     renderOverlays(progress) {
@@ -386,7 +420,7 @@ export function createStoryScene(canvas: HTMLCanvasElement, model: BuiltModel, o
       // Con histéresis (se enciende en 0,999, se apaga bajo 0,99) para que no parpadee en el borde.
       if (progress >= 0.999) root?.setAttribute('data-end', '');
       else if (progress < 0.99) root?.removeAttribute('data-end');
-      apply();
+      // Las notas las coloca el cuadro de la escena (una vez por cuadro), no el scroll.
     },
   };
 }

@@ -357,8 +357,8 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
 <script>
   /**
    * Carga la escena 3D sólo cuando sirve: con WebGL, sin movimiento reducido ni
-   * ahorro de datos, sin poca memoria declarada y con la figura cerca de la
-   * pantalla. Hasta su primer cuadro la fotografía oficial sigue visible, de
+   * ahorro de datos y con la figura cerca de la pantalla. Poca memoria declarada
+   * (< 4 GB) no apaga el 3D: baja al nivel medio, como en `ProductStory`. Hasta su primer cuadro la fotografía oficial sigue visible, de
    * modo que un fallo de carga deja la página como estaba y no en blanco.
    *
    * Con selector, el equipo elegido cambia en el mismo lienzo: un solo WebGL.
@@ -377,9 +377,9 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
   type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
   const nav = navigator as Nav;
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const lowEnd = (nav.deviceMemory !== undefined && nav.deviceMemory < 4) || nav.connection?.saveData === true;
+  const saveData = nav.connection?.saveData === true;
 
-  const use3d = !reduced && !lowEnd && 'WebGLRenderingContext' in window;
+  const use3d = !reduced && !saveData && 'WebGLRenderingContext' in window;
   // Mismo criterio de nivel que `ProductStory`: teléfono o equipo modesto, nivel medio.
   const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
   const tier: 'high' | 'medium' = innerWidth < 760 || modest ? 'medium' : 'high';
@@ -387,7 +387,7 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
   const settled = use3d && lazy ? new Promise<void>((resolve) => whenSettled(resolve)) : Promise.resolve();
 
   function setup(figure: HTMLElement) {
-    const canvas = figure.querySelector<HTMLCanvasElement>('[data-showroom-canvas]')!;
+    let canvas = figure.querySelector<HTMLCanvasElement>('[data-showroom-canvas]')!;
     const tasks = Array.from(figure.querySelectorAll<HTMLButtonElement>('[data-pick]'));
     const part = (selector: string, id: string) => figure.querySelector<HTMLElement>(`${selector}[data-entry="${id}"]`);
     let active = figure.dataset.active ?? '';
@@ -396,6 +396,8 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
     let wasLive = false;
     let ready = false;
     let loading = 0;
+    // El equipo que la sala tiene montado (puede ir detrás de `active` mientras carga otro).
+    let shownModel = active;
 
     const show = (id: string) => {
       for (const el of figure.querySelectorAll<HTMLElement>('[data-entry]')) {
@@ -475,9 +477,30 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
       }
     };
 
+    // El navegador retiró el contexto WebGL: se libera la sala, vuelve la
+    // fotografía y el lienzo se cambia por uno nuevo (el perdido no sirve para
+    // un próximo arranque). No se rehace la escena en el mismo contexto.
+    const lose = () => {
+      room?.dispose(true);
+      room = null;
+      ready = false;
+      ++loading;
+      const fresh = canvas.cloneNode(false) as HTMLCanvasElement;
+      fresh.hidden = true;
+      canvas.replaceWith(fresh);
+      canvas = fresh;
+      figure.removeAttribute('data-ready');
+      figure.removeAttribute('data-swapping');
+      for (const mode of figure.querySelectorAll<HTMLElement>('[data-showroom-mode]')) mode.textContent = photoLabel;
+      show(active);
+    };
+    const photoLabel = figure.querySelector<HTMLElement>('[data-showroom-mode]')?.textContent ?? '';
+
     const boot = async () => {
-      const load = modelLoaders[active];
+      const id = active;
+      const load = modelLoaders[id];
       if (!load) return;
+      shownModel = id;
       try {
         await document.fonts.ready;
         const [{ createShowroom }, module] = await Promise.all([import('../../lib/showroom/scene'), load()]);
@@ -486,29 +509,38 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
         room = createShowroom(canvas, module.build({ lite: tier === 'medium' }), { tier });
         wasLive = true;
         room.onFrame(onFrame);
+        room.onContextLost(() => queueMicrotask(lose));
       } catch (error) {
         canvas.hidden = true;
         console.warn('Sala 3D no disponible; queda la fotografía.', error);
+        return;
       }
+      // El visitante eligió otro equipo mientras se cargaba éste: se cambia ya montada la sala.
+      if (active !== id) void swap(active);
     };
 
     const pick = async (id: string) => {
       if (id === active) return;
-      const previous = active;
       active = id;
       show(id);
       resetControls(id);
+      await swap(id);
+    };
+    const swap = async (id: string) => {
       if (!room || !modelLoaders[id]) return;
       const ticket = ++loading;
       figure.setAttribute('data-swapping', '');
       try {
         const [module] = await Promise.all([modelLoaders[id](), new Promise((done) => setTimeout(done, 350))]);
-        if (ticket !== loading) return;
+        if (ticket !== loading || !room) return;
         room.setModel(module.build({ lite: tier === 'medium' }));
+        shownModel = id;
       } catch (error) {
         console.warn(`Sala 3D «${id}» no disponible.`, error);
-        active = previous;
-        show(previous);
+        if (active === id) {
+          active = shownModel;
+          show(shownModel);
+        }
       } finally {
         if (ticket === loading) figure.removeAttribute('data-swapping');
       }

@@ -382,6 +382,8 @@ export function build(): BuiltModel {
   }));
   // el glow se mueve con el pozo (posición fija en world space, separado del headGroup)
   const frostGlow = new THREE.Sprite(frostMat);
+  // La geometría del sprite es la que three comparte entre todos; liberarla sólo vacía su copia en la GPU.
+  keep(frostGlow.geometry);
   frostGlow.scale.set(26, 26, 1);
   frostGlow.position.set(0, -11 - 5, 0);   // abajo del portamuestra, donde está el pozo
   headGroup.add(frostGlow);

@@ -477,7 +477,7 @@ export function build(): BuiltModel {
     [BEAKER_R1 + 4, BEAKER_H], [BEAKER_R1 + 1.5, BEAKER_H],
     [BEAKER_R1, BEAKER_H - 4], [BEAKER_R0 + 0.8, BEAKER_H * 0.14],
     [BEAKER_R0 - 1, 2], [0, 2],
-  ])), labGlass());
+  ])), keep(labGlass()));
   beaker.renderOrder = 3;
   beaker.position.y = PLATE_T;
   root.add(beaker);
@@ -559,6 +559,8 @@ export function build(): BuiltModel {
     depthWrite: false, transparent: true, opacity: 0,
   }));
   const glow = new THREE.Sprite(glowMat);
+  // La geometría del sprite es la que three comparte entre todos; liberarla sólo vacía su copia en la GPU.
+  keep(glow.geometry);
   glow.scale.set(52, 38, 1);
   glow.position.set(0, TIP_Y + 8, 0);
   root.add(glow);

@@ -67,14 +67,27 @@ export interface Showroom {
   onFrame(callback: (anchors: AnchorPositions) => void): void;
   /** Cambia el equipo en el mismo escenario (un solo lienzo, un solo WebGL). */
   setModel(model: BuiltModel): void;
-  dispose(): void;
+  /**
+   * El navegador retiró el contexto WebGL (GPU reiniciada, demasiados
+   * contextos, pestaña en segundo plano en un teléfono). El bucle ya se paró;
+   * quien monta la escena la libera y vuelve a la imagen fija. No se intenta
+   * rehacer la luz de entorno en el mismo contexto.
+   */
+  onContextLost(callback: () => void): void;
+  /**
+   * Libera la escena. `discard`: el lienzo se descarta y además se suelta su
+   * contexto (`forceContextLoss`); sin él, el lienzo puede volver a usarse
+   * («Ver en 3D», el regreso desde la caché).
+   */
+  dispose(discard?: boolean): void;
 }
 
 const MM = 0.01;
 
 export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, options: ShowroomOptions = {}): Showroom {
   // En pantallas pequeñas (teléfonos) se dibuja con menos resolución y sombra.
-  const small = Math.min(window.innerWidth, window.innerHeight) < 700;
+  const isSmall = () => Math.min(window.innerWidth, window.innerHeight) < 700;
+  let small = isSmall();
   let tier: Tier = options.tier ?? 'high';
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: !small, alpha: true });
   const pixelRatio = () => Math.min(window.devicePixelRatio, small || tier === 'medium' ? 1.5 : 2);
@@ -207,16 +220,26 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), view: name, t: 0, ms, smooth };
   };
   const goTo = (name: string) => startTween(name, 1200, false);
-  canvas.addEventListener('pointerdown', () => {
+  const onPointerDown = () => {
     if (!controls.enabled) return;
     idle = false;
     tween = null;
-  });
+  };
+  canvas.addEventListener('pointerdown', onPointerDown);
 
   const resize = () => {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     if (!w || !h) return;
+    // Un giro de pantalla o una ventana que cambia de tamaño puede cruzar el umbral de «pequeña».
+    const nowSmall = isSmall();
+    if (nowSmall !== small) {
+      small = nowSmall;
+      renderer.setPixelRatio(pixelRatio());
+      key.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
+      key.shadow.map?.dispose();
+      key.shadow.map = null;
+    }
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
@@ -248,6 +271,17 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   const ray = new THREE.Raycaster();
   const hidden: Record<string, boolean> = {};
   let occlusionTick = 0;
+  let lost = false;
+  let lostCallback: (() => void) | null = null;
+  const onContextLost = (event: Event) => {
+    // Sin `preventDefault` el navegador no devolvería nunca el contexto.
+    event.preventDefault();
+    lost = true;
+    cancelAnimationFrame(raf);
+    raf = 0;
+    lostCallback?.();
+  };
+  canvas.addEventListener('webglcontextlost', onContextLost);
 
   const frame = (now: number) => {
     raf = 0;
@@ -311,7 +345,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     if (visible && !document.hidden) start();
   };
   function start() {
-    if (raf) return;
+    if (raf || lost) return;
     last = performance.now();
     raf = requestAnimationFrame(frame);
   }
@@ -362,17 +396,30 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     onFrame(callback) {
       frameCallback = callback;
     },
-    dispose() {
+    onContextLost(callback) {
+      lostCallback = callback;
+    },
+    dispose(discard = false) {
+      lost = true;
       cancelAnimationFrame(raf);
+      raf = 0;
       observer.disconnect();
       io.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
       controls.dispose();
       model.dispose();
       environment.dispose();
       pmrem.dispose();
+      ground.geometry.dispose();
+      (ground.material as THREE.Material).dispose();
+      blob.geometry.dispose();
+      (blob.material as THREE.Material).dispose();
       blobTexture.dispose();
+      key.shadow.dispose();
       renderer.dispose();
+      if (discard) renderer.forceContextLoss();
     },
   };
 }

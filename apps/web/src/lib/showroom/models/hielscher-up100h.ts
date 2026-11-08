@@ -313,6 +313,8 @@ export function build(options: BuildOptions = {}): BuiltModel {
     new THREE.SpriteMaterial({ map: glowTex.texture, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0 }),
   );
   const glow = new THREE.Sprite(glowMat);
+  // La geometría del sprite es la que three comparte entre todos; liberarla sólo vacía su copia en la GPU.
+  keep(glow.geometry);
   glow.position.set(L + SONO_LEN + 2, YC, 0);
   root.add(glow);
   const ringGeo = keep(new THREE.TorusGeometry(1, 0.07, 10, 64));

@@ -356,13 +356,23 @@ const steps = [
 var form=document.getElementById('solicitud-form');
 if(!form)return;
 var btn=document.getElementById('solicitud-btn');
-form.noValidate=true;
 var errPanel=document.getElementById('solicitud-network-error');
 var summary=form.querySelector('[data-error-summary]');
 var rat=document.getElementById('solicitud-render-at');
 if(rat)rat.value=String(Date.now()/1000);
 var sid=document.getElementById('solicitud-submission-id');
-if(sid)sid.value=crypto.randomUUID();
+// randomUUID falta en Safari < 15.4 y fuera de HTTPS: UUID v4 con getRandomValues o, sin crypto, con Math.random.
+function uuid(){
+  var c=window.crypto;
+  if(c&&typeof c.randomUUID==='function')return c.randomUUID();
+  var b=new Uint8Array(16),i;
+  if(c&&typeof c.getRandomValues==='function')c.getRandomValues(b);
+  else for(i=0;i<16;i++)b[i]=Math.floor(Math.random()*256);
+  b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;
+  var h='';for(i=0;i<16;i++)h+=(b[i]+256).toString(16).slice(1);
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+}
+if(sid)sid.value=uuid();
 var prod=new URLSearchParams(location.search).get('producto');
 if(prod){
   prod=prod.trim().slice(0,120);
@@ -449,6 +459,8 @@ form.addEventListener('submit',function(ev){
       errPanel.focus();
     });
 });
+// La validación propia sustituye a la del navegador sólo con su manejador ya puesto: si algo falla antes, el navegador sigue validando.
+form.noValidate=true;
 })();
 </script>
 
