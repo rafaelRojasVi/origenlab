@@ -557,7 +557,7 @@ describe("Pipeline page · Silenciosas (Task 8)", () => {
   it("is headed «Pipeline» with «Tablero · Tarjetas · Cerradas»", async () => {
     renderPage([silentNow()]);
     expect(await screen.findByRole("heading", { level: 1, name: "Pipeline" })).toBeInTheDocument();
-    const vista = screen.getByRole("group", { name: "Vista" });
+    const vista = await screen.findByRole("group", { name: "Vista" });
     expect(within(vista).getAllByRole("button").map((b) => b.textContent)).toEqual(["Tablero", "Tarjetas", "Cerradas"]);
   });
 
