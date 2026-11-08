@@ -71,6 +71,7 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
     canvas.hidden = true;
     throw error;
   }
+  scene.addViews(story.views);
   scene.bindOverlays(root);
 
   const marked = [...root.querySelectorAll<HTMLElement>('[data-beats]')];
@@ -185,23 +186,11 @@ export function mountStory(root: HTMLElement, { build }: ModelModule, story: Pro
       },
     };
   } else {
-    // Con primera pantalla (`[data-first-screen]`, el texto de entrada de la página de modelo) el recorrido
-    // de la historia empieza donde ella termina.
-    // Su alto se lee una vez y lo actualiza un ResizeObserver: `lead()` corre en cada cuadro.
-    const first = root.querySelector<HTMLElement>('[data-first-screen]');
-    let leadPx = first?.offsetHeight ?? 0;
-    const sizes = first && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => (leadPx = first.offsetHeight)) : null;
-    if (first) sizes?.observe(first);
-    const story = createScrollStory(spacer, scene, beats, {
-      lead: () => leadPx,
+    // La primera pantalla (`[data-first-screen]`) es el primer tramo de la columna fija: el
+    // recorrido empieza con el espaciador, sin `lead`.
+    runner = createScrollStory(spacer, scene, beats, {
       onProgress: (progress) => mark(activeBeat(progress, beats)?.beat.id ?? ''),
     });
-    runner = {
-      dispose() {
-        sizes?.disconnect();
-        story.dispose();
-      },
-    };
   }
   return handle;
 }

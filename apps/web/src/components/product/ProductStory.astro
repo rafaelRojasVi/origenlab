@@ -11,11 +11,21 @@ import type { BeatSpec, ProductStoryConfig } from '../../lib/showroom/productSto
 import type { Modelo } from '../../content.config';
 
 /**
- * Historia de producto por scroll: el equipo en 3D sobre un lienzo fijo y diez
- * tramos de texto que avanzan con la página. Es la primera pantalla de la
- * página de modelo: con el slot `intro` lleno, su contenido (el texto de
- * `ModelHeroCopy`) reemplaza el titular y el cuerpo del primer tramo, que
- * conserva su cámara y su animación y mide una pantalla (`data-first-screen`).
+ * Historia de producto por scroll: el equipo en 3D sobre un lienzo fijo y los
+ * tramos de texto de la historia en una columna fija a su izquierda. Es la
+ * primera pantalla de la página de modelo: con el slot `intro` lleno, su
+ * contenido (el texto de `ModelHeroCopy`) reemplaza el titular y el cuerpo del
+ * primer tramo, que conserva su cámara y su animación y mide una pantalla
+ * (`data-first-screen`).
+ *
+ * En escritorio (`data-mode="scroll"`) los textos de todos los tramos ocupan la
+ * misma celda de una columna fija (sticky) y se funden según el tramo activo
+ * (`data-on`): siempre se lee uno, entero y a la vista, y el primero es la
+ * entrada, así que no hay franja vacía entre ella y el tramo siguiente. El
+ * recorrido lo pone `.story__run`, un espaciador vacío de `--run × 500vh`; el
+ * progreso 0 es el borde superior del espaciador. El tramo inactivo queda en
+ * `display: none`, y por eso la barra fija de cotización, que espera a que
+ * `[data-first-screen]` salga de cuadro, entra cuando termina la entrada.
  * La ficha técnica, los accesorios y las preguntas ya no van aquí: son
  * secciones de la página.
  *
@@ -78,12 +88,13 @@ const spots = config.beats.flatMap((beat: BeatSpec) => {
 });
 
 const RUN = 500; // vh de scroll por unidad de progreso; la última pantalla suma 100 vh (0,2)
-const beats = config.beats.map((beat, index) => ({
+const beats = config.beats.map((beat) => ({
   ...beat,
-  span: beat.progressEnd - beat.progressStart + (index === config.beats.length - 1 ? 100 / RUN : 0),
   headline: fill(beat.textHeadline),
   body: fill(beat.textBody),
 }));
+// Largo del espaciador en unidades de progreso: la historia entera más la última pantalla.
+const run = (config.beats.at(-1)?.progressEnd ?? 1) + 100 / RUN;
 const { applications } = modelSections(entry, config);
 
 const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`)) ? `/products/${entry.slug}-poster.jpg` : null;
@@ -137,7 +148,6 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
             data-beat={beat.id}
             data-beats={beat.id}
             data-first-screen={intro && index === 0 ? '' : undefined}
-            style={`--span:${beat.span.toFixed(3)}`}
             aria-labelledby={intro && index === 0 ? 'modelo-titulo' : dom(beat.id)}
           >
             <div class="story__text">
@@ -195,8 +205,8 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
         ))
       }
     </div>
+    <div class="story__run" aria-hidden="true" style={`--run:${run.toFixed(3)}`}></div>
   </div>
-
 </div>
 
 <style is:global>
@@ -384,7 +394,7 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
     visibility: hidden;
     opacity: 0;
   }
-  /* Primera pantalla: el texto de entrada (slot `intro`) mide una pantalla y se va con la página. */
+  /* Primera pantalla: el texto de entrada (slot `intro`) mide una pantalla; en escritorio queda en la columna fija mientras dura su tramo. */
   .story__beat[data-first-screen] {
     position: relative;
     display: flex;
@@ -489,27 +499,55 @@ const dom = (part: string) => `historia-${entry.slug}-${part}`;
         animation: story-cue 1.6s ease-in-out 1s 3 both;
       }
     }
-    /* Cada tramo mide su parte del recorrido; su texto queda fijo mientras dura. */
+    /*
+     * Una sola columna de texto, fija como el escenario: los tramos se apilan en
+     * la misma celda y se lee el activo. El recorrido lo pone `.story__run`, en
+     * la misma celda de la rejilla, que mide la historia entera.
+     */
+    .story__run {
+      display: none;
+    }
+    .story[data-mode='scroll'] .story__run {
+      display: block;
+      grid-area: 1 / 1;
+      height: calc(var(--run) * 500vh);
+    }
+    .story[data-mode='scroll'] .story__beats {
+      position: sticky;
+      top: var(--hd-h, 4rem);
+      align-self: start;
+      display: grid;
+      height: calc(100svh - var(--hd-h, 4rem));
+    }
     .story[data-mode='scroll'] .story__beat {
-      height: calc(var(--span) * 500vh);
+      grid-area: 1 / 1;
+      align-self: center;
+      /* Abajo, el alto de la barra fija de cotización (`scroll-padding-bottom` de `ModelHero`). */
+      margin-block: 1rem 5rem;
       padding: 0;
       border: 0;
+      transition:
+        opacity 0.4s,
+        display 0.4s allow-discrete;
     }
-    /* El tramo de entrada mide una pantalla y deja su recorrido como margen: el progreso 0 empieza al terminar ella (`lead` de `createScrollStory`). */
     .story[data-mode='scroll'] .story__beat[data-first-screen] {
-      height: auto;
-      margin-bottom: calc(var(--span) * 500vh);
+      align-self: stretch;
+      min-height: 0;
+      margin: 0;
     }
-    .story[data-mode='scroll'] .story__text {
-      position: sticky;
-      top: 30vh;
-      transition: opacity 0.4s;
+    @starting-style {
+      .story[data-mode='scroll'] .story__beat {
+        opacity: 0;
+      }
     }
-    .story[data-mode='scroll'] .story__beat[data-first-screen] .story__text {
-      position: static;
-    }
-    /* Mientras la historia corre se lee un tramo a la vez. */
-    .story[data-live][data-mode='scroll'] .story__beat:not([data-on]):not([data-first-screen]) .story__text {
+    /*
+     * Se lee un tramo a la vez: el activo o, antes de que la historia arranque,
+     * la entrada. `display: none` y no sólo opacidad: el texto oculto no recibe
+     * foco ni clics, y la entrada sale de cuadro para la barra fija.
+     */
+    .story[data-live][data-mode='scroll'] .story__beat:not([data-on]),
+    .story[data-mode='scroll']:not([data-live]) .story__beat:not(:first-child) {
+      display: none;
       opacity: 0;
     }
     .story[data-live][data-mode='scroll'] .story__stage {

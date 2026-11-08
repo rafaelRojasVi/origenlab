@@ -6,6 +6,7 @@ export const story = threeBeatStory({
   hero: { headline: 'Pesaje de precisión', body: 'Balanza portátil Highland · {Capacidad}' },
   reveal: {
     view: 'plato',
+    scale: 1.8,
     anchors: ['pan', 'shield'],
     headline: 'Plato protegido, calibración interna',
     body: 'Calibración: {Calibración}. Protección: {Protección}.',

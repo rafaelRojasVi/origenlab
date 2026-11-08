@@ -1,5 +1,5 @@
 /**
- * Historia por scroll del Hielscher UP400St: diez beats sobre el modelo 3D
+ * Historia por scroll del Hielscher UP400St: nueve beats sobre el modelo 3D
  * (`models/hielscher-up400st.ts`), según el guion de la página de producto.
  *
  * Las cifras no se escriben aquí. `{Etiqueta}` en un titular o una línea es el
@@ -41,6 +41,15 @@ const running: Pose = { power: true, level: 0.25, yaw: 0, sonotrode: 'S24d14', r
 
 export const story: ProductStoryConfig = {
   modelId: 'hielscher-up400st',
+  // Vistas propias (el modelo no las trae): cada beat encuadra lo que describe.
+  views: {
+    // La punta de cerca, desde el otro lado que «sonotrodo»: la cavitación mientras sube la amplitud.
+    punta: { anchor: 'tip', direction: [-0.35, 0.05, 1], distance: 230 },
+    // El matraz entero con el sonotrodo dentro, un poco desde arriba.
+    muestra: { anchor: 'flask', direction: [0.35, 0.3, 1], distance: 520 },
+    // El sonotrodo de tres cuartos, desde el otro lado: el diámetro de la punta se lee de perfil.
+    puntas: { anchor: 'tip', direction: [-0.9, 0.1, 0.5], distance: 420 },
+  },
   beats: [
     {
       id: 'hero',
@@ -54,7 +63,7 @@ export const story: ProductStoryConfig = {
     {
       id: 'turn',
       progressStart: 0.08,
-      progressEnd: 0.18,
+      progressEnd: 0.2,
       cameraView: 'general',
       textHeadline: 'Compacto, por todos sus lados',
       textBody: 'Una vuelta completa al equipo: carcasa, pantalla, sujeción y sonotrodo.',
@@ -66,51 +75,44 @@ export const story: ProductStoryConfig = {
     },
     {
       id: 'screen',
-      progressStart: 0.18,
-      progressEnd: 0.3,
+      progressStart: 0.2,
+      progressEnd: 0.32,
       cameraView: 'pantalla',
       textHeadline: 'Todo el control en la pantalla',
       textBody: '{Registro}.',
-      animationHook: (scene) => pose(scene, running),
-    },
-    {
-      id: 'screen-hs',
-      progressStart: 0.3,
-      progressEnd: 0.38,
-      cameraView: 'pantalla',
-      textHeadline: 'La amplitud, a la vista',
-      textBody: 'Amplitud {Amplitud}, ajustada y registrada desde la misma pantalla.',
       animationHook: (scene) => pose(scene, running),
       overlayComponent: 'hotspot',
       overlayData: ['screen'],
     },
     {
       id: 'sonotrodo',
-      progressStart: 0.38,
-      progressEnd: 0.52,
+      progressStart: 0.32,
+      progressEnd: 0.46,
       cameraView: 'sonotrodo',
       textHeadline: 'Donde sucede la cavitación',
       textBody: 'Sonotrodo intercambiable · {Sonotrodos}',
       animationHook: (scene, t) => pose(scene, { ...running, level: 0.25 + 0.75 * t }),
       overlayComponent: 'hotspot',
       overlayData: ['tip'],
+      // Un lado fijo: el punto se mueve con la cámara y la cavitación, y la nota no salta.
+      overlayPlacement: { tip: 'right' },
     },
     {
       id: 'amplitude',
-      progressStart: 0.52,
-      progressEnd: 0.62,
-      cameraView: 'sonotrodo',
+      progressStart: 0.46,
+      progressEnd: 0.56,
+      cameraView: 'punta',
       textHeadline: 'Qué es la amplitud',
-      textBody: 'Cuánto se desplaza la punta en cada vibración. Más amplitud, cavitación más intensa.',
+      textBody: 'Cuánto se desplaza la punta en cada vibración: {Amplitud}. Más amplitud, cavitación más intensa.',
       animationHook: (scene, t) => pose(scene, { ...running, level: 0.2 + 0.8 * t, readout: t }),
       overlayComponent: 'meter',
       overlayData: ['Amplitud'],
     },
     {
       id: 'volumes',
-      progressStart: 0.62,
-      progressEnd: 0.72,
-      cameraView: 'lateral',
+      progressStart: 0.56,
+      progressEnd: 0.68,
+      cameraView: 'muestra',
       textHeadline: 'De la muestra pequeña al lote',
       textBody: '{Volumen de muestra}, con la misma unidad.',
       animationHook: (scene) => pose(scene, { ...running, level: 0.2 }),
@@ -119,17 +121,15 @@ export const story: ProductStoryConfig = {
     },
     {
       id: 'swap',
-      progressStart: 0.72,
-      progressEnd: 0.82,
-      cameraView: 'lateral',
+      progressStart: 0.68,
+      progressEnd: 0.8,
+      cameraView: 'puntas',
       textHeadline: 'El sonotrodo determina el volumen',
       textBody: 'La misma unidad acepta puntas de distinto diámetro: {Sonotrodos}.',
       animationHook: (scene, t) =>
         pose(scene, {
           ...running,
           level: 0.2,
-          // Un giro leve para ver la punta de lado, y de vuelta.
-          yaw: 0.35 * Math.sin(Math.PI * t),
           sonotrode: t < 1 / 3 ? 'S24d7' : t < 2 / 3 ? 'S24d14' : 'S24d22',
         }),
       overlayComponent: 'sonotrodes',
@@ -137,7 +137,7 @@ export const story: ProductStoryConfig = {
     },
     {
       id: 'apps',
-      progressStart: 0.82,
+      progressStart: 0.8,
       progressEnd: 0.9,
       cameraView: 'general',
       textHeadline: 'Aplicaciones',
@@ -150,9 +150,12 @@ export const story: ProductStoryConfig = {
       id: 'close',
       progressStart: 0.9,
       progressEnd: 1,
-      textHeadline: 'Ficha técnica',
-      textBody: 'Especificaciones con su fuente, accesorios y descargas, a continuación.',
-      animationHook: (scene) => pose(scene, { ...running, level: 0, yaw: null, sonotrode: 'S24d22' }),
+      cameraView: 'general',
+      textHeadline: 'Pida su cotización',
+      textBody: 'Le enviamos una propuesta formal para su laboratorio. La ficha técnica con su fuente sigue a continuación.',
+      // De tres cuartos por el otro lado y apagado: no repite el encuadre de «apps».
+      animationHook: (scene) => pose(scene, { ...rest, yaw: -0.9, sonotrode: 'S24d22' }),
+      overlayComponent: 'cta',
     },
   ],
   specs: [

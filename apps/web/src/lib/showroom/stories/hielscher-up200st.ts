@@ -5,9 +5,8 @@ export const story = threeBeatStory({
   modelId: 'hielscher-up200st',
   hero: { headline: 'Sonicación de laboratorio', body: 'Procesador ultrasónico UP200St · {Potencia} · {Frecuencia}' },
   reveal: {
-    view: 'general',
-    anchors: ['screen', 'tip'],
-    placement: { screen: 'bottom:70', tip: 'bottom:110' },
+    view: 'transductor',
+    anchors: ['transducer', 'stand'],
     headline: 'Generador y transductor, por separado',
     body: 'Protección: {Protección}. Volumen de muestra: {Volumen de muestra}.',
   },

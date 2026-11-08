@@ -5,9 +5,8 @@ export const story = threeBeatStory({
   modelId: 'hielscher-up100h',
   hero: { headline: 'Ultrasonido compacto', body: 'Procesador ultrasónico UP100H · {Potencia} · {Frecuencia}' },
   reveal: {
-    view: 'general',
-    anchors: ['housing', 'tip'],
-    placement: { tip: 'bottom:60' },
+    view: 'frontal',
+    anchors: ['housing', 'knob'],
     headline: 'Pequeño y de operación continua',
     body: 'Peso: {Peso}. Régimen de trabajo: {Régimen de trabajo}.',
   },

@@ -5,9 +5,9 @@ export const story = threeBeatStory({
   modelId: 'loeser-i-osmometer',
   hero: { headline: 'Osmometría crioscópica', body: 'Osmómetro i Osmometer · muestra de {Volumen de muestra}' },
   reveal: {
-    view: 'general',
+    view: 'pantalla',
+    scale: 3,
     anchors: ['screen', 'printer'],
-    placement: { screen: 'bottom:100', printer: 'bottom:100' },
     headline: 'El resultado, impreso junto a la muestra',
     body: 'Tiempo de medición: {Tiempo de medición}. Memoria: {Memoria}.',
   },

@@ -5,7 +5,8 @@ export const story = threeBeatStory({
   modelId: 'ika-t25-digital',
   hero: { headline: 'Dispersión de laboratorio', body: 'Dispersor ULTRA-TURRAX T 25 digital · {Revoluciones}' },
   reveal: {
-    view: 'general',
+    view: 'panel',
+    scale: 2.2,
     anchors: ['display', 'knob'],
     placement: { display: 'left:64', knob: 'left:64' },
     headline: 'Las revoluciones, a la vista',
