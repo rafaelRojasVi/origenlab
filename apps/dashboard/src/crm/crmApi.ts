@@ -20,6 +20,7 @@ import type {
   EquipmentInterestsResponse,
   ProvidersResponse,
   ReviewResponse,
+  TimelineResponse,
   WorkQueueResponse,
   WorkspaceOverview,
 } from "./crmTypes";
@@ -53,6 +54,8 @@ export const WORKSPACE_PATHS = {
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/purchase-order-candidates`,
   caseMemory: (opportunityId: string) =>
     `/v2/workspace/cases/${encodeURIComponent(opportunityId)}/memory`,
+  caseTimeline: (opportunityId: string) =>
+    `/v2/cockpit/opportunities/${encodeURIComponent(opportunityId)}/timeline`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
@@ -101,6 +104,10 @@ export type CaseMemoryResponse = {
 /** The latest machine memory for one case. Returns 404 when the case does not exist. */
 export const fetchCaseMemory = (opportunityId: string) =>
   fetchJsonGet<CaseMemoryResponse>(operatorApiUrl(WORKSPACE_PATHS.caseMemory(opportunityId)));
+
+/** One case's timeline for the drawer, oldest first. Returns 404 when the case does not exist. */
+export const fetchCaseTimeline = (opportunityId: string): Promise<TimelineResponse> =>
+  fetchJsonGet<TimelineResponse>(operatorApiUrl(WORKSPACE_PATHS.caseTimeline(opportunityId)));
 
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>

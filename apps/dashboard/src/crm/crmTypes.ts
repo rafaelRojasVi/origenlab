@@ -527,6 +527,43 @@ export interface WorkQueueResponse {
   offset: number;
 }
 
+/**
+ * One entry of `GET /v2/cockpit/opportunities/{id}/timeline` — a case's domain event or a
+ * synthetic «cotización enviada». `payload` holds only the stage/origin/close keys
+ * (`TIMELINE_PAYLOAD_KEYS` in apps/api); `actor_display_name` is null for a worker or migrator
+ * event and for synthetic entries.
+ */
+export interface TimelineEntry {
+  entry_kind: "domain_event" | "quotation_sent";
+  occurred_at: string;
+  event_type: string | null;
+  aggregate_kind: string | null;
+  aggregate_id: string | null;
+  actor_operator_id: string | null;
+  actor_display_name: string | null;
+  payload: {
+    from_stage?: string;
+    to_stage?: string;
+    stage?: string;
+    close_reason?: string | null;
+    reopened?: boolean;
+    from?: string | null;
+    to?: string | null;
+    from_origin?: string | null;
+    to_origin?: string | null;
+  } | null;
+  quote_id: string | null;
+  quote_number: string | null;
+  revision_no: number | null;
+  pdf_sha256: string | null;
+}
+
+/** `GET /v2/cockpit/opportunities/{id}/timeline` — oldest first. */
+export interface TimelineResponse {
+  opportunity_id: string;
+  entries: TimelineEntry[];
+}
+
 /** `GET /v2/workspace/mail-sync` — whether the Gmail capture is running (Phase 4a). */
 /** One quote number the captured Gmail shows (`/v2/workspace/mail-quote-numbers`). No client data. */
 export interface MailQuoteNumber {
