@@ -57,8 +57,10 @@ const width = Math.round(height * ratio);
     max-width: 100%;
     object-fit: contain;
   }
-  /* Tinta grafito → #ecedeb (`--color-fg`): negro y luego invertido al 93 %. */
+  /* Tinta grafito → clara (≈ `--color-fg`): negro y luego invertido al 93 %.
+     `--brand-logo-filter` permite a la base retocar el tratamiento en un solo
+     sitio si cambia el fondo. */
   .brand-logo--light {
-    filter: brightness(0) invert(0.93);
+    filter: var(--brand-logo-filter, brightness(0) invert(0.93));
   }
 </style>

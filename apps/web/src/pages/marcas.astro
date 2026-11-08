@@ -11,6 +11,8 @@ import { scopeById } from '../data/equipmentScope';
 import { getCollection } from 'astro:content';
 import type { Modelo } from '../content.config';
 import { brandEntries, featuredEntries, has3d } from '../lib/brandShowcase';
+import { rankBrands } from '../lib/ranking';
+import { publicClaim } from '../data/claims';
 
 /**
  * Índice de marcas: una tarjeta por fabricante, las siete con el mismo peso.
@@ -23,12 +25,15 @@ import { brandEntries, featuredEntries, has3d } from '../lib/brandShowcase';
  * conteos salen de la colección `modelos`; la línea y la familia, de
  * `brands.ts` y `equipmentScope.ts`.
  *
- * SERVA va última, como en toda lista del sitio: es la única línea de reactivos
- * e insumos y puesta antes desplazaría a las familias de equipo.
+ * Orden comercial del sitio (`rankBrands`, dueño 2026-11-08): Hielscher y
+ * OHAUS primero, IKA al final. El titular de la lista es la afirmación
+ * aprobada «directo con el fabricante» (`claims.ts`); nunca «distribuidor
+ * oficial» ni «exclusivo».
  */
 const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
 
-const cards = brands.map((brand) => {
+const heading = publicClaim('directo-con-el-fabricante') ?? brandsWallHeading;
+const cards = rankBrands(brands).map((brand) => {
   const entries = brandEntries(brand.id, all);
   return {
     brand,
@@ -55,7 +60,7 @@ const cards = brands.map((brand) => {
   </div>
 
   <section class="shell brands-sec" aria-labelledby="marcas-title">
-    <h2 id="marcas-title" class="sr-only">{brandsWallHeading}</h2>
+    <h2 id="marcas-title" class="t-label brands-sec__title">{heading}</h2>
     <ul class="brand-cards">
       {
         cards.map(({ brand, family, count, spinning, featured }, index) => (
@@ -124,6 +129,9 @@ const cards = brands.map((brand) => {
   }
   .brands-sec {
     padding-bottom: clamp(4rem, 8vw, 6rem);
+  }
+  .brands-sec__title {
+    margin-bottom: 1.25rem;
   }
   .brand-cards {
     display: grid;

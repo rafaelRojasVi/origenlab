@@ -1,23 +1,19 @@
 import type { Modelo } from '../content.config';
-import { modelsForBrand } from '../data/brandModels';
-import { getProductsByBrandId } from './catalog';
 import { turntableFor } from './turntable';
+import { rankModels } from './ranking';
+
+/** Modelos de la colección en el orden comercial del sitio (`ranking.ts`). */
+export function rankEntries(entries: readonly Modelo[]): Modelo[] {
+  return rankModels(entries.map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry);
+}
 
 /**
- * Modelos de una marca para `/marcas/` y `/marcas/<slug>/`, desde la colección
- * `modelos` (cada entrada tiene ficha). Orden: el de `brandModels.ts` (la
- * escalera de Hielscher, la tarea de OHAUS…) y luego el de `products.ts`
- * (centrífugas, consumible SERVA); lo que no esté en ninguno, por nombre.
+ * Modelos de una marca para `/marcas/`, `/marcas/<slug>/` y el menú, desde la
+ * colección `modelos` (cada entrada tiene ficha), en el orden comercial: los
+ * que tienen ficha 3D primero, luego por demanda (`rankModels`).
  */
 export function brandEntries(brandId: string, all: readonly Modelo[]): Modelo[] {
-  const order = [...modelsForBrand(brandId).map((model) => model.id), ...getProductsByBrandId(brandId).map((product) => product.id)];
-  const rank = (entry: Modelo) => {
-    const at = order.indexOf(entry.slug);
-    return at < 0 ? order.length : at;
-  };
-  return all
-    .filter((entry) => entry.brand === brandId)
-    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, 'es', { numeric: true }));
+  return rankEntries(all.filter((entry) => entry.brand === brandId));
 }
 
 /** El modelo tiene póster 3D (y, si existe, tira de giro). */
