@@ -26,9 +26,10 @@
  * El motor se sujeta a la varilla con un brazo horizontal y una nuez; el soporte
  * y el vaso son los de siempre.
  *
- * Todo en milímetros; la escena lo reduce a escala. La pantalla sigue el nivel
- * de marcha, o `root.userData.rpmFraction` (0 → 3.000 rpm … 1 → 25.000 rpm) si
- * la historia la fija.
+ * Todo en milímetros; la escena lo reduce a escala. La pantalla está encendida
+ * en «13.8» en reposo, como en la foto; en marcha sube con el nivel hacia el
+ * máximo, o sigue `root.userData.rpmFraction` (0 → 3.000 rpm … 1 → 25.000 rpm)
+ * si la historia la fija.
  */
 import * as THREE from 'three';
 import type { BuildOptions, BuiltModel } from '../types';
@@ -55,7 +56,7 @@ const TEETH_H = 8;
 /* ── rpm (ficha: 3.000 a 25.000 rpm) ── */
 const RPM_MIN = 3000;
 const RPM_MAX = 25000;
-const RPM_IDLE = 13800;       // la cifra de la fotografía, a plena marcha libre
+const RPM_IDLE = 13800;       // la cifra de la fotografía: la pantalla encendida en reposo
 
 export function build(options: BuildOptions = {}): BuiltModel {
   const { keep, dispose } = disposer();
@@ -79,6 +80,32 @@ export function build(options: BuildOptions = {}): BuiltModel {
     color: 0x55565a, roughness: 0.45, clearcoat: 0.6, clearcoatRoughness: 0.2,
   }));
   const steel = keep(new THREE.MeshPhysicalMaterial({ color: 0xd4d8dc, metalness: 1, roughness: 0.22 }));
+  // Tubo del elemento: acero pulido. El entorno de la sala es casi uniforme y
+  // en un espejo se ve gris liso; este entorno propio (franjas de estudio claras
+  // y oscuras alrededor) da las bandas verticales del cromado de la foto.
+  const studio = canvasTexture(512, 256, (g, w, h) => {
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#f4f5f6');
+    sky.addColorStop(0.48, '#b9bdc1');
+    sky.addColorStop(0.52, '#5c6064');
+    sky.addColorStop(1, '#2a2c2e');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, w, h);
+    const bands: [number, number, string][] = [
+      [0.04, 0.05, '#ffffff'], [0.14, 0.07, '#1e2022'], [0.3, 0.03, '#ffffff'],
+      [0.42, 0.1, '#26282a'], [0.58, 0.06, '#ffffff'], [0.7, 0.05, '#1a1c1e'],
+      [0.84, 0.04, '#ffffff'], [0.92, 0.04, '#303234'],
+    ];
+    for (const [x, bw, c] of bands) {
+      g.fillStyle = c;
+      g.fillRect(x * w, h * 0.12, bw * w, h * 0.76);
+    }
+  });
+  studio.texture.mapping = THREE.EquirectangularReflectionMapping;
+  keep(studio.texture);
+  const chrome = keep(new THREE.MeshPhysicalMaterial({
+    color: 0xf4f6f8, metalness: 1, roughness: 0.08, envMap: studio.texture, envMapIntensity: 1.25,
+  }));
   const steelBack = keep(new THREE.MeshPhysicalMaterial({ color: 0xb8bcc0, metalness: 1, roughness: 0.3, side: THREE.BackSide }));
   const polished = keep(new THREE.MeshPhysicalMaterial({ color: 0xe2e5e8, metalness: 1, roughness: 0.12 }));
   const black = keep(new THREE.MeshStandardMaterial({ color: 0x141518, roughness: 0.6 }));
@@ -187,8 +214,8 @@ export function build(options: BuildOptions = {}): BuiltModel {
   const panelY = (f: number) => BOX_Y0 + 3 + PANEL_H * (1 - f);
   const panelX = (f: number) => (f - 0.5) * PANEL_W;
 
-  let displayOn = false;
-  let displayRpm = 0;
+  let displayRpm = RPM_IDLE;
+  let shownRpm = -1;
 
   // Siete segmentos: a b c d e f g.
   const DIGITS: Record<string, string> = {
@@ -244,13 +271,14 @@ export function build(options: BuildOptions = {}): BuiltModel {
     const lx = w * 0.1, ly = h * 0.2, lw = w * 0.46, lh = h * 0.135;
     g.fillStyle = '#140708';
     g.fillRect(lx, ly, lw, lh);
-    const shown = displayOn ? (displayRpm / 1000).toFixed(1).padStart(4, ' ') : '88.8';
+    const shown = (displayRpm / 1000).toFixed(1).padStart(4, ' ');
     const chars = shown.replace('.', '');
     const dotAfter = shown.indexOf('.') - 1;
     const dw = lw * 0.21, dh = lh * 0.72, gap = lw * 0.06, st = dw * 0.19;
     const x0 = lx + lw - 3 * dw - 2 * gap - lw * 0.07;
-    g.fillStyle = displayOn ? '#ff2a18' : '#2c1214';
-    if (displayOn) { g.shadowColor = '#ff4630'; g.shadowBlur = 14; }
+    g.fillStyle = '#ff2a18';
+    g.shadowColor = '#ff4630';
+    g.shadowBlur = 14;
     for (let i = 0; i < 3; i++) {
       for (const s of DIGITS[chars[i] ?? ' '] ?? '') segment(g, x0 + i * (dw + gap), ly + lh * 0.14, dw, dh, st, s);
       if (i === dotAfter) {
@@ -347,7 +375,7 @@ export function build(options: BuildOptions = {}): BuiltModel {
     const tube = new THREE.Mesh(keep(lathe([
       [0, -2], [TUBE_R, -2], [TUBE_R, TUBE_END + 0.6], [TUBE_R - 0.5, TUBE_END],
       [TUBE_R - 1.4, TUBE_END], [TUBE_R - 1.4, TUBE_END + 3],
-    ], 48)), steel);
+    ], 64)), chrome);
     tube.castShadow = true;
     tool.add(tube);
 
@@ -369,7 +397,7 @@ export function build(options: BuildOptions = {}): BuiltModel {
     const innerGeo = keep(new THREE.CylinderGeometry(TUBE_R - 1.5, TUBE_R - 1.6, TEETH_H, 4, 1, true, 0, arc));
     innerGeo.translate(0, -TEETH_H / 2, 0);
     for (let i = 0; i < TEETH; i++) {
-      const tooth = new THREE.Mesh(toothGeo, steel);
+      const tooth = new THREE.Mesh(toothGeo, chrome);
       tooth.rotation.y = (i / TEETH) * Math.PI * 2;
       head.add(tooth);
       const inner = new THREE.Mesh(innerGeo, steelBack);
@@ -608,25 +636,24 @@ export function build(options: BuildOptions = {}): BuiltModel {
     yaw: 0.1,
     setPower(on: boolean) {
       powered = on;
-      if (on) displayOn = true;
     },
     update(dt: number, t: number, level: number) {
       /* pantalla LED: miles de rpm, una décima */
       const fixed = root.userData.rpmFraction as number | null;
-      if (displayOn && t - lastRedraw > 1 / 12) {
+      if (t - lastRedraw > 1 / 12) {
         lastRedraw = t;
         const pinned = typeof fixed === 'number';
-        const target = !powered
-          ? 0
-          : pinned
-            ? RPM_MIN + (RPM_MAX - RPM_MIN) * Math.min(1, Math.max(0, fixed))
-            : RPM_MIN + (RPM_IDLE - RPM_MIN) * level;
+        const target = powered && pinned
+          ? RPM_MIN + (RPM_MAX - RPM_MIN) * Math.min(1, Math.max(0, fixed))
+          : RPM_IDLE + (RPM_MAX - RPM_IDLE) * (powered ? level : 0);
         displayRpm += (target - displayRpm) * (pinned ? 0.5 : 0.2);
-        if (powered) displayRpm = Math.max(RPM_MIN, displayRpm);
-        if (!powered && level < 0.02) displayOn = false;
-        panelRedraw();
+        const tenth = Math.round(displayRpm / 100);
+        if (tenth !== shownRpm) {
+          shownRpm = tenth;
+          panelRedraw();
+        }
       }
-      panelMat.emissiveIntensity = 0.35 * level;
+      panelMat.emissiveIntensity = 0.1 + 0.3 * level;
 
       /* rotor + vibración del cabezal */
       rotor.rotation.y += dt * 90 * level;
