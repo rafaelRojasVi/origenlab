@@ -11,16 +11,20 @@
  *   • Protector de corrientes Ø 132 × 90 mm
  *   • Pantalla LCD retroiluminada con dígitos de 18 mm
  * Leído de la fotografía (estimado †):
- *   • Planta en lágrima: frente ancho y redondeado (174 mm) que se estrecha
- *     hacia atrás alrededor del protector (Ø 156 †) y termina en un lóbulo
- *     elevado que hace de asa (76 × 62 mm †), con el hueco para los dedos debajo
- *     y un apoyo azul estriado bajo el lóbulo †
- *   • Cubierta blanca sobre una base azul de 15 mm †; la cubierta baja hacia el
- *     frente (58 → 38 mm, ~11° †); el lóbulo del asa llega a los 80 mm oficiales
+ *   • Planta en lágrima: nariz delantera estrecha y redondeada (140 mm †),
+ *     círculo alrededor del protector (Ø 154 †) y atrás un bloque bajo de lado
+ *     a lado (los 174 mm oficiales) que hace de asa: sus lóbulos asoman a los
+ *     lados (72 mm de fondo †), con patas azules estriadas debajo †
+ *   • Cubierta blanca delgada sobre una base azul de 15 mm †; baja hacia una
+ *     nariz plana con el teclado (42 → 32 mm, ~5° †). Los lóbulos del asa
+ *     quedan apenas sobre la cubierta (54 mm †): la fotografía no muestra
+ *     ningún punto del cuerpo a 80 mm, así que manda la fotografía y la cifra
+ *     oficial de alto no se alcanza (quizá incluye el plato o el asiento del
+ *     protector; sin confirmar)
  *   • Centro del plato 26 mm detrás del centro del cuerpo †
- *   • Marco de pantalla 100 × 44 mm con ventana LCD 70 × 30 mm †, logo
+ *   • Marco de pantalla 82 × 44 mm con ventana LCD 60 × 30 mm †, logo
  *     «Highland™» arriba a la izquierda y franjas azules a los lados
- *   • Teclado de membrana 120 × 20 mm †: encendido aparte; Smpl, Mode, % y
+ *   • Teclado de membrana 86 × 20 mm †: encendido aparte; Smpl, Mode, % y
  *     Print sobre un óvalo azul; tara amarilla abajo a la izquierda y arriba a
  *     la derecha; logo ADAM entre pantalla y teclado
  *   • Nivel de burbuja delante del protector y placa de modelo a su derecha †
@@ -30,7 +34,8 @@
  * Ejes: x = ancho, y = alto (0 = suelo), z = fondo; el FRENTE (teclado) mira a
  * +z y el asa queda atrás (z = −126).
  *
- * Animación: `setPower(true)` enciende la retroiluminación («0.000 g»).
+ * Animación: arranca encendida («0.000 g», como la fotografía y el póster);
+ * `setPower(false)` apaga la retroiluminación.
  * `root.userData.sample = 1` coloca una muestra: la tapa del protector se
  * levanta, el platillo baja al plato, la tapa cierra y la lectura sube y se
  * asienta con una oscilación amortiguada; `0` la retira y vuelve a cero.
@@ -43,7 +48,7 @@ import { SANS, canvasTexture, disposer, lathe } from './kit';
 /* ── medidas (mm) ─────────────────────────────────────────────────────────── */
 const HALF_W = 87; // 174 / 2, oficial
 const FRONT = 126; // 252 / 2, oficial
-const TOP = 80; // alto oficial: lo alcanza el lóbulo del asa
+const LOBE_TOP = 54; // lóbulos del asa: apenas sobre la cubierta, como en la fotografía †
 const ZC = -26; // centro del plato y del protector †
 const RING = 77; // radio de la cubierta alrededor del protector †
 const NOSE_Z = 30; // donde empieza la nariz delantera †
@@ -52,8 +57,8 @@ const HUMP_Z = -90; // centro del bloque trasero del asa †
 const HUMP_B = 36; // medio fondo del bloque trasero †
 const HUMP_IN = 74; // radio de su cara cóncava, alrededor del protector †
 const BASE_H = 15; // base azul †
-const DECK = 58; // cubierta plana alrededor del protector †
-const NOSE = 38; // alto de la cubierta en el borde delantero †
+const DECK = 42; // cubierta plana alrededor del protector †
+const NOSE = 32; // alto de la cubierta en el borde delantero †
 const SLOPE_Z = 20; // donde empieza a bajar la cubierta †
 const SLOPE = Math.atan((DECK - NOSE) / (FRONT - SLOPE_Z));
 const PAN_R = 60; // Ø 120 oficial
@@ -238,9 +243,9 @@ export function build(): BuiltModel {
         envMapIntensity: 1.6,
       }),
     );
-  const shieldClear = translucent(0x2896ee, 0.42);
-  const shieldBand = translucent(0x1479d6, 0.8);
-  const lidMat = translucent(0x2b9af0, 0.55);
+  const shieldClear = translucent(0x0f72d8, 0.58);
+  const shieldBand = translucent(0x0753b8, 0.9);
+  const lidMat = translucent(0x1584e6, 0.68);
 
   /* ── base azul, cubierta blanca y asa trasera ───────────────────────────── */
   const plan = outline(halfWidth, FRONT, ZC - RING);
@@ -249,23 +254,23 @@ export function build(): BuiltModel {
   base.position.y = 1.5;
   root.add(base);
 
-  const shellGeo = keep(extrudePlan(plan, DECK - 12, 11, 7));
+  const shellGeo = keep(extrudePlan(plan, DECK - 12, 8, 6));
   shellGeo.translate(0, 12, 0);
   {
     // La cubierta baja hacia el frente: sólo se mueve la mitad superior.
     const pos = shellGeo.getAttribute('position');
     for (let i = 0; i < pos.count; i++) {
       const y = pos.getY(i);
-      if (y > 34) pos.setY(i, y + deckAt(pos.getZ(i)) - DECK);
+      if (y > (DECK + 12) / 2) pos.setY(i, y + deckAt(pos.getZ(i)) - DECK);
     }
     shellGeo.computeVertexNormals();
   }
   root.add(new THREE.Mesh(shellGeo, white));
 
-  // Asa: bloque trasero de lado a lado que sube a los 80 mm oficiales, con la
+  // Asa: bloque trasero bajo y redondeado, de lado a lado, con la
   // cara cóncava hacia el protector; sus extremos son los lóbulos que se ven a
   // los lados, detrás del plato.
-  const humpGeo = keep(extrudePlan(humpOutline(), TOP - 12, 12, 6));
+  const humpGeo = keep(extrudePlan(humpOutline(), LOBE_TOP - 12, 14, 6));
   humpGeo.translate(0, 12, 0);
   root.add(new THREE.Mesh(humpGeo, white));
 
@@ -409,6 +414,20 @@ export function build(): BuiltModel {
     h.absellipse(Math.cos(a) * 37, Math.sin(a) * 37, 3.6, 2.2, 0, Math.PI * 2, true, a);
     disk.holes.push(h);
   }
+  // Brillo en el borde de cada orificio: en la fotografía se leen como gotas claras.
+  const holeRimGeo = keep(new THREE.RingGeometry(1, 1.45, 28));
+  holeRimGeo.rotateX(-Math.PI / 2);
+  const holeRimMat = keep(new THREE.MeshBasicMaterial({ color: 0xe3f4ff, transparent: true, opacity: 0.85, depthWrite: false }));
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2;
+    const rimMesh = new THREE.Mesh(holeRimGeo, holeRimMat);
+    // El disco se tumba con rotateX(−π/2): la y del plano pasa a −z.
+    rimMesh.position.set(Math.cos(a) * 37, -LID_DROP + 0.3, -Math.sin(a) * 37);
+    rimMesh.rotation.y = a;
+    rimMesh.scale.set(3.6, 1, 2.2);
+    rimMesh.renderOrder = 5;
+    lid.add(rimMesh);
+  }
   const lidDiskGeo = keep(new THREE.ShapeGeometry(disk, 24));
   lidDiskGeo.rotateX(-Math.PI / 2);
   const lidDisk = new THREE.Mesh(lidDiskGeo, lidMat);
@@ -536,7 +555,7 @@ export function build(): BuiltModel {
       g.fillRect(w - 80, 150, 80, 12);
     }).texture,
   );
-  const frame = new THREE.Mesh(keep(new THREE.BoxGeometry(FW, 2.2, FD)), [
+  const frame = new THREE.Mesh(keep(new THREE.BoxGeometry(FW, 1.4, FD)), [
     bezel,
     bezel,
     keep(new THREE.MeshStandardMaterial({ map: frameTex, roughness: 0.45 })),
@@ -544,13 +563,14 @@ export function build(): BuiltModel {
     bezel,
     bezel,
   ]);
-  frame.position.set(0, 1.1, FZ);
+  frame.position.set(0, 0.7, FZ);
   fascia.add(frame);
 
   // Ventana LCD 70 × 30 mm (10 px por mm).
   const LW = 60;
   const LD = 30;
-  let screenOn = false;
+  // Encendida desde el principio: el póster y la portada muestran «0.000 g» como la fotografía.
+  let screenOn = true;
   let readValue = 0;
   let stable = true;
   const lcd = canvasTexture(600, 300, (g, w, h) => {
@@ -618,7 +638,7 @@ export function build(): BuiltModel {
   const lcdGeo = keep(new THREE.PlaneGeometry(LW, LD));
   lcdGeo.rotateX(-Math.PI / 2);
   const lcdMesh = new THREE.Mesh(lcdGeo, lcdMat);
-  lcdMesh.position.set(4, 2.3, FZ + 4);
+  lcdMesh.position.set(4, 1.5, FZ + 4);
   fascia.add(lcdMesh);
 
   // Panel del teclado: tara amarilla, óvalo azul, logo ADAM.
@@ -738,15 +758,15 @@ export function build(): BuiltModel {
   const consoleAnchor = anchor(fascia, 0, 0, 62);
   const panAnchor = anchor(root, 34, PAN_TOP + 2, ZC + 30);
   const shieldAnchor = anchor(root, -46, DECK + SHIELD_H - 6, ZC + 32);
-  const handleAnchor = anchor(root, 0, TOP + 1, -104);
+  const handleAnchor = anchor(root, -70, LOBE_TOP + 1, -96);
   const shieldMid = anchor(root, 0, DECK + 30, ZC + 20);
   const wholeMid = anchor(root, 0, 64, -4);
 
   /* ── animación ──────────────────────────────────────────────────────────── */
-  let powered = false;
+  let powered = true;
   let sampleT = 0; // 0 sin muestra … 1 muestra en el plato y tapa cerrada
   let landedFor = -1; // segundos desde que la muestra tocó el plato
-  let backlight = 0;
+  let backlight = 1;
   let shown = '';
 
   const SAMPLE_UP = DECK + SHIELD_H + 60;
@@ -809,7 +829,7 @@ export function build(): BuiltModel {
       }
 
       // Retroiluminación.
-      backlight += ((powered ? Math.max(level, 0.6) : 0) - backlight) * Math.min(1, dt * 5);
+      backlight += ((powered ? 1 : 0) - backlight) * Math.min(1, dt * 5);
       lcdMat.emissiveIntensity = 0.42 * backlight;
       if (!powered && level < 0.02 && backlight < 0.05) screenOn = false;
       redraw();

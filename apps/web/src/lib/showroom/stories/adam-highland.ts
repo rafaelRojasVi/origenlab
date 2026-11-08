@@ -43,8 +43,8 @@ export const story: ProductStoryConfig = {
       cameraView: 'general',
       textHeadline: 'Precisión que se lleva',
       textBody: 'Balanza portátil Highland · {Capacidad}',
-      // Vuelta entera: termina en la pose de presentación.
-      animationHook: (scene, t) => pose(scene, { power: false, yaw: smoothstep(t) * Math.PI * 2, sample: false }),
+      // Encendida con «0.000 g», como en la fotografía; vuelta entera que termina en la pose de presentación.
+      animationHook: (scene, t) => pose(scene, { power: true, yaw: smoothstep(t) * Math.PI * 2, sample: false }),
     },
     {
       id: 'pantalla',
