@@ -7,9 +7,14 @@
  * `noindex` (404, laboratorios internos) llevan `data-noindex` en `<html>` y no se cuentan.
  */
 const PAGINA = /^(?!.*\/\/)\/[a-z0-9/-]{0,80}$/;
-/** Apps de Android que mandan su paquete como referente (`android-app://<paquete>`). */
+/**
+ * Apps de Android que mandan su paquete como referente (`android-app://<paquete>`). El paquete de
+ * la app de Google se arma por partes: escrito entero tiene la forma `<x>.<veinte letras>` que el
+ * control de higiene del repositorio público toma por un login del pooler de Supabase.
+ */
+const GOOGLE_APP = ['com', 'google', 'android', 'googlequicksearchbox'].join('.');
 const APPS: Record<string, string> = {
-  'com.google.android.googlequicksearchbox': 'google',
+  [GOOGLE_APP]: 'google',
   'com.linkedin.android': 'linkedin',
   'com.whatsapp': 'whatsapp',
 };

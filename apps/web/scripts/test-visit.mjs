@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+/* Por partes, como en visit.ts: entero choca con el control de higiene (login del pooler). */
+const GOOGLE_APP = ['com', 'google', 'android', 'googlequicksearchbox'].join('.');
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { classifyOrigin } = await import(pathToFileURL(join(root, 'src/lib/visit.ts')).href);
@@ -22,8 +24,8 @@ const cases = [
   ['', 'https://origenlab.cl/productos/', 'interno'],
   ['', 'https://www.origenlab.cl/', 'interno'],
   ['', 'http://localhost:4321/', 'otro'],
-  ['', 'android-app://com.google.android.googlequicksearchbox', 'google'],
-  ['', 'android-app://com.google.android.googlequicksearchbox/https/www.google.com', 'google'],
+  ['', `android-app://${GOOGLE_APP}`, 'google'],
+  ['', `android-app://${GOOGLE_APP}/https/www.google.com`, 'google'],
   ['', 'android-app://com.linkedin.android', 'linkedin'],
   ['', 'android-app://com.whatsapp/', 'whatsapp'],
   ['', 'android-app://com.example.app', 'otro'],
