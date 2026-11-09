@@ -13,6 +13,7 @@ import { HeroHeader } from "../HeroHeader";
 import { todayHeaderCounts, useHomeFilter } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
+import { WebStatsCard } from "../web/WebStatsCard";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
@@ -86,6 +87,7 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
                 <PendientesPanel cases={p.items} navigate={navigate} />
                 <QuoteNumberBox pipeline={pipeline} compact />
                 <FxSection state={fx} reload={reloadFx} />
+                <WebStatsCard />
               </>
             }
           />

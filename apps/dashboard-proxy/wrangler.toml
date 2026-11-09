@@ -56,3 +56,22 @@ simple = { limit = 60, period = 60 }
 [[analytics_engine_datasets]]
 binding = "STATS_AE"
 dataset = "origenlab_web_stats"
+
+# Dashboard stats read (GET dashboard.origenlab.cl/api/stats/web-stats, src/stats_read.ts).
+# Two Worker secrets must be set with `wrangler secret put` (never in this file or as vars):
+#
+#   CF_ACCOUNT_ID       — the numeric Cloudflare account id that owns the AE dataset.
+#                         Found at dash.cloudflare.com → right column → Account ID.
+#   CF_STATS_API_TOKEN  — an API token with «Account Analytics: Read» for that account.
+#                         Create at dash.cloudflare.com/profile/api-tokens:
+#                           → Create Token → Use template «Edit Cloudflare Workers»
+#                              — OR — → Create Custom Token:
+#                             Permissions: Account / Account Analytics / Read
+#                             Account Resources: Include / <your account>
+#
+# When either secret is missing the route answers 503 and the dashboard card shows
+# «Falta configurar la lectura de estadísticas».
+#
+# To set after `wrangler login`:
+#   wrangler secret put CF_ACCOUNT_ID       --name origenlab-dashboard-proxy
+#   wrangler secret put CF_STATS_API_TOKEN  --name origenlab-dashboard-proxy

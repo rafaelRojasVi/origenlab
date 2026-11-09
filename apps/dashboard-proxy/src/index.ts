@@ -430,6 +430,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 }
 
 import { handleStatsRequest, type StatsEnv } from "./stats";
+import { handleWebStatsRequest, type StatsReadEnv } from "./stats_read";
 import { handleWebFormRequest } from "./web_form";
 
 export default {
@@ -441,6 +442,11 @@ export default {
     // Public first-party analytics: its own two-request allowlist, no dashboard session.
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/stats/")) {
       return handleStatsRequest(request, env as StatsEnv);
+    }
+    // Dashboard web-stats read: authenticated, served directly (not proxied to the API).
+    // The CF Analytics Engine SQL API credentials live in the Worker, not the API service.
+    if (url.hostname === "dashboard.origenlab.cl" && url.pathname === "/api/stats/web-stats") {
+      return handleWebStatsRequest(request, env as StatsReadEnv);
     }
     return handleRequest(request, env);
   },
