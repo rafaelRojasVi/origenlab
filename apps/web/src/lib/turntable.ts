@@ -12,6 +12,8 @@ export const TURNTABLE_FRAMES = 24;
 
 export interface TurntableFiles {
   poster: string;
+  /** Póster de 640x480 en WebP para tarjetas (`null` hasta que `npm run posters` lo genere). */
+  posterSmall: string | null;
   /** `null` si el modelo tiene póster pero aún no tira: la tarjeta queda quieta. */
   strip: string | null;
 }
@@ -22,7 +24,8 @@ export function turntableFor(slug: string): TurntableFiles | null {
   const poster = `products/${slug}-poster.jpg`;
   if (!has(poster)) return null;
   const strip = `products/${slug}-turntable.webp`;
-  return { poster: `/${poster}`, strip: has(strip) ? `/${strip}` : null };
+  const small = `products/${slug}-poster-640.webp`;
+  return { poster: `/${poster}`, posterSmall: has(small) ? `/${small}` : null, strip: has(strip) ? `/${strip}` : null };
 }
 
 /**

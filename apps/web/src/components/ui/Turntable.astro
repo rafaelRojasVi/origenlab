@@ -37,16 +37,35 @@ interface Props {
   loading?: 'lazy' | 'eager';
   class?: string;
   style?: string;
+  /** Ancho mostrado, para elegir entre el póster de 640 px y el de 1200 px. */
+  sizes?: string;
 }
 
-const { slug, alt, loading = 'lazy', class: className = '', style } = Astro.props;
+const {
+  slug,
+  alt,
+  loading = 'lazy',
+  class: className = '',
+  style,
+  sizes = '(min-width: 1024px) 25vw, (min-width: 640px) 45vw, 90vw',
+} = Astro.props;
 const files = turntableFor(slug);
 ---
 
 {
   files && (
     <div class:list={['tt', className]} style={style} data-tt={files.strip ?? undefined} data-frames={TURNTABLE_FRAMES}>
-      <img class="tt__poster" src={files.poster} width="1200" height="900" alt={alt} loading={loading} decoding="async" />
+      <img
+        class="tt__poster"
+        src={files.poster}
+        srcset={files.posterSmall ? `${files.posterSmall} 640w, ${files.poster} 1200w` : undefined}
+        sizes={files.posterSmall ? sizes : undefined}
+        width="1200"
+        height="900"
+        alt={alt}
+        loading={loading}
+        decoding="async"
+      />
       {files.strip && <span class="tt__strip" aria-hidden="true" />}
     </div>
   )

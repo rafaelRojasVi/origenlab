@@ -6,7 +6,7 @@ import { imageSourcesFor } from './productImage';
 import { turntableFor } from './turntable';
 
 /**
- * Miniatura de un modelo (sólo en el build: lee `public/`): la de 240 px del
+ * Miniatura de un modelo (sólo en el build: lee `public/`): la de 360 px del
  * estudio 3D (`<slug>-thumb.webp`), su póster si aún no hay miniatura, o la
  * fotografía del fabricante. La usan el menú grande y las industrias.
  */
@@ -23,7 +23,7 @@ export interface ModelThumb {
 export function modelThumb(entry: Modelo): ModelThumb | null {
   const files = turntableFor(entry.slug);
   const small = `/products/${entry.slug}-thumb.webp`;
-  if (files && existsSync(join(process.cwd(), 'public', small))) return { kind: '3d', src: small, srcset: undefined, width: 240, height: 180, alt: entry.name };
+  if (files && existsSync(join(process.cwd(), 'public', small))) return { kind: '3d', src: small, srcset: undefined, width: 360, height: 270, alt: entry.name };
   if (files) return { kind: '3d', src: files.poster, srcset: undefined, width: 1200, height: 900, alt: entry.name };
   const record = imageForEntry(entry);
   const sources = imageSourcesFor(record);

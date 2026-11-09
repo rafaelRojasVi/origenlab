@@ -81,6 +81,8 @@ const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
               <img
                 class="showroom__poster"
                 src={item.poster}
+                srcset={`${item.poster.replace('-poster.jpg', '-poster-640.webp')} 640w, ${item.poster} 1200w`}
+                sizes="(min-width: 1024px) 60vw, 92vw"
                 alt={`${item.entry.brand} ${item.entry.name}, modelo 3D`}
                 width="1200"
                 height="900"

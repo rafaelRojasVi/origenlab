@@ -88,8 +88,8 @@ async function writeFraming() {
   console.log(`  ok src/data/posterFraming.json (${Object.keys(framing).length} modelos)`);
 }
 
-/* Miniatura del mega-menú: 4:3, el equipo recortado del blanco con un margen. */
-const THUMB = [240, 180];
+/* Miniatura del mega-menú: 4:3 (360x270, nítida al doble de densidad en las tejas del panel), el equipo recortado del blanco con un margen. */
+const THUMB = [360, 270];
 async function writeThumb(slug) {
   const poster = join(outDir, `${slug}-poster.jpg`);
   const trimmed = await sharp(poster).trim({ background: '#ffffff', threshold: 18 }).toBuffer({ resolveWithObject: true });
@@ -108,6 +108,10 @@ async function writeThumb(slug) {
     .webp({ quality: 78 })
     .toBuffer();
   writeFileSync(join(outDir, `${slug}-thumb.webp`), buffer);
+  // Póster mediano para las tarjetas (`<slug>-poster-640.webp`, mismo encuadre que el
+  // póster de 1200x900): una tarjeta mide ~300 px de ancho y no necesita el JPEG completo.
+  const card = await sharp(poster).resize(640, 480).webp({ quality: 80 }).toBuffer();
+  writeFileSync(join(outDir, `${slug}-poster-640.webp`), card);
   return buffer.length;
 }
 const slugArgs = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));

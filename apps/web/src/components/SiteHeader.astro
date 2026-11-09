@@ -358,12 +358,12 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     transform: rotate(180deg);
   }
   .mm__panel {
-    display: none;
     position: absolute;
     top: 100%;
     left: 0;
     right: 0;
-    max-height: calc(100vh - var(--hd-h));
+    /* Tope: el panel nunca tapa la pantalla entera (se cierra al bajar el cursor a la página). */
+    max-height: min(calc(100vh - var(--hd-h) - 5rem), 38rem);
     padding-block: 2.25rem 2.75rem;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -371,9 +371,38 @@ function isActive(href: string, matches?: readonly string[]): boolean {
     border-bottom: 1px solid var(--color-hairline);
     box-shadow: 0 30px 60px -36px rgb(15 90 80 / 0.22);
   }
+  /* Cerrado: `display: none` (no se enfoca, no se lee y sus miniaturas
+     diferidas no se descargan). Abierto: baja y aparece; `@starting-style` +
+     `allow-discrete` animan la entrada y la salida sin dejar el panel montado. */
+  .mm__panel {
+    display: none;
+    opacity: 0;
+    transform: translateY(-0.75rem);
+    transition:
+      opacity 180ms var(--ease-out),
+      transform 240ms var(--ease-out),
+      display 240ms allow-discrete;
+  }
   [data-mm-nav]:not([data-mm-nav='js']) .mm:is(:hover, :focus-within) > .mm__panel,
   [data-mm-nav='js'] .mm[data-open] > .mm__panel {
     display: block;
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 220ms var(--ease-out),
+      transform 300ms var(--ease-out),
+      display 300ms allow-discrete;
+    @starting-style {
+      opacity: 0;
+      transform: translateY(-0.75rem);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mm__panel,
+    [data-mm-nav] .mm > .mm__panel {
+      transform: none;
+      transition: opacity 120ms linear, display 120ms allow-discrete;
+    }
   }
 
   /* --- Acciones --- */

@@ -392,7 +392,10 @@ const css = walk(dist, '.css').reduce((total, file) => total + statSync(file).si
 // CSS 110 kB (2026-11-08): sitio claro «Blanco con color» — la hoja de cotización animada,
 // el mega-menú con miniaturas, los resplandores y tintes de familia, y la tarjeta única
 // (LitCard). Medido tras borrar el CSS del showroom oscuro que reemplaza.
-const CSS_BUDGET = 110_000;
+// CSS 115 kB (2026-11-08, noche): paneles del mega-menú en dos columnas con tejas animadas y el mapa
+// interactivo de orígenes de la portada (pedidos del dueño); el CSS muerto restante es de secciones
+// condicionales (notas de aplicación) que no se dibujan hoy.
+const CSS_BUDGET = 115_000;
 const kb = (bytes) => (bytes / 1000).toFixed(1);
 assert(js < 16_500, `dist: ${kb(js)} kB de JavaScript (presupuesto 16,5 kB)`);
 assert(chat < 2_500, `dist: ${kb(chat)} kB en el panel de la burbuja bajo demanda (techo 2,5 kB)`);

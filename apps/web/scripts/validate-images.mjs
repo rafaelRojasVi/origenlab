@@ -156,8 +156,10 @@ const POSTER_MAX_BYTES = 150_000;
 const STRIP = /-turntable\.webp$/;
 const STRIP_FRAMES = 24;
 const STRIP_MAX_BYTES = 120_000;
-// Miniatura del mega-menú (240x180 WebP), junto a su póster.
+// Miniatura del mega-menú (360x270 WebP), junto a su póster.
 const THUMB = /-thumb\.webp$/;
+// Póster mediano de las tarjetas (640x480 WebP, ≤ 40 kB), junto a su póster.
+const POSTER_SMALL = /-poster-640\.webp$/;
 
 if (existsSync(productsDir)) {
   for (const brandDir of readdirSync(productsDir)) {
@@ -175,11 +177,16 @@ if (existsSync(productsDir)) {
         assert(existsSync(join(productsDir, brandDir.replace(STRIP, '-poster.jpg'))), `/products/${brandDir}: tira de giro sin su póster`);
       } else if (THUMB.test(brandDir)) {
         const meta = await sharp(dir).metadata();
-        assert(meta.width === 240 && meta.height === 180, `/products/${brandDir}: la miniatura mide ${meta.width}x${meta.height}, no 240x180`);
+        assert(meta.width === 360 && meta.height === 270, `/products/${brandDir}: la miniatura mide ${meta.width}x${meta.height}, no 360x270`);
         assert(statSync(dir).size <= 20_000, `/products/${brandDir}: la miniatura pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 20 kB)`);
         assert(existsSync(join(productsDir, brandDir.replace(THUMB, '-poster.jpg'))), `/products/${brandDir}: miniatura sin su póster`);
+      } else if (POSTER_SMALL.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        assert(meta.width === 640 && meta.height === 480, `/products/${brandDir}: el póster mediano mide ${meta.width}x${meta.height}, no 640x480`);
+        assert(statSync(dir).size <= 40_000, `/products/${brandDir}: el póster mediano pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 40 kB)`);
+        assert(existsSync(join(productsDir, brandDir.replace(POSTER_SMALL, '-poster.jpg'))), `/products/${brandDir}: póster mediano sin su póster`);
       } else {
-        assert(false, `/products/${brandDir}: archivo suelto que no es un póster, una tira de giro ni una miniatura generados`);
+        assert(false, `/products/${brandDir}: archivo suelto que no es un póster, una tira de giro, una miniatura ni un póster mediano generados`);
       }
       continue;
     }
@@ -264,7 +271,7 @@ if (!existsSync(dist)) {
       assert(!/^(https?:)?\/\//.test(src) || src.startsWith('https://origenlab.cl/'), at(`imagen remota: ${src}`));
       if (!src.startsWith('/products/')) continue;
       const tag = match[0];
-      if (GENERATED.test(src) || THUMB.test(src)) {
+      if (GENERATED.test(src) || THUMB.test(src) || POSTER_SMALL.test(src)) {
         assert(/\bwidth="\d+"/.test(tag) && /\bheight="\d+"/.test(tag), at(`póster sin dimensiones: ${src}`));
         assert(existsSync(join(root, 'public', src)), at(`póster inexistente: ${src}`));
         continue;
