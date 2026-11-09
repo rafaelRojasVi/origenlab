@@ -81,7 +81,7 @@ afterEach(() => {
 });
 
 /** A required field's label ends in « *»: match by its start. */
-const re = (name: string) => new RegExp(`^${name.replace(/[()]/g, "\\$&")}`);
+const re = (name: string) => new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
 const f = (name: string) => screen.getByLabelText(re(name));
 const findF = (name: string) => screen.findByLabelText(re(name));
 
