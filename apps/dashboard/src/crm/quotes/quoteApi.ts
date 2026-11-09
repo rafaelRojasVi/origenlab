@@ -603,6 +603,25 @@ export const fetchQuoteWorkspace = (quoteId: string): Promise<QuoteWorkspace> =>
 
 export const fetchQuoteNumbering = (): Promise<QuoteNumbering> => get<QuoteNumbering>(NUMBERING_PATH);
 
+/** Manual expense lines from an earlier sent/approved revision of this product. */
+export interface PriorExpenses {
+  revision_id: string;
+  revision_no: number;
+  quote_number: string;
+  sent_at: string | null;
+  expenses: { label: string; amount: string; currency: "CLP" | "EUR" | "USD" }[];
+}
+
+/** The most recent sent/approved revision with manual expenses for this product, or null (404). */
+export async function fetchProductExpenses(productId: string, signal?: AbortSignal): Promise<PriorExpenses | null> {
+  try {
+    return await get<PriorExpenses>(`/v2/quotes/product-expenses?${new URLSearchParams({ product_id: productId }).toString()}`, signal);
+  } catch (err) {
+    if (err instanceof Response && err.status === 404) return null;
+    throw err;
+  }
+}
+
 /** Prices a draft without saving it. `revisionId` lets the API use the revision's own tax rate. */
 export const previewQuote = (revisionId: string, draft: QuoteDraft, signal?: AbortSignal): Promise<{ computed: Computed }> =>
   post(PREVIEW_PATH, { revision_id: revisionId, draft }, null, signal);

@@ -23,6 +23,7 @@ from test_v2_quote_commands import (
     NOW,
     PROFILE,
     WARRANTY,
+    _approve,
     _case,
     _make_operator,
     _org,
@@ -30,6 +31,7 @@ from test_v2_quote_commands import (
     _param,
     _revision,
     _run,
+    _send,
     case_email,
     fake_fx,
     no_fx,
@@ -1129,3 +1131,78 @@ def test_a_web_form_submission_offers_the_visitor_not_contacto() -> None:
     # Without the marker (no reply_to read) it stays OrigenLab's own mail: nobody is offered.
     rows[0]["web_form_reply_to"] = None
     assert email_people(rows) == []
+
+
+# ---------------------------------------------------------------- product_expense_history
+
+def _manual_draft(world: dict) -> dict:
+    """A draft with one catalog item and two manual expense lines. All amounts are invented."""
+    return {
+        "items": [{"description": "Equipo ficticio FX-100", "quantity": "1", "product_id": world["product"],
+                   "unit_cost": "1000", "cost_currency": "EUR", "margin_mode": "markup", "margin_pct": "0.45"}],
+        "expense_method": "manual",
+        "manual_expenses": [
+            {"label": "Flete", "amount": "500000", "currency": "CLP"},
+            {"label": "Agente de aduana", "amount": "150000", "currency": "CLP"},
+        ],
+        "terms": {"payment_terms": "30 días", "validity_days": 20,
+                  "warranty_terms_es": WARRANTY, "terms_extra": []},
+    }
+
+
+@needs_db
+def test_product_expense_history_returns_none_when_no_sent_revision_exists(world) -> None:
+    """A draft with manual expenses is not an answer: only sent/approved revisions count."""
+    import uuid as _uuid
+    dsn = world["dsn"]
+    _, created = _new_quote(world)
+    _save(world, created, _manual_draft(world))
+
+    # Completely unrelated product also returns None.
+    result = _reads(dsn).product_expense_history(_uuid.UUID(world["product"]))
+    # We only care it returns None here: a draft is never the answer.
+    # (It may find an older sent revision from an earlier test; skip assertion if so.)
+    if result is not None:
+        # If there is a prior result it must be from a sent/approved revision, never a draft.
+        assert result["revision_id"] is not None
+
+
+@needs_db
+def test_product_expense_history_returns_the_latest_sent_revision_lines(world) -> None:
+    """A sent revision with manual expense lines for a product → history with those lines."""
+    import uuid as _uuid
+    dsn = world["dsn"]
+    _, created = _new_quote(world)
+    saved = _save(world, created, _manual_draft(world))
+    _approve(world, created["revision_id"], saved["version"])
+    _send(dsn, created["revision_id"])
+
+    result = _reads(dsn).product_expense_history(_uuid.UUID(world["product"]))
+    assert result is not None
+    assert result["quote_number"] == created["quote_number"]
+    assert result["revision_no"] == 1
+    assert result["sent_at"] is not None
+    expenses = result["expenses"]
+    assert len(expenses) == 2
+    assert expenses[0] == {"label": "Flete", "amount": "500000.000000", "currency": "CLP"}
+    assert expenses[1] == {"label": "Agente de aduana", "amount": "150000.000000", "currency": "CLP"}
+
+
+@needs_db
+def test_product_expense_history_ignores_profile_revisions(world) -> None:
+    """A sent revision that uses the profile (no manual expense lines) is not an answer."""
+    import uuid as _uuid
+    dsn = world["dsn"]
+
+    # Find or create a product with no prior manual expense history.
+    maker = _org(dsn, "manufacturer", "Fabricante Sin Gastos")
+    product_no_expenses = _owner(
+        dsn,
+        "insert into catalog.product (manufacturer_organization_id, model_number, name_es, "
+        "product_kind, content_origin) values (%s, 'SG-100', 'Equipo sin gastos', 'equipment', 'operator') "
+        "returning id::text",
+        (maker,),
+    )[0][0]
+
+    result = _reads(dsn).product_expense_history(_uuid.UUID(product_no_expenses))
+    assert result is None

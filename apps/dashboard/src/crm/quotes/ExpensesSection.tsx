@@ -25,6 +25,7 @@ import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { formatMoney } from "../money";
 import {
   addManualExpense,
+  newLineUid,
   principalItemOf,
   removeManualExpense,
   setExpenseMethod,
@@ -33,7 +34,8 @@ import {
 } from "./draftEditor";
 import { EXPENSE_KINDS, encodeExpenseLabel, parseExpenseLabel } from "./expenseKind";
 import { NumberInput } from "./LineRow";
-import type { Computed, ImportCostKind, QuoteDraft, QuoteDraftExpense } from "./quoteApi";
+import type { Computed, ImportCostKind, PriorExpenses, QuoteDraft, QuoteDraftExpense } from "./quoteApi";
+import { fetchProductExpenses } from "./quoteApi";
 import { ConfirmDialog } from "../ui";
 import { amountTextToDecimal, decimalEditText, formatPct } from "./quoteFormat";
 
@@ -275,6 +277,34 @@ export function ExpensesSection({
   }, []);
   const byId = useMemo(() => new Map((index?.items ?? []).map((i) => [i.id, i])), [index]);
 
+  // «Usar gastos de la última cotización de <modelo>»: load the most recent sent/approved revision
+  // for this product that has manual expense lines. Only when there is a catalog product as principal.
+  const [priorExpenses, setPriorExpenses] = useState<PriorExpenses | null>(null);
+  // Cheaply track the principal item's product_id for the fetch trigger: use `is_principal` when
+  // set, otherwise the first item. `principalItemOf` needs `computed`+`computedKeys` to resolve the
+  // priced line; this avoids that dependency so the fetch fires before the preview returns.
+  const principalProductId = useMemo(() => {
+    const marked = draft.items.find((i) => i.is_principal);
+    const item = marked ?? draft.items[0] ?? null;
+    return item?.product_id ?? null;
+  }, [draft.items]);
+  useEffect(() => {
+    if (!principalProductId) {
+      setPriorExpenses(null);
+      return;
+    }
+    let live = true;
+    const ctrl = new AbortController();
+    fetchProductExpenses(principalProductId, ctrl.signal).then(
+      (result) => live && setPriorExpenses(result),
+      () => live && setPriorExpenses(null),
+    );
+    return () => {
+      live = false;
+      ctrl.abort();
+    };
+  }, [principalProductId]);
+
   const manual = draft.expense_method === "manual";
   const principal = principalItemOf(draft, computed, computedKeys);
   const principalModel = principal
@@ -332,6 +362,30 @@ export function ExpensesSection({
                 Editar montos
               </button>
             </span>
+          ) : null}
+          {!manual && !disabled && priorExpenses ? (
+            <button
+              type="button"
+              onClick={() => {
+                edit((d) => ({
+                  ...d,
+                  expense_method: "manual",
+                  manual_expenses: priorExpenses.expenses.map((e) => ({
+                    label: e.label,
+                    amount: e.amount,
+                    currency: e.currency,
+                    uid: newLineUid(),
+                  })),
+                }));
+              }}
+              className="h-11 max-w-xs truncate rounded-md px-3 text-[13.5px] font-semibold text-accent hover:bg-brand-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            >
+              Usar gastos de {principalModel ?? "cotización anterior"} ({priorExpenses.quote_number}
+              {priorExpenses.sent_at
+                ? `, ${new Date(priorExpenses.sent_at).toLocaleDateString("es-CL", { day: "numeric", month: "short", year: "numeric" })}`
+                : ""}
+              )
+            </button>
           ) : null}
           <MethodToggle value={draft.expense_method} disabled={disabled} onChange={choose} />
         </div>
