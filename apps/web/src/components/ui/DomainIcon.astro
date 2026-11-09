@@ -1,0 +1,87 @@
+---
+/**
+ * Íconos de línea de las familias de equipo y de las industrias (portada y
+ * /aplicaciones/, dueño 2026-11-08: «con íconos, más lindo»). Mismo estilo que
+ * `Icon.astro`: 24×24, trazo 1,5, `currentColor`, extremos redondos. Trazos
+ * dibujados aquí o tomados de Tabler Icons (MIT). Siempre decorativos: el
+ * nombre de la familia o industria va en texto al lado.
+ */
+export type DomainIconName =
+  | 'sonicacion'
+  | 'pesaje-humedad'
+  | 'centrifugacion'
+  | 'osmometria'
+  | 'electroforesis'
+  | 'dispersion'
+  | 'alimentos'
+  | 'salmon'
+  | 'farma'
+  | 'hospitales'
+  | 'universidades'
+  | 'sector-publico';
+
+interface Props {
+  name: DomainIconName;
+  size?: number;
+  class?: string;
+}
+const { name, size = 24, class: className = '' } = Astro.props;
+
+const PATHS: Record<DomainIconName, string[]> = {
+  // Onda de ultrasonido saliendo de la punta de una sonda.
+  sonicacion: ['M9 3h6', 'M10 3v7l-2 4h8l-2 -4v-7', 'M6 18c1 -1 2 -1 3 0s2 1 3 0s2 -1 3 0s2 1 3 0', 'M8 21c.7 -.6 1.3 -.6 2 0s1.3 .6 2 0s1.3 -.6 2 0'],
+  // Balanza (Tabler «scale»).
+  'pesaje-humedad': ['M7 20l10 0', 'M6 6l6 -1l6 1', 'M12 3l0 17', 'M9 12l-3 -6l-3 6a3 3 0 0 0 6 0', 'M21 12l-3 -6l-3 6a3 3 0 0 0 6 0'],
+  // Rotor visto desde arriba, cuatro cubetas.
+  centrifugacion: [
+    'M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0 -18 0',
+    'M12 12m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0',
+    'M12 6.5m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0',
+    'M12 17.5m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0',
+    'M6.5 12m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0',
+    'M17.5 12m-1.5 0a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0',
+  ],
+  // Gota con el nivel de la muestra.
+  osmometria: [
+    'M7.5 19.4c2.6 2.1 6.4 2.1 9 0c2.6 -2.1 3.3 -5.7 1.6 -8.5l-4.9 -7.3a1.4 1.4 0 0 0 -2.4 0l-4.9 7.3c-1.7 2.8 -1 6.4 1.6 8.5z',
+    'M7 14h10',
+  ],
+  // Gel con bandas en dos carriles.
+  electroforesis: ['M5 3h14v18h-14z', 'M8 7h3', 'M13 7h3', 'M8 11h3', 'M13 13h3', 'M8 16h3', 'M13 17h3'],
+  // Remolino de la dispersión (Tabler «tornado»).
+  dispersion: ['M21 4l-18 0', 'M13 16l-6 0', 'M11 20l4 0', 'M6 8l14 0', 'M4 12l12 0'],
+  // Hoja (Tabler «leaf»).
+  alimentos: ['M5 21c.5 -4.5 2.5 -8 7 -10', 'M9 18c6.218 0 10.5 -3.288 11 -12v-2h-4.014c-9 0 -11.986 4 -12 9c0 1 0 3 2 5h3z'],
+  // Pez (Tabler «fish»).
+  salmon: [
+    'M16.69 7.44a6.973 6.973 0 0 0 -1.69 4.56c0 1.747 .64 3.345 1.699 4.571',
+    'M2 9.504c7.715 8.647 14.75 10.265 20 2.498c-5.25 -7.761 -12.285 -6.142 -20 2.504',
+    'M18 11v.01',
+  ],
+  // Cápsula (Tabler «pill»).
+  farma: ['M4.5 12.5l8 -8a4.94 4.94 0 0 1 7 7l-8 8a4.94 4.94 0 0 1 -7 -7', 'M8.5 8.5l7 7'],
+  // Cruz en un cuadro redondeado.
+  hospitales: ['M4 7a3 3 0 0 1 3 -3h10a3 3 0 0 1 3 3v10a3 3 0 0 1 -3 3h-10a3 3 0 0 1 -3 -3z', 'M12 8v8', 'M8 12h8'],
+  // Birrete (Tabler «school»).
+  universidades: ['M22 9l-10 -4l-10 4l10 4l10 -4v6', 'M6 10.6v5.4a6 3 0 0 0 12 0v-5.4'],
+  // Edificio con columnas (Tabler «building-bank»).
+  'sector-publico': ['M3 21l18 0', 'M3 10l18 0', 'M5 6l7 -3l7 3', 'M4 10l0 11', 'M20 10l0 11', 'M8 14l0 3', 'M12 14l0 3', 'M16 14l0 3'],
+};
+---
+
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  aria-hidden="true"
+  focusable="false"
+  class:list={['shrink-0', className]}
+>
+  {PATHS[name].map((d) => <path d={d} />)}
+</svg>

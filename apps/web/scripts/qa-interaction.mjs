@@ -1414,21 +1414,7 @@ console.log('\nPortada y cómo comprar');
   );
   check(home.includes('href="/como-comprar/"'), 'Home: enlaza la guía de compra');
 
-  // Tarjetas de familia: seis, con destinos distintos y los modelos de la colección (sin los de marcas ocultas),
-  // en el orden comercial de `src/lib/ranking.ts` (MODEL_ORDER; lo que no está, después).
-  const models = readdirSync(join(root, 'src/content/modelos'))
-    .filter((name) => name.endsWith('.json'))
-    .map((name) => JSON.parse(readFileSync(join(root, 'src/content/modelos', name), 'utf8')));
-  const rankingSrc = readFileSync(join(root, 'src/lib/ranking.ts'), 'utf8');
-  const MODEL_ORDER = [...(rankingSrc.match(/MODEL_ORDER = \[([\s\S]*?)\] as const/)?.[1] ?? '').matchAll(/'([\w-]+)'/g)].map(([, slug]) => slug);
-  const rank = (slug) => (MODEL_ORDER.indexOf(slug) + 1 || MODEL_ORDER.length + 1);
-  const expectedFoot = (family) =>
-    models
-      .filter((entry) => entry.family === family && !HIDDEN_ON_HOME.includes(entry.brand))
-      .sort((a, b) => rank(a.slug) - rank(b.slug))
-      .slice(0, 2)
-      .map((entry) => entry.name)
-      .join(' · ');
+  // Fichas de familia: seis, con destinos distintos, cada una con ícono y verbo.
   const headlineB = claimApproved('cotizacion-mismo-dia-habil');
   const h1Expected = headlineB ? 'Cotización el mismo día. Directo con el fabricante.' : 'Equipos para cada etapa de su muestra.';
   const bandExpected = headlineB
@@ -1442,18 +1428,15 @@ console.log('\nPortada y cómo comprar');
   check(await cards.count() === 6, `Home: seis tarjetas de familia (${await cards.count()})`);
   const hrefs = await cards.evaluateAll((els) => els.map((el) => el.getAttribute('href')));
   check(new Set(hrefs).size === 6 && hrefs.every((href) => href?.startsWith('/') && href.endsWith('/')), `Home: seis destinos internos distintos (${hrefs.join(', ')})`);
-  // Cada modelo del pie es su propio enlace a la ficha: el pie está en la tarjeta (`li`), no dentro del enlace de la familia.
-  const foots = await cards.evaluateAll((els) => els.map((el) => el.closest('li')?.querySelector('.fam__models')?.textContent?.replace(/\s+/g, ' ').trim() ?? ''));
-  const wanted = hrefs.map((href) => expectedFoot(href === '/productos/centrifugas/' ? 'centrifugacion' : href.split('/')[2]));
-  check(
-    JSON.stringify(foots) === JSON.stringify(wanted) && wanted.every(Boolean),
-    `Home: cada tarjeta nombra los dos primeros modelos de la colección (${foots.join(' | ')})`,
+  // Fila de familias (dueño 2026-11-08): cada ficha lleva su ícono de línea y el verbo, sin nombres de modelo en línea.
+  const chips = await cards.evaluateAll((els) =>
+    els.map((el) => ({ icon: Boolean(el.querySelector('.fam__icon svg')), verb: el.querySelector('.fam__verb')?.textContent?.trim() ?? '' })),
   );
-  const hiddenNames = models.filter((entry) => HIDDEN_ON_HOME.includes(entry.brand)).map((entry) => entry.name);
   check(
-    hiddenNames.every((hidden) => !foots.some((foot) => foot.split(' · ').includes(hidden))),
-    'Home: las tarjetas no nombran modelos de la marca oculta',
+    chips.every((chip) => chip.icon && chip.verb.length > 0),
+    `Home: cada familia lleva ícono y verbo (${chips.map((chip) => chip.verb).join(', ')})`,
   );
+  check(await wide.locator('#familias .fam__models').count() === 0, 'Home: la fila de familias no repite nombres de modelo');
   const h1 = (await wide.locator('h1').first().textContent())?.replace(/\s+/g, ' ').trim();
   check(h1 === h1Expected, `Home: el titular sigue el estado de las afirmaciones (${h1})`);
   const bandBody = (await wide.locator('.band__body').textContent())?.trim();

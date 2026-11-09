@@ -3,6 +3,7 @@ import { applications } from '../../data/applications';
 import { publicClaim } from '../../data/claims';
 import { industries } from '../../data/industries';
 import { familyInfo, type FamilySlug } from '../../lib/modelos';
+import DomainIcon, { type DomainIconName } from './DomainIcon.astro';
 
 /**
  * Industrias en seis tiles de texto (portada y /aplicaciones/, dueña
@@ -16,6 +17,7 @@ import { familyInfo, type FamilySlug } from '../../lib/modelos';
  *   (`applications.ts`); sin familias, la afirmación aprobada de Mercado
  *   Público y el enlace a cómo comprar por esa vía. Nada redactado aquí.
  * - `headingLevel`: nivel del nombre de cada tile según la página.
+ * - Cada tile lleva su ícono de línea (`DomainIcon`) en un disco teal pálido.
  */
 interface Props {
   headingLevel?: 'h3' | 'h4';
@@ -26,14 +28,22 @@ const LEAD = ['Alimentos y agro', 'Salmón', 'Farma', 'Hospitales', 'Universidad
 const ordered = [...industries].sort(
   (a, b) => (LEAD.indexOf(a.name) + 1 || 99) - (LEAD.indexOf(b.name) + 1 || 99),
 );
+const ICON: Record<string, DomainIconName> = {
+  'Alimentos y agro': 'alimentos',
+  Salmón: 'salmon',
+  Farma: 'farma',
+  Hospitales: 'hospitales',
+  Universidades: 'universidades',
+  'Sector público': 'sector-publico',
+};
 const leadApplication = (slug: FamilySlug) =>
   applications.find((application) => application.familyIds[0] === familyInfo(slug).scopeId);
 
 const tiles = ordered.map((item) => {
   const apps = [...new Set(item.families.map(leadApplication).filter((app) => app !== undefined))];
   return apps.length > 0
-    ? { name: item.name, line: apps.map((app) => app.name).join(' · '), href: `/aplicaciones/#${apps[0]!.slug}`, go: 'Ver equipos' }
-    : { name: item.name, line: publicClaim('vende-mercado-publico'), href: item.href, go: 'Cómo cotizar' };
+    ? { name: item.name, icon: ICON[item.name], line: apps.map((app) => app.name).join(' · '), href: `/aplicaciones/#${apps[0]!.slug}`, go: 'Ver equipos' }
+    : { name: item.name, icon: ICON[item.name], line: publicClaim('vende-mercado-publico'), href: item.href, go: 'Cómo cotizar' };
 });
 ---
 
@@ -41,6 +51,11 @@ const tiles = ordered.map((item) => {
   {
     tiles.map((tile) => (
       <li data-industry>
+        {tile.icon && (
+          <span class="ind__icon">
+            <DomainIcon name={tile.icon} size={26} />
+          </span>
+        )}
         <Heading class="ind__name">{tile.name}</Heading>
         {tile.line && <p class="ind__line">{tile.line}</p>}
         <a class="ind__go" href={tile.href}>
@@ -67,6 +82,16 @@ const tiles = ordered.map((item) => {
     gap: 0.5rem;
     padding: 1.75rem 0 2.25rem;
     border-top: 1px solid var(--color-hairline);
+  }
+  .ind__icon {
+    display: grid;
+    place-items: center;
+    width: 3.25rem;
+    height: 3.25rem;
+    margin-bottom: 0.75rem;
+    border-radius: 50%;
+    background: var(--color-surface);
+    color: var(--color-teal-700);
   }
   .ind__name {
     font-size: clamp(1.25rem, 1.6vw, 1.5rem);

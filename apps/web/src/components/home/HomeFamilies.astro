@@ -1,10 +1,11 @@
 ---
 import { getCollection } from 'astro:content';
 import Icon from '../ui/Icon.astro';
+import DomainIcon from '../ui/DomainIcon.astro';
 import LitCard from '../ui/LitCard.astro';
 import { publicClaim } from '../../data/claims';
 import { isShownOnHome } from '../../data/brands';
-import { homeFamilyCards, modelHref } from '../../lib/modelos';
+import { homeFamilyCards } from '../../lib/modelos';
 import { rankFamilies, rankModels } from '../../lib/ranking';
 import { turntableFor } from '../../lib/turntable';
 import type { Modelo } from '../../content.config';
@@ -14,10 +15,11 @@ import type { Modelo } from '../../content.config';
  *
  * 1. Fila de modelos: el primer modelo de cada una de las cuatro primeras
  *    familias en el orden comercial (`rankFamilies` / `rankModels`: 3D primero),
- *    cada uno una `LitCard` sobre el tinte de su familia, directo a la ficha.
- * 2. Las seis familias en una franja compacta: el verbo (enlace a la familia,
- *    `.home-family-card`) y los dos primeros modelos de la colección, cada uno
- *    enlazado a su ficha (regla del dueño).
+ *    cada uno una `LitCard` blanca, directo a la ficha.
+ * 2. Las seis familias como fila de fichas: ícono de línea (`DomainIcon`) y el
+ *    verbo, enlace a la página de la familia (`.home-family-card`). Sin los
+ *    nombres de modelo en línea (dueño 2026-11-08: «se ven raros»): los modelos
+ *    ya están en las tarjetas y en el mega-menú.
  *
  * La etiqueta de cifras sale del registro de afirmaciones. Con el titular B en
  * la primera pantalla, este bloque lleva «Elija el equipo. Nosotros lo cotizamos.»
@@ -43,7 +45,8 @@ const row = families
 ---
 
 <section class="shell home-sec" id="familias" aria-labelledby="familias-title">
-  <div class="home-head rv">
+  <div class="fam-intro rv">
+  <div class="home-head">
     {label && <p class="t-label">{label}</p>}
     <h2 id="familias-title" class="home-h2">
       {
@@ -60,6 +63,10 @@ const row = families
     </h2>
     <p class="lede">Directo del fabricante, con la ficha técnica en cada cotización.</p>
   </div>
+  <figure class="fam-intro__machine" aria-hidden="true">
+    <img class="pz" src="/products/ohaus-pioneer-px-poster.jpg" alt="" width="1200" height="900" loading="lazy" decoding="async" />
+  </figure>
+  </div>
 
   <ul class="row rv">
     {
@@ -74,22 +81,14 @@ const row = families
   <ul class="fam rv" aria-label="Familias de equipo">
     {
       families.map((family) => (
-        <li style={`--fam-ink: var(${family.colorVar})`}>
-          <h3 class="fam__verb">
-            <a class="home-family-card" href={family.href}>
-              <i aria-hidden="true" />
-              {family.verb}
-              <Icon name="arrow-right" size={16} class="arrow" />
-            </a>
-          </h3>
-          <p class="fam__models">
-            {family.models.map((entry, index) => (
-              <>
-                {index > 0 && <span aria-hidden="true"> · </span>}
-                <a href={modelHref(entry)} translate="no">{entry.name}</a>
-              </>
-            ))}
-          </p>
+        <li>
+          <a class="home-family-card" href={family.href}>
+            <span class="fam__icon">
+              <DomainIcon name={family.slug} size={22} />
+            </span>
+            <span class="fam__verb">{family.verb}</span>
+            <Icon name="arrow-right" size={16} class="arrow" />
+          </a>
         </li>
       ))
     }
@@ -97,6 +96,36 @@ const row = families
 </section>
 
 <style>
+  /* Titular a la izquierda y un equipo a la derecha (dueño 2026-11-08: sin
+     espacio blanco vacío junto a los titulares grandes). */
+  .fam-intro {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+    align-items: center;
+    gap: clamp(2rem, 4vw, 4rem);
+    margin-bottom: clamp(2.5rem, 5vw, 4rem);
+  }
+  .fam-intro .home-head {
+    margin-bottom: 0;
+  }
+  .fam-intro__machine {
+    margin: 0;
+  }
+  .fam-intro__machine img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 22rem;
+    object-fit: contain;
+  }
+  @media (max-width: 899.98px) {
+    .fam-intro {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .fam-intro__machine img {
+      max-height: 14rem;
+    }
+  }
   .row {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -118,74 +147,86 @@ const row = families
     }
   }
 
-  /* Las seis familias: una franja de verbos, cada uno con su punto de tinte. */
+  /* Las seis familias: una fila de fichas blancas con ícono y verbo. */
   .fam {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 0 1.5rem;
-    margin: clamp(3.5rem, 6vw, 5rem) 0 0;
+    gap: 0.75rem;
+    margin: clamp(3rem, 5vw, 4.5rem) 0 0;
     padding: 0;
     list-style: none;
-    border-top: 1px solid var(--color-hairline);
-  }
-  .fam > li {
-    padding-top: 1.25rem;
-  }
-  .fam__verb {
-    font-size: 1.125rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
   }
   .home-family-card {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 0.5rem;
-    min-height: 2.75rem;
+    gap: 0.75rem;
+    min-height: 3.5rem;
+    padding: 0.625rem 0.875rem 0.625rem 0.625rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+    background: var(--color-paper);
     color: var(--color-ink-950);
+    transition: box-shadow var(--ease-ui), border-color var(--ease-ui);
   }
-  .home-family-card i {
+  .fam__icon {
+    display: grid;
     flex: none;
-    width: 0.625rem;
-    height: 0.625rem;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
     border-radius: 50%;
-    background: color-mix(in srgb, var(--fam-ink) 70%, #fff);
+    background: var(--color-surface);
+    color: var(--color-teal-700);
+  }
+  .fam__verb {
+    flex: 1;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
   }
   .home-family-card :global(.arrow) {
     color: var(--color-teal-700);
     transition: transform var(--ease-ui);
   }
   .home-family-card:hover {
-    color: var(--color-teal-800);
+    border-color: var(--color-band-line);
+    box-shadow: var(--shadow-card);
+  }
+  .home-family-card:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
   }
   @media (prefers-reduced-motion: no-preference) {
     .home-family-card:hover :global(.arrow) {
       transform: translateX(3px);
     }
   }
-  .fam__models {
-    font-size: 0.875rem;
-    color: var(--color-ink-500);
-    line-height: 1.4;
-  }
-  .fam__models a {
-    display: inline-flex;
-    align-items: center;
-    min-height: 2.75rem;
-    color: var(--color-teal-800);
-  }
-  .fam__models a:hover {
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-  @media (max-width: 1023.98px) {
+  @media (max-width: 1199.98px) {
     .fam {
       grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
+  .fam > li,
+  .fam__verb {
+    min-width: 0;
+  }
   @media (max-width: 639.98px) {
     .fam {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0 1rem;
+      gap: 0.5rem;
+    }
+    .home-family-card {
+      gap: 0.5rem;
+      padding-right: 0.625rem;
+    }
+    .fam__verb {
+      font-size: 0.9375rem;
+      overflow-wrap: anywhere;
+    }
+    /* En teléfono toda la ficha es el enlace: la flecha sobra y empujaba el ancho. */
+    .home-family-card :global(.arrow) {
+      display: none;
     }
   }
 </style>
