@@ -11,6 +11,7 @@
 | `POST /v2/commands/record-case-won` | the case was won, against this sent, current quote revision |
 | `POST /v2/commands/resolve-current-revision` | of this quote's current revisions, this one is the current one |
 | `POST /v2/commands/record-case-quotation` | this quote was already sent on this case, by this Gmail message |
+| `POST /v2/commands/set-case-origin` | the channel this case came from, set or corrected (null clears it) |
 
 **Why a third router.** `routes.py` is the read boundary and a test over its own methods
 asserts it has no POST; `command_routes.py` is the evidence-review write path. This is the
@@ -58,6 +59,7 @@ from origenlab_api.v2.case_commands import (
     RECORD_CASE_WON,
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
+    SET_CASE_ORIGIN,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     CompleteCaseFromSentQuoteBody,
@@ -70,6 +72,7 @@ from origenlab_api.v2.case_commands import (
     RecordCaseWonBody,
     ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
+    SetCaseOriginBody,
     validated_case,
 )
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
@@ -341,6 +344,32 @@ def record_case_quotation(
     """
     return _run(
         command_name=RECORD_CASE_QUOTATION,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/set-case-origin")
+def set_case_origin(
+    body: SetCaseOriginBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Set or correct the channel a case came from (`crm.opportunity.origin`); `origin: null` clears it.
+
+    One of the nine channels of `case_origin.py` or null (422 otherwise; the field is required, so
+    leaving it out is a 422 too). The case version shown must be current (409
+    `case_version_conflict`), the case must exist (404 `case_not_found`), and the origin must
+    actually change (409 `case_origin_unchanged`). It writes one `opportunity.origin_set` event with
+    the old and the new value and bumps the case version; it touches nothing else, and a closed
+    case may be corrected. A tender is refused like every general case command (409
+    `tender_not_a_sale`).
+    """
+    return _run(
+        command_name=SET_CASE_ORIGIN,
         body=body,
         repo=repo,
         operator=operator,

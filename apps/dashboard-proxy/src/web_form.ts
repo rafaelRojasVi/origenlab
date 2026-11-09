@@ -91,7 +91,18 @@ export async function handleWebFormRequest(
   if (isNaN(renderAt)) {
     renderAt = Date.parse(renderAtRaw) / 1000;
   }
-  if (Number.isFinite(renderAt) && renderAt > 0 && Date.now() / 1000 - renderAt < 3) {
+  const hasRenderAt = Number.isFinite(renderAt) && renderAt > 0;
+  if (isNoJs) {
+    // Without JavaScript the hidden render_at input stays empty: there is no timing signal.
+    // Forward a usable number or nothing at all — never "" (the API would refuse it and the
+    // lead would be lost).
+    if (hasRenderAt) {
+      fields["render_at"] = String(renderAt);
+    } else {
+      delete fields["render_at"];
+    }
+  }
+  if (hasRenderAt && Date.now() / 1000 - renderAt < 3) {
     return new Response(JSON.stringify({ status: "received" }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -138,7 +149,7 @@ export async function handleWebFormRequest(
 
   // C2: no-JS browsers (form-encoded or multipart submission) get a 303 redirect on success
   if (isNoJs && upstreamResp.ok) {
-    return new Response(null, { status: 303, headers: { Location: "/contacto/?ok=1" } });
+    return new Response(null, { status: 303, headers: { Location: `${WEB_FORM_ORIGIN}/contacto/enviado/` } });
   }
   return new Response(upstreamResp.body, {
     status: upstreamResp.status,

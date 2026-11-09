@@ -22,6 +22,7 @@ import {
   type NoteRow,
 } from "./crmAuthoringApi";
 import { isAdmin } from "./authoring";
+import { callOutcomeLabel } from "../callOutcome";
 
 interface NoteListProps {
   notes: NoteRow[];
@@ -101,6 +102,11 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
                     <p className="font-medium text-ink">{n.author_name}</p>
                     <p className="text-[11px] text-ink-faint">{fmtDate(n.created_at)}</p>
                   </div>
+                  {n.note_kind === "llamada" ? (
+                    <Badge tone="brand" glyph={false}>
+                      {`Llamada · ${callOutcomeLabel(n.call_outcome ?? "")}`}
+                    </Badge>
+                  ) : null}
                   {n.status === "archived" ? <Badge tone="neutral">Archivada</Badge> : null}
                   {n.revision_no > 1 ? (
                     <Badge tone="info" glyph={false}>
@@ -118,7 +124,14 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
                     onCancel={() => setEditId(null)}
                   />
                 ) : (
-                  <p className="mt-2 whitespace-pre-wrap break-words text-ink">{n.body}</p>
+                  <>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-ink">{n.body}</p>
+                    {n.note_kind === "llamada" && n.call_next_step ? (
+                      <p className="mt-1 whitespace-pre-wrap break-words text-ink-muted">
+                        <span className="font-medium">Siguiente paso:</span> {n.call_next_step}
+                      </p>
+                    ) : null}
+                  </>
                 )}
                 {error && archiveId === n.id ? <p className="mt-1 text-[11px] text-bad">{error}</p> : null}
                 <div className="mt-2 flex flex-wrap gap-2">

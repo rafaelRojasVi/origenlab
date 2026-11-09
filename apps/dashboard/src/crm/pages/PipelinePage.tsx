@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchCaseNotes, fetchPipeline } from "../crmApi";
 import { CaseMemory } from "./CaseMemory";
 import { crmHash } from "../crmRoute";
+import { CASE_ORIGINS, NO_ORIGIN_LABEL, ORIGIN_LABEL, matchesOrigin, originLabel, type OriginFilter } from "../caseOrigin";
+import { OriginSelect } from "../authoring/OriginSelect";
 import type { OpportunityCardData } from "../crmTypes";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { NoteList } from "../authoring/NoteList";
@@ -99,6 +101,7 @@ function Pipeline({
   const [status, setStatus] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>("board");
   const [q, setQ] = useState("");
+  const [origin, setOrigin] = useState<OriginFilter>("all");
   const [openId, setOpenId] = useState<string | null>(initialId);
   // A drawer opened by a drop on «Ganada» arrives with «Marcar ganada» open.
   const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
@@ -133,8 +136,11 @@ function Pipeline({
   }, [items]);
 
   const visible = useMemo(
-    () => items.filter((i) => (status === "all" || i.status === status) && matchesQuery(i, q)).sort(byLatestActivity),
-    [items, status, q],
+    () =>
+      items
+        .filter((i) => (status === "all" || i.status === status) && matchesOrigin(i, origin) && matchesQuery(i, q))
+        .sort(byLatestActivity),
+    [items, status, origin, q],
   );
   const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
   const revisions = items.reduce((n, i) => n + i.revision_count, 0);
@@ -202,6 +208,22 @@ function Pipeline({
             { value: "ok", label: "Al día", count: counts.ok },
           ]}
         />
+        <label className="flex items-center gap-1.5 text-xs text-ink-muted">
+          Origen
+          <select
+            value={origin}
+            onChange={(e) => setOrigin(e.target.value as OriginFilter)}
+            className="h-8 rounded-md border border-line bg-canvas-raised px-2 text-xs text-ink focus:border-brand-600 focus:outline-none"
+          >
+            <option value="all">Todos</option>
+            {CASE_ORIGINS.map((o) => (
+              <option key={o} value={o}>
+                {ORIGIN_LABEL[o]}
+              </option>
+            ))}
+            <option value="none">{NO_ORIGIN_LABEL}</option>
+          </select>
+        </label>
         <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
         <span className="text-xs text-ink-faint tabular-nums">{visible.length} resultados</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -250,7 +272,7 @@ function Pipeline({
           onClose={() => setDeciding(false)}
         />
       ) : visible.length === 0 ? (
-        <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado o la búsqueda.</EmptyState>
+        <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado u origen, o la búsqueda.</EmptyState>
       ) : view === "cards" ? (
         <CardGrid cards={visible} onOpen={(id) => open(id)} />
       ) : (
@@ -367,6 +389,11 @@ function SolicitudSinCotizarCard({
           {waitLabel} esperando
         </span>
       </div>
+      {card.origin ? (
+        <p className="text-[11px] leading-4 text-ink-faint" data-testid="card-origin">
+          Origen: {originLabel(card.origin)}
+        </p>
+      ) : null}
 
       {/* Institution + contact */}
       <button
@@ -479,6 +506,10 @@ export function OpportunityCard({
           ) : (
             <span className="text-ink-faint">Sin contacto</span>
           )}
+        </dd>
+        <dt className="text-ink-faint">Origen</dt>
+        <dd className={`min-w-0 truncate ${card.origin ? "text-ink-muted" : "text-ink-faint"}`} data-testid="card-origin">
+          {originLabel(card.origin)}
         </dd>
         <dt className="text-ink-faint">Revisión</dt>
         <dd className="min-w-0 truncate">
@@ -623,6 +654,11 @@ function OpportunityDrawer({
           {stage.label}
         </Badge>
         {card.status === "ok" ? null : <Badge tone={status.tone}>{status.label}</Badge>}
+        <span data-testid="case-origin-badge">
+          <Badge glyph={false} title="Por dónde llegó el caso">
+            Origen: {originLabel(card.origin)}
+          </Badge>
+        </span>
       </div>
 
       <CaseLinks card={card} />
@@ -714,6 +750,10 @@ function OpportunityDrawer({
             </li>
           ) : null}
         </ul>
+      </Section>
+
+      <Section title="Origen">
+        <OriginSelect card={card} onChanged={onChanged} />
       </Section>
 
       <Section title="Correos del caso">

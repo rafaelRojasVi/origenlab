@@ -143,6 +143,13 @@ def _all(db, sql, *args):
         return conn.execute(sql, args).fetchall()
 
 
+def test_a_tender_case_comes_from_mercado_publico(db, operator_id, world) -> None:
+    r = open_tender_case(db, operator_id, reference=world["code"], detail=_detail(world))
+    assert scalar(db, "select origin from crm.opportunity where id=%s", r["opportunity_id"]) == "mercado_publico"
+    assert scalar(db, "select payload->>'origin' from crm.domain_event where aggregate_id=%s "
+                      "and event_type='opportunity.created'", r["opportunity_id"]) == "mercado_publico"
+
+
 def test_tender_row_shape(db, operator_id, world) -> None:
     r = open_tender_case(db, operator_id, reference=world["code"], detail=_detail(world))
     assert row(db, "select kind, tender_status, stage, owner_operator_id::text from crm.opportunity where id=%s",

@@ -30,6 +30,7 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/workspace/mail-quote-numbers` | Quote numbers already seen in the captured Gmail (number, first sighting, message count; the 500 newest), for the Resumen's quote-number box. No address, subject or institution; GET only, operator session |
 | `/v2/workspace/mail-rules/preview` | Email → cases dry run: each planned action with its rule (R1–R8), reasons, case, institution and quote number, and the actions already applied. **Admin only** upstream (403 for sales and viewer); writes nothing |
 | `/v2/catalog/*` (7 exact paths — see *Catalog 1a* below) | Catalog reads |
+| `/v2/web/model-sheet/<id>`, `/v2/web/publish-status/<id>` | «Publicar web» editor reads: one model's sheet, and the state of its last publish. `<id>` is `[a-z0-9-]{1,60}`; operator session; GET only, no query string |
 
 **Refused on purpose** (GET: 403 `path_not_allowed`; POST: 405 `method_not_allowed`; never forwarded): every V1 surface — `/operator/*`, `/cases/warm`, `/opportunities/*`, `/operations/*`, `/contacts/*` and `/mirror/*`. Upstream they are gated only by the shared API key — no operator identity, no role, no redaction — and the current dashboard calls none of them, so V2 `/v2/*` is the only browser surface for CRM, contacts and evidence. The V1 paths and the V1 POST commands (including the tender annex upload) were removed from the allowlist in the source on 2026-10-03 (built, not deployed; see the note at the top). `/v2/cockpit/*` and every `/v2/workspace/*` path other than the named reads below are not listed either. The W10 unsubscribe tooling that carries message bodies (`POST /v2/unsubscribe/preview`, `POST /v2/commands/apply-unsubscribe-replies`) is API-only and never listed. See `docs/OPERATIONS.md`.
 
@@ -44,12 +45,14 @@ For **unprotected** upstreams (local dev, internal URL, FastAPI Cloud without Ac
 | `/v2/commands/advance-case-stage`, `/v2/commands/record-case-won`, `/v2/commands/resolve-current-revision`, `/v2/commands/record-case-quotation` | The case drawer's «Cambiar etapa», «Marcar ganada», «Elegir revisión vigente» and «Registrar cotización» / «Nueva revisión» (`CASE_COMMAND_POST_PATHS`). Upstream: active `sales`/`admin` operator, `Idempotency-Key`, the case version shown, a note; mounted only behind `ORIGENLAB_V2_COMMANDS_ENABLED`. Same Origin / JSON / key guard as the marketing commands, body ≤ 16 KiB. `open-commercial-case` is also allowed (owner decision 2026-10-10): «Abrir caso» on a «Correos sin caso» row opens a case at `lead` whose origin is that email; upstream requires the origin record, a title and a note. «Reabrir» on a reply to a lost case is `advance-case-stage` on that same case (2026-10-10). `record-case-interest` stays refused |
 | `/v2/commands/create-task`, `/v2/commands/complete-task`, `/v2/commands/cancel-task` | The W11 tasks behind «En pausa hasta…» (create), «Hecho» (complete) and «Retomar ahora» (cancel), in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the task version shown, not the case's). A task never changes the case's stage or version |
 | `/v2/commands/create-todo`, `/v2/commands/update-todo`, `/v2/commands/move-todo`, `/v2/commands/complete-todo`, `/v2/commands/reopen-todo`, `/v2/commands/delete-todo` | «Pendientes», the shared to-do list on Hoy, in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the line's version shown). A todo never changes a case's stage or version |
+| `/v2/commands/set-case-origin` | The case panel's «Origen» select: set or correct the channel a case came from (one of nine, or `null` to clear), in the same `CASE_COMMAND_POST_PATHS` list and under the same guard and upstream requirements (the case version shown, a note). Upstream refuses a stale version (409) and a value outside the nine (422) |
 | `/v2/commands/set-invoice-case`, `/v2/commands/mark-invoice-paid`, `/v2/commands/mark-invoice-unpaid` | «Pagos»: a factura's case, «Pagada» and its undo, in the same `CASE_COMMAND_POST_PATHS` list and under the same guard (the document's version shown). The SII CSV upload `/v2/commands/import-invoices` is multipart and listed with the other uploads (`CATALOG_UPLOAD_POST_PATHS`, at most 2 MiB + 64 KiB) |
 | `/v2/commands/<name>` for the 29 CRM-authoring commands (person, organization — `confirm-organization-record` included —, contact point, classification, product line, supplier-candidate resolution, notes) | CRM authoring; exact paths in `CRM_AUTHORING_COMMAND_POST_PATHS` (`src/allowlist.ts`). Evidence-bound and case commands are not in this list. Mounted upstream only behind `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` (default off) |
 | `/v2/commands/{create-product,update-product,confirm-product-content,record-supplier-cost,set-supplier-terms,set-cost-parameter,record-fx-rate,update-product-image,review-document-line}` | Catalog commands: 9 exact paths, JSON, body ≤ 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/{create-quote,save-quote-draft,approve-quote-revision,void-quote-revision,create-quote-revision}` | Cotizador commands: 5 exact paths, JSON, same guards as the catalog commands (`save-quote-draft` body ≤ 256 KiB, the rest 64 KiB) — see *Cotizador* below |
 | GET `/v2/quotes`, `/v2/quotes/clients`, `/v2/quotes/numbering`, `/v2/quotes/economics`, `/v2/quotes/<uuid>` | Cotizador reads (sales and admin upstream) — see *Cotizador* below |
 | POST `/v2/quotes/preview` | Cotizador live preview: a POST that reads, no `Idempotency-Key` — see *Cotizador* below |
+| POST `/v2/web/publish-model-sheet` | «Publicar web»: publish one model sheet to the site (the API validates it against `modelos.schema.json`, commits it and dispatches the deploy). JSON only, the same Origin / `Sec-Fetch-Site` guard as the quote preview, body ≤ 32 KiB, no `Idempotency-Key` (the API does not read one; its guard is one publish per model per 60 s). `WEB_PUBLISH_POST_PATHS` in `src/allowlist.ts` |
 | `/v2/commands/add-product-image` | Catalog image upload: one of the two multipart POSTs, body ≤ 8 MiB + 64 KiB — see *Catalog 1a* below |
 | `/v2/commands/attach-case-document` | A case's purchase order from the computer (2026-10-12): the second multipart POST, same guard as the image upload, body ≤ 20 MiB + 64 KiB. Upstream: active `sales`/`admin`, `Idempotency-Key`, a note; behind `ORIGENLAB_V2_COMMANDS_ENABLED` and Storage |
 | `/v2/commands/attach-case-document-from-email`, `/v2/commands/remove-case-document` | Copy a case email's purchase order into the case's documents, or remove one with its reason (`CASE_COMMAND_POST_PATHS`, JSON ≤ 16 KiB, same guard as the case commands) |
@@ -184,6 +187,63 @@ paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
 - `POST /v2/quotes/preview` computes a quote from a draft and writes nothing, so it has its own
   list (`QUOTE_PREVIEW_POST_PATHS`) and guard (`quotePreviewRefusal`): allowed `Origin`, no
   cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 256 KiB (`QUOTE_COMMAND_MAX_BYTES`) — and no `Idempotency-Key`.
+
+## Public stats route (`origenlab.cl/api/stats/*`)
+
+First-party analytics for the public site (`src/stats.ts`), a separate route family from the dashboard
+allowlist (like `/api/web/*`): no session, no operator identity, no CORS. Exactly two requests exist and
+everything else under the prefix is 404:
+
+- `POST /api/stats/event` — body `{name, props}`, at most 2 KB, `Origin: https://origenlab.cl`,
+  JSON or `text/plain` (what `sendBeacon` sends). `name` must be one of `cotizacion_click`, `whatsapp_click`,
+  `pdf_download`, `3d_interact`, `form_submit` (props `{modelo?}`, `modelo` matches `[A-Za-z0-9._-]{1,64}`;
+  `origen`/`pagina` are refused with 400) or `visita` (one per page view, props `{origen, pagina}`, both required,
+  no `modelo`): `origen` is one of `google`, `perfil-google`, `linkedin`, `directo`, `whatsapp`, `otro`, `interno`
+  (`interno`: a same-site navigation, from another origenlab.cl page; anything else is a 400) and `pagina` matches `^/[a-z0-9/-]{0,80}$` and contains no `//` (path only: no query, fragment, dot, `%` or
+  uppercase). No cookies, no identifiers. Other props are dropped.
+- `GET /api/stats/script.js` — only when `STATS_ORIGIN` is set; 404 otherwise.
+
+`STATS_ORIGIN` (a `[vars]` entry) picks the mode. Set to `https://host`, the validated event and the script
+are proxied to that self-hosted analytics origin (`STATS_EVENT_PATH` and `STATS_SCRIPT_PATH` adapt the
+upstream paths; proxy mode needs a payload adapter — Plausible `domain`/`url`, Umami `type`/`payload.website` —
+that does not exist yet, so counter mode only for now) with a fresh header set: never the browser's cookies or
+`Authorization`, never the API key or Access credentials. Proxy mode forwards `{name, props}` as validated.
+
+Empty (counter mode), the Worker writes **one Workers Analytics Engine data point per event** to the
+`STATS_AE` binding (dataset `origenlab_web_stats`), answers 204 and exposes nothing readable:
+
+| Field | Value |
+|---|---|
+| `blob1` | event name |
+| `blob2` | `modelo`, kept only if listed in `STATS_MODELOS` (real slugs such as `hielscher-up400st,hielscher-up200st,hielscher-up100h`, matched case-sensitively), else `other`; `""` when absent or for `visita` |
+| `blob3` | `origen` (`visita` only, else `""`) |
+| `blob4` | `pagina` (`visita` only), kept only if listed in `STATS_PAGINAS` (comma-separated paths such as `/,/catalogo,/contacto`, exact and case-sensitive, so `/catalogo` does not match `/catalogo/`), else `otra`; `""` for clicks |
+| `double1` | `1` |
+| `index1` | event name |
+
+There is no read-before-write, so concurrent events never lose a count. A failed `writeDataPoint` is
+swallowed (the visitor still gets 204, a fixed log line, no event data). Without the binding the event is
+validated and answered 204 and nothing is written, so a deploy without it is safe. The dataset needs no
+setup: Cloudflare creates it on the first write.
+
+Totals come from the Analytics Engine SQL API (`POST https://api.cloudflare.com/client/v4/accounts/<account_id>/analytics_engine/sql`,
+an API token with **Account Analytics: Read**). Sum `_sample_interval`, not `count()`, because Analytics Engine
+may sample at high volume:
+
+```sql
+SELECT blob1 AS evento, blob2 AS modelo, blob3 AS origen, blob4 AS pagina,
+       SUM(_sample_interval) AS total
+FROM origenlab_web_stats
+WHERE timestamp > NOW() - INTERVAL '7' DAY
+GROUP BY evento, modelo, origen, pagina
+ORDER BY total DESC
+```
+
+The free-plan allowance (data points per day, queries, retention) is not recorded here: the owner
+confirms it in the Cloudflare dashboard before relying on it.
+
+A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
+60 s. Nothing logs an IP, User-Agent or body.
 
 ## Response hardening
 

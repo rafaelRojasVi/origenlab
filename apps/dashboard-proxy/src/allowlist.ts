@@ -41,6 +41,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // record-case-quotation -- are reachable as POSTs through `CASE_COMMAND_POST_PATHS` below
   // (with the three W11 task commands); the other three case commands stay refused. Widening either
   // list is a separate, deliberate decision with its own review.
+  // «Publicar web» editor reads (`apps/api` v2/web_publish.py): one model's sheet, and the state of
+  // its last publish. GET-only; the id is the model file's name (`^[a-z0-9-]{1,60}$`), no query.
+  // The publish itself is the one POST in `WEB_PUBLISH_POST_PATHS`.
+  /^\/v2\/web\/model-sheet\/[a-z0-9-]{1,60}$/,
+  /^\/v2\/web\/publish-status\/[a-z0-9-]{1,60}$/,
   /^\/v2\/cases$/,
   /^\/v2\/cases\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   // CRM Marketing reads (`apps/api` v2/crm_workspace_routes.py). Exact paths only: the
@@ -343,8 +348,9 @@ export function isAllowedMailRulesCommandPostPath(pathname: string): boolean {
  * case email (`attach-case-document-from-email`) and removes one (`remove-case-document`). The six
  * «Pendientes» commands of Hoy (`create-todo`, `update-todo`, `move-todo`, `complete-todo`,
  * `reopen-todo`, `delete-todo`) ride the same list: a todo never changes a case, and so do the three
- * «Pagos» commands (`set-invoice-case`, `mark-invoice-paid`, `mark-invoice-unpaid`). Twenty-five
- * exact paths, and only twenty-five. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
+ * «Pagos» commands (`set-invoice-case`, `mark-invoice-paid`, `mark-invoice-unpaid`) and the case panel's
+ * «Origen» select (`set-case-origin`: the channel a case came from, or null to clear it). Twenty-six
+ * exact paths, and only twenty-six. Upstream each needs an active `sales` or `admin` operator (from the verified session, never
  * the body), an `Idempotency-Key`, the case (or task) version the operator was shown (the opening
  * command names its origin record instead) and a note, and mounts only behind
  * `ORIGENLAB_V2_COMMANDS_ENABLED`. `record-case-interest` stays refused. The reviewed cross-thread quotation flow
@@ -385,6 +391,9 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/set-invoice-case$/,
   /^\/v2\/commands\/mark-invoice-paid$/,
   /^\/v2\/commands\/mark-invoice-unpaid$/,
+  // The case panel's «Origen» select (2026-11-09): set or correct the channel a case came from. The case
+  // version shown is the case's; upstream refuses a stale one (409) and a value outside the nine (422).
+  /^\/v2\/commands\/set-case-origin$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */
@@ -626,6 +635,31 @@ export function isAllowedCatalogUploadPostPath(pathname: string): boolean {
 }
 
 /**
+ * «Publicar web» (`apps/api` v2/web_publish.py): the operator's model sheet, validated upstream and
+ * committed to the site. One exact POST path, never GET. Every request here must pass
+ * `webPublishRefusal` in index.ts: an allowed `Origin`, no cross-site `Sec-Fetch-Site`, a JSON body
+ * within `WEB_PUBLISH_MAX_BYTES`. No `Idempotency-Key`: the API does not read one (its guard is one
+ * publish per model per 60 s, upstream). Roles are enforced upstream.
+ */
+export const WEB_PUBLISH_POST_PATHS: readonly RegExp[] = [/^\/v2\/web\/publish-model-sheet$/];
+
+/**
+ * 32 KiB. The body is `{model_id, sheet}`, a whole model file: the largest sheet in the site's
+ * history is about 3.8 kB, so four times that is about 15 kB, rounded up to 32 KiB.
+ */
+export const WEB_PUBLISH_MAX_BYTES = 32_768;
+
+export function isAllowedWebPublishPostPath(pathname: string): boolean {
+  const pathOnly = pathname.split("?")[0];
+  return WEB_PUBLISH_POST_PATHS.some((pattern) => pattern.test(pathOnly));
+}
+
+/** Whether a body of `bytes` bytes fits the publish limit. Used for the declared length and the buffered body. */
+export function webPublishBodyWithinLimit(bytes: number): boolean {
+  return Number.isFinite(bytes) && bytes <= WEB_PUBLISH_MAX_BYTES;
+}
+
+/**
  * Sign-out. Clears the session cookie upstream (and records the logout); listed apart from
  * the commercial commands so it can never inherit their headers or be mistaken for one.
  */
@@ -665,6 +699,7 @@ export function isAllowedPostPath(pathname: string): boolean {
     isAllowedCatalogCommandPostPath(pathname) ||
     isAllowedCatalogUploadPostPath(pathname) ||
     isAllowedQuotePreviewPostPath(pathname) ||
+    isAllowedWebPublishPostPath(pathname) ||
     isAllowedAuthPostPath(pathname)
   );
 }

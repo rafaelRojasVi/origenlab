@@ -42,6 +42,8 @@ DEFAULT_BASE_URL = "https://dashboard.origenlab.cl"
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
 UUID_PATTERN = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 FILE_KEY_PATTERN = "[a-z0-9_-]{1,64}"
+MODEL_ID_PATTERN = "[a-z0-9-]{1,60}"
+MODEL_ID_PLACEHOLDER = "modelo-ficticio"
 MAX_SECONDS = 2.0
 MAX_AUTHENTICATED_SECONDS = 3.0
 SESSION_COOKIE = "__Host-origenlab_session"
@@ -56,6 +58,8 @@ PUBLIC_ROUTES = {
 # Routes mounted only when a deployment switch is on: 401 when on, 404 when off; either is fine.
 SWITCHED_ROUTES = {
     "/v2/workspace/marketing/test-send-history": "ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED",
+    f"/v2/web/model-sheet/{MODEL_ID_PLACEHOLDER}": "ORIGENLAB_V2_WEB_PUBLISH_ENABLED",
+    f"/v2/web/publish-status/{MODEL_ID_PLACEHOLDER}": "ORIGENLAB_V2_WEB_PUBLISH_ENABLED",
 }
 
 Fetch = Callable[[str], "tuple[int, bytes]"]
@@ -79,7 +83,7 @@ def allowlist_entries(ts_text: str) -> list[tuple[str, list[str]]]:
 
 
 def _expand(pattern: str) -> list[str]:
-    body = pattern[1:-1].replace(UUID_PATTERN, NIL_UUID).replace(FILE_KEY_PATTERN, "paquete").replace("\\/", "/")
+    body = pattern[1:-1].replace(UUID_PATTERN, NIL_UUID).replace(FILE_KEY_PATTERN, "paquete").replace(MODEL_ID_PATTERN, MODEL_ID_PLACEHOLDER).replace("\\/", "/")
     pieces = re.split(r"\(([a-z0-9_|-]+)\)", body)
     choices = [[p] if i % 2 == 0 else p.split("|") for i, p in enumerate(pieces)]
     paths = ["".join(c) for c in itertools.product(*choices)]

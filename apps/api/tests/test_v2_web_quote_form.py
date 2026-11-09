@@ -87,6 +87,59 @@ def test_institution_truncated_to_120_in_subject() -> None:
     assert len(subject) - len(prefix) == 120
 
 
+def test_product_in_subject_and_body() -> None:
+    from origenlab_api.v2.gmail_send import build_web_quote_message
+
+    raw = build_web_quote_message(
+        reply_to="ana@ficticio.invalid",
+        institution="Instituto Ficticio",
+        need="Necesito un sonicador",
+        extra={},
+        submitted_at="2026-11-07T10:00:00-03:00",
+        product="UP400St",
+        consent_version="consent-v1-2026-11",
+    )
+    msg = message_from_bytes(raw, policy=email.policy.default)
+    assert "UP400St" in msg["Subject"]
+    assert msg["Subject"] == "Solicitud de cotización — sitio web — Instituto Ficticio — UP400St"
+    body = msg.get_content()
+    assert "Producto: UP400St" in body
+    assert "Consentimiento: consent-v1-2026-11 2026-11-07T10:00:00-03:00" in body
+    # The product appears once: the route no longer also passes it through `extra`.
+    assert body.count("Producto:") == 1
+
+
+def test_no_product_keeps_original_subject() -> None:
+    from origenlab_api.v2.gmail_send import build_web_quote_message
+
+    raw = build_web_quote_message(
+        reply_to="ana@ficticio.invalid",
+        institution="Instituto Ficticio",
+        need="Necesito un sonicador",
+        extra={},
+        submitted_at="2026-11-07T10:00:00-03:00",
+    )
+    msg = message_from_bytes(raw, policy=email.policy.default)
+    assert msg["Subject"] == "Solicitud de cotización — sitio web — Instituto Ficticio"
+    body = msg.get_content()
+    assert "Producto:" not in body
+    assert "Consentimiento:" not in body
+
+
+def test_product_with_crlf_in_subject_is_refused_by_the_builder() -> None:
+    from origenlab_api.v2.gmail_send import build_web_quote_message
+
+    with pytest.raises(ValueError):
+        build_web_quote_message(
+            reply_to="a@b.invalid",
+            institution="Instituto Ficticio",
+            need="x",
+            extra={},
+            submitted_at="2026-11-07T10:00:00-03:00",
+            product="UP400St\r\nBcc: bad@evil.invalid",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Mounting tests — require create_app()
 # ---------------------------------------------------------------------------
@@ -256,6 +309,26 @@ def test_timing_guard_silently_succeeds_without_sending() -> None:
     assert sender.calls == []
 
 
+def test_submission_without_render_at_is_accepted_and_sent() -> None:
+    """A no-JS form has no timing signal: the request is not refused and the mail goes out."""
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    body = _body()
+    del body["render_at"]
+    r = client.post("/v2/web/quote-request", json=body)
+    assert r.status_code == 200
+    assert r.json()["status"] == "sent"
+    assert len(sender.calls) == 1
+
+
+def test_submission_with_null_render_at_is_accepted_and_sent() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(render_at=None))
+    assert r.status_code == 200
+    assert len(sender.calls) == 1
+
+
 def test_honeypot_non_empty_silently_succeeds_without_sending() -> None:
     """Non-empty honeypot field silently succeeds without calling the sender."""
     sender = _MockSender()
@@ -357,3 +430,72 @@ def test_sent_timestamps_swallow_a_database_failure() -> None:
         raise RuntimeError("down")
 
     assert sent_timestamps_last_24h(broken, "dsn") == []
+
+
+# ---------------------------------------------------------------------------
+# product / consent_version on the route
+# ---------------------------------------------------------------------------
+
+
+def test_route_carries_product_and_consent_version_into_the_mail() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post(
+        "/v2/web/quote-request",
+        json=_body(product="  UP400St  ", consent_version="consent-v1-2026-11"),
+    )
+    assert r.status_code == 200
+    msg = message_from_bytes(sender.calls[0], policy=email.policy.default)
+    assert msg["Subject"].endswith("— UP400St")
+    body = msg.get_content()
+    assert body.count("Producto: UP400St") == 1
+    assert "Consentimiento: consent-v1-2026-11 " in body
+
+
+def test_route_product_with_newline_is_flattened_not_a_header() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post(
+        "/v2/web/quote-request",
+        json=_body(product="UP400St\r\nBcc: bad@evil.invalid\x07"),
+    )
+    assert r.status_code == 200
+    msg = message_from_bytes(sender.calls[0], policy=email.policy.default)
+    assert msg["Bcc"] is None
+    assert "\n" not in msg["Subject"]
+
+
+def test_route_whitespace_only_product_is_treated_as_absent() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(product="   ", consent_version="  "))
+    assert r.status_code == 200
+    msg = message_from_bytes(sender.calls[0], policy=email.policy.default)
+    assert msg["Subject"] == "Solicitud de cotización — sitio web — U. de Chile"
+    body = msg.get_content()
+    assert "Producto:" not in body
+    assert "Consentimiento:" not in body
+
+
+def test_product_field_too_long_is_rejected() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(product="P" * 121))
+    assert r.status_code == 422
+    assert sender.calls == []
+
+
+def test_consent_version_too_long_is_rejected() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(consent_version="c" * 81))
+    assert r.status_code == 422
+    assert sender.calls == []
+
+
+def test_product_at_the_limit_is_accepted() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(product="P" * 120, consent_version="c" * 80))
+    assert r.status_code == 200
+    assert len(sender.calls) == 1

@@ -24,6 +24,9 @@ COPY apps/email-pipeline/pyproject.toml apps/email-pipeline/uv.lock apps/email-p
 COPY apps/email-pipeline/src apps/email-pipeline/src
 COPY apps/email-pipeline/data/catalog/catalog_seed_v1.json apps/email-pipeline/data/catalog/catalog_seed_v1.json
 
+# «Publicar web» validates a sheet against the public site's own JSON Schema (v2/web_publish.py).
+COPY apps/web/src/content/modelos.schema.json apps/web/src/content/modelos.schema.json
+
 COPY apps/api/pyproject.toml apps/api/uv.lock apps/api/README.md apps/api/
 COPY apps/api/src apps/api/src
 

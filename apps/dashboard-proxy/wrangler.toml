@@ -4,6 +4,16 @@ compatibility_date = "2025-04-01"
 
 [vars]
 ORIGENLAB_API_UPSTREAM = "https://api.origenlab.cl"
+# Empty = built-in counter mode (Analytics Engine); set to the analytics origin (https://host) to proxy. See the stats block below.
+STATS_ORIGIN = ""
+# Counter mode only: comma-separated modelo slugs that may appear in the data points (blob2), e.g.
+# "hielscher-up400st,hielscher-up200st,hielscher-up100h". Matching is case-sensitive.
+# Any other modelo counts as "other"; empty = every modelo counts as "other".
+STATS_MODELOS = ""
+# Counter mode only: comma-separated page paths (lowercase, e.g. "/,/catalogo,/contacto") that a `visita`
+# data point may carry (blob4). Exact match, no trailing-slash folding. Any other page counts as "otra";
+# empty = every page counts as "otra" (the per-source totals still work). Distinct values: 7 x (pages + 1).
+STATS_PAGINAS = ""
 
 [[routes]]
 pattern = "dashboard.origenlab.cl/api*"
@@ -20,3 +30,29 @@ zone_name = "origenlab.cl"
 name = "WEB_FORM_RATE_LIMIT"
 namespace_id = "1001"
 simple = { limit = 5, period = 60 }
+# First-party analytics for the public site: POST /api/stats/event and GET /api/stats/script.js
+# (src/stats.ts). Two modes, chosen by STATS_ORIGIN:
+#   unset/empty -> the Worker records the six events itself in Analytics Engine (STATS_AE);
+#   set         -> events and script.js are proxied to that self-hosted analytics origin
+#                  (https://host only: no path, no credentials). Proxy mode needs a payload adapter
+#                  (Plausible `domain`/`url`, Umami `type`/`payload.website`) that does not exist yet:
+#                  use counter mode only for now.
+# Optional vars when proxying (defaults are Plausible CE; Umami is /api/send and /script.js):
+#   STATS_EVENT_PATH  = "/api/event"
+#   STATS_SCRIPT_PATH = "/js/script.js"
+[[routes]]
+pattern = "origenlab.cl/api/stats/*"
+zone_name = "origenlab.cl"
+
+# 60 events per IP per 60 s: analytics fires several times per page view, unlike the quote form.
+[[ratelimits]]
+name = "STATS_RATELIMIT"
+namespace_id = "1002"
+simple = { limit = 60, period = 60 }
+
+# Counter mode (STATS_ORIGIN empty): one Workers Analytics Engine data point per event
+# (src/stats.ts, README «Public stats route»). Nothing to create: the dataset appears on the first write.
+# Without this binding the events are still validated and answered 204, and nothing is written.
+[[analytics_engine_datasets]]
+binding = "STATS_AE"
+dataset = "origenlab_web_stats"

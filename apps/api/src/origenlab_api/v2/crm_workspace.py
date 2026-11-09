@@ -264,7 +264,7 @@ _OVERVIEW_COUNTS_SQL: str = "select " + ",\n       ".join(
 # Sales cases only (`case_kind.py`): every card — Oportunidades, Tablero, Hoy and its follow-ups —
 # is built from this list, so a tender never becomes one.
 _SQL_PIPELINE_OPPS = f"""
-    select op.id::text as opportunity_id, op.title, op.stage, op.version,
+    select op.id::text as opportunity_id, op.title, op.stage, op.version, op.origin,
            op.organization_id::text as organization_id, o.name as organization_name,
            o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
@@ -1138,6 +1138,8 @@ def compose_pipeline(
                 "updated_at": opp.get("updated_at"),
                 "closed_at": opp.get("closed_at"),
                 "close_reason": opp.get("close_reason"),
+                # The channel the case came from (`case_origin.py`); null = nobody classified it.
+                "origin": opp.get("origin"),
                 "organization": organization,
                 # Confirmation of this institution's ROLE on this case, not its
                 # general CRM organization-record confirmation.
@@ -2237,7 +2239,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2423,7 +2425,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2525,7 +2527,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest

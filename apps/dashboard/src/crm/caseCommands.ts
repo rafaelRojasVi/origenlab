@@ -19,6 +19,7 @@ import type { AuthSessionState } from "../api/authClient";
 import { OperatorApiError, notifyIfSessionRefused, operatorApiUrl } from "../api/operatorClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
+import type { CaseOrigin } from "./caseOrigin";
 import { STAGE_LABEL } from "./stage";
 import { envelopeOfError } from "../api/refusalEnvelope";
 
@@ -38,6 +39,7 @@ export const CASE_COMMAND_PATHS = {
   createRequestFromForward: "/v2/commands/create-request-from-forward",
   dismissForwardedRequest: "/v2/commands/dismiss-forwarded-request",
   removeAutomaticAction: "/v2/commands/remove-automatic-action",
+  setCaseOrigin: "/v2/commands/set-case-origin",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -161,12 +163,15 @@ export function applyCaseReceipt(
     if (typeof card.version === "number" && receipt.opportunity_version <= card.version) return card;
     const stage = typeof receipt.stage === "string" ? receipt.stage : card.stage;
     const closing = TERMINAL_RECEIPT_STAGES.has(stage) && !TERMINAL_RECEIPT_STAGES.has(card.stage);
+    // A corrected origin shows at once; `null` is a cleared one, so presence decides, not truthiness.
+    const originSet = receipt.command === "set_case_origin" && "origin" in receipt;
     return {
       ...card,
       stage,
       version: receipt.opportunity_version,
       updated_at: now.toISOString(),
       closed_at: closing ? now.toISOString() : card.closed_at,
+      ...(originSet ? { origin: (receipt.origin as string | null) ?? null } : {}),
     };
   });
 }
@@ -271,6 +276,17 @@ export interface AdvanceCaseStageBody {
 
 export const advanceCaseStage = (body: AdvanceCaseStageBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.advanceStage, body, idempotencyKey);
+
+/** `origin: null` clears it. The note is required: it lands in the case's audit trail. */
+export interface SetCaseOriginBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  origin: CaseOrigin | null;
+  note: string;
+}
+
+export const setCaseOrigin = (body: SetCaseOriginBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.setCaseOrigin, body, idempotencyKey);
 
 export interface RecordCaseWonBody {
   opportunity_id: string;
@@ -551,6 +567,8 @@ const REFUSAL_ES: Record<string, string> = {
   supplier_exception_is_not_needed: "No corresponde registrar una excepción de proveedor para esta institución.",
   case_is_closed: "El caso ya está cerrado; un caso cerrado no se reabre.",
   case_is_already_at_that_stage: "El caso ya está en esa etapa.",
+  case_origin_unchanged: "El caso ya tiene ese origen.",
+  tender_not_a_sale: "Esto es una licitación, no una venta: su origen no se corrige aquí.",
   stage_transition_not_allowed: "Ese cambio de etapa no está permitido desde la etapa actual.",
   stage_requires_a_confirmed_requesting_institution:
     "Para esa etapa el caso necesita una institución solicitante confirmada por una persona.",

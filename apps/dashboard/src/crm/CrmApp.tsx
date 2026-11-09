@@ -20,6 +20,7 @@ const PipelinePage = lazyPage(() => import("./pages/PipelinePage").then((m) => m
 const OrganizationsPage = lazyPage(() => import("./pages/OrganizationsPage").then((m) => m.OrganizationsPage));
 const PeoplePage = lazyPage(() => import("./pages/PeoplePage").then((m) => m.PeoplePage));
 const CatalogPage = lazyPage(() => import("./pages/CatalogPage").then((m) => m.CatalogPage));
+const ModelSheetPage = lazyPage(() => import("./pages/ModelSheetPage").then((m) => m.ModelSheetPage));
 const CotizadorModulePage = lazyPage(() => import("./pages/CotizadorModulePage").then((m) => m.CotizadorModulePage));
 const LicitacionesPage = lazyPage(() => import("./tenders/LicitacionesPage").then((m) => m.LicitacionesPage));
 const ProspectosPage = lazyPage(() => import("./prospects/ProspectosPage").then((m) => m.ProspectosPage));
@@ -122,6 +123,8 @@ function Section({
       return <PeoplePage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "catalogo":
       return <CatalogPage id={id} navigate={navigate} />;
+    case "catalogo-web":
+      return <ModelSheetPage id={id} navigate={navigate} />;
     case "cotizador":
       // Not keyed by the quote: the module stays mounted while its tabs change.
       return <CotizadorModulePage quoteId={id} pane={pane} navigate={navigate} />;
@@ -406,6 +409,7 @@ const ICON_PATHS: Record<CrmSection, string> = {
   organizaciones: "M3 13.5V4l5-2 5 2v9.5M2 13.5h12M6 6.5h1M9 6.5h1M6 9h1M9 9h1M7 13.5v-2h2v2",
   personas: "M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5M11 3.5a2 2 0 0 1 0 4M12 9.7c1.1.5 1.8 1.6 2 3.3",
   catalogo: "M3 2.5h7.5l2.5 2.5v8.5H3zM10.5 2.5V5H13M5.5 7.5h5M5.5 10h5",
+  "catalogo-web": "M2.5 3.5h11v6h-11zM6 12.5h4M8 9.5v3M5 6.5l1.5 1.5L8.5 5.5l2 2",
   marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
   historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
   datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",

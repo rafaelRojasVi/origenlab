@@ -178,8 +178,121 @@ describe("web form handler", () => {
     const resp = await handleWebFormRequest(req, TEST_ENV);
     // no-JS path: form-encoded → Worker returns 303 after successful upstream call
     expect(resp.status).toBe(303);
-    expect(resp.headers.get("Location")).toBe("/contacto/?ok=1");
+    expect(resp.headers.get("Location")).toBe("https://origenlab.cl/contacto/enviado/");
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("no-JS success redirects to /contacto/enviado/ for a browser form post", async () => {
+    stubUpstreamFetch();
+    const renderAt = String(Math.floor(Date.now() / 1000) - 10);
+    const req = new Request("https://origenlab.cl/api/web/solicitud", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": WEB_ORIGIN,
+        "Accept": "text/html",
+      },
+      body: new URLSearchParams({
+        need: "sonicador",
+        email: "ana@ficticio.invalid",
+        render_at: renderAt,
+      }).toString(),
+    });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    expect(resp.headers.get("Location")).toBe("https://origenlab.cl/contacto/enviado/");
+  });
+
+  it("no-JS post without render_at is forwarded without it and redirects (lead kept)", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const req = makeFormRequest({
+      need: "sonicador",
+      email: "ana@ficticio.invalid",
+      org: "Instituto Ficticio",
+      render_at: "",
+    });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    expect(resp.headers.get("Location")).toBe("https://origenlab.cl/contacto/enviado/");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+    const forwarded = JSON.parse(await upstreamReq.text());
+    expect("render_at" in forwarded).toBe(false);
+    expect(forwarded.email).toBe("ana@ficticio.invalid");
+  });
+
+  it("no-JS post with no render_at field at all also redirects", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const req = makeFormRequest({ need: "sonicador", email: "ana@ficticio.invalid", org: "X" });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+    expect("render_at" in JSON.parse(await upstreamReq.text())).toBe(false);
+  });
+
+  it("no-JS post with an invalid render_at drops it instead of forwarding garbage", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const req = makeFormRequest({ email: "ana@ficticio.invalid", render_at: "not-a-time" });
+    const resp = await handleWebFormRequest(req, TEST_ENV);
+    expect(resp.status).toBe(303);
+    const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+    expect("render_at" in JSON.parse(await upstreamReq.text())).toBe(false);
+  });
+
+  it("does not redirect when the upstream call fails (no-JS path)", async () => {
+    stubUpstreamFetch(422);
+    const renderAt = String(Math.floor(Date.now() / 1000) - 10);
+    const resp = await handleWebFormRequest(
+      makeFormRequest({ email: "ana@ficticio.invalid", render_at: renderAt }),
+      TEST_ENV,
+    );
+    expect(resp.status).toBe(422);
+    expect(resp.headers.get("Location")).toBeNull();
+  });
+
+  describe("product and consent_version pass-through", () => {
+    const EXTRA = { product: "UP400St", consent_version: "consent-v1-2026-11" };
+
+    async function forwardedBody(req: Request): Promise<Record<string, string>> {
+      const fetchMock = stubUpstreamFetch();
+      await handleWebFormRequest(req, TEST_ENV);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [upstreamReq] = fetchMock.mock.calls[0] as unknown as [Request];
+      return JSON.parse(await upstreamReq.text());
+    }
+
+    const base = () => ({
+      submission_id: crypto.randomUUID(),
+      need: "sonicador",
+      email: "ana@ficticio.invalid",
+      org: "Instituto Ficticio",
+      render_at: String(Math.floor(Date.now() / 1000) - 10),
+    });
+
+    it("forwards both fields unchanged from a JSON body", async () => {
+      const parsed = await forwardedBody(makeJsonRequest({ ...base(), ...EXTRA }));
+      expect(parsed.product).toBe(EXTRA.product);
+      expect(parsed.consent_version).toBe(EXTRA.consent_version);
+    });
+
+    it("forwards both fields unchanged from a urlencoded body", async () => {
+      const parsed = await forwardedBody(makeFormRequest({ ...base(), ...EXTRA }));
+      expect(parsed.product).toBe(EXTRA.product);
+      expect(parsed.consent_version).toBe(EXTRA.consent_version);
+    });
+
+    it("forwards both fields unchanged from a multipart body", async () => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries({ ...base(), ...EXTRA })) fd.append(k, v);
+      const req = new Request("https://origenlab.cl/api/web/solicitud", {
+        method: "POST",
+        headers: { Origin: WEB_ORIGIN },
+        body: fd,
+      });
+      const parsed = await forwardedBody(req);
+      expect(parsed.product).toBe(EXTRA.product);
+      expect(parsed.consent_version).toBe(EXTRA.consent_version);
+    });
   });
 
   it("proceeds without forwarding operator session cookies", async () => {
