@@ -219,7 +219,9 @@ const groups = ORIGINS.map((origin) => ({ ...origin, brands: rail.filter((brand)
   @supports (animation-timeline: view()) {
     @media (prefers-reduced-motion: no-preference) {
       .brand-map__arc {
-        animation: arc-draw linear both;
+        animation-name: arc-draw;
+        animation-timing-function: linear;
+        animation-fill-mode: both;
         animation-timeline: view();
         animation-range: entry calc(10% + var(--i) * 6%) cover calc(45% + var(--i) * 6%);
       }

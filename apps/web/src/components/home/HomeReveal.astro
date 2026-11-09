@@ -17,6 +17,12 @@ import type { Modelo } from '../../content.config';
  *
  * La línea sale de la ficha (`headline`) y, si está aprobada, de la promesa
  * «cotización el mismo día hábil» del registro de afirmaciones.
+ *
+ * Animación (dueño 2026-11-08: «animado y lindo»), ligada al desplazamiento y
+ * en CSS puro (`animation-timeline: view()`): el equipo da una vuelta completa
+ * con la tira de giro de 24 cuadros (`<slug>-turntable.webp`, el mismo encuadre
+ * que el póster), sube a su sitio, y el nombre gigante se desliza en sentido
+ * contrario. Sin soporte o con movimiento reducido: el póster quieto.
  */
 const FEATURE = 'ortoalresa-digicen-22-r';
 const entry = (await getCollection('modelos')).map((item) => item.data as Modelo).find((item) => item.slug === FEATURE);
@@ -32,6 +38,7 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
       <div class="reveal__in">
         <p class="reveal__giant" aria-hidden="true" data-decorative translate="no">{entry.name}</p>
         <img class="reveal__poster pz" src={files.poster} width="1200" height="900" alt={`${brand} ${entry.name}, modelo 3D`} loading="lazy" decoding="async" />
+        {files.strip && <span class="reveal__spin pz" aria-hidden="true" style={`--strip: url(${files.strip})`} />}
         <div class="shell reveal__copy">
           <p id="reveal-title">
             <b>{kind.charAt(0).toUpperCase() + kind.slice(1)} {brand}.</b>
@@ -47,13 +54,15 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
 <style>
   .reveal {
     position: relative;
-    overflow: hidden;
-    margin-top: clamp(5rem, 10vw, 8rem);
+    /* `clip` y no `hidden`: `hidden` crea un contenedor de desplazamiento y las
+       animaciones `view()` de dentro seguirían a esta caja inmóvil, no a la página. */
+    overflow: clip;
+    margin-top: clamp(2.5rem, 5vw, 4rem);
     background: var(--color-paper);
   }
   .reveal__in {
     position: relative;
-    height: 51.25rem;
+    height: 46rem;
   }
   .reveal__giant {
     position: absolute;
@@ -71,13 +80,95 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
     background-clip: text;
     -webkit-text-fill-color: transparent;
   }
-  .reveal__poster {
+  .reveal__poster,
+  .reveal__spin {
     position: absolute;
     left: 50%;
     top: 0.625rem;
     width: 61.25rem;
     max-width: none;
+    aspect-ratio: 4 / 3;
     translate: -52% 0;
+  }
+  .reveal__spin {
+    display: none;
+    background: var(--strip) 0 0 / 2400% 100% no-repeat;
+  }
+  /* Vuelta completa ligada al desplazamiento; el póster cede su lugar a la tira. */
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .reveal__spin {
+        display: block;
+        /* Longhands, no el atajo `animation`: el minificador lo fusionaría con
+           `animation-timeline` y Chrome descarta ese atajo entero. */
+        animation-name: reveal-turn, reveal-rise, reveal-strip;
+        animation-timing-function: steps(23, jump-none), ease-out, linear;
+        animation-fill-mode: both, both, both;
+        animation-timeline: view(), view(), view();
+        animation-range: entry 0% cover 45%, entry 0% cover 45%, entry 0% cover 45%;
+      }
+      /* La tira es de baja resolución (sirve a las tarjetas): sólo se ve mientras gira.
+         Quieta, al principio y al terminar la vuelta (sección centrada), manda el
+         póster nítido de 1200 px, que tiene el mismo ángulo que el primer y el último cuadro. */
+      .reveal__poster:has(+ .reveal__spin) {
+        animation-name: reveal-rise, reveal-poster;
+        animation-timing-function: ease-out, linear;
+        animation-fill-mode: both, both;
+        animation-timeline: view(), view();
+        animation-range: entry 0% cover 45%, entry 0% cover 45%;
+      }
+      .reveal__giant {
+        animation-name: reveal-slide;
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: view();
+        animation-range: entry 0% exit 0%;
+      }
+    }
+  }
+  @keyframes reveal-turn {
+    from {
+      background-position-x: 0%;
+    }
+    to {
+      background-position-x: 100%;
+    }
+  }
+  @keyframes reveal-strip {
+    0%,
+    100% {
+      opacity: 0;
+    }
+    6%,
+    94% {
+      opacity: 1;
+    }
+  }
+  @keyframes reveal-poster {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    6%,
+    94% {
+      opacity: 0;
+    }
+  }
+  @keyframes reveal-rise {
+    from {
+      translate: -52% 4rem;
+    }
+    to {
+      translate: -52% 0;
+    }
+  }
+  @keyframes reveal-slide {
+    from {
+      transform: translateX(9%);
+    }
+    to {
+      transform: translateX(-9%);
+    }
   }
   .reveal__copy {
     position: absolute;
@@ -109,7 +200,8 @@ const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
       top: 4.375rem;
       font-size: 3.875rem;
     }
-    .reveal__poster {
+    .reveal__poster,
+    .reveal__spin {
       width: 31.25rem;
       top: 3.5rem;
     }

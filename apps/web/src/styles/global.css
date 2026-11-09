@@ -264,12 +264,13 @@
   }
 
   /* Vertical rhythm: one section spacing scale for the whole site. */
+  /* Ritmo vertical más apretado (dueño 2026-11-08: «demasiado espacio en blanco»). */
   .section {
-    padding-block: 4rem;
+    padding-block: 3rem;
   }
   @media (min-width: 768px) {
     .section {
-      padding-block: 6rem;
+      padding-block: 4.5rem;
     }
   }
 
@@ -568,13 +569,13 @@
    * pudiendo moverla. Nada de la primera pantalla lleva `.rv`.
    * ------------------------------------------------------------------------- */
   .home-sec {
-    padding-top: clamp(5rem, 10vw, 9rem);
+    padding-top: clamp(3.5rem, 6vw, 5.5rem);
   }
   .home-head {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
-    margin-bottom: clamp(2.5rem, 5vw, 4rem);
+    margin-bottom: clamp(2rem, 3.5vw, 3rem);
     .t-label {
       color: var(--color-teal-700);
     }
