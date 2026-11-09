@@ -122,6 +122,10 @@ union all select 'crm.person_name', count(*)::text from crm.person_name
 union all select 'crm.invoice', count(*)::text from crm.invoice
 union all select 'crm.invoice_payment', count(*)::text from crm.invoice_payment
 union all select 'crm.consent', count(*)::text from crm.consent
+union all select 'crm.expense', count(*)::text from crm.expense
+union all select 'crm.supplier_order', count(*)::text from crm.supplier_order
+union all select 'crm.monthly_target', count(*)::text from crm.monthly_target
+union all select 'crm.partner_rule', count(*)::text from crm.partner_rule
 ;
 
 commit;

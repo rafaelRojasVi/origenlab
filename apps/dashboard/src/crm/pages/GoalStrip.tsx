@@ -20,6 +20,7 @@ import {
   soldThisMonth,
 } from "../goals";
 import { formatMoney } from "../money";
+import { fetchFinanceSettings } from "../finanzas/financeApi";
 import { fetchInvoices } from "../pagos/invoiceApi";
 import { buildParaTiQueue } from "../today";
 import { useResource } from "../useResource";
@@ -93,6 +94,10 @@ export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardDa
 /** «Vendido en {mes}»: its own read of the SII register, so only a role that sees money asks for it. */
 function SoldTile({ today, navigate }: { today: string; navigate: Navigate }) {
   const [state, reload] = useResource(fetchInvoices);
+  // Fetch the monthly target from finance settings; fall back to the hardcoded $6 M default.
+  const [settingsState] = useResource(fetchFinanceSettings);
+  const monthlyTarget =
+    settingsState.kind === "ready" ? settingsState.data.monthly_target.net : MONTHLY_TARGET_CLP;
   const month = MONTHS[Number(today.slice(5, 7)) - 1] ?? "";
   const label = `Vendido en ${month}`;
   if (state.kind === "loading") {
@@ -121,8 +126,8 @@ function SoldTile({ today, navigate }: { today: string; navigate: Navigate }) {
   }
   const items = state.data.items ?? [];
   const sold = soldThisMonth(items, today);
-  const pace = requiredPace(sold.net, MONTHLY_TARGET_CLP, today);
-  const pct = Math.max(0, Math.floor((sold.net / MONTHLY_TARGET_CLP) * 100));
+  const pace = requiredPace(sold.net, monthlyTarget, today);
+  const pct = Math.max(0, Math.floor((sold.net / monthlyTarget) * 100));
   const last = lastIssuedOn(items);
   const met = pace.remaining === 0;
   const paceLine = met
@@ -138,7 +143,7 @@ function SoldTile({ today, navigate }: { today: string; navigate: Navigate }) {
       label={label}
       met={met}
       value={formatMillions(sold.net)}
-      mean={`${pct} % de la meta ${formatMillions(MONTHLY_TARGET_CLP)}`}
+      mean={`${pct} % de la meta ${formatMillions(monthlyTarget)}`}
       bar={Math.min(100, pct)}
       detail={paceLine}
       foot={`neto, facturado en el SII${last ? ` · último folio del ${fmtDay(last)}` : ""}`}

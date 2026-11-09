@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
@@ -85,7 +85,7 @@ describe("Pipeline ?vista=", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     expect(window.location.hash).toBe("#/ventas/pipeline");
-    expect(screen.queryByTestId("pipeline-vista")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("pipeline-vista")).toBeNull());
     expect(screen.getAllByText("Planta Reciente")).not.toHaveLength(0);
     expect(screen.getAllByText("Instituto Pedido")).not.toHaveLength(0);
   });
