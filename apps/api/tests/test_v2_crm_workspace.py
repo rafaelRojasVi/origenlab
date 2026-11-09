@@ -254,6 +254,31 @@ def test_card_carries_the_newest_note_on_the_case() -> None:
     assert compose_pipeline([_opp("o1")], [], [], [], {}, [], {})[0]["last_note"] is None
 
 
+def test_card_carries_requested_at_or_falls_back_to_created_at() -> None:
+    """Hoy's «Solicitud → cotización» clock starts when the client asked: the origin email's
+    `sent_at` when the case came from one, else when the case was opened."""
+    asked, opened = compose_pipeline(
+        [_opp("o1", requested_at="2026-10-01T09:00:00+00:00"), _opp("o2")], [], [], [], {}, [], {},
+    )
+    assert asked["requested_at"] == "2026-10-01T09:00:00+00:00"
+    assert opened["requested_at"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_card_carries_the_newest_answered_call() -> None:
+    """A call the client answered (contestó · reunión) is a follow-up touch on Hoy: the card
+    carries the newest one, or null."""
+    calls = [
+        {"opportunity_id": "o1", "at": "2026-11-02T14:00:00Z", "outcome": "contesto"},
+        {"opportunity_id": "o1", "at": "2026-11-05T15:30:00Z", "outcome": "reunion"},
+    ]
+    called, silent = compose_pipeline(
+        [_opp("o1"), _opp("o2")], [], [], [], {}, [], {}, last_calls=calls,
+    )
+    assert called["last_call"] == {"at": "2026-11-05T15:30:00Z", "outcome": "reunion"}
+    assert silent["last_call"] is None
+    assert compose_pipeline([_opp("o1")], [], [], [], {}, [], {})[0]["last_call"] is None
+
+
 def test_confirmed_requester_is_independent_of_organization_profile_confirmation() -> None:
     """An unconfirmed organization record does not undo a human-confirmed case role."""
     role = {
@@ -1097,3 +1122,22 @@ def test_no_reply_only_marks_the_email_r18_read() -> None:
     assert last_contacts([closing])["o1"]["inbound"]["no_reply"] is True
     later = _mail_row("m2", "2026-10-24T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=False)
     assert "no_reply" not in last_contacts([closing, later])["o1"]["inbound"]
+
+
+def test_card_carries_the_origin_of_the_case() -> None:
+    cards = compose_pipeline(
+        [_opp("o1", origin="web"), _opp("o2", origin=None), _opp("o3")], [], [], [], {}, [], load_drive_ledgers([])
+    )
+    assert [c["origin"] for c in cards] == ["web", None, None]
+
+
+def test_dashboard_names_the_same_origins_as_the_api() -> None:
+    """`caseOrigin.ts` repeats `case_origin.py`'s nine values (it cannot import them): same set, same order."""
+    import re
+
+    from origenlab_api.v2.case_origin import CASE_ORIGINS
+
+    ts = (Path(__file__).resolve().parents[2] / "dashboard/src/crm/caseOrigin.ts").read_text(encoding="utf-8")
+    block = re.search(r"export const CASE_ORIGINS = \[(.*?)\] as const;", ts, re.S)
+    assert block is not None
+    assert re.findall(r'"([a-z_]+)"', block.group(1)) == list(CASE_ORIGINS)

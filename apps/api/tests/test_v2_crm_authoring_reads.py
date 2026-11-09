@@ -153,7 +153,8 @@ class _FakeRepo:
                  "body": "Llamé al laboratorio; esperan la orden de compra.",
                  "author_operator_id": _FAKE_OP, "author_name": "Sales",
                  "created_at": "2026-10-01T00:00:00Z", "status": "active", "archived_at": None,
-                 "archive_reason": None, "version": 1, "is_latest": True},
+                 "archive_reason": None, "version": 1, "is_latest": True,
+                 "note_kind": None, "call_outcome": None, "call_next_step": None},
             ],
         }
 
@@ -340,6 +341,7 @@ def test_case_notes_read_in_the_note_shape_for_every_role(role: str) -> None:
     assert set(body["notes"][0]) == {
         "id", "root_note_id", "revision_no", "body", "author_operator_id", "author_name",
         "created_at", "status", "archived_at", "archive_reason", "version", "is_latest",
+        "note_kind", "call_outcome", "call_next_step",
     }
 
 

@@ -481,11 +481,14 @@ export function ResourceGate<T>({
   state,
   reload,
   skeleton,
+  errorTitle = "No se pudo leer el CRM",
   children,
 }: {
   state: ResourceState<T>;
   reload: () => void;
   skeleton?: ReactNode;
+  /** The error's headline, for a read that is one block of a page rather than the page. */
+  errorTitle?: string;
   children: (data: T) => ReactNode;
 }) {
   if (state.kind === "loading") return <>{skeleton ?? <Skeleton />}</>;
@@ -514,7 +517,7 @@ export function ResourceGate<T>({
   }
   return (
     <div role="alert" className="rounded-lg border border-bad/30 bg-bad-bg px-4 py-4">
-      <p className="text-[13px] font-semibold text-bad">No se pudo leer el CRM</p>
+      <p className="text-[13px] font-semibold text-bad">{errorTitle}</p>
       <p className="mt-1 break-words text-xs text-ink-muted">{state.message}</p>
       <button
         type="button"
@@ -535,6 +538,10 @@ export function Drawer({
   title,
   subtitle,
   busy = false,
+  width = "default",
+  actions,
+  footer,
+  label,
   children,
 }: {
   open: boolean;
@@ -543,6 +550,14 @@ export function Drawer({
   subtitle?: ReactNode;
   /** The data behind the drawer is being refreshed (after a save). */
   busy?: boolean;
+  /** «wide» is 640 px from `sm` up (the case drawer); below `sm` every drawer is full width. */
+  width?: "default" | "wide";
+  /** Under the title, still in the header: the drawer's everyday actions, its tabs. */
+  actions?: ReactNode;
+  /** Pinned to the bottom while the body scrolls. */
+  footer?: ReactNode;
+  /** The dialog's name when `title` is not plain text. */
+  label?: string;
   children: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -570,10 +585,11 @@ export function Drawer({
       <aside
         role="dialog"
         aria-modal="true"
-        aria-label={typeof title === "string" ? title : "Detalle"}
-        className="crm-drawer-in absolute inset-y-0 right-0 flex w-full flex-col border-l border-line bg-canvas-raised shadow-lg sm:w-[34rem]"
+        aria-label={label ?? (typeof title === "string" ? title : "Detalle")}
+        className={`crm-drawer-in absolute inset-y-0 right-0 flex w-full flex-col border-l border-line bg-canvas-raised shadow-lg ${width === "wide" ? "sm:w-[40rem]" : "sm:w-[34rem]"}`}
       >
-        <header className="flex items-start gap-3 border-b border-line px-4 py-3">
+        <header className="border-b border-line px-4 py-3">
+          <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold leading-6 text-ink">{title}</h2>
             {subtitle ? <div className="mt-0.5 text-xs text-ink-muted">{subtitle}</div> : null}
@@ -589,12 +605,19 @@ export function Drawer({
             type="button"
             onClick={onClose}
             aria-label="Cerrar"
-            className="h-7 w-7 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink"
+            className="-mr-2 -mt-1.5 h-11 w-11 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           >
             ✕
           </button>
+          </div>
+          {actions ? <div className="mt-2.5">{actions}</div> : null}
         </header>
         <div className="flex-1 space-y-5 overflow-y-auto p-4">{children}</div>
+        {footer ? (
+          <footer className="sticky bottom-0 border-t border-line bg-canvas-raised px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
+            {footer}
+          </footer>
+        ) : null}
       </aside>
     </div>
   );
@@ -768,7 +791,7 @@ export function FormField({
         {required ? <span aria-hidden="true" className="ml-0.5 text-bad"> *</span> : null}
       </label>
       {children}
-      {error ? <p className="text-[11px] text-bad">{error}</p> : hint ? <p className="text-[11px] text-ink-faint">{hint}</p> : null}
+      {error ? <p id={htmlFor ? `${htmlFor}-error` : undefined} className="text-[11px] text-bad">{error}</p> : hint ? <p className="text-[11px] text-ink-faint">{hint}</p> : null}
     </div>
   );
 }
@@ -784,6 +807,8 @@ export function TextInput({
   placeholder,
   required,
   disabled,
+  invalid,
+  describedBy,
   maxLength,
 }: {
   id?: string;
@@ -793,6 +818,8 @@ export function TextInput({
   placeholder?: string;
   required?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   maxLength?: number;
 }) {
   return (
@@ -804,6 +831,8 @@ export function TextInput({
       placeholder={placeholder}
       required={required}
       disabled={disabled}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       maxLength={maxLength}
       className={INPUT_CLS}
     />
@@ -817,6 +846,8 @@ export function TextareaInput({
   placeholder,
   required,
   disabled,
+  invalid,
+  describedBy,
   maxLength,
   rows = 3,
 }: {
@@ -826,6 +857,8 @@ export function TextareaInput({
   placeholder?: string;
   required?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   maxLength?: number;
   rows?: number;
 }) {
@@ -837,6 +870,8 @@ export function TextareaInput({
       placeholder={placeholder}
       required={required}
       disabled={disabled}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       maxLength={maxLength}
       rows={rows}
       className={`${INPUT_CLS} resize-y`}
@@ -851,6 +886,8 @@ export function SelectInput({
   options,
   required,
   disabled,
+  invalid,
+  describedBy,
   placeholder,
 }: {
   id?: string;
@@ -859,6 +896,8 @@ export function SelectInput({
   options: { value: string; label: string }[];
   required?: boolean;
   disabled?: boolean;
+  invalid?: boolean;
+  describedBy?: string;
   placeholder?: string;
 }) {
   return (
@@ -868,6 +907,8 @@ export function SelectInput({
       onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
       required={required}
       disabled={disabled}
+      aria-invalid={invalid || undefined}
+      aria-describedby={describedBy}
       className={INPUT_CLS}
     >
       {placeholder ? <option value="">{placeholder}</option> : null}

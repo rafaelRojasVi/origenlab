@@ -11,6 +11,8 @@ on:
     paths:
       - "apps/dashboard/**"
       - ".github/workflows/dashboard.yml"
+      # The «Catálogo web» form is pinned to this schema by a drift test.
+      - "apps/web/src/content/modelos.schema.json"
 
 concurrency:
   group: dashboard-${{ github.ref }}

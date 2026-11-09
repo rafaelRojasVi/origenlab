@@ -158,7 +158,7 @@ afterEach(() => {
 describe("Cotizador module — tabs", () => {
   it("opens the address's quote as a tab after «Todas», and names it once its workspace loads", async () => {
     const api = stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     expect(within(tablist()).getAllByRole("tab")[0]).toHaveTextContent("Todas");
     await showsQuote("CN00041");
     const tab = tabOf("CN00041");
@@ -177,8 +177,8 @@ describe("Cotizador module — tabs", () => {
   it("restores the tabs on reload, reading only the tab shown; another reads the first time it is shown, then stays mounted", async () => {
     seed([1, 2, 3], 2);
     const api = stubApi();
-    renderModule("#/crm/cotizador");
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(2)}`));
+    renderModule("#/ventas/cotizaciones");
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${Q(2)}`));
     await showsQuote("CN00042");
     expect(quoteTabs()).toHaveLength(3);
     // Restored tabs say what was stored until they are shown.
@@ -202,27 +202,27 @@ describe("Cotizador module — tabs", () => {
 
   it("never opens the same quote twice: opening it again shows its tab", async () => {
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     await showsQuote("CN00041");
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(2)}`));
     await showsQuote("CN00042");
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(1).toUpperCase()}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(1).toUpperCase()}`));
     await waitFor(() => expect(tabOf("CN00041")).toHaveAttribute("aria-selected", "true"));
     expect(quoteTabs()).toHaveLength(2);
   });
 
   it("«Todas» shows the list pane", async () => {
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     await showsQuote("CN00041");
     fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
     await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeInTheDocument());
-    expect(window.location.hash).toBe("#/crm/cotizador");
+    expect(window.location.hash).toBe("#/ventas/cotizaciones");
   });
 
   it("«+ Nueva» opens «Nueva cotización»; the quote it creates opens as a tab, in the address", async () => {
     const api = stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     fireEvent.click(screen.getByRole("button", { name: "+ Nueva" }));
     const dialog = screen.getByRole("dialog", { name: "Nueva cotización" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Cliente" }), { target: { value: "Universidad" } });
@@ -232,7 +232,7 @@ describe("Cotizador module — tabs", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Nueva cotización" })).not.toBeInTheDocument());
     await waitFor(() => expect(tabOf("CN00049")).toHaveAttribute("aria-selected", "true"));
     expect(tabOf("CN00049")).toHaveTextContent("Universidad Ejemplo 9");
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(9)}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${Q(9)}`));
     await showsQuote("CN00049");
     expect(api.calls.find((c) => c.path === "/v2/commands/create-quote")?.body).toEqual({
       client: { organization_id: CLIENT.id },
@@ -242,7 +242,7 @@ describe("Cotizador module — tabs", () => {
 
   it("the list's «Nueva cotización» opens the same dialog, and Esc closes it", async () => {
     stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     fireEvent.click(await screen.findByRole("button", { name: "Nueva cotización" }));
     expect(screen.getByRole("dialog", { name: "Nueva cotización" })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: "Escape" });
@@ -251,7 +251,7 @@ describe("Cotizador module — tabs", () => {
 
   it("«+ Nueva» is off, and says why, when the commands are off", async () => {
     stubApi();
-    window.location.hash = "#/crm/cotizador";
+    window.location.hash = "#/ventas/cotizaciones";
     render(
       <AuthSessionContext.Provider value={{ session: { ...session, caseCommandsEnabled: false }, signOut: async () => true }}>
         <Routed />
@@ -268,7 +268,7 @@ describe("Cotizador module — tabs", () => {
   it(`opens at most ${MAX_TABS}: a ninth closes the oldest tab with nothing pending`, async () => {
     seed([1, 2, 3, 4, 5, 6, 7, 8], 8);
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(9)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(9)}`);
     await showsQuote("CN00049");
     const labels = quoteTabs().map((t) => t.textContent ?? "");
     expect(labels).toHaveLength(MAX_TABS);
@@ -279,7 +279,7 @@ describe("Cotizador module — tabs", () => {
   it("moves between tabs with the arrows, and Supr closes the focused one", async () => {
     seed([1, 2], 1);
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     await showsQuote("CN00041");
     const todas = within(tablist()).getByRole("tab", { name: "Todas" });
     expect(tabOf("CN00041")).toHaveAttribute("tabindex", "0");
@@ -302,9 +302,9 @@ describe("Cotizador module — panes keep their edits", () => {
   it("an edit survives a switch, and its autosave runs while the tab is hidden", async () => {
     fakeTimers();
     const api = stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "3" } });
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(2)}`));
     await showsQuote("CN00042");
     await autosave();
     await waitFor(() => expect(api.savesOf(1)).toBe(1));
@@ -315,20 +315,20 @@ describe("Cotizador module — panes keep their edits", () => {
 
   it("closing a tab sends its pending save first", async () => {
     const api = stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
     expect(api.savesOf(1)).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
     await waitFor(() => expect(quoteTabs()).toHaveLength(0));
     expect(api.savesOf(1)).toBe(1);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+    await waitFor(() => expect(window.location.hash).toBe("#/ventas/cotizaciones"));
     expect(JSON.parse(localStorage.getItem(tabsStorageKey(OP))!).tabs).toEqual([]);
   });
 
   it("asks «No se pudo guardar. ¿Cerrar igual?» when that save fails, and keeps the tab unless told yes", async () => {
     const api = stubApi(() => json({ detail: "boom" }, 500));
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
     const dialog = await screen.findByRole("dialog", { name: "No se pudo guardar. ¿Cerrar igual?" });
@@ -350,9 +350,9 @@ describe("Cotizador module — panes keep their edits", () => {
         ? json({ detail: { code: "not_a_draft", message: "only a draft revision is edited" } }, 409)
         : json({ revision_id: revisionId, version: 4, computed: computedFixture() }),
     );
-    renderModule(`#/crm/cotizador/${Q(2)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(2)}`);
     await showsQuote("CN00042");
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(1)}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(1)}`));
     await showsQuote("CN00041");
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "2" } });
     await autosave();
@@ -374,9 +374,9 @@ describe("Cotizador module — panes keep their edits", () => {
 describe("Cotizador module — fix round 1", () => {
   it("«/» focuses the catalog search of the quote shown, not of a hidden one mounted first (I1)", async () => {
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     await showsQuote("CN00041");
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(2)}`));
     await showsQuote("CN00042");
     const search = await shownField("Agregar del catálogo");
     fireEvent.keyDown(document.body, { key: "/" });
@@ -385,9 +385,9 @@ describe("Cotizador module — fix round 1", () => {
 
   it("two closes whose saves both fail ask one after the other, and both can close (I2)", async () => {
     stubApi(() => json({ detail: "boom" }, 500));
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(2)}`));
     await showsQuote("CN00042");
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "6" } });
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
@@ -405,22 +405,22 @@ describe("Cotizador module — fix round 1", () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     const api = stubApi(() => gate.then(() => json({ revision_id: "r-1", version: 4, computed: computedFixture() })));
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
     await waitFor(() => expect(api.savesOf(1)).toBe(1));
-    act(() => void (window.location.hash = "#/crm/resumen"));
+    act(() => void (window.location.hash = "#/hoy"));
     await screen.findByText("Fuera del módulo");
     await act(async () => {
       release();
       await new Promise((r) => setTimeout(r, 50));
     });
-    expect(window.location.hash).toBe("#/crm/resumen");
+    expect(window.location.hash).toBe("#/hoy");
   });
 
   it("no second warning after «Cerrar igual» on an incomplete draft (M1)", async () => {
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "" } });
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cerrar igual" }));
@@ -434,7 +434,7 @@ describe("Cotizador module — fix round 1", () => {
   it("after a close the focus goes to the tab now selected, then to «Todas» (M2); the × is outside the tablist (M3)", async () => {
     seed([1, 2], 1);
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     await showsQuote("CN00041");
     expect(within(tablist()).queryByRole("button", { name: /Cerrar/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
@@ -446,7 +446,7 @@ describe("Cotizador module — fix round 1", () => {
   it("closing another tab leaves the focus where the operator is working (final wave)", async () => {
     seed([1, 2], 1);
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     const qty = await shownField("Cantidad de la línea 1");
     qty.focus();
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00042" }));
@@ -460,7 +460,7 @@ describe("Cotizador module — fix round 1", () => {
   it("Backspace on a focused tab closes it, like Supr", async () => {
     seed([1, 2], 1);
     stubApi();
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     await showsQuote("CN00041");
     tabOf("CN00042").focus();
     fireEvent.keyDown(tabOf("CN00042"), { key: "Backspace" });
@@ -470,9 +470,9 @@ describe("Cotizador module — fix round 1", () => {
 
   it("each question starts with the focus on its first button", async () => {
     stubApi(() => json({ detail: "boom" }, 500));
-    renderModule(`#/crm/cotizador/${Q(1)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(1)}`);
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "5" } });
-    act(() => void (window.location.hash = `#/crm/cotizador/${Q(2)}`));
+    act(() => void (window.location.hash = `#/ventas/cotizaciones/${Q(2)}`));
     await showsQuote("CN00042");
     fireEvent.change(await shownField("Cantidad de la línea 1"), { target: { value: "6" } });
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00041" }));
@@ -489,7 +489,7 @@ describe("Cotizador module — fix round 1", () => {
   it("a restored tab whose quote is gone says so, and can be closed (M6)", async () => {
     seed([7], 7);
     stubApi(undefined, [7]);
-    renderModule(`#/crm/cotizador/${Q(7)}`);
+    renderModule(`#/ventas/cotizaciones/${Q(7)}`);
     expect(await within(shown()).findByText("Esta cotización no existe.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cerrar CN00047" }));
     await waitFor(() => expect(quoteTabs()).toHaveLength(0));
@@ -498,7 +498,7 @@ describe("Cotizador module — fix round 1", () => {
   it("the old one-quote address lands on the quote's tab (M6)", async () => {
     stubApi();
     renderModule(`#/crm/cotizar/${Q(1)}`);
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${Q(1)}`));
     await showsQuote("CN00041");
     expect(quoteTabs()).toHaveLength(1);
   });
@@ -507,9 +507,9 @@ describe("Cotizador module — fix round 1", () => {
 describe("Cotizador module — «Preferencias»", () => {
   const prefsHeading = () => screen.queryByRole("heading", { level: 1, name: "Preferencias del Cotizador" });
 
-  it("#/crm/cotizador/preferencias shows the fixed pane: no quote is read, no tab is opened", async () => {
+  it("#/ventas/cotizaciones/preferencias shows the fixed pane: no quote is read, no tab is opened", async () => {
     const api = stubApi();
-    renderModule("#/crm/cotizador/preferencias");
+    renderModule("#/ventas/cotizaciones/preferencias");
     expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
     expect(await screen.findByLabelText("Equipos")).toHaveValue("40");
     expect(quoteTabs()).toHaveLength(0);
@@ -517,44 +517,44 @@ describe("Cotizador module — «Preferencias»", () => {
     // The strip holds the tabs and «+ Nueva»; «Preferencias» is the list header's (e1).
     expect(screen.queryByRole("button", { name: "Preferencias" })).toBeNull();
     expect(screen.getByRole("button", { name: "+ Nueva" })).toBeInTheDocument();
-    expect(window.location.hash).toBe("#/crm/cotizador/preferencias");
+    expect(window.location.hash).toBe("#/ventas/cotizaciones/preferencias");
   });
 
   it("the list's «Preferencias» opens it — the only one, the strip has none (e1); «Todas» goes back to the list", async () => {
     stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     // The list's own button (in the «Todas» panel).
     const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Preferencias" });
     expect(listButton).toBeEnabled();
     expect(screen.getAllByRole("button", { name: "Preferencias" })).toEqual([listButton]);
     expect(document.querySelector("[data-module-preferences]")).toBeNull();
     fireEvent.click(listButton);
-    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/preferencias"));
+    await waitFor(() => expect(window.location.hash).toBe("#/ventas/cotizaciones/preferencias"));
     expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
     expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "false");
 
     fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
-    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+    await waitFor(() => expect(window.location.hash).toBe("#/ventas/cotizaciones"));
     await waitFor(() => expect(prefsHeading()).toBeNull());
     expect(screen.getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeVisible();
   });
 
   it("«+ Nueva» from «Preferencias»: the quote made is shown, in the address, and «Todas» then shows the list (I1)", async () => {
     stubApi();
-    renderModule("#/crm/cotizador/preferencias");
+    renderModule("#/ventas/cotizaciones/preferencias");
     expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "+ Nueva" }));
     const dialog = screen.getByRole("dialog", { name: "Nueva cotización" });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Cliente" }), { target: { value: "Universidad" } });
     fireEvent.click(await within(dialog).findByRole("option", { name: /Universidad Ejemplo 9/ }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Crear y abrir" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(9)}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${Q(9)}`));
     await showsQuote("CN00049");
     expect(tabOf("CN00049")).toHaveAttribute("aria-selected", "true");
     expect(prefsHeading()).toBeNull();
 
     fireEvent.click(within(tablist()).getByRole("tab", { name: "Todas" }));
-    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador"));
+    await waitFor(() => expect(window.location.hash).toBe("#/ventas/cotizaciones"));
     await waitFor(() => expect(within(shown()).getByRole("heading", { level: 1, name: "Cotizaciones" })).toBeInTheDocument());
     expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "true");
   });
@@ -562,12 +562,12 @@ describe("Cotizador module — «Preferencias»", () => {
   it("opened directly with restored tabs, it stays on «Preferencias»; a quote tab is one click away", async () => {
     seed([1, 2], 2);
     const api = stubApi();
-    renderModule("#/crm/cotizador/preferencias");
+    renderModule("#/ventas/cotizaciones/preferencias");
     expect(await screen.findByRole("heading", { level: 1, name: "Preferencias del Cotizador" })).toBeInTheDocument();
     await act(async () => {
       for (let i = 0; i < 5; i++) await Promise.resolve();
     });
-    expect(window.location.hash).toBe("#/crm/cotizador/preferencias");
+    expect(window.location.hash).toBe("#/ventas/cotizaciones/preferencias");
     expect(quoteTabs()).toHaveLength(2);
     // The restored tab is not read behind the pane.
     expect(api.reads(1) + api.reads(2)).toBe(0);
@@ -580,24 +580,24 @@ describe("Cotizador module — «Preferencias»", () => {
 describe("Cotizador module — «Rentabilidad»", () => {
   it("the list's «Rentabilidad» opens the fixed pane; a row's «Abrir cotización» opens its tab", async () => {
     const api = stubApi();
-    renderModule("#/crm/cotizador");
+    renderModule("#/ventas/cotizaciones");
     const listButton = await within(screen.getByRole("tabpanel")).findByRole("button", { name: "Rentabilidad" }, { timeout: 5000 });
     fireEvent.click(listButton);
-    await waitFor(() => expect(window.location.hash).toBe("#/crm/cotizador/rentabilidad"));
+    await waitFor(() => expect(window.location.hash).toBe("#/ventas/cotizaciones/rentabilidad"));
     expect(await screen.findByRole("heading", { level: 1, name: "Rentabilidad" }, { timeout: 5000 })).toBeInTheDocument();
     expect(within(tablist()).getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "false");
     expect(api.calls.some((c) => c.path === "/v2/quotes/economics")).toBe(true);
 
     fireEvent.click(await screen.findByRole("button", { name: /CN00041/ }, { timeout: 5000 }));
     fireEvent.click(screen.getByRole("button", { name: "Abrir cotización" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${Q(1)}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${Q(1)}`));
     await showsQuote("CN00041");
     expect(screen.queryByRole("heading", { level: 1, name: "Rentabilidad" })).toBeNull();
   });
 
-  it("#/crm/cotizador/rentabilidad opened directly reads no quote and opens no tab", async () => {
+  it("#/ventas/cotizaciones/rentabilidad opened directly reads no quote and opens no tab", async () => {
     const api = stubApi();
-    renderModule("#/crm/cotizador/rentabilidad");
+    renderModule("#/ventas/cotizaciones/rentabilidad");
     expect(await screen.findByRole("heading", { level: 1, name: "Rentabilidad" })).toBeInTheDocument();
     expect(quoteTabs()).toHaveLength(0);
     expect(api.calls.some((c) => /^\/v2\/quotes\/[0-9a-f-]{36}$/.test(c.path))).toBe(false);

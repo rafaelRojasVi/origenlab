@@ -66,7 +66,13 @@ class WebQuoteFormRequest(BaseModel):
     phone: str | None = None
     city: str | None = None
     deadline: str | None = None
-    render_at: float
+    #: Model of interest (the site's product page), e.g. «UP400St».
+    product: str | None = None
+    #: Version of the consent text the visitor accepted, e.g. «consent-v1-2026-11».
+    consent_version: str | None = None
+    #: Seconds since the epoch when the page rendered. ``None`` = no timing signal (the
+    #: form was sent without JavaScript); such a submission is not refused.
+    render_at: float | None = None
     #: Honeypot field — must be absent or empty from real browsers.
     hp: str = ""
 
@@ -92,6 +98,26 @@ class WebQuoteFormRequest(BaseModel):
         v = v.strip()
         if not (1 <= len(v) <= 200):
             raise ValueError("org must be 1–200 characters")
+        return v
+
+    @field_validator("product")
+    @classmethod
+    def validate_product(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 120:
+            raise ValueError("product must be ≤120 characters")
+        return v
+
+    @field_validator("consent_version")
+    @classmethod
+    def validate_consent_version(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if len(v) > 80:
+            raise ValueError("consent_version must be ≤80 characters")
         return v
 
 
@@ -239,9 +265,10 @@ def post_web_quote_request(body: WebQuoteFormRequest, request: Request) -> Any:
     Returns 429 when a rate cap is exceeded.
     """
     # --- bot guards (fail-open: pretend to send, reveal nothing) ---
-    elapsed = time.time() - body.render_at
-    if elapsed < _BOT_TIMING_THRESHOLD_SECONDS:
-        return {"status": "sent"}
+    if body.render_at is not None:
+        elapsed = time.time() - body.render_at
+        if elapsed < _BOT_TIMING_THRESHOLD_SECONDS:
+            return {"status": "sent"}
 
     if body.hp:
         return {"status": "sent"}
@@ -278,6 +305,9 @@ def post_web_quote_request(body: WebQuoteFormRequest, request: Request) -> Any:
             need=strip_control(body.need),
             extra=extra,
             submitted_at=submitted_at,
+            # Both land in header/one-line positions: flatten newlines instead of refusing.
+            product=_normalise_body_text(body.product) if body.product else None,
+            consent_version=_normalise_body_text(body.consent_version) if body.consent_version else None,
         )
     except ValueError:
         return JSONResponse(status_code=400, content={"error": {"code": "invalid_input"}})

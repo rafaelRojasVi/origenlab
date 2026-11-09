@@ -206,6 +206,9 @@ Names and value shapes only; values are Render secrets and are never written in 
 | `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | `true` once the operator turns CRM authoring on (the 28 `/v2/commands/*` people/organization/note commands, sales and admin); unset (default `false`) keeps the hosted deployment read-only and every authoring path a 404. The three #619 review findings that gated it are fixed ([`STATUS.md`](STATUS.md) §2.7.46). `GET /auth/session` reports the switch as `crm_authoring_enabled`, and the dashboard offers no CRM editor while it is off |
 | `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED` | `true` once the owner has authorized the Gmail send token (`apps/api/README.md` «Campaign test sends»); unset (default `false`) leaves «Enviar prueba» unmounted. Mounted only together with a readable, valid token file below — a bad file logs «campaign test send disabled» and the feature stays off |
 | `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` | `/etc/secrets/gmail-send-token.json` — the Render secret file holding the `gmail.compose` + `gmail.modify` + `gmail.settings.basic` refresh token for `contacto@origenlab.cl` (`{client_id, client_secret, refresh_token, address}`). `gmail.modify` (needed to label «Preparar correo» drafts «Claude» + «Prospecto») also grants reading mail; the API uses it only for labels. `gmail.settings.basic` reads the send-as signature. A token authorized before this scope was added drafts without labels until `apps/api/scripts/gmail_send_authorize.py` is run again. Revoking is deleting the file and both variables, and removing the app's access in the `contacto@` Google account |
+| `ORIGENLAB_V2_WEB_PUBLISH_ENABLED` | `true` once the owner has created the GitHub token below; unset (default `false`) leaves the three `/v2/web/*` routes («Catálogo web») unmounted (404). Mounted only together with a non-empty token. Branch built, not merged: do not set it before the release that ships the routes |
+| `ORIGENLAB_GITHUB_PUBLISH_TOKEN` | secret. Fine-grained personal access token limited to the site repository (`ORIGENLAB_GITHUB_REPO`, default `rafaelRojasVi/origenlab`): **Contents: read and write**, **Actions: read and write** (write dispatches `web-deploy.yml`, read lists its runs for the status line). Owner steps: create the token on GitHub, set it on Render, set the switch above, then publish one sheet and approve the deploy in the GitHub `production` environment — the approval stays in GitHub. **Do not turn the switch on yet:** the commit goes straight to `ORIGENLAB_GITHUB_REF` (`main`), which the `main` ruleset refuses (502 `branch_protected`), and the release gate (`scripts/deploy/check_branch_protection.py`) fails closed if the ruleset has any bypass actor, so the token must never be given one. Publishing needs an owner design decision first: commit to a branch and open a PR, or use a staging ref and decide whether the `production` environment may deploy from it. The switch stays off until then |
+| `ORIGENLAB_GITHUB_REPO` / `ORIGENLAB_GITHUB_REF` | optional: `owner/name` of the site repository (default `rafaelRojasVi/origenlab`) and the branch the sheet is committed to and the workflow dispatched on (default `main`). Committer name and email: `ORIGENLAB_GITHUB_PUBLISH_COMMITTER_NAME` / `_EMAIL` (default `OrigenLab panel` / `panel@origenlab.cl`) |
 
 **`ORIGENLAB_V2_JWKS_URL` must remain unset for the current deployment architecture.** An
 earlier revision of this step instructed the operator to set it to the project's JWKS. That
@@ -270,6 +273,19 @@ Recorded so it is not mistaken for completeness:
   real Gmail API credentials rather than a shadow of V1 ([`DATA.md`](DATA.md) §6).
 - **Quotes.** Blocked behind the V1 durable migration.
 
+#### First-party site statistics (`origenlab.cl/api/stats/*`)
+
+The `dashboard-proxy` Worker records the site's six events (five clicks and `visita`) as Workers
+Analytics Engine data points in the dataset `origenlab_web_stats` (binding `STATS_AE` in
+`apps/dashboard-proxy/wrangler.toml`; branch `feat/web-backend-form-consent`, not deployed). Owner
+steps: **nothing to create** — there is no KV namespace any more, and the dataset is created by
+Cloudflare on the first write after the Worker deploys. A deploy without the binding is safe: events
+are validated and answered 204, nothing is written. **Reading** totals needs a Cloudflare API token
+with **Account → Account Analytics: Read** (a separate token, never the deploy token) and the SQL API
+query in `apps/dashboard-proxy/README.md` («Public stats route»). Confirm the free-plan Analytics
+Engine allowance (data points written per day, query volume, retention) in the Cloudflare dashboard
+before relying on it; the repository does not record it.
+
 ## 2. Operator roles
 
 | Role | May |
@@ -312,9 +328,10 @@ it carries (§1.2 steps 9 and 10; built, not deployed — [`STATUS.md`](STATUS.m
   Re-listing a prefix without one of the two reopens the unmasked read and is refused in
   review; `src/allowlist.test.ts` and `src/index.test.ts` pin every V1 prefix as refused.
 - **CRM workspace reads, by name:** `GET /v2/workspace/{overview,pipeline,providers,drive,review}`,
-  `GET /v2/workspace/equipment-interests`, the Marketing reads under `/v2/workspace/marketing*`
-  and `GET /v2/cockpit/work-queue` are listed, exactly — the reads the dashboard's CRM
-  (`#/crm/*`) needs (`apps/dashboard-proxy/README.md`). Upstream they require the dashboard
+  `GET /v2/workspace/equipment-interests`, the Marketing reads under `/v2/workspace/marketing*`,
+  `GET /v2/cockpit/work-queue` and `GET /v2/cockpit/opportunities/<uuid>/timeline` (the case
+  drawer's history) are listed, exactly — the reads the dashboard's five areas (`#/hoy`,
+  `#/ventas/…`, …) need (`apps/dashboard-proxy/README.md`). Upstream they require the dashboard
   session (401 without one) and mask contact addresses for `viewer`; the Worker forwards only
   the session cookie and refuses every other method (405). `src/v2WorkspaceReads.test.ts` pins it.
 - **Still not exposed:** every other `/v2/cockpit/*` path — the other cockpit reads, the
@@ -2612,7 +2629,7 @@ feature stays **inactive until a quote number seed exists**, because `create-quo
    `create-quote-revision`. The dashboard Worker allows exactly those paths; `save-quote-draft` and
    the preview accept bodies up to 256 KiB, every other command the usual limit. Sales and admin
    only; a viewer gets 403.
-2. **Set the parameters** in the dashboard: Cotizador → «Preferencias» (`#/crm/cotizador/preferencias`,
+2. **Set the parameters** in the dashboard: Cotizador → «Preferencias» (`#/ventas/cotizaciones/preferencias`,
    [`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The module») saves each value below with a reason;
    «Numeración» is shown to admin only for editing. Underneath it is
    `POST /v2/commands/set-cost-parameter` (an operator session —

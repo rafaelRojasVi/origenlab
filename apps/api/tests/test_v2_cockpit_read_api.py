@@ -26,6 +26,7 @@ import pytest
 
 from origenlab_api.v2.cockpit_routes import cockpit_router
 from origenlab_api.v2.cockpit_schemas import (
+    TIMELINE_PAYLOAD_KEYS,
     WORK_ITEM_KINDS,
     EvidenceDrawer,
     KpiResponse,
@@ -34,6 +35,7 @@ from origenlab_api.v2.cockpit_schemas import (
     QuotationDetail,
     QuotationListResponse,
     SearchResponse,
+    TimelineEntry,
     TimelineResponse,
     WorkQueueResponse,
 )
@@ -128,6 +130,23 @@ def test_timeline_response_fields() -> None:
     model = TimelineResponse.model_fields
     assert "opportunity_id" in model
     assert "entries" in model
+    assert "actor_display_name" in TimelineEntry.model_fields
+
+
+def test_timeline_payload_keeps_only_whitelisted_keys() -> None:
+    """Payloads carry notes, prices and addresses; the drawer gets only the stage/origin keys."""
+    from origenlab_api.v2.cockpit_repository import project_timeline_payload
+
+    assert TIMELINE_PAYLOAD_KEYS == frozenset(
+        {"from_stage", "to_stage", "stage", "close_reason", "reopened", "from", "to",
+         "from_origin", "to_origin"}
+    )
+    projected = project_timeline_payload(
+        {"to_stage": "won", "note": "llamar a compras@cliente.invalid", "net": 1000}
+    )
+    assert projected == {"to_stage": "won"}
+    assert project_timeline_payload(None) is None
+    assert project_timeline_payload({"note": "x"}) == {}
 
 
 def test_evidence_drawer_fields() -> None:
@@ -451,6 +470,36 @@ def world(disposable_database):
     return state
 
 
+@pytest.fixture(scope="module")
+def timeline_events(world):
+    """Three fictitious events on the world's case: a worker-made creation (no operator), an
+    operator stage change carrying a note with an address, and a Cotizador autosave."""
+    import json as _json
+
+    import psycopg
+
+    events = [
+        ("opportunity", world["opportunity_id"], "opportunity.created",
+         {"title": "Pytest opp", "note": "de compras@cliente.invalid"}, "worker", None),
+        ("opportunity", world["opportunity_id"], "opportunity.staged",
+         {"from_stage": "lead", "to_stage": "qualifying", "note": "escribir a compras@cliente.invalid",
+          "net": 123456}, "operator", world["operator_id"]),
+        ("quote_revision", world["revision_id"], "quote_revision.draft_saved",
+         {"net": 99, "lines": []}, "operator", world["operator_id"]),
+    ]
+    with psycopg.connect(world["dsn"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        for kind, agg, etype, payload, actor_kind, actor in events:
+            cur.execute(
+                "insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type,"
+                " payload_version, payload, actor_kind, actor_operator_id)"
+                " select %s, %s, coalesce(max(seq), 0) + 1, %s, 1, %s::jsonb, %s, %s"
+                " from crm.domain_event where aggregate_kind = %s and aggregate_id = %s",
+                (kind, agg, etype, _json.dumps(payload), actor_kind, actor, kind, agg),
+            )
+    return world
+
+
 # ──────────────────────────────────────── KPI counts ────────────────────────
 
 
@@ -712,6 +761,136 @@ def test_db_missing_timeline_returns_none(world) -> None:
     api_dsn = runtime_dsn(world["dsn"])
     repo = CockpitRepository(psycopg.connect, api_dsn)
     assert repo.opportunity_timeline(str(uuid.uuid4())) is None
+
+
+@needs_db
+def test_timeline_has_actor_display_name(world, timeline_events) -> None:
+    """The drawer shows who did each thing; a worker event has no operator and reads null."""
+    import psycopg
+
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    entries = repo.opportunity_timeline(world["opportunity_id"])["entries"]
+    by_type = {e["event_type"]: e for e in entries if e["entry_kind"] == "domain_event"}
+    assert by_type["opportunity.staged"]["actor_display_name"] == "Pytest Cockpit Op"
+    assert by_type["opportunity.created"]["actor_display_name"] is None
+    assert by_type["opportunity.created"]["actor_operator_id"] is None
+    for e in entries:
+        assert "actor_display_name" in e
+        TimelineResponse.model_validate({"opportunity_id": world["opportunity_id"], "entries": [e]})
+
+
+@needs_db
+def test_timeline_skips_draft_saved(world, timeline_events) -> None:
+    """A Cotizador autosave is not a case event; the drawer never lists it."""
+    import psycopg
+
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    types = [e["event_type"] for e in repo.opportunity_timeline(world["opportunity_id"])["entries"]]
+    assert "opportunity.staged" in types
+    assert "quote_revision.draft_saved" not in types
+
+
+@needs_db
+def test_timeline_caps_at_the_newest_events(world, timeline_events, monkeypatch) -> None:
+    """A long-lived case reads only its newest TIMELINE_MAX_EVENTS events, still oldest first."""
+    import psycopg
+
+    from origenlab_api.v2 import cockpit_repository
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    assert cockpit_repository.TIMELINE_MAX_EVENTS == 500
+
+    def events() -> list[dict]:
+        entries = repo.opportunity_timeline(world["opportunity_id"])["entries"]
+        return [e for e in entries if e["entry_kind"] == "domain_event"]
+
+    full = events()
+    assert len(full) >= 2
+    monkeypatch.setattr(cockpit_repository, "TIMELINE_MAX_EVENTS", 1)
+    capped = events()
+    assert [e["event_type"] for e in capped] == [full[-1]["event_type"]]
+    monkeypatch.setattr(cockpit_repository, "TIMELINE_MAX_EVENTS", 2)
+    assert [e["event_type"] for e in events()] == [e["event_type"] for e in full[-2:]]
+
+
+@needs_db
+def test_timeline_db_payload_is_whitelisted(world, timeline_events) -> None:
+    import psycopg
+
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    entries = repo.opportunity_timeline(world["opportunity_id"])["entries"]
+    staged = next(e for e in entries if e["event_type"] == "opportunity.staged")
+    assert staged["payload"] == {"from_stage": "lead", "to_stage": "qualifying"}
+
+
+@needs_db
+def test_timeline_masks_for_viewer(world, timeline_events) -> None:
+    """The route keeps ContactRedactingRoute: a viewer reads 200 and an address in a payload field
+    the whitelist keeps (`close_reason`) comes back masked, not readable."""
+    import json as _json
+
+    import psycopg
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from origenlab_api.v2.cockpit_repository import CockpitRepository
+    from origenlab_api.v2.contact_redaction import REDACTION_HEADER
+    from origenlab_api.v2.identity import IdentityPort, OperatorIdentity
+
+    class _ViewerPort(IdentityPort):
+        def resolve(self, headers: dict[str, str]) -> OperatorIdentity:
+            return OperatorIdentity(
+                operator_id="00000000-0000-4000-8000-000000000001",
+                email_norm="viewer@example.invalid",
+                display_name="Viewer",
+                role="viewer",
+                status="active",
+            )
+
+    # `close_reason` survives TIMELINE_PAYLOAD_KEYS, so this address reaches the route's response
+    # and only the redactor stands between it and the viewer.
+    with psycopg.connect(world["dsn"], autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into crm.domain_event (aggregate_kind, aggregate_id, seq, event_type,"
+            " payload_version, payload, actor_kind, actor_operator_id)"
+            " select 'opportunity', %s, coalesce(max(seq), 0) + 1, 'opportunity.closed', 1, %s::jsonb,"
+            " 'operator', %s from crm.domain_event"
+            " where aggregate_kind = 'opportunity' and aggregate_id = %s",
+            (
+                world["opportunity_id"],
+                _json.dumps({"stage": "lost", "close_reason": "Compró por compras@cliente.invalid"}),
+                world["operator_id"],
+                world["opportunity_id"],
+            ),
+        )
+
+    repo = CockpitRepository(psycopg.connect, runtime_dsn(world["dsn"]))
+    raw = repo.opportunity_timeline(world["opportunity_id"])["entries"]
+    assert any(
+        (e.get("payload") or {}).get("close_reason") == "Compró por compras@cliente.invalid" for e in raw
+    ), "the address must survive the whitelist, or this test checks nothing"
+
+    app = FastAPI()
+    app.state.v2_identity = _ViewerPort()
+    app.state.cockpit_repository = repo
+    app.include_router(cockpit_router)
+    response = TestClient(app).get(f"/v2/cockpit/opportunities/{world['opportunity_id']}/timeline")
+    assert response.status_code == 200
+    assert response.headers[REDACTION_HEADER] == "contact-addresses"
+    assert "compras@" not in response.text
+    reasons = [
+        (e.get("payload") or {}).get("close_reason") for e in response.json()["entries"]
+    ]
+    assert "Compró por ***@cliente.invalid" in reasons
+    assert "Pytest Cockpit Op" in response.text
 
 
 # ─────────────────────────────────────── evidence drawer ────────────────────

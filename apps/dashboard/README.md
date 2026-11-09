@@ -6,7 +6,8 @@ durable core. It talks only to **`apps/api`**, and — apart from sign-out and t
 | Route | Use |
 |-------|-----|
 | `GET /auth/session` · `GET /auth/google/login` · `POST /auth/logout` | Sign-in state, Google Workspace login, sign-out |
-| `GET /v2/workspace/*` | Every CRM section (Hoy, Oportunidades, Organizaciones, Personas, Proveedores, Archivo Drive, Marketing, Revisión) |
+| `GET /v2/workspace/*` | Every page of the five areas (Hoy, Pipeline, Clientes, Listas y llamadas, Operaciones, Historial, …) |
+| `GET /v2/cockpit/opportunities/<uuid>/timeline` | The case drawer's history (stage, origin and close moves, with the operator's name) |
 | `GET /v2/contacts` · `GET /v2/organizations` | Personas and Organizaciones search |
 | `GET /v2/catalog/*` | Catálogo, read-only: products, product detail, quoted-price history, USD/EUR rate, costing parameters, image signed URLs. Mounted only with `ORIGENLAB_V2_QUOTING_ENABLED`; off, the page shows «Catálogo no habilitado». Costs come back only for sales/admin |
 | `POST /v2/commands/create-campaign-draft` · `POST /v2/commands/save-campaign-draft` | Marketing: create and save a campaign **draft**; mounted only with `ORIGENLAB_V2_CAMPAIGN_DRAFTS_ENABLED`, refused by the production proxy |
@@ -25,19 +26,50 @@ V2 architecture: [`../../docs/README.md`](../../docs/README.md); what is built a
 
 ```
 App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google Workspace sign-in)
-  → crm/CrmApp.tsx (the one shell and navigation; crm/shellRoute.ts reads the hash)
-  → crm/pages/: Hoy (OverviewPage + TodayBody), Oportunidades, Organizaciones, Personas, Proveedores, Catálogo,
-    Archivo Drive, Marketing, Revisión — read-only over `/v2/workspace/*`
+  → crm/CrmApp.tsx (the one shell and navigation; crm/shellRoute.ts reads the hash, crm/nav.ts the areas)
+  → crm/pages/: five areas — Hoy · Ventas · Finanzas · Catálogo · Ajustes — read-only over
+    `/v2/workspace/*`, plus the one case drawer (crm/drawer/CaseDrawer.tsx)
 ```
 
-- Routes are `#/crm/<section>[/<case uuid>]`. `#/`, an empty hash and unknown hashes open
-  `#/crm/resumen`.
-- **Old bookmarks keep working.** Hashes of the earlier operator panel (`#/cotizaciones`,
-  `#/ventas`, `#/contactos`, `#/archivo`, …) are redirected to the CRM section that covers the
-  same ground, or to Hoy when none does (`LEGACY_REDIRECTS` in `crm/shellRoute.ts`). A
-  bookmark that selected a case — `#/ventas?opportunity=<uuid>`, `#/casos?id=<uuid>` — opens
-  that case in Oportunidades when it exists in the CRM, and the list when it does not. V1
-  `sales_…` ids name no V2 case and open the list.
+- **Routes** are `#/<area>[/<page>][/<id>]` (`SECTION_PATH` in `crm/crmRoute.ts`). `#/`, an
+  empty hash and unknown hashes open `#/hoy`; a bare area root opens its first page; a path no
+  page of the area has opens that area's first page.
+
+  | Area | Tab | Hash |
+  |---|---|---|
+  | Hoy | — | `#/hoy` |
+  | Ventas | Pipeline | `#/ventas/pipeline[/<case uuid>]` (opens the case drawer) |
+  | Ventas | Cotizaciones (sales/admin) | `#/ventas/cotizaciones[/<quote uuid>\|/preferencias\|/rentabilidad]` |
+  | Ventas | Clientes | `#/ventas/clientes` (Organizaciones) · `#/ventas/clientes/personas` |
+  | Ventas | Listas y llamadas | `#/ventas/listas` (Prospectos) · `#/ventas/listas/campanas` |
+  | Ventas | Licitaciones | `#/ventas/licitaciones[/<tender uuid>\|/mp-<notice uuid>]` |
+  | Finanzas | Por cobrar | `#/finanzas/por-cobrar` |
+  | Catálogo | Productos | `#/catalogo[?query]` |
+  | Catálogo | Catálogo web (admin) | `#/catalogo/web[/<model slug>]` |
+  | Ajustes | Operaciones | `#/ajustes/operaciones[/<tab>]` (`proveedores`, `drive`, `estado`, …) |
+  | Ajustes | Historial | `#/ajustes/historial` |
+
+- **Old `#/crm/<section>` links keep working.** `legacyCrmTarget` (`crm/crmRoute.ts`) redirects
+  every `#/crm/…` hash to the page of the same section, keeping the case or quote id, the
+  Operaciones tab, the Cotizador pane and the query (`#/crm/oportunidades/<uuid>` →
+  `#/ventas/pipeline/<uuid>`, `#/crm/cotizar/<uuid>` → `#/ventas/cotizaciones/<uuid>`,
+  `#/crm/proveedores` → `#/ajustes/operaciones/proveedores`, `#/crm/revision` →
+  `#/ajustes/historial`).
+- **Older bookmarks too.** Hashes of the earlier operator panel (`#/cotizaciones`,
+  `#/contactos`, `#/archivo`, …) are redirected to the page that covers the same ground, or to
+  Hoy when none does (`LEGACY_REDIRECTS` in `crm/shellRoute.ts`). A bookmark that selected a
+  case — `#/ventas?opportunity=<uuid>`, `#/casos?id=<uuid>` — opens that case in the Pipeline
+  when it exists in the CRM, and the list when it does not. V1 `sales_…` ids name no V2 case
+  and open the list.
+- **Hoy per profile.** Each profile opens Hoy on its own queue (`profile.home_filter` from
+  `/auth/session`: `todo`, `llamadas` or `cotizar`), with «Mi cola» / «Todo el equipo» in the
+  header and the «Franja de metas» (goals strip) above the list.
+- **Pipeline.** Board columns with «Silenciosas» (an Enviada case 21 days without an answer, «Seguimiento N de 3»,
+  «¿Marcar perdida?»); Ganadas always shown; a lost case leaves the board 7 days after closing
+  and moves to «Cerradas», one table per month with its lost neto and reasons.
+- **One case drawer** (640 px) for every case, wherever it is opened: Resumen · Cotización ·
+  Contacto · Notas y llamadas · Correos, its history read from
+  `GET /v2/cockpit/opportunities/<uuid>/timeline`.
 - **Roles.** The API decides what each operator sees. Only `sales` and `admin` read contact
   addresses as recorded; for any other role (`viewer`) the API masks them; the dashboard says so and searches by name instead (`crm/redaction.ts`).
 - **Honest labels.** An imported case still in `quoting` shows «Cotización enviada ·

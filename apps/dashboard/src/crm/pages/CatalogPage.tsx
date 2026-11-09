@@ -3,8 +3,8 @@
  * loaded once (`catalogIndex.ts`) and typing filters it with no request (`catalogSearch.ts`): the
  * model code first, then words, accent-insensitive and typo-tolerant. A supplier rail and kind
  * chips scope the list, each with live counts; the supplier, kind and search live in the address
- * (`#/crm/catalogo?s=&k=&q=&ficha=1`) so a view survives a reload. A row opens the product panel
- * (`#/crm/catalogo/<uuid>`) with its photo, Drive documents, supplier prices (never to a viewer),
+ * (`#/catalogo?s=&k=&q=&ficha=1`) so a view survives a reload. A row opens the product panel
+ * (`#/catalogo/<uuid>`) with its photo, Drive documents, supplier prices (never to a viewer),
  * quoted-price history and the day's rates; sales and admin also see the costing parameters.
  *
  * Every read is `/v2/catalog/*`, mounted only behind `ORIGENLAB_V2_QUOTING_ENABLED`: a 404 means
@@ -19,7 +19,7 @@ import { createCatalogSearch } from "../catalog/catalogSearch";
 import { NotEnabled, ProductDrawer } from "../catalog/ProductPanel";
 import { ResultList } from "../catalog/ResultList";
 import { SupplierRail } from "../catalog/SupplierRail";
-import type { CrmSection } from "../crmRoute";
+import { crmHash, type CrmSection } from "../crmRoute";
 import { Button, EmptyState, PageHeader, ResourceGate, Segmented, Skeleton, fmtDate, fmtInt } from "../ui";
 import { useResource } from "../useResource";
 
@@ -93,7 +93,7 @@ interface Filters {
 
 const NO_FILTERS: Filters = { q: "", supplier: "", kind: "", ficha: false };
 
-/** The catalog's own part of the address: `#/crm/catalogo?s=<supplier>&k=<kind>&q=<text>&ficha=1`. */
+/** The catalog's own part of the address: `#/catalogo?s=<supplier>&k=<kind>&q=<text>&ficha=1`. */
 function readFilters(): Filters {
   const query = window.location.hash.split("?")[1] ?? "";
   const p = new URLSearchParams(query);
@@ -102,7 +102,7 @@ function readFilters(): Filters {
 
 function writeFilters(f: Filters): void {
   const [path] = window.location.hash.split("?");
-  if (path.replace(/\/$/, "") !== "#/crm/catalogo") return; // a product is open: its address is its own
+  if (path.replace(/\/$/, "") !== crmHash("catalogo")) return; // a product is open: its address is its own
   const p = new URLSearchParams();
   if (f.supplier) p.set("s", f.supplier);
   if (f.kind) p.set("k", f.kind);

@@ -1,3 +1,4 @@
+import type { CallOutcome } from "./callOutcome";
 import type { SupplierCandidate } from "./supplierCandidates";
 import type { AudienceInterest } from "./marketing/marketingTypes";
 
@@ -229,9 +230,16 @@ export interface OpportunityCardData {
   /** The case version a case command compares against. Absent from an older API. */
   version?: number | null;
   created_at: string | null;
+  /**
+   * When the client asked: the origin email's `sent_at` when the case came from one, else
+   * `created_at` (Hoy's «Solicitud → cotización»). Absent from an older API — read `created_at`.
+   */
+  requested_at?: string | null;
   updated_at: string | null;
   closed_at: string | null;
   close_reason: string | null;
+  /** The channel the case came from (`caseOrigin.ts`); null = nobody classified it. Absent from an older API. */
+  origin?: string | null;
   organization: {
     organization_id: string;
     name: string | null;
@@ -290,6 +298,12 @@ export interface OpportunityCardData {
    * Absent from an older API.
    */
   last_note?: { created_at: string; body: string; author: string | null } | null;
+  /**
+   * The newest active «Llamada» note on the case that reached the client (outcome `contesto` or
+   * `reunion`): a follow-up touch like an email of ours (owner ruling 2026-11-08). `at` is when the
+   * call was first logged. Absent from an older API; then only emails count.
+   */
+  last_call?: { at: string; outcome: string } | null;
   /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
   next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
 }
@@ -313,6 +327,15 @@ export interface PipelineResponse {
   drive_casos_url?: string | null;
   /** Tenders that close tomorrow (Hoy's only tender signal); absent from an older API. */
   tenders_closing?: { id: string; code: string | null; title: string; closes_at: string | null }[];
+  /** The team's live calls per Santiago day and outcome, the last 35 days (Hoy's «Alcance»); absent from an older API. */
+  calls?: CallDay[];
+}
+
+/** One day's calls with one outcome: `day` is `YYYY-MM-DD` in Santiago. */
+export interface CallDay {
+  day: string;
+  outcome: CallOutcome;
+  count: number;
 }
 
 export interface SupplierDirectoryEntry {
@@ -502,6 +525,43 @@ export interface WorkQueueResponse {
   counts?: Record<string, number>;
   limit: number;
   offset: number;
+}
+
+/**
+ * One entry of `GET /v2/cockpit/opportunities/{id}/timeline` — a case's domain event or a
+ * synthetic «cotización enviada». `payload` holds only the stage/origin/close keys
+ * (`TIMELINE_PAYLOAD_KEYS` in apps/api); `actor_display_name` is null for a worker or migrator
+ * event and for synthetic entries.
+ */
+export interface TimelineEntry {
+  entry_kind: "domain_event" | "quotation_sent";
+  occurred_at: string;
+  event_type: string | null;
+  aggregate_kind: string | null;
+  aggregate_id: string | null;
+  actor_operator_id: string | null;
+  actor_display_name: string | null;
+  payload: {
+    from_stage?: string;
+    to_stage?: string;
+    stage?: string;
+    close_reason?: string | null;
+    reopened?: boolean;
+    from?: string | null;
+    to?: string | null;
+    from_origin?: string | null;
+    to_origin?: string | null;
+  } | null;
+  quote_id: string | null;
+  quote_number: string | null;
+  revision_no: number | null;
+  pdf_sha256: string | null;
+}
+
+/** `GET /v2/cockpit/opportunities/{id}/timeline` — oldest first. */
+export interface TimelineResponse {
+  opportunity_id: string;
+  entries: TimelineEntry[];
 }
 
 /** `GET /v2/workspace/mail-sync` — whether the Gmail capture is running (Phase 4a). */

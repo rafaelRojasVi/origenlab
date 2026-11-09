@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuthSessionState } from "../../api/authClient";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import type { FxResponse } from "../fx";
 import { OverviewPage } from "./OverviewPage";
@@ -235,7 +237,14 @@ describe("Resumen", () => {
   });
 
   it("puts a decided case in the 3 · 14 · 30 rhythm, linking to its case and email, and counts the historical ones apart", async () => {
-    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    const ANDINO = "11111111-1111-4111-8111-111111111111";
+    respond({
+      "/v2/workspace/fx": FX,
+      "/v2/workspace/pipeline": PIPELINE,
+      [`/v2/cockpit/opportunities/${ANDINO}/timeline`]: { opportunity_id: ANDINO, entries: [] },
+      [`/v2/workspace/opportunities/${ANDINO}/notes`]: { opportunity_id: ANDINO, notes: [] },
+      [`/v2/workspace/opportunities/${ANDINO}/threads`]: { opportunity_id: ANDINO, threads: [] },
+    });
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
     expect(await screen.findByTestId("hero-header")).toHaveTextContent("HOY");
@@ -249,13 +258,16 @@ describe("Resumen", () => {
       "href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/gm1",
     );
+    // The case opens in its drawer, over Hoy.
     fireEvent.click(within(row).getByRole("button", { name: "Laboratorio Andino" }));
-    expect(navigate).toHaveBeenCalledWith("oportunidades", "11111111-1111-4111-8111-111111111111");
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Laboratorio Andino");
+    expect(navigate).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
     // Valle is historical (undecided) → in housekeeping, not in the queue.
     expect(within(paraTi).queryByText("Universidad del Valle")).not.toBeInTheDocument();
     expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
     // The header counts by section: one follow-up, nothing else due.
-    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 seguimiento");
+    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 llamada");
     expect(screen.queryByTestId("today-stats")).not.toBeInTheDocument();
   });
 
@@ -341,8 +353,8 @@ describe("Hoy · orden", () => {
   it("puts today's work above the exchange rate and the quote number", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // The first section heading (Andino is at the 3-day threshold, so «Seguimientos de hoy» shows).
-    const heading = await screen.findByRole("heading", { level: 2, name: "Seguimientos de hoy" });
+    // The first section heading (Andino is at the 3-day threshold, so «Llamar» shows).
+    const heading = await screen.findByRole("heading", { level: 2, name: "Llamar" });
     const usd = await screen.findByTestId("fx-USD");
     const quotes = await screen.findByTestId("quote-number-box");
     expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -364,3 +376,42 @@ describe("Hoy · housekeeping", () => {
   });
 });
 
+
+describe("Hoy · franja de metas y «Mi cola»", () => {
+  function as(profileId: string, name: string): AuthSessionState {
+    return {
+      kind: "signed_in",
+      method: "google_profile",
+      operator: { operatorId: "op-1", email: "contacto@ejemplo.invalid", displayName: "Contacto", role: "sales" },
+      caseCommandsEnabled: true,
+      crmAuthoringEnabled: true,
+      profile: { id: profileId, displayName: name, roleLabel: "Ventas", homeFilter: "llamadas" },
+    };
+  }
+  const page = (s: AuthSessionState) => (
+    <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
+      <OverviewPage navigate={() => undefined} />
+    </AuthSessionContext.Provider>
+  );
+
+  it("the goal strip sits between the greeting and today's queue", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
+    render(<OverviewPage navigate={() => undefined} />);
+    const strip = await screen.findByTestId("goal-strip");
+    const hero = screen.getByTestId("hero-header");
+    expect(hero.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(strip).getByRole("link", { name: /Seguimiento/ })).toBeInTheDocument();
+  });
+
+  it("«Mi cola» / «Todo el equipo» is in the header, and another profile starts on its own queue", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
+    const { rerender } = render(page(as("p-ana", "Ana")));
+    const hero = await screen.findByTestId("hero-header");
+    fireEvent.click(within(hero).getByRole("button", { name: "Todo el equipo" }));
+    expect(within(hero).getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
+    rerender(page(as("p-beto", "Beto")));
+    expect(within(screen.getByTestId("hero-header")).getByRole("button", { name: "Mi cola · Beto" })).toHaveAttribute("aria-pressed", "true");
+    // Only one switch on the page.
+    expect(screen.getAllByTestId("today-scope")).toHaveLength(1);
+  });
+});

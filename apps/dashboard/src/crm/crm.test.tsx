@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OperatorApiError } from "../api/operatorClient";
 import { splitAddress } from "./address";
-import { crmHash, isCrmHash, parseCrmHash } from "./crmRoute";
+import { crmHash, isShellHash, legacyCrmTarget, parseCrmHash } from "./crmRoute";
 import type { OpportunityCardData, PipelineResponse, WorkspaceOverview } from "./crmTypes";
 import { PipelinePage } from "./pages/PipelinePage";
 import { PeoplePage } from "./pages/PeoplePage";
@@ -101,33 +101,33 @@ afterEach(() => {
 });
 
 describe("crm routing", () => {
-  it("recognises #/crm and parses section and uuid", () => {
-    expect(isCrmHash("#/crm")).toBe(true);
-    expect(isCrmHash("#/crm/drive")).toBe(true);
-    expect(isCrmHash("#/crmx")).toBe(false);
-    expect(isCrmHash("#/cotizaciones")).toBe(false);
-    expect(parseCrmHash("#/crm")).toEqual({ section: "resumen", id: null });
-    expect(parseCrmHash("#/crm/nope")).toEqual({ section: "resumen", id: null });
+  it("recognises the five areas and parses section and uuid", () => {
+    expect(isShellHash("#/hoy")).toBe(true);
+    expect(isShellHash("#/ajustes/operaciones/drive")).toBe(true);
+    expect(isShellHash("#/hoyx")).toBe(false);
+    expect(isShellHash("#/cotizaciones")).toBe(false);
+    expect(parseCrmHash("#/hoy")).toEqual({ section: "resumen", id: null });
+    expect(parseCrmHash("#/ventas/nope")).toEqual({ section: "resumen", id: null });
     // A page's own query (the catalog keeps its supplier and search there) never changes the route.
-    expect(parseCrmHash("#/crm/catalogo?s=x&q=y")).toEqual({ section: "catalogo", id: null });
-    expect(parseCrmHash("#/crm/catalogo/6bafddfa-0000-4000-8000-0000000000c1?q=y")).toEqual({
+    expect(parseCrmHash("#/catalogo?s=x&q=y")).toEqual({ section: "catalogo", id: null });
+    expect(parseCrmHash("#/catalogo/6bafddfa-0000-4000-8000-0000000000c1?q=y")).toEqual({
       section: "catalogo", id: "6bafddfa-0000-4000-8000-0000000000c1" });
     // Old links keep working: Revisión is Historial; suppliers and the Drive archive live in Datos.
-    expect(parseCrmHash("#/crm/revision")).toEqual({ section: "historial", id: null });
-    expect(parseCrmHash("#/crm/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
-    expect(parseCrmHash("#/crm/drive")).toEqual({ section: "datos", id: null, tab: "drive" });
+    expect(legacyCrmTarget("#/crm/revision")).toBe("#/ajustes/historial");
+    expect(legacyCrmTarget("#/crm/proveedores")).toBe("#/ajustes/operaciones/proveedores");
+    expect(parseCrmHash(legacyCrmTarget("#/crm/drive")!)).toEqual({ section: "datos", id: null, tab: "drive" });
     // A «Datos» tab has its own address, so a link can open it directly.
-    expect(parseCrmHash("#/crm/datos/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
-    expect(crmHash("datos", null, "drive")).toBe("#/crm/datos/drive");
+    expect(parseCrmHash("#/ajustes/operaciones/proveedores")).toEqual({ section: "datos", id: null, tab: "proveedores" });
+    expect(crmHash("datos", null, "drive")).toBe("#/ajustes/operaciones/drive");
     const id = "11111111-1111-4111-8111-111111111111";
-    expect(parseCrmHash(`#/crm/oportunidades/${id}`)).toEqual({ section: "oportunidades", id });
+    expect(parseCrmHash(`#/ventas/pipeline/${id}`)).toEqual({ section: "oportunidades", id });
     // A non-uuid id is dropped, never interpolated into a request.
-    expect(parseCrmHash("#/crm/oportunidades/../../v2/commands")).toEqual({ section: "oportunidades", id: null });
+    expect(parseCrmHash("#/ventas/pipeline/../../v2/commands")).toEqual({ section: "oportunidades", id: null });
     // «Licitaciones» also opens a Mercado Público notice: `mp-<uuid>`, there and nowhere else.
-    expect(parseCrmHash(`#/crm/licitaciones/mp-${id}`)).toEqual({ section: "licitaciones", id: `mp-${id}` });
-    expect(parseCrmHash(`#/crm/oportunidades/mp-${id}`)).toEqual({ section: "oportunidades", id: null });
-    expect(parseCrmHash("#/crm/licitaciones/mp-1234567-12-LE26")).toEqual({ section: "licitaciones", id: null });
-    expect(crmHash("drive")).toBe("#/crm/drive");
+    expect(parseCrmHash(`#/ventas/licitaciones/mp-${id}`)).toEqual({ section: "licitaciones", id: `mp-${id}` });
+    expect(parseCrmHash(`#/ventas/pipeline/mp-${id}`)).toEqual({ section: "oportunidades", id: null });
+    expect(parseCrmHash("#/ventas/licitaciones/mp-1234567-12-LE26")).toEqual({ section: "licitaciones", id: null });
+    expect(crmHash("drive")).toBe("#/ajustes/operaciones/drive");
   });
 });
 
@@ -357,56 +357,164 @@ describe("dashboard shell", () => {
     window.location.hash = "";
   });
 
-  it("shows an admin the twelve sections in order and marks the current one", async () => {
-    signedInAt(`#/crm/oportunidades`);
-    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
+  const AREA_NAMES = ["Hoy", "Ventas", "Finanzas", "Catálogo", "Ajustes"];
+  const sideNav = () => screen.findByRole("navigation", { name: "Secciones del panel" });
+
+  it("renders five areas in order, each opening its first page", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    const nav = await sideNav();
     const links = within(nav).getAllByRole("link");
-    expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/crm/resumen", "#/crm/oportunidades", "#/crm/cotizador", "#/crm/licitaciones", "#/crm/prospectos", "#/crm/pagos", "#/crm/organizaciones", "#/crm/personas",
-      "#/crm/catalogo", "#/crm/marketing", "#/crm/historial", "#/crm/datos",
-    ]);
-    expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual([
-      "Oportunidades",
-    ]);
+    const areas = AREA_NAMES.map((name) => within(nav).getByRole("link", { name }));
+    expect(areas.map((a) => links.indexOf(a))).toEqual([...areas.map((a) => links.indexOf(a))].sort((x, y) => x - y));
+    expect(areas.map((a) => a.getAttribute("href"))).toEqual(["#/hoy", "#/ventas/pipeline", "#/finanzas/por-cobrar", "#/catalogo", "#/ajustes/operaciones"]);
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveAttribute("aria-current", "true");
+    expect(within(nav).getByRole("link", { name: "Hoy" })).not.toHaveAttribute("aria-current");
   });
 
-  it("hides «Datos» from a sales user", async () => {
-    signedInAt(`#/crm/oportunidades`, "sales");
-    const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
-    expect(within(nav).queryByRole("link", { name: /Datos/ })).not.toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: /Historial/ })).toBeInTheDocument();
+  it("Ventas shows its five tabs and marks Pipeline current", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
+    const links = tabs.getAllByRole("link");
+    expect(links.map((a) => a.textContent)).toEqual(["Pipeline", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "#/ventas/pipeline", "#/ventas/cotizaciones", "#/ventas/clientes", "#/ventas/listas", "#/ventas/licitaciones",
+    ]);
+    expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual(["Pipeline"]);
+    // The side nav lists the same tabs under the open area.
+    const nav = within(await sideNav());
+    expect(nav.getByRole("link", { name: "Pipeline" })).toHaveAttribute("aria-current", "page");
+    expect(nav.queryByRole("link", { name: "Por cobrar" })).not.toBeInTheDocument();
+    expect(document.title).toBe("Pipeline · OrigenLab");
+  });
+
+  it("viewer sees no Cotizaciones tab", async () => {
+    signedInAt(`#/ventas/pipeline`, "viewer");
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Pipeline", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(within(await sideNav()).queryByRole("link", { name: "Cotizaciones" })).not.toBeInTheDocument();
+  });
+
+  it("sales sees no Catálogo web", async () => {
+    signedInAt(`#/catalogo`, "sales");
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Catálogo" }));
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Productos"]);
+    expect(within(await sideNav()).queryByRole("link", { name: "Catálogo web" })).not.toBeInTheDocument();
+  });
+
+  it("admin sees Catálogo web", async () => {
+    signedInAt(`#/catalogo/web`);
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Catálogo" }));
+    expect(tabs.getByRole("link", { name: "Catálogo web" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("sales finds Operaciones and Historial under Ajustes", async () => {
+    signedInAt(`#/ajustes/historial`, "sales");
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ajustes" }));
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Operaciones", "Historial"]);
+    expect(tabs.getByRole("link", { name: "Historial" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Clientes shows Organizaciones · Personas", async () => {
+    signedInAt(`#/ventas/clientes/personas`);
+    const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
+    expect(tabs.getByRole("link", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
+    const pair = within(screen.getByRole("group", { name: "Clientes" }));
+    const links = pair.getAllByRole("link");
+    expect(links.map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Organizaciones", "#/ventas/clientes"],
+      ["Personas", "#/ventas/clientes/personas"],
+    ]);
+    expect(pair.getByRole("link", { name: "Personas" })).toHaveAttribute("aria-current", "page");
+    expect(document.title).toBe("Personas · OrigenLab");
+  });
+
+  it("lights Organizaciones on both of its addresses", async () => {
+    signedInAt(`#/ventas/clientes/organizaciones`);
+    const pair = within(await screen.findByRole("group", { name: "Clientes" }));
+    expect(pair.getByRole("link", { name: "Organizaciones" })).toHaveAttribute("aria-current", "page");
+    expect(within(screen.getByRole("navigation", { name: "Pestañas de Ventas" })).getByRole("link", { name: "Clientes" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Listas y llamadas shows Prospectos · Campañas", async () => {
+    signedInAt(`#/ventas/listas`);
+    const pair = within(await screen.findByRole("group", { name: "Listas y llamadas" }));
+    expect(pair.getAllByRole("link").map((a) => a.textContent)).toEqual(["Prospectos", "Campañas"]);
+    expect(pair.getByRole("link", { name: "Prospectos" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("lights Prospectos on #/ventas/listas/prospectos too", async () => {
+    signedInAt(`#/ventas/listas/prospectos`);
+    const pair = within(await screen.findByRole("group", { name: "Listas y llamadas" }));
+    expect(pair.getByRole("link", { name: "Prospectos" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("Hoy has no tabs", async () => {
+    signedInAt(`#/hoy`);
+    await sideNav();
+    expect(screen.queryByRole("navigation", { name: /^Pestañas de/ })).not.toBeInTheDocument();
+  });
+
+  it("Hoy, which has no tabs, is marked as the page itself", async () => {
+    signedInAt(`#/hoy`);
+    const nav = await sideNav();
+    expect(within(nav).getByRole("link", { name: "Hoy" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("hides the tab row above the page while the phone menu is open", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    await screen.findByRole("navigation", { name: "Pestañas de Ventas" });
+    const row = screen.getByTestId("crm-subnav");
+    expect(row).not.toHaveClass("max-lg:hidden");
+    const menu = screen.getByRole("button", { name: "Menú" });
+    fireEvent.click(menu);
+    expect(menu).toHaveAttribute("aria-expanded", "true");
+    expect(row).toHaveClass("max-lg:hidden");
+    fireEvent.click(menu);
+    expect(row).not.toHaveClass("max-lg:hidden");
+  });
+
+  it("gives side-nav area and tab links a visible focus ring", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    const nav = await sideNav();
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveClass("focus-visible:ring-2", "focus-visible:ring-brand-600");
+    expect(within(nav).getByRole("link", { name: "Pipeline" })).toHaveClass("focus-visible:ring-2", "focus-visible:ring-brand-600");
+  });
+
+  it("the Pipeline page heading matches its tab", async () => {
+    signedInAt(`#/ventas/pipeline`);
+    expect(await screen.findByRole("heading", { level: 1, name: "Pipeline" })).toBeInTheDocument();
   });
 
   it("opens the «Datos» tab a link asks for, also when already on «Datos»", async () => {
-    signedInAt(`#/crm/datos/proveedores`);
+    signedInAt(`#/ajustes/operaciones/proveedores`);
     expect(await screen.findByRole("button", { name: /^Proveedores/, pressed: true })).toBeInTheDocument();
-    window.location.hash = "#/crm/datos/estado";
+    window.location.hash = "#/ajustes/operaciones/estado";
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     expect(await screen.findByRole("button", { name: /^Estado de los datos/, pressed: true })).toBeInTheDocument();
   });
 
   it("folds the section names into a rail of icons, and remembers it", async () => {
     window.localStorage.removeItem("crm.nav.collapsed");
-    signedInAt(`#/crm/oportunidades`);
+    signedInAt(`#/ventas/pipeline`);
     const nav = await screen.findByRole("navigation", { name: "Secciones del panel" });
     const toggle = within(nav).getByRole("button", { name: "Contraer menú" });
     fireEvent.click(toggle);
     expect(within(nav).getByRole("button", { name: "Expandir menú" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(nav).getByRole("link", { name: "Oportunidades" })).toHaveAttribute("title", "Oportunidades");
+    expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveAttribute("title", "Ventas");
     expect(window.localStorage.getItem("crm.nav.collapsed")).toBe("1");
     window.localStorage.removeItem("crm.nav.collapsed");
   });
 
   it("opens the case an old ?opportunity= bookmark selected", async () => {
     signedInAt(`#/ventas?opportunity=${CASE}`);
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${CASE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/pipeline/${CASE}`));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 
   it("opens the list, not a guess, when the bookmarked case is not in the CRM", async () => {
     const other = "22222222-2222-4222-8222-222222222222";
     signedInAt(`#/casos?id=${other}`);
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/oportunidades/${other}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/pipeline/${other}`));
     expect(await screen.findByTestId(`board-card-${CASE}`)).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -434,6 +542,8 @@ describe("no write path in the CRM workspace", () => {
   const TODO_API_CLIENT = "./todos/todoApi.ts";
   //  - the «Pagos» client (pagos/invoiceApi.ts) POSTs the SII CSV upload and three invoice commands.
   const PAGOS_API_CLIENT = "./pagos/invoiceApi.ts";
+  //  - the «Catálogo web» client (web/webPublishApi.ts) POSTs one model sheet to the site's repository (the page is shown to admins only).
+  const WEB_PUBLISH_CLIENT = "./web/webPublishApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -447,7 +557,7 @@ describe("no write path in the CRM workspace", () => {
       if (
         f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT ||
         f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === TENDER_API_CLIENT || f === PROSPECT_API_CLIENT ||
-        f === TODO_API_CLIENT || f === PAGOS_API_CLIENT
+        f === TODO_API_CLIENT || f === PAGOS_API_CLIENT || f === WEB_PUBLISH_CLIENT
       ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);

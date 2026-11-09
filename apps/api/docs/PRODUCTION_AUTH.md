@@ -630,10 +630,15 @@ The roster is JSON **outside the repository**:
   "principal": {"email": "<shared address>@origenlab.cl", "provider_subject": "<Google sub>"},
   "profiles": [
     {"key": "<slug>", "display_name": "<Nombre>", "role": "admin", "sort_order": 1},
-    {"key": "<slug>", "display_name": "<Nombre>", "role": "sales", "sort_order": 3}
+    {"key": "<slug>", "display_name": "<Nombre>", "role": "sales", "sort_order": 3,
+     "home_filter": "llamadas"}
   ]
 }
 ```
+
+`home_filter` (optional) is the «Hoy» view the profile opens on: `todo`, `llamadas` or
+`cotizar`; omitted means none (the dashboard default), so dropping it from the roster clears
+it. It is not a security field — changing it never ends the profile's session.
 
 PINs (6–12 digits; no repeated digit, no ascending/descending run) are **never** in the roster
 and never on the command line: `--prompt-pin <key>` asks for each twice on a hidden terminal

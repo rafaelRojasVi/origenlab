@@ -20,9 +20,13 @@
  *   («Retomar: …», a call), overdue first.
  * - **Instituciones por confirmar**: the machine-proposed institutions of open cases.
  */
-import { conversation, lastTouch } from "./caseDisplay";
+import type { HomeFilter } from "../api/authClient";
+import { useAuthSession } from "../context/AuthSessionContext";
+import { callTouch, conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
+
+export type { HomeFilter } from "../api/authClient";
 
 /** Hoy's only tender signal: one line per tender (open, not yet awarded) that closes tomorrow. */
 export function tenderClosingLines<T extends { id: string; title: string }>(closing: readonly T[] | undefined): { id: string; text: string }[] {
@@ -173,7 +177,7 @@ export interface FollowUp {
   /** Days since OrigenLab's last touch: the quote, or a later email it sent. */
   days: number;
   rhythm: Rhythm;
-  /** The last touch was a follow-up email, not the quote itself. */
+  /** The last touch was a follow-up email (or a call that reached the client), not the quote itself. */
   byEmail: boolean;
   /** The «Seguimiento …» task due today that put the case here, if one did. */
   task: DueTask | null;
@@ -187,14 +191,15 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     // OrigenLab's last touch after the quote: an email on the thread — a note is a reminder, not a
     // touch. One clock with the board's status line (`lastTouch`).
     const touch = lastTouch(card);
-    const email = touch.by === "us" ? touch.at : null;
+    // A call that reached the client is a touch too (owner ruling 2026-11-08): last contact is the
+    // later of our last email and that call.
+    const email = ourLastTouch(card);
     // The client's closing reply («gracias, te aviso», mail rule R18) restarts the rhythm, but only an
-    // email of ours marks a follow-up task done.
-    const clock = touch.by === "settled" ? touch.at : email;
+    // email (or a call) of ours marks a follow-up task done.
+    const clock = touch.by === "settled" ? later(touch.at, email) : email;
     // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
     // to press «Hecho» — the email the sync captures is the proof.
-    const written = (t: OpenTask) => email !== null && Date.parse(email) >= startOfLocalDay(Date.parse(t.due_at));
-    const pending = open.filter((t) => !(isFollowUpTask(t) && written(t)));
+    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
     const decided = open.some(isFollowUpTask);
     let task: DueTask | null = null;
@@ -215,10 +220,52 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.
     if (!task && days < RHYTHM[0].from) continue;
-    const rhythm = days >= RHYTHM[2].from ? "cerrar" : days >= RHYTHM[1].from ? "segundo" : "primero";
+    const rhythm = RHYTHM[stepForDays(days) - 1].key;
     out.push({ card, days, rhythm, byEmail, task });
   }
   return out.sort((a, b) => b.days - a.days);
+}
+
+// `callTouch` lives in caseDisplay.ts (stage.ts needs it for Silenciosas); re-exported here.
+export { CALL_TOUCH_OUTCOMES, callTouch } from "./caseDisplay";
+
+function later(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
+/** OrigenLab's last touch after the quote that can meet a follow-up: our email, or a call that reached the client. */
+export function ourLastTouch(card: OpportunityCardData): string | null {
+  const touch = lastTouch(card);
+  return later(touch.by === "us" ? touch.at : null, callTouch(card));
+}
+
+/** A «Seguimiento …» task is met once OrigenLab touched the case on or after its day. */
+function followUpMet(task: OpenTask, touch: string | null): boolean {
+  return touch !== null && Date.parse(touch) >= startOfLocalDay(Date.parse(task.due_at));
+}
+
+/** The case's «Seguimiento …» reminders still pending, earliest first: one already met is done. */
+export function pendingFollowUpTasks(card: OpportunityCardData): OpenTask[] {
+  const touch = ourLastTouch(card);
+  return (card.open_tasks ?? [])
+    .filter((t) => isFollowUpTask(t) && !followUpMet(t, touch))
+    .sort((a, b) => a.due_at.localeCompare(b.due_at));
+}
+
+/**
+ * The rhythm step for a number of days since OrigenLab's last touch: 3 from `RHYTHM[2].from`
+ * (30), 2 from `RHYTHM[1].from` (14), else 1. The one mapping the board card, the drawer chip and
+ * `followUpsDue` share.
+ */
+export function stepForDays(days: number): 1 | 2 | 3 {
+  return days >= RHYTHM[2].from ? 3 : days >= RHYTHM[1].from ? 2 : 1;
+}
+
+/** «Seguimiento N de 3»: the rhythm step a follow-up is on (1 from day 3, 2 from 14, 3 from 30). */
+export function followUpStep(f: FollowUp): 1 | 2 | 3 {
+  return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3;
 }
 
 function startOfLocalDay(t: number): number {
@@ -263,12 +310,12 @@ export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()
  * Counts for «Hoy»'s hero header: cotizar, responder and seguimientos (the three main sections).
  * `hechas` is tracked in the page's own state and not computed here.
  */
-export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null): {
+export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null, filter: HomeFilter = "todo"): {
   cotizar: number;
   responder: number;
   seguimientos: number;
 } {
-  const queue = buildParaTiQueue(items, now, me);
+  const queue = filterQueue(buildParaTiQueue(items, now, me), filter);
   return {
     cotizar: queue.filter((q) => q.kind === "cotizar").length,
     responder: queue.filter((q) => q.kind === "reply").length,
@@ -328,8 +375,23 @@ export function awaitsQuote(card: OpportunityCardData): boolean {
 }
 
 /**
+ * «Cotizar»: an open case with no quote sent yet (pre-quote, or a first quote still in the
+ * Cotizador), not paused and not blocked. Hoy's Cotizar section and the Pipeline's «Por cotizar»
+ * view both read this.
+ */
+export function isCotizarCase(card: OpportunityCardData, now: Date): boolean {
+  if (!isOpenCase(card)) return false;
+  // A first quote still in the Cotizador is «Cotizar» at any stage: finishing it is the job.
+  if (!PRE_QUOTE_STAGES.has(card.stage) && card.latest_revision === null) return false;
+  if (!awaitsQuote(card)) return false;
+  if (pausedUntil(card, now) !== null) return false;
+  return !card.attention.some((a) => a.blocking);
+}
+
+/**
  * ONE merged list of what the operator needs to act on today, deduplicated by `opportunity_id`.
- * Priority per case: cotizar > reply > overdue task > due task > follow-up due today.
+ * Priority per case: cotizar > reply > overdue task > due task > follow-up due today; shown in the
+ * order Cotizar · Responder · Llamar (follow-ups) · Tareas.
  * Order (owner, 2026-10-15): oldest wait first in every section — the case that has been
  * waiting the longest is at the top within its section.
  * Forwarded requests are excluded: they have no case yet and are appended in `TodayBody`.
@@ -340,12 +402,7 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   // 0. Cotizar — open pre-quote cases with no sent quote, not paused, not blocked.
   //    Cotizar takes priority over Responder: a new request that still needs a quote goes here.
   for (const card of items) {
-    if (!isOpenCase(card)) continue;
-    // A first quote still in the Cotizador is «Cotizar» at any stage: finishing it is the job.
-    if (!PRE_QUOTE_STAGES.has(card.stage) && card.latest_revision === null) continue;
-    if (!awaitsQuote(card)) continue;
-    if (pausedUntil(card, now) !== null) continue;
-    if (card.attention.some((a) => a.blocking)) continue;
+    if (!isCotizarCase(card, now)) continue;
     const id = card.opportunity_id;
     const startAt = card.last_contact?.inbound?.at ?? card.created_at ?? null;
     const waitMs = startAt ? Math.max(0, now.getTime() - Date.parse(startAt)) : 0;
@@ -386,7 +443,9 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f, waitMs: f.days * DAY_MS });
   }
 
-  const RANK: Record<QueueItem["kind"], number> = { cotizar: 0, reply: 1, task: 2, followup: 3 };
+  // Display order (owner, 2026-11-08): Cotizar · Responder · Llamar · Tareas; forwarded requests
+  // («Decidir») come last in `TodayBody`. The dedupe priority above does not change.
+  const RANK: Record<QueueItem["kind"], number> = { cotizar: 0, reply: 1, followup: 2, task: 3 };
   // Within every section: oldest wait first (largest waitMs first).
   return [...queue.values()].sort((a, b) =>
     RANK[a.kind] - RANK[b.kind] || b.waitMs - a.waitMs);
@@ -395,4 +454,29 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
 /** Count for «N para ti» in the header; `forwards` are the forwarded requests still waiting. */
 export function paraTiCount(items: OpportunityCardData[], now: Date, me: string | null, forwards = 0): number {
   return buildParaTiQueue(items, now, me).length + forwards;
+}
+
+/* ─────────────────────────────────────────────────────── per-profile view ── */
+
+/**
+ * The sections each «Hoy» view shows; «decidir» is the forwarded requests and «licitacion» the
+ * «Licitación cierra mañana» lines (preparing an offer is quoting work).
+ */
+export const HOME_FILTER_KINDS: Record<HomeFilter, ReadonlySet<QueueItem["kind"] | "decidir" | "licitacion">> = {
+  todo: new Set(["cotizar", "reply", "followup", "task", "decidir", "licitacion"]),
+  llamadas: new Set(["followup", "task"]),
+  cotizar: new Set(["cotizar", "reply", "task", "decidir", "licitacion"]),
+};
+
+/** The queue as a profile's view shows it: only the sections that view holds, order kept. */
+export function filterQueue(q: QueueItem[], f: HomeFilter): QueueItem[] {
+  const kinds = HOME_FILTER_KINDS[f] ?? HOME_FILTER_KINDS.todo;
+  return q.filter((item) => kinds.has(item.kind));
+}
+
+/** The view the signed-in profile opens «Hoy» on; no profile, none set or an unknown one is «todo». */
+export function useHomeFilter(): HomeFilter {
+  const { session } = useAuthSession();
+  const f = session.kind === "signed_in" ? session.profile?.homeFilter : null;
+  return f && Object.prototype.hasOwnProperty.call(HOME_FILTER_KINDS, f) ? f : "todo";
 }

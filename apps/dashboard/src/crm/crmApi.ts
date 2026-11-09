@@ -1,9 +1,11 @@
 /**
  * Read-only client for the CRM workspace. GET only; nothing here can write.
  *
- * `/v2/workspace/*` and `/v2/cockpit/*` are **not** in the dashboard-proxy allowlist yet: they
- * work through the Vite dev proxy, and behind the production Worker they answer 403
- * `path_not_allowed`, which the pages show as "not enabled in this environment".
+ * The dashboard-proxy allowlist (`apps/dashboard-proxy/src/allowlist.ts`) names the
+ * `/v2/workspace/*` and `/v2/cockpit/*` reads one by one — never a prefix — among them
+ * `/v2/cockpit/opportunities/<uuid>/timeline` for the case drawer. A path not listed there works
+ * through the Vite dev proxy but answers 403 `path_not_allowed` behind the production Worker,
+ * which the pages show as "not enabled in this environment".
  */
 
 import { fetchJsonGet, operatorApiUrl } from "../api/operatorClient";
@@ -20,6 +22,7 @@ import type {
   EquipmentInterestsResponse,
   ProvidersResponse,
   ReviewResponse,
+  TimelineResponse,
   WorkQueueResponse,
   WorkspaceOverview,
 } from "./crmTypes";
@@ -53,6 +56,8 @@ export const WORKSPACE_PATHS = {
     `/v2/workspace/opportunities/${encodeURIComponent(opportunityId)}/purchase-order-candidates`,
   caseMemory: (opportunityId: string) =>
     `/v2/workspace/cases/${encodeURIComponent(opportunityId)}/memory`,
+  caseTimeline: (opportunityId: string) =>
+    `/v2/cockpit/opportunities/${encodeURIComponent(opportunityId)}/timeline`,
 } as const;
 
 export const fetchOverview = () => fetchJsonGet<WorkspaceOverview>(operatorApiUrl(WORKSPACE_PATHS.overview));
@@ -101,6 +106,10 @@ export type CaseMemoryResponse = {
 /** The latest machine memory for one case. Returns 404 when the case does not exist. */
 export const fetchCaseMemory = (opportunityId: string) =>
   fetchJsonGet<CaseMemoryResponse>(operatorApiUrl(WORKSPACE_PATHS.caseMemory(opportunityId)));
+
+/** One case's timeline for the drawer, oldest first. Returns 404 when the case does not exist. */
+export const fetchCaseTimeline = (opportunityId: string): Promise<TimelineResponse> =>
+  fetchJsonGet<TimelineResponse>(operatorApiUrl(WORKSPACE_PATHS.caseTimeline(opportunityId)));
 
 export const fetchProviders = () => fetchJsonGet<ProvidersResponse>(operatorApiUrl(WORKSPACE_PATHS.providers));
 export const fetchEquipmentInterests = () =>

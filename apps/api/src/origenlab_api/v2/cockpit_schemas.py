@@ -414,6 +414,18 @@ TIMELINE_ENTRY_KINDS = frozenset(
     {"domain_event", "quotation_sent"}
 )
 
+#: The only ``crm.domain_event.payload`` keys the timeline returns. A payload also carries notes,
+#: prices, line items and addresses; the case drawer needs the stage and origin moves only, so
+#: every other key is dropped in the repository before the answer is built.
+TIMELINE_PAYLOAD_KEYS = frozenset(
+    {"from_stage", "to_stage", "stage", "close_reason", "reopened", "from", "to",
+     "from_origin", "to_origin"}
+)
+
+#: Event types the timeline leaves out: a Cotizador autosave is not something that happened to
+#: the case.
+TIMELINE_SKIPPED_EVENT_TYPES = frozenset({"quote_revision.draft_saved"})
+
 
 class TimelineEntry(BaseModel):
     """One ordered entry in an opportunity's timeline.
@@ -444,9 +456,19 @@ class TimelineEntry(BaseModel):
         description="crm.domain_event.aggregate_id as text.",
     )
     actor_operator_id: str | None = None
+    actor_display_name: str | None = Field(
+        default=None,
+        description=(
+            "platform.operator.display_name of the acting operator; null for a worker or "
+            "migrator event and for synthetic entries."
+        ),
+    )
     payload: dict[str, Any] | None = Field(
         default=None,
-        description="crm.domain_event.payload, or null for synthetic entries.",
+        description=(
+            "crm.domain_event.payload reduced to TIMELINE_PAYLOAD_KEYS, or null for synthetic "
+            "entries."
+        ),
     )
     # Quotation-sent extras (when entry_kind = 'quotation_sent')
     quote_id: str | None = None

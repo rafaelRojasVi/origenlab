@@ -282,6 +282,20 @@ class Settings(BaseSettings):
     v2_campaign_test_send_enabled: bool = False
     """Mount POST /v2/web/quote-request (web quote form). Default false; also needs v2_test_send_token_file."""
     v2_web_quote_form_enabled: bool = False
+    """Mount POST /v2/web/publish-model-sheet («Publicar web»). Default **false**; also needs a V2 database
+    and `github_publish_token`. Commits one model sheet to the repository and dispatches the deploy
+    workflow; the production approval stays in GitHub."""
+    v2_web_publish_enabled: bool = False
+    """Fine-grained GitHub token (`ORIGENLAB_GITHUB_PUBLISH_TOKEN`): Contents write and Actions write on
+    `github_repo` only. Secret; never logged, never echoed in an error."""
+    github_publish_token: SecretStr | None = None
+    """`owner/name` of the repository that holds the site."""
+    github_repo: str = "rafaelRojasVi/origenlab"
+    """Branch the sheet is committed to and the workflow is dispatched on."""
+    github_ref: str = "main"
+    """Committer on the GitHub commit (neutral: the panel, not a person)."""
+    github_publish_committer_name: str = "OrigenLab panel"
+    github_publish_committer_email: str = "panel@origenlab.cl"
     """Render secret file with the send-scope refresh token for the shared mailbox.
 
     Read from `ORIGENLAB_V2_GMAIL_SEND_TOKEN_FILE` (the authorize script under scripts/ writes it).
@@ -528,6 +542,14 @@ class Settings(BaseSettings):
 
     def v2_web_quote_form_configured(self) -> bool:
         return self.v2_configured() and self.v2_web_quote_form_enabled and bool(self.v2_test_send_token_file)
+
+    def v2_web_publish_configured(self) -> bool:
+        return (
+            self.v2_configured()
+            and self.v2_web_publish_enabled
+            and self.github_publish_token is not None
+            and bool(self.github_publish_token.get_secret_value().strip())
+        )
 
     def v2_campaign_drafts_configured(self) -> bool:
         return self.v2_configured() and bool(self.v2_campaign_drafts_enabled)

@@ -104,7 +104,7 @@ describe("Cotizador page", () => {
     expect(urls).toEqual([`/v2/quotes/${QUOTE_ID}`]);
     expect(screen.getByText("Borrador")).toBeInTheDocument();
     const back = screen.getByRole("link", { name: /Universidad Ejemplo — agitador/ });
-    expect(back).toHaveAttribute("href", `#/crm/oportunidades/${CASE_ID}`);
+    expect(back).toHaveAttribute("href", `#/ventas/pipeline/${CASE_ID}`);
     expect(back.textContent).toMatch(/^←/);
   });
 
@@ -146,7 +146,7 @@ describe("Cotizador page", () => {
     stub(() => json({ detail: "Not Found" }, 404));
     renderPage();
     expect(await screen.findByText("Esta cotización no existe.")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Volver a Oportunidades" })).toHaveAttribute("href", "#/crm/oportunidades");
+    expect(screen.getByRole("link", { name: "Volver a Oportunidades" })).toHaveAttribute("href", "#/ventas/pipeline");
   });
 
   it("offers a retry on a server error", async () => {

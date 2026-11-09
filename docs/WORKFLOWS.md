@@ -631,8 +631,8 @@ authored draft is approved directly.
   `/v2/quotes/*` read and `403 role_may_not_decide` on the commands. Event payloads carry no cost,
   price or margin — only a saved draft's net total.
 
-**The screen (built 2026-10-16).** The Cotizador page is `#/crm/cotizador/<quoteId>` in the dashboard (a tab of
-the module below; the older `#/crm/cotizar/<quoteId>` redirects there); it
+**The screen (built 2026-10-16).** The Cotizador page is `#/ventas/cotizaciones/<quoteId>` in the dashboard (a tab of
+the module below; the older `#/crm/cotizador/<quoteId>` and `#/crm/cotizar/<quoteId>` redirect there); it
 only calls the commands and reads above and owns no rule.
 
 - **Entry points.** Hoy «Cotizar» (or «Continuar cotización» when a draft exists), the Solicitud card,
@@ -675,7 +675,7 @@ only calls the commands and reads above and owns no rule.
 Oportunidades and Organizaciones; viewers do not see it, and a viewer's deep link shows the no-access
 state. It only calls the reads and commands above and owns no rule.
 
-- **Tabs.** `#/crm/cotizador` is the list («Todas»); `#/crm/cotizador/<quoteId>` opens or activates
+- **Tabs.** `#/ventas/cotizaciones` is the list («Todas»); `#/ventas/cotizaciones/<quoteId>` opens or activates
   that quote's tab. Up to eight quotes stay open at once, stored per operator on this computer
   (`localStorage` key `cotizador:tabs:<operator_id>`: the quote id, its number, the client label
   and the state — never a cost; the client label is the client's name, or its email address when
@@ -711,7 +711,7 @@ state. It only calls the reads and commands above and owns no rule.
   in `error.details.code`, else the generic `error.code`, else an older `detail.code` — by one
   parser (`apps/dashboard/src/api/refusalEnvelope.ts`) shared by the Cotizador, the case commands,
   CRM authoring and marketing.
-- **Preferencias** (`#/crm/cotizador/preferencias`). The company's defaults, read from
+- **Preferencias** (`#/ventas/cotizaciones/preferencias`). The company's defaults, read from
   `GET /v2/catalog/parameters` and saved one field at a time with `set-cost-parameter` (a reason of at
   least 3 characters; the parameter's current row as `expected_current_id`, so a concurrent change is
   refused `parameter_changed` — «Otra persona lo cambió; recarga.»), each with its «Historial»:
@@ -721,7 +721,7 @@ state. It only calls the reads and commands above and owns no rule.
   precio» is stored only: nothing warns on it yet. A quote can still be changed by
   hand; a change never reprices a saved draft. The rail's margin band reads the same values (the
   workspace's `params`).
-- **Rentabilidad** (`#/crm/cotizador/rentabilidad`, the list's button beside «Preferencias»;
+- **Rentabilidad** (`#/ventas/cotizaciones/rentabilidad`, the list's button beside «Preferencias»;
   `GET /v2/quotes/economics?from=YYYY-MM&to=YYYY-MM`, this year by default; owner decisions
   2026-10-17). For every quote made in the Cotizador (`origin = authored`; imported quotes are left
   out — their import costs were never recorded), at its current revision as the list takes it, void

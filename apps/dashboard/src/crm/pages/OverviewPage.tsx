@@ -2,14 +2,15 @@ import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } f
 import { fetchFx, fetchPipeline } from "../crmApi";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
-import { ResourceGate } from "../ui";
+import { ResourceGate, Segmented } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { PendientesPanel } from "../todos/PendientesPanel";
 import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
-import { TodayBody } from "./TodayBody";
+import { TodayBody, type TodayScope } from "./TodayBody";
+import { GoalStrip } from "./GoalStrip";
 import { HeroHeader } from "../HeroHeader";
-import { todayHeaderCounts } from "../today";
+import { todayHeaderCounts, useHomeFilter } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 
@@ -29,16 +30,44 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [hechas, setHechas] = useState(0);
   const onCleared = useCallback(() => setHechas((n) => n + 1), []);
   const [, setForwardCount] = useState(0);
+  // «Mi cola» / «Todo el equipo»: held here so the header's counts follow the list. Session-only,
+  // and per profile: another profile on the shared login starts on its own queue again.
+  const homeFilter = useHomeFilter();
+  const profileKey = session.kind === "signed_in" ? `${session.operator.operatorId}|${session.profile?.id ?? ""}` : "";
+  const [held, setHeld] = useState<{ profile: string; scope: TodayScope }>({ profile: profileKey, scope: "mine" });
+  const scope: TodayScope = held.profile === profileKey ? held.scope : "mine";
+  const setScope = useCallback((next: TodayScope) => setHeld({ profile: profileKey, scope: next }), [profileKey]);
+  const view = scope === "team" ? "todo" : homeFilter;
 
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
-  const headerCounts = pipeline.kind === "ready" ? todayHeaderCounts(pipeline.data.items, new Date(), me) : null;
+  const headerCounts = pipeline.kind === "ready" ? todayHeaderCounts(pipeline.data.items, new Date(), me, view) : null;
 
   return (
     <div className="space-y-5">
       <HeroHeader
         name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
         counts={headerCounts !== null ? { ...headerCounts, hechas } : null}
+        actions={
+          // Only a profile with its own queue has a «Mi cola»; in the header, as on the canvas.
+          homeFilter !== "todo" ? (
+            <div data-testid="today-scope">
+              <Segmented<TodayScope>
+                label="Qué cola ver"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  { value: "mine", label: me ? `Mi cola · ${me}` : "Mi cola" },
+                  { value: "team", label: "Todo el equipo" },
+                ]}
+              />
+            </div>
+          ) : null
+        }
       />
+      {/* «Franja de metas»: the four goals, first on Hoy, each a link into the view that acts on it. */}
+      {pipeline.kind === "ready" ? (
+        <GoalStrip items={pipeline.data.items} calls={pipeline.data.calls ?? []} navigate={navigate} />
+      ) : null}
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (
           <TodayBody
@@ -50,6 +79,8 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             onForwardCount={setForwardCount}
             refreshing={refreshing}
             people={people}
+            scope={scope}
+            onScopeChange={setScope}
             aside={
               <>
                 <PendientesPanel cases={p.items} navigate={navigate} />

@@ -30,6 +30,9 @@ SERVICE_PREFIXES: tuple[tuple[str, frozenset[str]], ...] = (
     ("supabase/migrations/", frozenset({"worker", "api"})),
     ("supabase/roles.sql", frozenset({"worker", "api"})),
     # Deployed by their own workflows (web-deploy, dashboard-proxy-deploy), never by Render here.
+    # The one site file the API reads (publish validation) and its image copies: deploy the API.
+    # It must stay before the apps/web/ rule, the first match wins.
+    ("apps/web/src/content/modelos.schema.json", frozenset({"api"})),
     ("apps/web/", frozenset()),
     ("apps/dashboard-proxy/", frozenset()),
     ("docs/", frozenset()),

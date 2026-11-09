@@ -147,7 +147,7 @@ def _live_note(
                revision_of_note_id::text as revision_of_note_id,
                revision_no, status, version,
                archived_at, archived_by_operator_id::text as archived_by_operator_id,
-               archive_reason
+               archive_reason, note_kind, call_outcome, call_next_step
           from crm.note
          where id = %s
            for update
@@ -2382,25 +2382,38 @@ def _handle_add_note(
     # revision_no = 1 notes have root_note_id = NULL (schema constraint note_revision_shape).
     # Revisions point back to the root via root_note_id; the revise-note handler resolves the
     # root by following old_note["root_note_id"] or note_id (for the first revision of a root note).
+    # A «Llamada» (`call_outcome.py`): the three call columns are written here, once, and frozen
+    # by `note_guard()` afterwards. The request body already guarantees the table's shape check.
+    note_kind = fields.get("note_kind")
+    call_outcome = fields.get("call_outcome")
+    call_next_step = fields.get("call_next_step")
     cur.execute(
         """
         insert into crm.note
             (subject_kind, subject_id, body, author_operator_id,
-             revision_no, status)
-        values (%s, %s::uuid, %s, %s::uuid, 1, 'active')
+             revision_no, status, note_kind, call_outcome, call_next_step)
+        values (%s, %s::uuid, %s, %s::uuid, 1, 'active', %s, %s, %s)
         returning id::text as id, version
         """,
-        (subject_kind, subject_id, body, operator.operator_id),
+        (subject_kind, subject_id, body, operator.operator_id,
+         note_kind, call_outcome, call_next_step),
     )
     note = _one(cur)
     note_id = note["id"]
+
+    payload: dict[str, Any] = {"subject_kind": subject_kind, "subject_id": subject_id}
+    if note_kind is not None:
+        payload["note_kind"] = note_kind
+        payload["call_outcome"] = call_outcome
+        if call_next_step is not None:
+            payload["call_next_step"] = call_next_step
 
     self._append_event(
         cur,
         aggregate_kind="note",
         aggregate_id=note_id,
         event_type="note.created",
-        payload={"subject_kind": subject_kind, "subject_id": subject_id},
+        payload=payload,
         operator=operator,
         receipt_id=receipt_id,
     )
@@ -2431,10 +2444,10 @@ def _handle_revise_note(
         insert into crm.note
             (subject_kind, subject_id, body, author_operator_id,
              root_note_id, revision_of_note_id,
-             revision_no, status)
+             revision_no, status, note_kind, call_outcome, call_next_step)
         values (%s, %s::uuid, %s, %s::uuid,
                 %s::uuid, %s::uuid,
-                %s, 'active')
+                %s, 'active', %s, %s, %s)
         returning id::text as id, version
         """,
         (
@@ -2445,6 +2458,11 @@ def _handle_revise_note(
             root_id,
             note_id,
             old_note["revision_no"] + 1,
+            # A revision edits the text of a call record, not how the call ended: the outcome and
+            # next step are frozen facts of the call, so they travel with every revision.
+            old_note["note_kind"],
+            old_note["call_outcome"],
+            old_note["call_next_step"],
         ),
     )
     new_note = _one(cur)

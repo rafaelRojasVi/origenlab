@@ -395,6 +395,22 @@ class ProfileAuthRepository:
             )
             return [ProfileCard(*row) for row in cur.fetchall()]
 
+    def home_filter(self, operator_id: str) -> str | None:
+        """The «Hoy» view a profile opens on (`todo`, `llamadas`, `cotizar`), or None.
+
+        Set only by the roster tool (`profile_roster.py`); not a security field.
+        """
+        oid = parse_uuid(operator_id)
+        if oid is None:
+            return None
+        with self._read() as cur:
+            cur.execute(
+                "select home_filter from platform.operator_profile where operator_id = %s::uuid",
+                (oid,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+
     # ------------------------------------------------------------------ the attempt
 
     def select_profile(
