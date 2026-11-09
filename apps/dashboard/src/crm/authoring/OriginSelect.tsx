@@ -75,7 +75,8 @@ export function OriginSelect({ card, onChanged }: { card: OpportunityCardData; o
       <FormField
         label="Origen del caso"
         htmlFor="case-origin-select"
-        hint={reason ?? "Por dónde llegó este caso. Si lo cambias, queda en el historial."}
+        // The explanation only while changing it: on every case it was a paragraph nobody needed.
+        hint={reason ?? (choosing ? "Si lo cambias, queda en el historial." : undefined)}
       >
         <SelectInput
           id="case-origin-select"
