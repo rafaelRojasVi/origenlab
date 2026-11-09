@@ -246,6 +246,58 @@ confirms it in the Cloudflare dashboard before relying on it.
 A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
 60 s. Nothing logs an IP, User-Agent or body.
 
+## Dashboard web-stats read (`dashboard.origenlab.cl/api/stats/web-stats`)
+
+Authenticated dashboard read that queries the `origenlab_web_stats` Analytics Engine dataset and returns
+aggregated totals for the last 7 and 30 days. Intercepted in `src/index.ts` before the proxy logic;
+not proxied to `apps/api` — the CF Analytics Engine SQL API credentials live in the Worker, not on Render.
+
+**Auth:** the Worker validates the browser's session by forwarding a `HEAD /auth/session` subrequest to the
+upstream API (same session cookie, API token and CF Access headers the Worker sends for every other dashboard read).
+Any result other than 200 is forwarded to the browser unchanged.
+
+**Caching:** `caches.default` for 5 minutes, keyed by a canonical URL that encodes the account id. The browser
+gets `Cache-Control: private, max-age=0`; the server-side Worker cache absorbs repeat requests within the window.
+
+**When secrets are absent:** 503 `{"error":{"code":"not_configured"}}` → the dashboard card shows
+«Falta configurar la lectura de estadísticas».
+
+**Required Worker secrets** (set with `wrangler secret put`, never in `wrangler.toml`):
+
+| Secret | Value | Where to find it |
+|---|---|---|
+| `CF_ACCOUNT_ID` | Your Cloudflare account id (numeric string) | [dash.cloudflare.com](https://dash.cloudflare.com) → right column → **Account ID** |
+| `CF_STATS_API_TOKEN` | A Cloudflare API token with **Account Analytics: Read** | [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → Custom Token: Permissions: Account / Account Analytics / Read; Account Resources: Include your account |
+
+```bash
+wrangler secret put CF_ACCOUNT_ID       --name origenlab-dashboard-proxy
+wrangler secret put CF_STATS_API_TOKEN  --name origenlab-dashboard-proxy
+```
+
+**Response shape** (JSON):
+```json
+{
+  "7d": {
+    "visitas_total": 142,
+    "visitas_interno": 23,
+    "visitas_by_origen": { "google": 95, "directo": 32 },
+    "whatsapp_total": 18,
+    "whatsapp_top_models": [["hielscher-up400st", 10]],
+    "cotizacion_total": 12,
+    "cotizacion_top_models": [["hielscher-up200st", 7]],
+    "form_submits": 3,
+    "pdf_downloads": 8,
+    "d3_interacts": 55,
+    "top_pages": [["/productos/sonicacion/hielscher-up400st/", 42]]
+  },
+  "30d": { "..." : "..." },
+  "fetched_at": "2026-11-09T12:00:00Z"
+}
+```
+
+«interno» visits (same-site navigation) are excluded from `visitas_total` and reported separately in
+`visitas_interno` so they do not inflate the acquisition funnel.
+
 ## Response hardening
 
 The Worker is deliberately stricter than a generic pass-through proxy:
@@ -283,8 +335,10 @@ Cloudflare Access identity, so identity reaches the API only as the `__Host-` se
 | `ORIGENLAB_API_AUTH_TOKEN` | Worker secret | **always** (same value as Render API) |
 | `CF_ACCESS_CLIENT_ID` | Worker secret | **yes** when upstream is behind Cloudflare Access (production default) |
 | `CF_ACCESS_CLIENT_SECRET` | Worker secret | **yes** when upstream is behind Cloudflare Access (production default) |
+| `CF_ACCOUNT_ID` | Worker secret | **yes** to enable the dashboard web-stats card (see *Dashboard web-stats read*) |
+| `CF_STATS_API_TOKEN` | Worker secret | **yes** to enable the dashboard web-stats card (see *Dashboard web-stats read*) |
 
-Both CF Access secrets must be set together. The Worker never sends a lone `CF-Access-Client-Id` without the matching secret.
+Both CF Access secrets must be set together. The Worker never sends a lone `CF-Access-Client-Id` without the matching secret. `CF_ACCOUNT_ID` and `CF_STATS_API_TOKEN` are independent — when either is absent the stats card shows a configuration notice instead of data.
 
 ### Deploy (production — `api.origenlab.cl` upstream)
 
