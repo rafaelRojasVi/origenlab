@@ -206,7 +206,7 @@ select o.stage,
          (select coalesce(
                    case when qr.quote_currency = 'CLP' then qr.tax_base end,
                    case when qd.payload ->> 'currency' = 'CLP'
-                         and qd.payload ->> 'net_total' ~ '^[0-9]+(\.[0-9]+)?$'
+                         and qd.payload ->> 'net_total' ~ '^[0-9]+([.][0-9]+)?$'
                         then (qd.payload ->> 'net_total')::numeric end)
             from crm.quote q
             join crm.quote_revision qr on qr.quote_id = q.id
