@@ -98,7 +98,7 @@ describe("today lists", () => {
     expect(overdueTasks([card({ open_tasks: [theirs9], stage: "lost", closed_at: "2026-10-01T00:00:00Z" })], NOW, "Ventas")).toEqual([]);
   });
 
-  it("puts each silent case on the 3 · 14 · 30 rhythm, never a planned, replied or historical one", () => {
+  it("puts each silent case on the 3 · 7 · 10 · 15 rhythm, never a planned, replied or historical one", () => {
     const d5 = card({}, "2026-10-01T12:00:00Z");
     const d20 = card({}, "2026-09-16T12:00:00Z");
     const d40 = card({}, "2026-08-27T12:00:00Z");
@@ -110,9 +110,10 @@ describe("today lists", () => {
     );
     const historical = card({ stage: "quoting" }, "2026-07-01T12:00:00Z");
     const out = followUpsDue([d5, d20, d40, fresh, planned, replied, historical], NOW);
+    // d40 (40 d) → cuarto; d20 (20 d) → cuarto; d5 (5 d) → primero
     expect(out.map((f) => [f.card.opportunity_id, f.rhythm])).toEqual([
-      [d40.opportunity_id, "cerrar"],
-      [d20.opportunity_id, "segundo"],
+      [d40.opportunity_id, "cuarto"],
+      [d20.opportunity_id, "cuarto"],
       [d5.opportunity_id, "primero"],
     ]);
     expect(repliesToAnswer([d5, replied], NOW).map((r) => r.card.opportunity_id)).toEqual([replied.opportunity_id]);
@@ -192,7 +193,7 @@ describe("today lists", () => {
     // A reminder the operator set shows on its day, even on a quote sent yesterday; one for a
     // later day keeps its case off the list until then.
     expect(out.map((f) => [f.card.opportunity_id, f.rhythm, f.task?.task.task_id])).toEqual([
-      [old.opportunity_id, "cerrar", "f2"],
+      [old.opportunity_id, "cuarto", "f2"], // 40 days old → step 4
       [fresh.opportunity_id, "primero", "f1"],
     ]);
     // Without a reminder, a quote sent yesterday is not chased yet.
@@ -493,10 +494,10 @@ describe("Hoy actions", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
-  it("closes a 30-day silent case as «Sin respuesta» from the rhythm", async () => {
+  it("closes a 15-day silent case as «Sin respuesta» from the rhythm", async () => {
     const calls = stub();
-    // Exactly 30 days ago so isFollowUpDueToday passes (days === 30).
-    const c = card({}, "2026-09-06T12:00:00Z");
+    // Exactly 15 days ago so isFollowUpDueToday passes (days === 15 = 4th threshold).
+    const c = card({}, "2026-09-21T15:00:00Z");
     renderToday([c]);
     const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
@@ -516,7 +517,7 @@ describe("Hoy actions", () => {
     const c = card({ open_tasks: [{ task_id: "s1", title: "Seguimiento de 01239-26", due_at: "2026-10-06T12:00:00Z", version: 3, owner: null }] }, "2026-09-01T12:00:00Z");
     (c.latest_revision as RevisionCard).gmail = { source_record_id: "s", message_id: "m", thread_id: "t", url: "https://mail.example.cl/m", subject: "Cotización Balanzas Ohaus" };
     const onChanged = renderToday([c]);
-    // No today-rhythm-cerrar wrapper in the unified queue — the row is directly in today-para-ti.
+    // No rhythm-section wrapper in the unified queue — the row is directly in today-para-ti.
     const row = screen.getByTestId("today-task-s1");
     expect(row).toHaveTextContent("Balanzas Ohaus");
     expect(within(row).getByRole("link", { name: /Escribir/ })).toHaveAttribute(
@@ -542,12 +543,12 @@ describe("Hoy actions", () => {
 
   it("a note is a reminder, not a contact: the case stays on its clock and shows the note under it", () => {
     stub();
-    // Exactly 30 days ago so isFollowUpDueToday passes (days === 30).
-    const c = card({ last_note: { created_at: "2026-10-05T10:00:00Z", body: "Mandar correo esta semana", author: "Rafael" } }, "2026-09-06T12:00:00Z");
+    // Exactly 15 days ago so isFollowUpDueToday passes (days === 15 = 4th threshold).
+    const c = card({ last_note: { created_at: "2026-10-05T10:00:00Z", body: "Mandar correo esta semana", author: "Rafael" } }, "2026-09-21T15:00:00Z");
     renderToday([c]);
     const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
-    // The day pill shows «30 d» for 30 days waiting; no prose text.
-    expect(within(row).getByTestId("day-pill")).toHaveTextContent("30 d");
+    // The day pill shows «15 d» for 15 days waiting; no prose text.
+    expect(within(row).getByTestId("day-pill")).toHaveTextContent("15 d");
     expect(within(row).getByTestId("today-followup-note")).toHaveTextContent("Nota: Mandar correo esta semana · Rafael, 05 oct 2026");
   });
 
@@ -555,8 +556,8 @@ describe("Hoy actions", () => {
     stub();
     const fu = { task_id: "rem", title: "Seguimiento de 00001-26", due_at: "2026-10-06T09:00:00Z", version: 1, owner: "Rafael" };
     const reminded = card({ open_tasks: [fu] }, "2026-09-01T12:00:00Z");
-    // Exactly 30 days ago so isFollowUpDueToday passes without a task (days === 30).
-    const own = card({}, "2026-09-06T12:00:00Z");
+    // Exactly 15 days ago so isFollowUpDueToday passes without a task (days === 15 = 4th threshold).
+    const own = card({}, "2026-09-21T15:00:00Z");
     renderToday([reminded, own]);
     expect(within(screen.getByTestId("today-task-rem")).getByTestId("today-reminder-chip")).toHaveTextContent("Tu recordatorio");
     expect(within(screen.getByTestId(`today-followup-${own.opportunity_id}`)).queryByTestId("today-reminder-chip")).toBeNull();
@@ -589,10 +590,10 @@ describe("«Para ti» queue", () => {
     const { buildParaTiQueue } = await import("../today");
     const fresh = card(inbound("2026-10-06T13:00:00Z"), "2026-10-01T12:00:00Z");
     const old = card(inbound("2026-09-28T12:00:00Z"), "2026-09-25T12:00:00Z");
-    const silent14 = card({}, "2026-09-22T15:00:00Z");
-    const order = buildParaTiQueue([silent14, old, fresh], NOW, null).map((q) => [q.kind, q.opportunity_id]);
+    const silent15 = card({}, "2026-09-21T15:00:00Z"); // 15 days = 4th threshold
+    const order = buildParaTiQueue([silent15, old, fresh], NOW, null).map((q) => [q.kind, q.opportunity_id]);
     // «old» has been waiting 8 days, «fresh» only 2 hours — oldest first within each section.
-    expect(order).toEqual([["reply", old.opportunity_id], ["reply", fresh.opportunity_id], ["followup", silent14.opportunity_id]]);
+    expect(order).toEqual([["reply", old.opportunity_id], ["reply", fresh.opportunity_id], ["followup", silent15.opportunity_id]]);
   });
 
   it("one email that answers two cases is one row: the other case takes no follow-up row", async () => {
@@ -635,8 +636,8 @@ describe("«Para ti» queue", () => {
     );
     const tenMinAgo = new Date(NOW.getTime() - 600_000).toISOString();
     const reply = card(inbound(tenMinAgo));
-    const silent14 = card({}, "2026-09-22T15:00:00Z"); // 14 days → follow-up
-    const counts = todayHeaderCounts([solicitud, reply, silent14], NOW, null);
+    const silent15 = card({}, "2026-09-21T15:00:00Z"); // 15 days = 4th threshold
+    const counts = todayHeaderCounts([solicitud, reply, silent15], NOW, null);
     expect(counts.cotizar).toBe(1);
     expect(counts.responder).toBe(1);
     expect(counts.seguimientos).toBe(1);
@@ -805,10 +806,10 @@ describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
 
   it("a llamadas profile (fixture «Ana») shows «Mi cola · Ana» by default and «Todo el equipo» reveals the cotizar row", () => {
     const pedido = solicitud();
-    const silent14 = card({}, "2026-09-22T15:00:00Z");
-    renderAs(profileSession("llamadas"), [pedido, silent14]);
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 «Llamar» threshold
+    renderAs(profileSession("llamadas"), [pedido, silent7]);
     expect(screen.getByRole("button", { name: "Mi cola · Ana" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId(`today-followup-${silent14.opportunity_id}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`today-followup-${silent7.opportunity_id}`)).toBeInTheDocument();
     expect(screen.queryByTestId(`today-cotizar-${pedido.opportunity_id}`)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Todo el equipo" }));
     expect(screen.getByTestId(`today-cotizar-${pedido.opportunity_id}`)).toBeInTheDocument();
@@ -816,17 +817,17 @@ describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
   });
 
   it("a todo profile sees no «Mi cola» switch", () => {
-    renderAs(profileSession(null), [card({}, "2026-09-22T15:00:00Z")]);
+    renderAs(profileSession(null), [card({}, "2026-09-29T15:00:00Z")]); // 7 days = step 2 threshold
     expect(screen.queryByRole("button", { name: /Mi cola/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Todo el equipo" })).toBeNull();
   });
 
-  it("follow-up row reads «Llamar» and «Seguimiento 2 de 3»", () => {
-    const silent14 = card({}, "2026-09-22T15:00:00Z");
-    const navigate = renderAs(profileSession("llamadas"), [silent14]);
+  it("follow-up row reads «Llamar» and «Seguimiento 2 de 4»", () => {
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 «Llamar» threshold
+    const navigate = renderAs(profileSession("llamadas"), [silent7]);
     expect(screen.getByRole("heading", { level: 2, name: "Llamar" })).toBeInTheDocument();
-    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
-    expect(row).toHaveTextContent("Seguimiento 2 de 3");
+    const row = screen.getByTestId(`today-followup-${silent7.opportunity_id}`);
+    expect(row).toHaveTextContent("Seguimiento 2 de 4");
     // «Registrar llamada» opens the case's drawer over Hoy (see «Hoy opens the case drawer in place»).
     expect(within(row).getByRole("button", { name: "Registrar llamada" })).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
@@ -859,9 +860,9 @@ describe("Task 4 review fixes", () => {
   const TENDER = [{ id: "55555555-5555-4555-8555-555555555556", title: "Compra de balanzas de ejemplo" }];
 
   it("a viewer gets no «Registrar llamada»", () => {
-    const silent14 = card({}, "2026-09-22T15:00:00Z");
-    renderBody(as("viewer", "llamadas"), [silent14]);
-    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 «Llamar» threshold
+    renderBody(as("viewer", "llamadas"), [silent7]);
+    const row = screen.getByTestId(`today-followup-${silent7.opportunity_id}`);
     expect(within(row).queryByRole("button", { name: "Registrar llamada" })).toBeNull();
   });
 
@@ -923,9 +924,9 @@ describe("Hoy opens the case drawer in place (Task 8)", () => {
 
   it("«Registrar llamada» opens the drawer on the call form", async () => {
     stubDrawer();
-    const silent14 = card({}, "2026-09-22T15:00:00Z");
-    const navigate = renderNav([silent14]);
-    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 «Llamar» threshold
+    const navigate = renderNav([silent7]);
+    const row = screen.getByTestId(`today-followup-${silent7.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByTestId("log-call")).toBeVisible();
@@ -944,9 +945,9 @@ describe("Task 8 review fixes", () => {
 
   it("a Hoy reload keeps the drawer's tab and does not reopen a form the operator closed", async () => {
     stubDrawer();
-    const silent14 = card({}, "2026-09-22T15:00:00Z");
-    const { rerender } = render(body([silent14]));
-    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 «Llamar» threshold
+    const { rerender } = render(body([silent7]));
+    const row = screen.getByTestId(`today-followup-${silent7.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
     const dialog = await screen.findByRole("dialog");
     // The operator closes the call form (as after saving it), then reads «Contacto».
@@ -954,7 +955,7 @@ describe("Task 8 review fixes", () => {
     expect(within(dialog).queryByTestId("log-call")).toBeNull();
     fireEvent.click(within(dialog).getByRole("tab", { name: "Contacto" }));
     // Hoy reloads: new items, same case.
-    rerender(body([{ ...silent14 }]));
+    rerender(body([{ ...silent7 }]));
     expect(within(screen.getByRole("dialog")).getByRole("tab", { name: "Contacto" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("tab", { name: "Resumen" }));
     expect(within(screen.getByRole("dialog")).queryByTestId("log-call")).toBeNull();

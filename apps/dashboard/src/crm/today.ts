@@ -5,9 +5,10 @@
  * - **Te toca responder**: the client wrote after OrigenLab's last email on the case, and nobody has
  *   scheduled a task on the case since («No requiere respuesta», «En pausa»): a task set after the
  *   client's email is the operator's answer to it. A newer email from the client brings it back.
- * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 14 · 30-day rhythm counted
- *   from OrigenLab's last touch (the quote, or a later email it sent — never a note): green from
- *   day 3 (first follow-up), yellow from day 14 (second), red from day 30 (close?). A case whose
+ * - **Seguimientos**: one list, coloured like a traffic light by the 3 · 7 · 10 · 15-day rhythm
+ *   counted from OrigenLab's last touch (the quote, or a later email it sent — never a note):
+ *   green from day 3 (correo corto), yellow from day 7 (llamada), yellow from day 10 (WhatsApp),
+ *   red from day 15 (último correo). From day 45 the row suggests closing the case. A case whose
  *   «Seguimiento …» task (a reminder from «Recordarme…») is due today shows that day,
  *   whatever the count, and the task counts as done once OrigenLab writes on the thread on or after
  *   its day (no «Hecho» needed). A reminder for a later day keeps the case off the list until then.
@@ -163,14 +164,18 @@ function answeredByTask(card: OpportunityCardData, at: string, now: Date): boole
   return open.every((t) => !t.created_at) && pausedUntil(card, now) !== null;
 }
 
-export type Rhythm = "primero" | "segundo" | "cerrar";
+export type Rhythm = "primero" | "segundo" | "tercero" | "cuarto";
 
-/** The traffic light: green, yellow, red. */
+/** The traffic light: green → yellow → yellow → red. Four steps, 3 · 7 · 10 · 15 days. */
 export const RHYTHM: { key: Rhythm; label: string; from: number; hint: string; tone: "good" | "warn" | "bad" }[] = [
-  { key: "primero", label: "Primer seguimiento", from: 3, hint: "hasta 13 días sin respuesta", tone: "good" },
-  { key: "segundo", label: "Segundo seguimiento", from: 14, hint: "14 a 29 días sin respuesta", tone: "warn" },
-  { key: "cerrar", label: "¿Cerrar?", from: 30, hint: "30 días o más: casi nunca vuelve", tone: "bad" },
+  { key: "primero",  label: "Primer seguimiento",   from: 3,  hint: "correo corto",                      tone: "good" },
+  { key: "segundo",  label: "Segundo seguimiento",  from: 7,  hint: "llamada",                            tone: "warn" },
+  { key: "tercero",  label: "Tercer seguimiento",   from: 10, hint: "WhatsApp",                           tone: "warn" },
+  { key: "cuarto",   label: "Cuarto seguimiento",   from: 15, hint: "último correo con fecha límite",     tone: "bad"  },
 ];
+
+/** Day count from which a silent case shows «cerrar con motivo» — only a suggestion, never auto-close. */
+export const CLOSE_DAYS = 45;
 
 export interface FollowUp {
   card: OpportunityCardData;
@@ -255,17 +260,17 @@ export function pendingFollowUpTasks(card: OpportunityCardData): OpenTask[] {
 }
 
 /**
- * The rhythm step for a number of days since OrigenLab's last touch: 3 from `RHYTHM[2].from`
- * (30), 2 from `RHYTHM[1].from` (14), else 1. The one mapping the board card, the drawer chip and
- * `followUpsDue` share.
+ * The rhythm step for a number of days since OrigenLab's last touch: 4 from `RHYTHM[3].from`
+ * (15), 3 from `RHYTHM[2].from` (10), 2 from `RHYTHM[1].from` (7), else 1. The one mapping the
+ * board card, the drawer chip and `followUpsDue` share.
  */
-export function stepForDays(days: number): 1 | 2 | 3 {
-  return days >= RHYTHM[2].from ? 3 : days >= RHYTHM[1].from ? 2 : 1;
+export function stepForDays(days: number): 1 | 2 | 3 | 4 {
+  return days >= RHYTHM[3].from ? 4 : days >= RHYTHM[2].from ? 3 : days >= RHYTHM[1].from ? 2 : 1;
 }
 
-/** «Seguimiento N de 3»: the rhythm step a follow-up is on (1 from day 3, 2 from 14, 3 from 30). */
-export function followUpStep(f: FollowUp): 1 | 2 | 3 {
-  return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3;
+/** «Seguimiento N de 4»: the rhythm step a follow-up is on (1 from day 3, 2 from 7, 3 from 10, 4 from 15). */
+export function followUpStep(f: FollowUp): 1 | 2 | 3 | 4 {
+  return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3 | 4;
 }
 
 function startOfLocalDay(t: number): number {
@@ -329,7 +334,7 @@ export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: s
  *  operator explicitly set a reminder that is due today (or overdue). */
 export function isFollowUpDueToday(f: FollowUp): boolean {
   if (f.task !== null) return true;
-  return f.days === RHYTHM[0].from || f.days === RHYTHM[1].from || f.days === RHYTHM[2].from;
+  return RHYTHM.some((r) => f.days === r.from);
 }
 
 /** A pre-quote open case with no sent quote: the operator must still write the quotation. */

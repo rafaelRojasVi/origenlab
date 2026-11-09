@@ -395,14 +395,14 @@ describe("Tablero · board rules (Task 8)", () => {
     return c;
   };
 
-  it("Silenciosas column holds the 22-day card with «Seguimiento N de 3» and «¿Marcar perdida?»", () => {
+  it("Silenciosas column holds the 22-day card with «Seguimiento N de 4» and «¿Marcar perdida?»", () => {
     const silent = silentCard();
     const onLose = vi.fn();
     render(<Board cards={[silent, card()]} onOpen={() => undefined} onMove={() => undefined} onLose={onLose} now={NOW} />);
     const column = screen.getByTestId("board-column-silenciosas");
     expect(screen.getByTestId("board-count-silenciosas")).toHaveTextContent("1");
     const b = within(column).getByTestId(`board-card-${silent.opportunity_id}`);
-    expect(within(b).getByTestId("board-followup-step")).toHaveTextContent("Seguimiento 2 de 3");
+    expect(within(b).getByTestId("board-followup-step")).toHaveTextContent("Seguimiento 4 de 4");
     const lose = within(b).getByRole("button", { name: `¿Marcar perdida? ${silent.organization?.name}` });
     expect(lose).toHaveTextContent("¿Marcar perdida?");
     expect(lose.className).toContain("min-h-11");
@@ -461,12 +461,13 @@ describe("Tablero · board rules (Task 8)", () => {
 
   it("a silent card's step counts from our last touch, an answered call included (one rhythm with the drawer)", () => {
     // A historical import `followUpsDue` leaves out: the board falls back to the same rhythm.
+    // Rhythm 3·7·10·15: quietSince=66d→4, called=10d→3, fortnight=14d→3
     const quietSince = card({}, "2026-08-01T12:00:00Z");
     const called = card({ last_call: { at: "2026-09-26T12:00:00Z", outcome: "contesto" } }, "2026-08-01T12:00:00Z");
     const fortnight = card({ last_call: { at: "2026-09-22T12:00:00Z", outcome: "contesto" } }, "2026-08-01T12:00:00Z");
-    expect(silentFollowUpStep(quietSince, NOW)).toBe(3);
-    expect(silentFollowUpStep(called, NOW)).toBe(1);
-    expect(silentFollowUpStep(fortnight, NOW)).toBe(2);
+    expect(silentFollowUpStep(quietSince, NOW)).toBe(4); // 66 days >= 15 → step 4
+    expect(silentFollowUpStep(called, NOW)).toBe(3);     // 10 days (call Sep 26) >= 10 → step 3
+    expect(silentFollowUpStep(fortnight, NOW)).toBe(3);  // 14 days (call Sep 22) >= 10 but < 15 → step 3
   });
 
   it("no Enviada dividers when sorted by name", () => {

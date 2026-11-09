@@ -24,7 +24,8 @@
  * gated the same way; a viewer sees the lists without the buttons.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { addNote, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
+import { addNote, fetchPersonAuthoring, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
+import { whatsAppUrl } from "../drawer/PersonPhones";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
   cancelTask,
@@ -46,6 +47,7 @@ import type { OpportunityCardData } from "../crmTypes";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
   buildParaTiQueue,
+  CLOSE_DAYS,
   filterQueue,
   followUpStep,
   followUpsDue,
@@ -465,7 +467,14 @@ function CotizarQueueRow({
         className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
       >
         <p className="truncate text-[14px] font-semibold text-ink group-hover:text-accent">{name}</p>
-        <p className="truncate text-[12px] text-ink-muted">{what}</p>
+        <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
+          <span className="truncate">{what}</span>
+          {!card.last_note?.body.startsWith("Calificación:") ? (
+            <span className="inline-flex shrink-0 items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent" data-testid="today-unqualified-chip">
+              Sin calificar
+            </span>
+          ) : null}
+        </p>
       </button>
       <div className="flex shrink-0 gap-2">
         <Button
@@ -584,7 +593,7 @@ function ParaTiSection({
       {followItems.length > 0 && (
         <QueueSection
           title="Llamar"
-          hint="cotización enviada, sin respuesta · seguimiento N de 3 · ritmo 3 · 14 · 30 días"
+          hint="cotización enviada, sin respuesta · seguimiento N de 4 · ritmo 3 · 7 · 10 · 15 días"
           count={followItems.length}
         >
           {followItems.map((item, i) => (
@@ -764,7 +773,14 @@ function ReplyQueueRow({
         >
           {name}
         </button>
-        <p className="truncate text-[12px] text-ink-muted">{what}</p>
+        <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
+          <span className="truncate">{what}</span>
+          {!card.latest_revision && !card.last_note?.body.startsWith("Calificación:") ? (
+            <span className="inline-flex shrink-0 items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent" data-testid="today-unqualified-chip">
+              Sin calificar
+            </span>
+          ) : null}
+        </p>
         {reply.others.length ? (
           <p className="mt-0.5 truncate text-[11px] text-ink-muted">
             También en:{" "}
@@ -992,6 +1008,88 @@ function dueText(overdueDays: number): string {
   return overdueDays === 0 ? "Vence hoy" : overdueDays === 1 ? "Atrasada 1 día" : `Atrasada ${overdueDays} días`;
 }
 
+/* ─────────────────────────────────────────────── Follow-up helpers ── */
+
+const FOLLOW_UP_ACTION: Record<1 | 2 | 3 | 4, string> = {
+  1: "Correo",
+  2: "Llamar",
+  3: "WhatsApp",
+  4: "Último correo",
+};
+
+/** Chip showing what to do on this step; «Cerrar caso» appears from day `CLOSE_DAYS` onward. */
+function FollowUpActionChip({ step, days }: { step: 1 | 2 | 3 | 4; days: number }) {
+  const label = FOLLOW_UP_ACTION[step];
+  const close = days >= CLOSE_DAYS;
+  return (
+    <>
+      <span
+        className="inline-flex shrink-0 items-center rounded-full bg-canvas-sunken px-1.5 py-px text-[10.5px] font-medium text-ink-muted"
+        data-testid="today-followup-action"
+      >
+        → {label}
+      </span>
+      {close ? (
+        <span
+          className="inline-flex shrink-0 items-center rounded-full bg-bad-bg px-1.5 py-px text-[10.5px] font-semibold text-bad"
+          data-testid="today-followup-close-hint"
+          title="Sin respuesta en más de 45 días — considera cerrar el caso"
+        >
+          Cerrar caso
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Phone links (tel: and wa.me) for the «Llamar» (step 2) and «WhatsApp» (step 3) steps.
+ * Fetches the person's active phone lazily; shows nothing while loading or if no phone is found.
+ * Step 2 shows a «Llamar» tel: link; step 3 shows a WhatsApp link.
+ */
+function FollowUpPhoneLinks({ personId, step }: { personId: string; step: 2 | 3 }) {
+  const load = useCallback(() => fetchPersonAuthoring(personId), [personId]);
+  const [state] = useResource(load, [personId]);
+  if (state.kind !== "ready") return null;
+  const phones = state.data.contact_points.filter((c) => c.kind === "phone" && c.status === "active");
+  if (phones.length === 0) return null;
+  const p = phones[0];
+  const dial = p.value_norm || p.value_display.replace(/[^\d+]/g, "");
+  const wa = whatsAppUrl(p.value_norm || p.value_display);
+  if (step === 3) {
+    if (!wa) return null;
+    return (
+      <p className="mt-0.5 truncate text-[11px]">
+        <a
+          href={wa}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 font-medium text-good hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          aria-label={`WhatsApp al ${p.value_display}`}
+          data-testid="today-followup-wa-link"
+        >
+          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0" fill="currentColor" aria-hidden="true"><path d="M8 1a7 7 0 1 0 2.9 13.37L14 14l-.64-3.08A7 7 0 0 0 8 1Zm0 1.4A5.6 5.6 0 1 1 5.08 12l-.16-.27-1.68.44.44-1.68-.27-.16A5.6 5.6 0 0 1 8 2.4Zm-1.5 2.9c-.15 0-.38.05-.58.27-.2.21-.76.74-.76 1.8 0 1.07.78 2.1.89 2.25.11.14 1.53 2.34 3.72 3.19.52.2.93.32 1.24.41.52.16 1 .14 1.37.08.42-.07 1.29-.53 1.47-1.04.18-.51.18-.95.13-1.04-.05-.09-.2-.14-.41-.25-.21-.11-1.28-.63-1.47-.7-.2-.07-.34-.11-.49.11-.14.21-.56.7-.69.84-.13.14-.26.16-.48.05-.21-.11-.9-.33-1.72-1.06-.64-.57-1.07-1.27-1.19-1.49-.13-.21-.01-.33.1-.43.1-.1.21-.26.32-.38.1-.13.14-.21.21-.35.07-.14.03-.27-.01-.38-.05-.11-.49-1.18-.67-1.62-.18-.43-.36-.37-.49-.38l-.41-.01Z"/></svg>
+          WhatsApp {p.value_display} ↗
+        </a>
+      </p>
+    );
+  }
+  // step === 2: tel: link
+  return (
+    <p className="mt-0.5 truncate text-[11px]">
+      <a
+        href={`tel:${dial}`}
+        className="inline-flex items-center gap-1 font-medium text-ink hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        aria-label={`Llamar al ${p.value_display}`}
+        data-testid="today-followup-tel-link"
+      >
+        <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5.5 2.5A11.6 11.6 0 0 0 6.6 5L5 6.5c.7 1.4 1.7 2.7 3 3.5L9.5 8.5a11.5 11.5 0 0 0 2.5 1.1v2a12.3 12.3 0 0 1-8.5-8.5l2-.6Z" strokeLinejoin="round"/></svg>
+        {p.value_display}
+      </a>
+    </p>
+  );
+}
+
 /* ─────────────────────────────────────────────── Follow-up row ── */
 
 function FollowUpQueueRow({
@@ -1074,6 +1172,7 @@ function FollowUpQueueRow({
   if (gone) return null;
   const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
   const { name } = displayName(f.card);
+  const fStep = followUpStep(f); // cached so TypeScript can narrow the type for FollowUpPhoneLinks
   const what = [
     ...(product ? [product] : []),
     ...(quote ? [quote] : []),
@@ -1094,10 +1193,14 @@ function FollowUpQueueRow({
         >
           {name}
         </button>
-        <p className="truncate text-[12px] text-ink-muted">
-          <span className="font-semibold text-ink" data-testid="today-followup-step">Seguimiento {followUpStep(f)} de 3</span>
-          {what ? ` · ${what}` : null}
+        <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
+          <span className="font-semibold text-ink" data-testid="today-followup-step">Seguimiento {fStep} de 4</span>
+          <FollowUpActionChip step={fStep} days={f.days} />
+          {what ? <span className="truncate">{` · ${what}`}</span> : null}
         </p>
+        {(fStep === 2 || fStep === 3) && f.card.contact?.person_id ? (
+          <FollowUpPhoneLinks personId={f.card.contact.person_id} step={fStep} />
+        ) : null}
         {note || f.task ? (
           <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note">
             {f.task ? (
@@ -1111,8 +1214,7 @@ function FollowUpQueueRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: «Registrar llamada» — the case's drawer over Hoy, on the call form.
-            A viewer gets no action buttons. */}
+        {/* Primary action depends on step: Llamar shows «Registrar llamada»; all steps keep «Escribir». */}
         {mayDecide ? (
           <Button variant="primary" onClick={() => openCase(f.card.opportunity_id, "call")}>
             Registrar llamada
