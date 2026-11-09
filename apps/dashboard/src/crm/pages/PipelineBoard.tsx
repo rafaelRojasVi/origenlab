@@ -9,11 +9,11 @@
  *   «Enviada» by the follow-up rhythm («0–7 días», «8–21 días»: `enviadaBand`), the others by the
  *   last touch («Hoy», «Esta semana», «Semana pasada»…).
  * - «Silenciosas» fills by itself (`isSilent`: 21 days without an answer). Its cards say which
- *   follow-up is due («Seguimiento N de 3») and offer «¿Marcar perdida?».
+ *   follow-up is due («Seguimiento N de 4») and offer «¿Marcar perdida?».
  * - A card shows one amount: the neto of the case's current quotation (`cardMoney`), its number and
  *   a «rev N» chip. The history of revisions is in the drawer.
  * - A card leads with a readable institution name, the contact and the days since the quote went
- *   out (coloured by the follow-up rhythm: 3 · 14 · 30 days), then the quote, what it is for
+ *   out (coloured by the follow-up rhythm: 3 · 7 · 10 · 15 days), then the quote, what it is for
  *   (`quoteProduct`: the email subject's product, the PDF's model), where the conversation
  *   stands, and direct links to the PDF in Drive and the email.
  * - With `onMove` (the operator may decide cases), a card can be dragged to another column. The
@@ -135,12 +135,12 @@ function enviadaBandOf(card: OpportunityCardData, at: Date): EnviadaBandKey {
 }
 
 /**
- * «Seguimiento N de 3» for a silent card: the step `followUpsDue` gives it, or — for a case that
+ * «Seguimiento N de 4» for a silent card: the step `followUpsDue` gives it, or — for a case that
  * list leaves out (an undecided historical import, a follow-up written in the last days) — the same
  * rhythm (`stepForDays`) over the days since OrigenLab's last touch (`ourLastTouch`: our email or
  * a call that reached the client), so the card and the drawer chip agree.
  */
-export function silentFollowUpStep(card: OpportunityCardData, at: Date): 1 | 2 | 3 {
+export function silentFollowUpStep(card: OpportunityCardData, at: Date): 1 | 2 | 3 | 4 {
   const due = followUpsDue([card], at)[0];
   if (due) return followUpStep(due);
   const since = Date.parse(ourLastTouch(card) ?? card.latest_revision?.sent_at ?? "");
@@ -420,8 +420,8 @@ export function BoardCard({
   index?: number;
   /** A closed case: the name, the quote and how it ended — nothing to act on. */
   compact?: boolean;
-  /** A silent card: «Seguimiento N de 3». */
-  followUpStep?: 1 | 2 | 3;
+  /** A silent card: «Seguimiento N de 4». */
+  followUpStep?: 1 | 2 | 3 | 4;
   /** «¿Marcar perdida?»: asks for the reason. Absent: no button. */
   onLose?: (card: OpportunityCardData) => void;
 }) {
@@ -550,7 +550,7 @@ export function BoardCard({
       ) : null}
       {step ? (
         <p className="mt-1.5 text-[11px] font-semibold leading-4 text-warn" data-testid="board-followup-step">
-          Seguimiento {step} de 3
+          Seguimiento {step} de 4
         </p>
       ) : null}
       <p className={`mt-1.5 line-clamp-2 text-[11px] font-medium leading-4 ${LINE_TONE[line.tone] ?? LINE_TONE.neutral}`} data-testid="board-status-line">

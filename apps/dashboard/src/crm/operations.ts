@@ -264,7 +264,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
   },
   R18: {
     cuando: "El cliente escribe en un caso abierto o ganado, en los últimos 14 días, y la lectura de la IA dice que nadie necesita responderle: agradece, avisa que está evaluando, acusa recibo. No cuenta un correo nuestro, de un proveedor, un rebote ni una respuesta automática.",
-    hace: "Saca el correo de «Responder»; el seguimiento (3 · 14 · 30 días) cuenta desde ese correo. No cambia nada en el caso. «Quitar» lo devuelve a «Responder».",
+    hace: "Saca el correo de «Responder»; el seguimiento (3 · 7 · 10 · 15 días) cuenta desde ese correo. No cambia nada en el caso. «Quitar» lo devuelve a «Responder».",
     automatica: true,
     ejemplo: "«Gracias, estamos analizando varias ofertas, te aviso» → sale de «Responder» y el seguimiento vuelve en 3 días.",
   },

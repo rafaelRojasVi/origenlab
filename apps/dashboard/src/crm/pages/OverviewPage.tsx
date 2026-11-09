@@ -19,7 +19,7 @@ type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
 /**
  * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,
- * clients who answered, the 3 · 14 · 30 follow-ups, what is left to add or decide), and on the side
+ * clients who answered, the 3 · 7 · 10 · 15 follow-ups, what is left to add or decide), and on the side
  * the shared «Pendientes de la semana», the next quote number and the day's exchange rates. The data-health counts live on Datos.
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {

@@ -65,7 +65,7 @@ export function reviewableOpenCards(cards: OpportunityCardData[]): OpportunityCa
  * wrote back — our own follow-ups do not make an unanswered quote fresh. Only what changes the
  * case comes ticked: a lost one, and a reply on a case not yet in «Conversación». A pause still
  * running, a reply on a case already in «Conversación» and an ordinary follow-up (Hoy already
- * schedules it on its 3 · 14 · 30 rhythm) come unticked.
+ * schedules it on its 3 · 7 · 10 · 15 rhythm) come unticked.
  */
 export function proposeOpenDecision(card: OpportunityCardData, now: Date): { decision: Decision; why: string; include: boolean } {
   const until = pausedUntil(card, now);

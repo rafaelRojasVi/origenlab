@@ -72,7 +72,7 @@ function mixed(): QueueItem[] {
   const cotizar = card({ stage: "qualifying", latest_revision: null, quote_numbers: [], created_at: ago(1) }, null);
   const reply = card({ last_contact: { outbound: null, inbound: { at: ago(0, 3_600_000), subject: "Consulta", url: "https://mail.example.cl/r" } } }, ago(5));
   const tarea = card({ open_tasks: [{ task_id: "t1", title: "Llamar al laboratorio", due_at: ago(0, -3_600_000), version: 1, owner: null }] }, ago(1));
-  const followup = card({}, ago(14));
+  const followup = card({}, ago(15)); // day 15 = 4th threshold, so isFollowUpDueToday passes
   return buildParaTiQueue([followup, tarea, reply, cotizar], NOW, null);
 }
 
@@ -114,14 +114,14 @@ describe("home filter", () => {
     expect(read(signedIn({ id: "p", displayName: "Ana", roleLabel: "", homeFilter: "llamadas" }))).toBe("llamadas");
   });
 
-  it("followUpStep maps 3/14/30 days to 1/2/3", () => {
-    const cards = [card({}, ago(3)), card({}, ago(14)), card({}, ago(30))];
-    expect(followUpsDue(cards, NOW).map((f) => [f.days, followUpStep(f)])).toEqual([[30, 3], [14, 2], [3, 1]]);
+  it("followUpStep maps 3/7/10/15 days to 1/2/3/4", () => {
+    const cards = [card({}, ago(3)), card({}, ago(7)), card({}, ago(10)), card({}, ago(15))];
+    expect(followUpsDue(cards, NOW).map((f) => [f.days, followUpStep(f)])).toEqual([[15, 4], [10, 3], [7, 2], [3, 1]]);
   });
 
   it("the header counts follow the view", () => {
     const pedido = card({ stage: "qualifying", latest_revision: null, quote_numbers: [], created_at: ago(1) }, null);
-    const silent = card({}, ago(14));
+    const silent = card({}, ago(15)); // day 15 = 4th threshold
     expect(todayHeaderCounts([pedido, silent], NOW, null, "llamadas")).toEqual({ cotizar: 0, responder: 0, seguimientos: 1 });
     expect(todayHeaderCounts([pedido, silent], NOW, null, "cotizar")).toEqual({ cotizar: 1, responder: 0, seguimientos: 0 });
     expect(todayHeaderCounts([pedido, silent], NOW, null)).toEqual({ cotizar: 1, responder: 0, seguimientos: 1 });
@@ -171,12 +171,14 @@ describe("stepForDays (final review: one rhythm for the board card and the drawe
     expect(stepForDays(RHYTHM[1].from)).toBe(2);
     expect(stepForDays(RHYTHM[2].from - 1)).toBe(2);
     expect(stepForDays(RHYTHM[2].from)).toBe(3);
-    expect(stepForDays(400)).toBe(3);
-    expect([RHYTHM[1].from, RHYTHM[2].from]).toEqual([14, 30]);
+    expect(stepForDays(RHYTHM[3].from - 1)).toBe(3);
+    expect(stepForDays(RHYTHM[3].from)).toBe(4);
+    expect(stepForDays(400)).toBe(4);
+    expect([RHYTHM[1].from, RHYTHM[2].from, RHYTHM[3].from]).toEqual([7, 10, 15]);
   });
 
   it("agrees with followUpStep on the step followUpsDue assigns", () => {
-    for (const d of [3, 13, 14, 29, 30, 45]) {
+    for (const d of [3, 6, 7, 9, 10, 14, 15, 29, 30, 45]) {
       const [f] = followUpsDue([card({}, ago(d))], NOW);
       expect(followUpStep(f)).toBe(stepForDays(d));
     }

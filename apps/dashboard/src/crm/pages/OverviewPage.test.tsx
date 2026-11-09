@@ -236,7 +236,7 @@ describe("Resumen", () => {
     expect(screen.getByTestId("fx-result")).toHaveTextContent("$1.312.813");
   });
 
-  it("puts a decided case in the 3 · 14 · 30 rhythm, linking to its case and email, and counts the historical ones apart", async () => {
+  it("puts a decided case in the 3 · 7 · 10 · 15 rhythm, linking to its case and email, and counts the historical ones apart", async () => {
     const ANDINO = "11111111-1111-4111-8111-111111111111";
     respond({
       "/v2/workspace/fx": FX,

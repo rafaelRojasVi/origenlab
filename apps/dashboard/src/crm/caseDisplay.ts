@@ -115,12 +115,12 @@ export function daysSince(iso: string | null | undefined, now: Date = new Date()
   return Math.max(0, Math.floor((now.getTime() - t) / 86_400_000));
 }
 
-/** The follow-up rhythm (day 3, 14, 30) as a tone for the «N d» badge. */
+/** The follow-up rhythm (day 3, 7, 10, 15) as a tone for the «N d» badge. */
 export function ageTone(days: number | null): Tone {
   if (days == null) return "neutral";
   if (days <= 3) return "brand";
-  if (days <= 14) return "info";
-  if (days <= 30) return "warn";
+  if (days <= 7) return "info";
+  if (days <= 15) return "warn";
   return "bad";
 }
 

@@ -32,6 +32,7 @@ import { Badge, Button, Drawer, Section, buttonClass, fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { CaseTimeline } from "./CaseTimeline";
 import { PersonPhones } from "./PersonPhones";
+import { QualifyCard } from "./QualifyCard";
 import { RevisionHistory } from "./RevisionHistory";
 
 export type DrawerTab = "resumen" | "cotizacion" | "contacto" | "notas" | "correos";
@@ -61,13 +62,13 @@ function weekdayDay(iso: string): string {
 }
 
 /**
- * «Seguimiento N de 3 · …» for the header: with a «Seguimiento …» reminder still pending (one an
+ * «Seguimiento N de 4 · …» for the header: with a «Seguimiento …» reminder still pending (one an
  * email of ours already met is done: `pendingFollowUpTasks`), its step and its day — «hoy» when it
  * is due today or overdue, else its weekday; the step is the one the rhythm will be on that day,
  * read from `followUpsDue` as of then. Otherwise, when the case is due today by the rhythm alone,
  * «hoy». Null when neither.
  */
-function followUpChip(card: OpportunityCardData, now: Date): { step: 1 | 2 | 3; day: string } | null {
+function followUpChip(card: OpportunityCardData, now: Date): { step: 1 | 2 | 3 | 4; day: string } | null {
   const reminder = pendingFollowUpTasks(card)[0] ?? null;
   const dueNow = followUpsDue([card], now)[0] ?? null;
   if (reminder) {
@@ -184,7 +185,7 @@ function CaseDrawerBody({
             className="inline-flex items-center rounded-full border border-warn/30 bg-warn-bg px-1.5 py-px text-[11px] font-semibold leading-4 text-warn"
             data-testid="case-drawer-followup"
           >
-            Seguimiento {followUp.step} de 3 · {followUp.day}
+            Seguimiento {followUp.step} de 4 · {followUp.day}
           </span>
         ) : null}
         {net ? (
@@ -258,6 +259,8 @@ function CaseDrawerBody({
         <CaseLinks card={card} />
         <CaseActions card={card} initial={request} onChanged={onChanged} hoisted />
         <NextStepLine card={card} />
+        {/* Qualify before quoting: five short questions saved as a case note. */}
+        {!card.closed_at ? <QualifyCard card={card} mayAuthor={mayAuthor} onChanged={onChanged} /> : null}
         {/* What the conversation says so far, first: the case memory (owner, 2026-10-15). */}
         <CaseMemory opportunityId={card.opportunity_id} />
         <Section title="Origen">
