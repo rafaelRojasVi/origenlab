@@ -3,6 +3,7 @@ import { OperatorApiError } from "../../api/operatorClient";
 import { Badge, Button, ConfirmDialog, Skeleton, toast } from "../ui";
 import { crmHash, type CrmSection } from "../crmRoute";
 import { ClientSection } from "../quotes/ClientSection";
+import { takeCotizadorReturn } from "../quotes/cotizadorReturn";
 import { isEditable, isGone } from "../quotes/draftEditor";
 import { ExpensesSection } from "../quotes/ExpensesSection";
 import { IssuedView, RevisionSummary, RevisionSwitcher, statusOf } from "../quotes/IssuedView";
@@ -433,7 +434,12 @@ function CotizadorWorkspace({
       <CotizadorHeader
         workspace={ws}
         leaving={leaving}
-        onBack={() => void leaveTo(() => ws.tender != null ? navigate("licitaciones") : navigate("oportunidades", ws.quote.opportunity_id))}
+        onBack={() => void leaveTo(() => {
+          const ret = takeCotizadorReturn();
+          if (ret) { window.location.hash = ret; return; }
+          if (ws.tender != null) navigate("licitaciones");
+          else navigate("oportunidades", ws.quote.opportunity_id);
+        })}
         actions={actions}
         status={
           authored ? (
