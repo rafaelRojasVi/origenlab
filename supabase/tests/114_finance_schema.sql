@@ -3,7 +3,7 @@
 -- Fictitious fixtures only — no real client names, RUTs, amounts or company data.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(40);
+select plan(39);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;

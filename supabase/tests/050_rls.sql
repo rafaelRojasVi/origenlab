@@ -300,9 +300,24 @@ insert into expected_policies values
     ('crm', 'invoice_payment', 'origenlab_api', 'UPDATE'),
     -- 20261108100000: crm.consent — api select/insert, no worker policy.
     ('crm', 'consent', 'origenlab_api', 'SELECT'),
-    ('crm', 'consent', 'origenlab_api', 'INSERT');
+    ('crm', 'consent', 'origenlab_api', 'INSERT'),
+    -- 20261112100000: crm.expense — api select/insert/update, no worker policy.
+    ('crm', 'expense', 'origenlab_api', 'SELECT'),
+    ('crm', 'expense', 'origenlab_api', 'INSERT'),
+    ('crm', 'expense', 'origenlab_api', 'UPDATE'),
+    -- 20261112100000: crm.supplier_order — api select/insert/update, no worker policy.
+    ('crm', 'supplier_order', 'origenlab_api', 'SELECT'),
+    ('crm', 'supplier_order', 'origenlab_api', 'INSERT'),
+    ('crm', 'supplier_order', 'origenlab_api', 'UPDATE'),
+    -- 20261112100000: crm.monthly_target — api select/insert/update, no worker policy.
+    ('crm', 'monthly_target', 'origenlab_api', 'SELECT'),
+    ('crm', 'monthly_target', 'origenlab_api', 'INSERT'),
+    ('crm', 'monthly_target', 'origenlab_api', 'UPDATE'),
+    -- 20261112100000: crm.partner_rule — api select/insert only (append-only), no worker policy.
+    ('crm', 'partner_rule', 'origenlab_api', 'SELECT'),
+    ('crm', 'partner_rule', 'origenlab_api', 'INSERT');
 
-select is((select count(*)::int from expected_policies), 238, 'the matrix implies 238 policies');
+select is((select count(*)::int from expected_policies), 249, 'the matrix implies 249 policies');
 
 -- Posture.
 select is(

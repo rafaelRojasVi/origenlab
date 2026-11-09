@@ -148,7 +148,7 @@ create policy origenlab_api_update on crm.monthly_target for update to origenlab
 -- Append-only: the rule in force is the row with the greatest valid_from.
 -- Never physically deleted: use a new row to change the rule.
 create table crm.partner_rule (
-  id                      serial primary key,
+  id                      bigint generated always as identity primary key,
   valid_from              date not null,
   rule_name               text not null,
   -- arriendo paid by Tatiana; relevant to split calculation
@@ -195,9 +195,5 @@ alter table crm.partner_rule enable row level security;
 
 create policy origenlab_api_select on crm.partner_rule for select to origenlab_api using (true);
 create policy origenlab_api_insert on crm.partner_rule for insert to origenlab_api with check (true);
-
--- grant partner_rule sequences too (serial)
-grant usage, select on sequence crm.partner_rule_id_seq to origenlab_api;
-revoke all on sequence crm.partner_rule_id_seq from public, anon, authenticated, service_role;
 
 reset role;

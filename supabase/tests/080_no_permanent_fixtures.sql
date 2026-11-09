@@ -23,7 +23,7 @@ select is(
 select is(
   (select count(*)::int from pg_policies
     where schemaname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')),
-  238, 'the policy set is intact (238)');
+  249, 'the policy set is intact (249)');
 select is(
   (select count(*)::int from pg_auth_members am
     where am.roleid in ('origenlab_api'::regrole, 'origenlab_worker'::regrole, 'origenlab_migrator'::regrole)
