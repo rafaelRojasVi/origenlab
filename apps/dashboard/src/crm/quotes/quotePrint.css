@@ -126,8 +126,9 @@
   font-size: 12px;
   line-height: 1.45;
 }
-/* Match print cell padding inside the measurement container. */
-.qp-measure .qp-lines td { padding: 7px 6px; }
+/* Print cell padding for the measurement and the on-screen pages, so both match the PDF row for row. */
+.qp-measure .qp-lines td,
+.qp-page .qp-lines td { padding: 7px 6px; }
 /* Gap between sibling blocks (same as .qp-page gap). */
 .qp-measure > * + * { margin-top: 14px; }
 
