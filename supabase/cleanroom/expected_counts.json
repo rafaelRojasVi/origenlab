@@ -341,8 +341,8 @@
       "why": "Finanzas: no monthly target row exists in a fresh build; the API defaults to $6 M; an admin sets one from Ajustes."
     },
     "crm.partner_rule": {
-      "expect": 1,
-      "why": "Finanzas: the migration seeds one actual_50_50 partner rule so the app always has a rule to read."
+      "expect": 0,
+      "why": "Finanzas: no seed row; when the table is empty the API defaults to the fifty_fifty (actual_50_50) rule. An admin sets the first row from Ajustes."
     }
   }
 }

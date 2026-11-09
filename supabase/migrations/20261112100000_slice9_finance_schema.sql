@@ -179,12 +179,8 @@ create trigger partner_rule_never_deleted
   before delete on crm.partner_rule
   for each row execute function platform.reject_mutation('append-only: insert a new row to change the rule');
 
--- Seed the current rule so the app always has something to read
-insert into crm.partner_rule
-  (valid_from, rule_name, arriendo_clp, tasa_sebastian, sueldo_tatiana, arriendo_pct_empresa, split_pct, notes)
-values
-  ('2026-01-01', 'actual_50_50', 875000, null, 0, 0, 0.5000,
-   'Regla actual 50/50: Tatiana paga el arriendo de su bolsillo (arriendo_pct_empresa=0).');
+-- No seed row: when crm.partner_rule is empty the API defaults to the fifty_fifty rule
+-- (actual_50_50 / 50–50 split). An admin sets the first row from Ajustes › Regla de socios.
 
 -- ── grants & RLS: partner_rule ───────────────────────────────────────────────────────────────
 revoke all on crm.partner_rule from public, anon, authenticated, service_role;

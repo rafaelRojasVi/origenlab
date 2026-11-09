@@ -3,7 +3,7 @@
 -- Fictitious fixtures only — no real client names, RUTs, amounts or company data.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(42);
+select plan(40);
 
 grant origenlab_api    to session_user with set true, inherit false;
 grant origenlab_worker to session_user with set true, inherit false;
@@ -156,12 +156,6 @@ select is(
     where c.relkind = 'r' and n.nspname = 'crm' and c.relname = 'partner_rule'
       and c.relrowsecurity and not c.relforcerowsecurity),
   1, 'RLS is enabled and not forced on crm.partner_rule');
-
--- ── partner_rule: seed row present ───────────────────────────────────────────────────────────
-select is((select count(*)::int from crm.partner_rule), 1,
-  'the migration seeds the initial actual_50_50 partner rule');
-select is((select rule_name from crm.partner_rule order by valid_from desc limit 1),
-  'actual_50_50', 'the seeded rule is actual_50_50');
 
 -- ── partner_rule: api inserts ────────────────────────────────────────────────────────────────
 select is(pg_temp.run_as('origenlab_api', $$ insert into crm.partner_rule
