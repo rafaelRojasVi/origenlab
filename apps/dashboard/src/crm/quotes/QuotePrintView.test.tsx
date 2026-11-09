@@ -152,8 +152,9 @@ describe("Vista previa PDF — an approved revision", () => {
     expect(sheet.getByText("Atentamente,")).toBeInTheDocument();
     expect(sheet.getByText("Tatiana Vivanco")).toBeInTheDocument();
     expect(sheet.getByText("Bioquímico · OrigenLab")).toBeInTheDocument();
-    expect(sheet.getByText("www.origenlab.cl · Horario: 09:00-18:00")).toBeInTheDocument();
-    expect(sheet.getByText("contacto@origenlab.cl · +56 9 6256 7816")).toBeInTheDocument();
+    expect(sheet.getByRole("link", { name: "www.origenlab.cl" })).toHaveAttribute("href", "https://www.origenlab.cl");
+    expect(sheet.getByRole("link", { name: "contacto@origenlab.cl" })).toHaveAttribute("href", "mailto:contacto@origenlab.cl");
+    expect(sheet.getByRole("link", { name: "+56 9 6256 7816" })).toHaveAttribute("href", "tel:+56962567816");
     expect(sheet.queryByText(/BORRADOR/)).not.toBeInTheDocument();
     expect(sheet.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeEnabled();
     expect(document.title).toBe("Cotización CN01272 — Universidad de Prueba");
@@ -187,11 +188,11 @@ describe("Vista previa PDF — WhatsApp line and QR", () => {
 
   it("prints the line, the QR and its caption beside the signature when a number is set", () => {
     const sheet = within(showWith(PHONE));
-    expect(sheet.getByText("WhatsApp +56 9 1234 5678")).toBeInTheDocument();
+    expect(sheet.getByRole("link", { name: "WhatsApp +56 9 1234 5678" }).getAttribute("href")).toMatch(/^https:\/\/wa\.me\/56912345678/);
     expect(sheet.getByRole("img", { name: "Código QR para escribir por WhatsApp" })).toBeInTheDocument();
-    expect(sheet.getByText("Escanee para escribir por WhatsApp sobre esta cotización")).toBeInTheDocument();
+    expect(sheet.getByText("Escanee o toque para escribir por WhatsApp sobre esta cotización")).toBeInTheDocument();
     // The existing contact lines stay.
-    expect(sheet.getByText("www.origenlab.cl · Horario: 09:00-18:00")).toBeInTheDocument();
+    expect(sheet.getByRole("link", { name: "www.origenlab.cl" })).toHaveAttribute("href", "https://www.origenlab.cl");
   });
 
   it("prints nothing new without a number, and the document is identical to before", () => {
@@ -210,7 +211,7 @@ describe("Vista previa PDF — WhatsApp line and QR", () => {
     const sheet = within(screen.getByRole("dialog"));
     expect(sheet.queryByRole("img", { name: /WhatsApp/ })).toBeNull();
     expect(sheet.queryByText(/Escanee/)).toBeNull();
-    expect(sheet.getByText("WhatsApp +56 9 1234 5678")).toBeInTheDocument();
+    expect(sheet.getByRole("link", { name: "WhatsApp +56 9 1234 5678" }).getAttribute("href")).toMatch(/^https:\/\/wa\.me\/56912345678/);
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });

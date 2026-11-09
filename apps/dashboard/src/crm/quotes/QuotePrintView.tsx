@@ -24,12 +24,11 @@ import "./quotePrint.css";
 export const ISSUER = {
   signer: "Tatiana Vivanco",
   title: "Bioquímico · OrigenLab",
-  contactLines: [
-    "Tatiana Vivanco - OrigenLab",
-    "Casa Matriz: Oettinger 51, D206, Valdivia",
-    "contacto@origenlab.cl · +56 9 6256 7816",
-    "www.origenlab.cl · Horario: 09:00-18:00",
-  ],
+  contactLines: ["Tatiana Vivanco - OrigenLab", "Casa Matriz: Oettinger 51, D206, Valdivia"],
+  email: "contacto@origenlab.cl",
+  phone: "+56 9 6256 7816",
+  site: "www.origenlab.cl",
+  hours: "Horario: 09:00-18:00",
 } as const;
 
 const LOGO = "/logo/origenlab-mark-light.svg";
@@ -298,16 +297,35 @@ export function QuotePrintView({
             {quote.draft ? <span className="qp-strong qp-draft-note">Borrador sin aprobar: no válido como cotización.</span> : null}
           </div>
           {waUrl && qrFits ? (
-            <div className="qp-wa">
+            <a className="qp-wa qp-link" href={waUrl}>
               <QrSvg text={waUrl} size="22mm" />
-              <span>Escanee para escribir por WhatsApp sobre esta cotización</span>
-            </div>
+              <span>Escanee o toque para escribir por WhatsApp sobre esta cotización</span>
+            </a>
           ) : null}
           <div className="qp-muted qp-right">
             {ISSUER.contactLines.map((line) => (
               <span key={line}>{line}</span>
             ))}
-            {whatsapp ? <span>WhatsApp {formatWhatsappNumber(whatsapp)}</span> : null}
+            <span>
+              <a className="qp-link" href={`mailto:${ISSUER.email}`}>
+                {ISSUER.email}
+              </a>
+              {" · "}
+              <a className="qp-link" href={`tel:${ISSUER.phone.replace(/\s+/g, "")}`}>
+                {ISSUER.phone}
+              </a>
+            </span>
+            <span>
+              <a className="qp-link" href={`https://${ISSUER.site}`}>
+                {ISSUER.site}
+              </a>
+              {` · ${ISSUER.hours}`}
+            </span>
+            {whatsapp && waUrl ? (
+              <a className="qp-link" href={waUrl}>
+                WhatsApp {formatWhatsappNumber(whatsapp)}
+              </a>
+            ) : null}
           </div>
         </footer>
       </article>
