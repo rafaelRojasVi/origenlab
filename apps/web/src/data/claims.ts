@@ -225,6 +225,19 @@ export const claims: readonly Claim[] = [
     note: 'Sin calificar: no declara orden de compra ni condiciones de pago propias de Mercado Público.',
   },
   {
+    id: 'sello-empresa-mujer',
+    text: 'Sello Empresa Mujer · ChileCompra',
+    value: null,
+    source:
+      'Sello Empresa Mujer de ChileCompra: se otorga automáticamente a la persona natural mujer inscrita en ChileProveedores (Directiva ChileCompra); OrigenLab opera como persona natural de Tatiana Vivanco. Estudio comercial 2026-11-07, «Ayuda del Estado» (privado)',
+    measuredOn: '2026-11-09',
+    approvedBy: 'Rafael Rojas por instrucción del negocio, 2026-11-09 («agrega a la página web el sello mujer»)',
+    approvedOn: '2026-11-09',
+    status: 'approved',
+    visibility: 'public',
+    note: 'Insignia de texto, sin el logotipo oficial. Verificar que figure en la ficha de ChileProveedores; si OrigenLab pasa a SpA, revisar si la empresa conserva el sello.',
+  },
+  {
     id: 'proveedor-inscrito',
     text: 'Proveedor inscrito en universidades, laboratorios farmacéuticos y empresas agroindustriales · Acreditado en ChileProveedores',
     value: null,
