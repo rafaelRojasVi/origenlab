@@ -106,6 +106,7 @@ function Pipeline({
   function open(id: string | null, withForm: typeof openWith = null) {
     setOpenWith(withForm);
     setOpenId(id);
+    if (id === null) history.pushState(null, "", crmHash("oportunidades"));
   }
 
   /** A card dropped on another Tablero column: ask for what the move needs, or say why not. */
