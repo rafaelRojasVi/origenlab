@@ -83,3 +83,17 @@ def test_mes_handles_decimal_amounts() -> None:
     assert out["por_cobrar"]["by_age"] == {"0-30": 2_200_000, "31-60": 410_000, "61-90": 0, "90+": 0}
     assert out["vendido"]["pct_meta"] == 17.5
     assert out["monthly_history"] == [{"month": "2026-10-01", "neto": 5_050_000}]
+
+
+def test_mes_amounts_leave_as_json_numbers() -> None:
+    """The route returns `dict[str, Any]`, which Pydantic serializes with Decimal as a JSON string;
+    «pct.toFixed is not a function» then blanked the whole dashboard."""
+    from pydantic import TypeAdapter
+
+    mes = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn").mes()
+    out = TypeAdapter(dict[str, Any]).dump_python(mes, mode="json")
+
+    for path in (("vendido", "net"), ("vendido", "meta_net"), ("vendido", "pct_meta"), ("por_cobrar", "total"),
+                 ("capital_atado", "total"), ("gastos", "total")):
+        value = out[path[0]][path[1]]
+        assert isinstance(value, (int, float)) and not isinstance(value, bool), (path, value)
