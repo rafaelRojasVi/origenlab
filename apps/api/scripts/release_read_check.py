@@ -190,8 +190,8 @@ class _OwnerConnection:
     """A psycopg connection opened as origenlab_migrator, then SET ROLEd to origenlab_owner.
 
     SET ROLE is session-level (not transaction-level), so it persists for the full connection
-    lifetime.  The repositories' _read() context managers issue SET TRANSACTION READ ONLY
-    inside this session, so every read runs as the owner role within a read-only transaction.
+    lifetime.  `default_transaction_read_only` is set on the session too, so every transaction is
+    read-only even where a repository's _read() does not say so itself.
     """
 
     def __init__(self, dsn: str) -> None:
@@ -204,6 +204,9 @@ class _OwnerConnection:
         # Open with autocommit=True so SET ROLE runs outside a transaction.
         conn = psycopg.connect(self._dsn, autocommit=True)
         conn.execute("set role origenlab_owner")
+        # The owner may write: every transaction on this session is read-only regardless of
+        # whether a repository's own _read() says so, so no read path can change production.
+        conn.execute("set default_transaction_read_only = on")
         # Switch off autocommit; the repositories then start their own transactions.
         conn.autocommit = False
         self._conn = conn
