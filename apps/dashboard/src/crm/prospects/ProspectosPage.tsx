@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMayRunCaseCommands } from "../caseCommands";
-import { crmHash, type CrmSection } from "../crmRoute";
+import type { CrmSection } from "../crmRoute";
 import { Button, EmptyState, PageHeader, ResourceGate, Skeleton, toast } from "../ui";
 import { useResource } from "../useResource";
 import { ContactarDialog } from "./ContactarDialog";
