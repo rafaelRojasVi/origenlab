@@ -104,6 +104,7 @@ comment on table crm.supplier_order is
 create index supplier_order_opportunity_idx on crm.supplier_order (opportunity_id) where opportunity_id is not null;
 create index supplier_order_quote_idx on crm.supplier_order (quote_id) where quote_id is not null;
 create index supplier_order_ordered_idx on crm.supplier_order (ordered_on);
+create index supplier_order_created_by_idx on crm.supplier_order (created_by_operator_id) where created_by_operator_id is not null;
 
 -- ── grants & RLS: supplier_order ─────────────────────────────────────────────────────────────
 revoke all on crm.supplier_order from public, anon, authenticated, service_role;
@@ -130,6 +131,8 @@ comment on table crm.monthly_target is
   'DOMAIN.md §8 #75 — the monthly net-sales target (meta neto). One row per calendar month '
   '(PRIMARY KEY month). The API returns the latest row when the current month has no row; '
   'the application default is $6,000,000. Set by an admin from Ajustes › Meta mensual.';
+
+create index monthly_target_set_by_idx on crm.monthly_target (set_by_operator_id) where set_by_operator_id is not null;
 
 -- ── grants & RLS: monthly_target ─────────────────────────────────────────────────────────────
 revoke all on crm.monthly_target from public, anon, authenticated, service_role;
@@ -174,6 +177,8 @@ comment on table crm.partner_rule is
   'DOMAIN.md §8 #76 — partner distribution rule (append-only). The rule in force is the row with '
   'the greatest valid_from. rule_name: actual_50_50 (current) or opciones A–D from the strategy. '
   'Admin-only; set from Ajustes › Regla de socios.';
+
+create index partner_rule_set_by_idx on crm.partner_rule (set_by_operator_id) where set_by_operator_id is not null;
 
 create trigger partner_rule_never_deleted
   before delete on crm.partner_rule
