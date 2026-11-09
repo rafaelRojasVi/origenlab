@@ -34,6 +34,7 @@ const FinanzasSociosPage = lazyPage(() => import("./finanzas/FinanzasSociosPage"
 const MarketingPage = lazyPage(() => import("./pages/MarketingPage").then((m) => m.MarketingPage));
 const HistoryPage = lazyPage(() => import("./pages/HistoryPage").then((m) => m.HistoryPage));
 const OperacionesPage = lazyPage(() => import("./pages/OperacionesPage").then((m) => m.OperacionesPage));
+const AjustesMeta = lazyPage(() => import("./pages/AjustesMeta").then((m) => m.AjustesMeta));
 
 /**
  * The dashboard: one shell, one navigation, one sign-in. Five areas (Hoy · Ventas · Finanzas ·
@@ -160,6 +161,8 @@ function Section({
       return <HistoryPage navigate={navigate} />;
     case "datos":
       return <OperacionesPage navigate={navigate} tab={tab} />;
+    case "ajustes-meta":
+      return <AjustesMeta />;
     default:
       return <OverviewPage navigate={navigate} />;
   }
