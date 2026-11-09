@@ -212,6 +212,11 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // «Hecho automáticamente» on Hoy (2026-10-14): what the automatic email rules did, any operator reads.
   /^\/v2\/workspace\/automatic-actions$/,
   /^\/v2\/cockpit\/work-queue$/,
+  // One case's timeline for the case drawer: its events (stage, origin and close moves only --
+  // every other payload key is dropped upstream, `TIMELINE_PAYLOAD_KEYS`) with the acting
+  // operator's name. GET-only, operator session required, masked for a `viewer`; a UUID-shaped
+  // segment and the literal `/timeline` tail, so `/v2/cockpit/opportunities/<uuid>` stays refused.
+  /^\/v2\/cockpit\/opportunities\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/timeline$/,
   // Catalog 1a reads (`apps/api` v2/catalog/routes.py): products, one product, the supplier list
   // (names and product counts by kind, no costs), a supplier's terms, cost parameters, FX, price history (`?model_key=&limit=`) and a short-lived signed
   // image URL (JSON, never image bytes). Exact paths, GET-only upstream; named one by one so

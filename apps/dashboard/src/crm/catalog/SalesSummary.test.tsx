@@ -54,7 +54,7 @@ describe("SalesSummary", () => {
     const list = screen.getByTestId("quoted-history");
     const won = within(list).getByText(/09101-26/).closest("li")!;
     expect(won).toHaveTextContent("Vendida");
-    expect(within(won).getByRole("link", { name: "Universidad Ficticia" })).toHaveAttribute("href", "#/crm/oportunidades/case-09101-26");
+    expect(within(won).getByRole("link", { name: "Universidad Ficticia" })).toHaveAttribute("href", "#/ventas/pipeline/case-09101-26");
     expect(within(list).getByText(/09102-26/).closest("li")).toHaveTextContent("Abierta");
     expect(within(list).getByText(/09103-26/).closest("li")).toHaveTextContent("Sin caso");
   });
@@ -119,6 +119,6 @@ describe("SalesSummary with margins", () => {
     const tip = screen.getByRole("tooltip");
     expect(tip).toHaveTextContent("Margen");
     expect(tip).toHaveTextContent("Costo");
-    expect(dots[0].closest("a")).toHaveAttribute("href", expect.stringContaining("#/crm/oportunidades/case-"));
+    expect(dots[0].closest("a")).toHaveAttribute("href", expect.stringContaining("#/ventas/pipeline/case-"));
   });
 });

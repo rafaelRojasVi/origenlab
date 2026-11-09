@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AuthSessionState } from "../../api/authClient";
+import type { AuthSessionState, HomeFilter } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
 import { followUpsDue, organizationsToConfirm, overdueTasks, repliesToAnswer, tasksDue } from "../today";
@@ -714,12 +714,15 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
 
   it("a viewer keeps the old behaviour: the case opens, nothing is created", async () => {
     const c = solicitud();
-    const calls = stub();
+    stubDrawer();
     const navigate = renderWith([c], "viewer");
     const row = await screen.findByTestId(`today-cotizar-${c.opportunity_id}`);
     fireEvent.click(within(row).getByRole("button", { name: "Cotizar" }));
-    expect(navigate).toHaveBeenCalledWith("oportunidades", c.opportunity_id);
-    expect(calls.filter((x) => x.path.startsWith("/v2/commands/"))).toEqual([]);
+    // The case opens in its drawer, over Hoy.
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+    const posts = (vi.mocked(fetch).mock.calls as [RequestInfo | URL, RequestInit?][]).filter(([, init]) => init?.method === "POST");
+    expect(posts).toEqual([]);
   });
 
   it("a refusal is said in a toast and nothing opens", async () => {
@@ -757,7 +760,7 @@ describe("«Licitación cierra mañana»", () => {
     stub();
     const navigate = renderTenders(closing);
     const link = await screen.findByRole("link", { name: "Licitación cierra mañana: Compra de balanzas de ejemplo" });
-    expect(link).toHaveAttribute("href", `#/crm/licitaciones/${TENDER}`);
+    expect(link).toHaveAttribute("href", `#/ventas/licitaciones/${TENDER}`);
     fireEvent.click(link);
     expect(navigate).toHaveBeenCalledWith("licitaciones", TENDER);
   });
@@ -774,5 +777,186 @@ describe("«Licitación cierra mañana»", () => {
     renderTenders(undefined, [card({ title: "Licitación 1234567-12-LE26 — Compra" })]);
     await screen.findByText("No hay nada que hacer ahora mismo.");
     expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
+  });
+});
+
+describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
+  // «Ana» is an invented profile whose Hoy opens on her calls.
+  function profileSession(homeFilter: HomeFilter | null): AuthSessionState {
+    const base = session("sales");
+    if (base.kind !== "signed_in") throw new Error("unreachable");
+    return { ...base, profile: { id: "p-ana", displayName: "Ana", roleLabel: "Ventas", homeFilter } };
+  }
+  function renderAs(s: AuthSessionState, items: OpportunityCardData[]) {
+    stub();
+    const navigate = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
+        <TodayBody items={items} navigate={navigate} onChanged={() => undefined} now={NOW} />
+      </AuthSessionContext.Provider>,
+    );
+    return navigate;
+  }
+  const solicitud = () =>
+    card({
+      stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [],
+      last_contact: { outbound: null, inbound: { at: "2026-10-05T12:00:00Z", subject: "Solicitud de equipo", url: null } },
+    });
+
+  it("a llamadas profile (fixture «Ana») shows «Mi cola · Ana» by default and «Todo el equipo» reveals the cotizar row", () => {
+    const pedido = solicitud();
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    renderAs(profileSession("llamadas"), [pedido, silent14]);
+    expect(screen.getByRole("button", { name: "Mi cola · Ana" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId(`today-followup-${silent14.opportunity_id}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`today-cotizar-${pedido.opportunity_id}`)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Todo el equipo" }));
+    expect(screen.getByTestId(`today-cotizar-${pedido.opportunity_id}`)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("a todo profile sees no «Mi cola» switch", () => {
+    renderAs(profileSession(null), [card({}, "2026-09-22T15:00:00Z")]);
+    expect(screen.queryByRole("button", { name: /Mi cola/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Todo el equipo" })).toBeNull();
+  });
+
+  it("follow-up row reads «Llamar» and «Seguimiento 2 de 3»", () => {
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const navigate = renderAs(profileSession("llamadas"), [silent14]);
+    expect(screen.getByRole("heading", { level: 2, name: "Llamar" })).toBeInTheDocument();
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    expect(row).toHaveTextContent("Seguimiento 2 de 3");
+    // «Registrar llamada» opens the case's drawer over Hoy (see «Hoy opens the case drawer in place»).
+    expect(within(row).getByRole("button", { name: "Registrar llamada" })).toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("«N cosas por ordenar» only for todo", () => {
+    const proposed = () => card({ organization: { organization_id: "o-x", name: "Sociedad Ficticia", confirmation: "machine_proposed", version: 1 } });
+    renderAs(profileSession("todo"), [proposed()]);
+    expect(screen.getByTestId("today-housekeeping")).toHaveTextContent("cosa por ordenar");
+    cleanup();
+    renderAs(profileSession("llamadas"), [proposed()]);
+    expect(screen.queryByTestId("today-housekeeping")).toBeNull();
+  });
+});
+
+describe("Task 4 review fixes", () => {
+  function as(role: string, homeFilter: HomeFilter | null): AuthSessionState {
+    const base = session(role);
+    if (base.kind !== "signed_in") throw new Error("unreachable");
+    return { ...base, profile: { id: "p-ana", displayName: "Ana", roleLabel: "Ventas", homeFilter } };
+  }
+  function renderBody(s: AuthSessionState, items: OpportunityCardData[], tendersClosing?: { id: string; title: string }[]) {
+    stub();
+    render(
+      <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
+        <TodayBody items={items} navigate={vi.fn()} onChanged={() => undefined} now={NOW} tendersClosing={tendersClosing} />
+      </AuthSessionContext.Provider>,
+    );
+  }
+  const TENDER = [{ id: "55555555-5555-4555-8555-555555555556", title: "Compra de balanzas de ejemplo" }];
+
+  it("a viewer gets no «Registrar llamada»", () => {
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    renderBody(as("viewer", "llamadas"), [silent14]);
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    expect(within(row).queryByRole("button", { name: "Registrar llamada" })).toBeNull();
+  });
+
+  it("«Licitación cierra mañana» is quoting work: not in a llamadas view, shown in cotizar", () => {
+    renderBody(as("sales", "llamadas"), [], TENDER);
+    expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
+    cleanup();
+    renderBody(as("sales", "cotizar"), [], TENDER);
+    expect(screen.getByText(/Licitación cierra mañana/)).toBeInTheDocument();
+  });
+
+  it("the empty state's «Próximos seguimientos» shows only in a view with calls", () => {
+    // Five days since the quote: a follow-up coming up, not due today.
+    const soon = card({}, "2026-10-01T15:00:00Z");
+    renderBody(as("sales", null), [soon]);
+    expect(screen.getByTestId("today-empty")).toHaveTextContent("Próximos seguimientos");
+    cleanup();
+    renderBody(as("sales", "cotizar"), [soon]);
+    expect(screen.getByTestId("today-empty")).not.toHaveTextContent("Próximos seguimientos");
+  });
+});
+
+/** Serves what the case drawer reads: an empty timeline, notes and threads. */
+function stubDrawer() {
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const path = new URL(url, "http://localhost").pathname;
+    const body = path.endsWith("/timeline")
+      ? { opportunity_id: "x", entries: [] }
+      : path.endsWith("/notes") ? { notes: [] } : path.endsWith("/threads") ? { threads: [] } : { items: [], total: 0 };
+    return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+  }));
+}
+
+describe("Hoy opens the case drawer in place (Task 8)", () => {
+  function renderNav(items: OpportunityCardData[]) {
+    const navigate = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <TodayBody items={items} navigate={navigate} onChanged={() => undefined} now={NOW} />
+        <Toaster />
+      </AuthSessionContext.Provider>,
+    );
+    return navigate;
+  }
+
+  it("«Abrir caso» opens the drawer without leaving Hoy", async () => {
+    stubDrawer();
+    window.location.hash = "#/hoy";
+    const c = card({ open_tasks: [task("hoy-1", "2026-10-06T20:00:00Z")] });
+    const navigate = renderNav([c]);
+    const row = screen.getByTestId("today-task-hoy-1");
+    fireEvent.click(within(row).getByRole("button", { name: "Abrir caso" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Instituto Ficticio");
+    expect(window.location.hash).toBe("#/hoy");
+    expect(navigate).not.toHaveBeenCalled();
+    window.location.hash = "";
+  });
+
+  it("«Registrar llamada» opens the drawer on the call form", async () => {
+    stubDrawer();
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const navigate = renderNav([silent14]);
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByTestId("log-call")).toBeVisible();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("Task 8 review fixes", () => {
+  function body(items: OpportunityCardData[]) {
+    return (
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <TodayBody items={items} navigate={() => undefined} onChanged={() => undefined} now={NOW} />
+      </AuthSessionContext.Provider>
+    );
+  }
+
+  it("a Hoy reload keeps the drawer's tab and does not reopen a form the operator closed", async () => {
+    stubDrawer();
+    const silent14 = card({}, "2026-09-22T15:00:00Z");
+    const { rerender } = render(body([silent14]));
+    const row = screen.getByTestId(`today-followup-${silent14.opportunity_id}`);
+    fireEvent.click(within(row).getByRole("button", { name: "Registrar llamada" }));
+    const dialog = await screen.findByRole("dialog");
+    // The operator closes the call form (as after saving it), then reads «Contacto».
+    fireEvent.click(within(await within(dialog).findByTestId("log-call")).getByRole("button", { name: "Cancelar" }));
+    expect(within(dialog).queryByTestId("log-call")).toBeNull();
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Contacto" }));
+    // Hoy reloads: new items, same case.
+    rerender(body([{ ...silent14 }]));
+    expect(within(screen.getByRole("dialog")).getByRole("tab", { name: "Contacto" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("tab", { name: "Resumen" }));
+    expect(within(screen.getByRole("dialog")).queryByTestId("log-call")).toBeNull();
   });
 });

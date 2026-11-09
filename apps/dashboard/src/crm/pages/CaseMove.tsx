@@ -69,6 +69,7 @@ function receiptLine(step: WonStep, n: number, total: number): string {
 
 /** Why `card` cannot go to `target`, or null when it can. */
 export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: Date = new Date()): string | null {
+  if (target === "silenciosas") return "Silenciosas se llena sola: un caso entra a los 21 días sin respuesta.";
   const closed = card.closed_at != null || ["won", "lost", "abandoned"].includes(card.stage);
   if (closed && card.stage === "won") return "El caso está ganado: una venta ganada no se mueve.";
   if (closed && !isReopenable(card)) return "Este caso se descartó por una corrección: abre uno nuevo desde el correo.";

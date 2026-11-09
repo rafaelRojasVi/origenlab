@@ -130,7 +130,7 @@ describe("Operaciones", () => {
   });
 
   it("an old Datos link still lands on its view under Más", async () => {
-    expect(parseCrmHash("#/crm/datos/evidencia")).toEqual({ section: "datos", id: null, tab: "evidencia" });
+    expect(parseCrmHash("#/ajustes/operaciones/evidencia")).toEqual({ section: "datos", id: null, tab: "evidencia" });
     respond();
     renderOps("admin", "proveedores");
     await waitFor(() => expect(screen.getByRole("button", { name: "Proveedores" })).toHaveAttribute("aria-pressed", "true"));

@@ -1,4 +1,4 @@
-/** A prospect's full profile opens from a direct link (`#/crm/prospectos/<id>`). Invented data only. */
+/** A prospect's full profile opens from a direct link (`#/ventas/listas/<id>`). Invented data only. */
 import "@testing-library/jest-dom";
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,7 +34,7 @@ beforeEach(() => clearResourceCache());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ProspectDetail", () => {
-  it("el detalle se abre por enlace directo #/crm/prospectos/<id>", async () => {
+  it("el detalle se abre por enlace directo #/ventas/listas/<id>", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const u = new URL(raw, "http://localhost");

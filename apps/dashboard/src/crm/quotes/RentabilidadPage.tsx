@@ -1,5 +1,5 @@
 /**
- * «Rentabilidad» (`#/crm/cotizador/rentabilidad`, a fixed pane of the Cotizador module): for every
+ * «Rentabilidad» (`#/ventas/cotizaciones/rentabilidad`, a fixed pane of the Cotizador module): for every
  * quote made in the Cotizador, where the money goes — the sale (neto), the product cost, the quote's
  * own import costs («gastos»: freight, customs agent, duties and customs, local transport) and the
  * gross margin. Company overhead is not included (owner, 2026-10-17). Quotes from before the

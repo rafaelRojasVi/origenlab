@@ -91,7 +91,7 @@ describe("the request card's «Cotizar»", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
     const c = await screen.findByTestId(`opportunity-card-${CASE_ID}`);
     fireEvent.click(within(c).getByRole("button", { name: "Cotizar" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${NEW_QUOTE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${NEW_QUOTE}`));
     expect(posts(calls)).toEqual(["/v2/commands/create-quote"]);
   });
 
@@ -114,7 +114,7 @@ describe("the request card's «Cotizar»", () => {
     fireEvent.click(button);
     expect(await within(c).findByRole("button", { name: "Creando…" })).toBeDisabled();
     release(new Response(JSON.stringify({ ok: true, quote_id: NEW_QUOTE, quote_number: "00043-26", revision_id: "r", version: 1 }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${NEW_QUOTE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${NEW_QUOTE}`));
   });
 
   it("a case whose quote is still a draft stays «Por cotizar»: «Continuar cotización» opens it, no POST", async () => {
@@ -125,7 +125,7 @@ describe("the request card's «Cotizar»", () => {
     const c = await screen.findByTestId(`opportunity-card-${CASE_ID}`);
     expect(within(c).getByTestId("por-cotizar-chip")).toBeInTheDocument();
     fireEvent.click(within(c).getByRole("button", { name: "Continuar cotización" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${DRAFT_QUOTE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${DRAFT_QUOTE}`));
     expect(posts(calls)).toEqual([]);
   });
 
@@ -146,11 +146,12 @@ describe("the case drawer", () => {
     const calls = stub([card({ stage: "quoting", quotes: [historical], quote_numbers: ["00041-26"] })]);
     renderPipeline("admin", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: "Abrir borrador" })).not.toBeInTheDocument();
     // A historical quote is not the Cotizador's.
     expect(within(dialog).queryByRole("link", { name: /Abrir en Cotizador/ })).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Nueva cotización" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${NEW_QUOTE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${NEW_QUOTE}`));
     expect(posts(calls)).toEqual(["/v2/commands/create-quote"]);
   });
 
@@ -158,11 +159,12 @@ describe("the case drawer", () => {
     const calls = stub([card({ stage: "quoting", quotes: [historical, draft], quote_numbers: ["00041-26", "00042-26"] })]);
     renderPipeline("sales", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: "Nueva cotización" })).not.toBeInTheDocument();
     const links = within(dialog).getAllByRole("link", { name: /Abrir en Cotizador/ });
-    expect(links.map((a) => a.getAttribute("href"))).toEqual([`#/crm/cotizador/${DRAFT_QUOTE}`]);
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([`#/ventas/cotizaciones/${DRAFT_QUOTE}`]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Abrir borrador" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/crm/cotizador/${DRAFT_QUOTE}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${DRAFT_QUOTE}`));
     expect(posts(calls)).toEqual([]);
   });
 
@@ -170,15 +172,17 @@ describe("the case drawer", () => {
     stub([card({ stage: "lost", closed_at: "2026-10-12T12:00:00Z", quotes: [historical, draft], quote_numbers: ["00041-26", "00042-26"] })]);
     renderPipeline("sales", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: /Nueva cotización|Abrir borrador/ })).not.toBeInTheDocument();
     // Its quotes still open in the Cotizador, to read.
-    expect(within(dialog).getByRole("link", { name: /Abrir en Cotizador/ })).toHaveAttribute("href", `#/crm/cotizador/${DRAFT_QUOTE}`);
+    expect(within(dialog).getByRole("link", { name: /Abrir en Cotizador/ })).toHaveAttribute("href", `#/ventas/cotizaciones/${DRAFT_QUOTE}`);
   });
 
   it("a viewer gets neither", async () => {
     stub([card({ stage: "quoting", quotes: [historical, draft], quote_numbers: ["00041-26", "00042-26"] })]);
     renderPipeline("viewer", CASE_ID);
     const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).queryByRole("button", { name: /Nueva cotización|Abrir borrador/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("link", { name: /Abrir en Cotizador/ })).not.toBeInTheDocument();
   });

@@ -37,6 +37,7 @@ const READS = [
   "/v2/workspace/mail-quote-numbers",
   "/v2/workspace/history",
   "/v2/cockpit/work-queue",
+  "/v2/cockpit/opportunities/96301691-af05-41ea-82e3-05f5fae40837/timeline",
 ];
 
 function stubUpstream(status: number, body = "{}", headers: [string, string][] = []) {

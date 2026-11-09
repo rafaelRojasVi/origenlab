@@ -1,10 +1,17 @@
 /**
- * The Oportunidades «Tablero»: one column per state (Solicitada, Enviada,
+ * The Pipeline «Tablero»: one column per state (Solicitada, Enviada, Silenciosas,
  * Conversación, En pausa, Ganada, Perdida).
  *
- * - Every card is shown; every column scrolls on its own, so a long column never stretches the
- *   page. `sort` orders them (newest quote, oldest, «respondieron primero», institution); by date,
- *   a thin divider marks each age band («Hoy», «Esta semana», «Semana pasada»…) without hiding a card.
+ * - Every card is shown except a loss closed more than `LOST_ON_BOARD_DAYS` ago (`isOnBoard`; it
+ *   lives under «Cerradas»); a won case always stays. Every column scrolls on its own, so a long
+ *   column never stretches the page. `sort` orders them (newest quote, oldest, «respondieron
+ *   primero», institution); by date, a thin divider marks each age band without hiding a card —
+ *   «Enviada» by the follow-up rhythm («0–7 días», «8–21 días»: `enviadaBand`), the others by the
+ *   last touch («Hoy», «Esta semana», «Semana pasada»…).
+ * - «Silenciosas» fills by itself (`isSilent`: 21 days without an answer). Its cards say which
+ *   follow-up is due («Seguimiento N de 3») and offer «¿Marcar perdida?».
+ * - A card shows one amount: the neto of the case's current quotation (`cardMoney`), its number and
+ *   a «rev N» chip. The history of revisions is in the drawer.
  * - A card leads with a readable institution name, the contact and the days since the quote went
  *   out (coloured by the follow-up rhythm: 3 · 14 · 30 days), then the quote, what it is for
  *   (`quoteProduct`: the email subject's product, the PDF's model), where the conversation
@@ -19,7 +26,21 @@ import { inSharedMailbox } from "../gmailLinks";
 import type { OpportunityCardData } from "../crmTypes";
 import { originLabel } from "../caseOrigin";
 import { ageTone, contactLine, conversation, displayName, isDelivered, quoteProduct } from "../caseDisplay";
-import { AGE_BUCKETS, BOARD_COLUMNS, activityTimestamp, ageBucket, boardColumnOf, byLatestActivity, pausedUntil, type BoardColumnKey } from "../stage";
+import {
+  AGE_BUCKETS,
+  BOARD_COLUMNS,
+  ENVIADA_BANDS,
+  activityTimestamp,
+  ageBucket,
+  boardColumnOf,
+  byLatestActivity,
+  enviadaBand,
+  isOnBoard,
+  pausedUntil,
+  type BoardColumnKey,
+  type EnviadaBandKey,
+} from "../stage";
+import { followUpStep, followUpsDue, ourLastTouch, stepForDays } from "../today";
 import { fmtDate } from "../ui";
 import { GrowingListEnd } from "../GrowingListEnd";
 import { useGrowingList } from "../useGrowingList";
@@ -46,6 +67,7 @@ const LINE_TONE: Record<string, string> = {
 const COLUMN_DOT: Record<BoardColumnKey, string> = {
   solicitada: "bg-ink-faint",
   enviada: "bg-brand-600",
+  silenciosas: "bg-warn",
   conversacion: "bg-warn",
   pausa: "bg-violet-600",
   ganada: "bg-good",
@@ -86,6 +108,46 @@ function ColumnMoney({ cards, columnKey }: { cards: readonly OpportunityCardData
   );
 }
 
+/**
+ * The one amount a card shows: the neto of the case's current quotation (`money[0]`, the last sent
+ * vigente revision), its number and revision. «sin leer» when nobody has read that PDF yet; an
+ * empty text when the case has no quotation with an amount.
+ */
+export function cardMoney(card: OpportunityCardData): { text: string; cn: string | null; rev: number | null } {
+  const m = (card.money ?? [])[0];
+  const fallbackCn = card.latest_revision?.quote_number ?? null;
+  if (!m) return { text: "", cn: fallbackCn, rev: null };
+  return {
+    text: m.currency === "unread" ? "sin leer" : (formatMoney(m.net_total, m.currency) ?? ""),
+    cn: m.quote_number ?? fallbackCn,
+    rev: m.revision_no ?? null,
+  };
+}
+
+/**
+ * «Enviada»'s band for a card. A draft nobody sent yet is fresh work: «0–7 días». Past day 21 and
+ * not silent (the client answered) it sits under «8–21 días».
+ */
+function enviadaBandOf(card: OpportunityCardData, at: Date): EnviadaBandKey {
+  const band = enviadaBand(card, at);
+  if (band) return band;
+  return isDelivered(card.latest_revision) ? "d8_21" : "d0_7";
+}
+
+/**
+ * «Seguimiento N de 3» for a silent card: the step `followUpsDue` gives it, or — for a case that
+ * list leaves out (an undecided historical import, a follow-up written in the last days) — the same
+ * rhythm (`stepForDays`) over the days since OrigenLab's last touch (`ourLastTouch`: our email or
+ * a call that reached the client), so the card and the drawer chip agree.
+ */
+export function silentFollowUpStep(card: OpportunityCardData, at: Date): 1 | 2 | 3 {
+  const due = followUpsDue([card], at)[0];
+  if (due) return followUpStep(due);
+  const since = Date.parse(ourLastTouch(card) ?? card.latest_revision?.sent_at ?? "");
+  const days = Number.isNaN(since) ? 0 : Math.floor((at.getTime() - since) / 86_400_000);
+  return stepForDays(days);
+}
+
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
 
 /** «24 sept», with the year only when it is not this one («12 may 2025»). */
@@ -117,9 +179,10 @@ export function sortCards(cards: OpportunityCardData[], sort: BoardSort, now: Da
 }
 
 export function Board({
-  cards,
+  cards: allCards,
   onOpen,
   onMove,
+  onLose,
   sort = "recent",
   now,
 }: {
@@ -127,11 +190,15 @@ export function Board({
   onOpen: (id: string) => void;
   /** A card was dropped on another column. Absent: the board is read-only. */
   onMove?: (card: OpportunityCardData, to: BoardColumnKey) => void;
+  /** «¿Marcar perdida?» on a silent card. Offered only when the board takes moves (`onMove`). */
+  onLose?: (card: OpportunityCardData) => void;
   sort?: BoardSort;
   /** The moment ages and pauses are measured from; tests pass a fixed one. */
   now?: Date;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
+  const cards = useMemo(() => allCards.filter((c) => isOnBoard(c, at)), [allCards, at]);
+  const lose = onMove ? onLose : undefined;
   const [dragging, setDragging] = useState<{ id: string; from: BoardColumnKey } | null>(null);
   const [over, setOver] = useState<BoardColumnKey | null>(null);
 
@@ -148,7 +215,7 @@ export function Board({
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
       {/* Five working columns share the width; Ganada and Perdida are narrower, with compact cards. */}
-      <div className="grid min-w-[60rem] grid-cols-[repeat(4,minmax(11rem,1fr))_repeat(2,minmax(9rem,0.8fr))] gap-3">
+      <div className="grid min-w-[70rem] grid-cols-[repeat(5,minmax(10rem,1fr))_repeat(2,minmax(8.5rem,0.8fr))] gap-3">
         {BOARD_COLUMNS.map((col) => {
           const inCol = sortCards(
             cards.filter((c) => boardColumnOf(c, at) === col.key),
@@ -199,10 +266,22 @@ export function Board({
               >
                 {inCol.length === 0 ? (
                   <p className="rounded-lg border border-dashed border-line-strong px-2 py-4 text-center text-[11px] text-ink-faint">
-                    {droppable ? "Suelta aquí" : "Sin oportunidades"}
+                    {col.key === "silenciosas"
+                      ? "Ninguna cotización lleva más de 21 días sin respuesta. Se llena sola."
+                      : droppable
+                        ? "Suelta aquí"
+                        : "Sin oportunidades"}
                   </p>
                 ) : (
-                  <ColumnCards cards={inCol} columnKey={col.key} byDate={byDate} at={at} onOpen={onOpen} drag={drag} />
+                  <ColumnCards
+                    cards={col.key === "enviada" && byDate ? byEnviadaBand(inCol, sort, at) : inCol}
+                    columnKey={col.key}
+                    byDate={byDate}
+                    at={at}
+                    onOpen={onOpen}
+                    onLose={col.key === "silenciosas" ? lose : undefined}
+                    drag={drag}
+                  />
                 )}
               </div>
             </section>
@@ -213,6 +292,22 @@ export function Board({
   );
 }
 
+/**
+ * «Enviada» sorted by date: its two bands in order (newest band first, or last under «Más
+ * antiguas»), each band keeping the sort inside it — a follow-up email moves a card up within its
+ * band, never across the divider.
+ */
+function byEnviadaBand(cards: OpportunityCardData[], sort: BoardSort, at: Date): OpportunityCardData[] {
+  const keys = ENVIADA_BANDS.map((b) => b.key);
+  const order = sort === "oldest" ? [...keys].reverse() : keys;
+  return order.flatMap((k) => cards.filter((c) => enviadaBandOf(c, at) === k));
+}
+
+function ageBucketOf(card: OpportunityCardData, at: Date): string {
+  const activity = activityTimestamp(card);
+  return ageBucket(activity == null ? null : new Date(activity).toISOString(), at);
+}
+
 /** One column's cards, drawn in slices: Ganada and Perdida hold every closed case. */
 function ColumnCards({
   cards,
@@ -220,6 +315,7 @@ function ColumnCards({
   byDate,
   at,
   onOpen,
+  onLose,
   drag,
 }: {
   cards: OpportunityCardData[];
@@ -227,22 +323,25 @@ function ColumnCards({
   byDate: boolean;
   at: Date;
   onOpen: (id: string) => void;
+  onLose?: (card: OpportunityCardData) => void;
   drag: DragHook | null;
 }) {
   const { shown, hidden, showMore, endRef } = useGrowingList(cards);
+  const enviada = columnKey === "enviada";
+  // «Enviada» always shows its two dividers by date: they are the follow-up rhythm, not just a
+  // way through a long column.
+  const bandOf = (c: OpportunityCardData) => (enviada ? enviadaBandOf(c, at) : ageBucketOf(c, at));
+  const labelOf = (key: string) =>
+    enviada ? ENVIADA_BANDS.find((b) => b.key === key)?.label : AGE_BUCKETS.find((b) => b.key === key)?.label;
   return (
     <>
       {shown.map((c, i) => {
-        const activity = activityTimestamp(c);
-        const previousActivity = i > 0 ? activityTimestamp(cards[i - 1]) : null;
-        const band = byDate ? ageBucket(activity == null ? null : new Date(activity).toISOString(), at) : null;
-        const prev = byDate && i > 0
-          ? ageBucket(previousActivity == null ? null : new Date(previousActivity).toISOString(), at)
-          : null;
-        const label = band && (i === 0 || band !== prev) ? AGE_BUCKETS.find((b) => b.key === band)?.label : null;
+        const band = byDate ? bandOf(c) : null;
+        const prev = byDate && i > 0 ? bandOf(cards[i - 1]) : null;
+        const label = band && (i === 0 || band !== prev) ? labelOf(band) : null;
         return (
           <Fragment key={c.opportunity_id}>
-            {label && cards.length > 4 ? (
+            {label && (enviada || cards.length > 4) ? (
               <p className="flex items-center gap-2 px-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint" data-testid={`board-band-${band}`}>
                 {label}
                 <span aria-hidden="true" className="h-px flex-1 bg-line-strong" />
@@ -255,6 +354,8 @@ function ColumnCards({
               drag={drag}
               index={i}
               compact={columnKey === "ganada" || columnKey === "perdida"}
+              followUpStep={columnKey === "silenciosas" ? silentFollowUpStep(c, at) : undefined}
+              onLose={onLose}
             />
           </Fragment>
         );
@@ -309,6 +410,8 @@ export function BoardCard({
   drag = null,
   index = 0,
   compact = false,
+  followUpStep: step,
+  onLose,
 }: {
   card: OpportunityCardData;
   onOpen: (id: string) => void;
@@ -317,12 +420,16 @@ export function BoardCard({
   index?: number;
   /** A closed case: the name, the quote and how it ended — nothing to act on. */
   compact?: boolean;
+  /** A silent card: «Seguimiento N de 3». */
+  followUpStep?: 1 | 2 | 3;
+  /** «¿Marcar perdida?»: asks for the reason. Absent: no button. */
+  onLose?: (card: OpportunityCardData) => void;
 }) {
   const at = now ?? new Date();
   const latest = card.latest_revision;
-  // The neto of the vigente quotations; the first currency only (a mixed-currency case is rare).
-  const firstMoney = (card.money ?? []).find((m) => m.currency !== "unread");
-  const money = firstMoney ? formatMoney(firstMoney.net_total, firstMoney.currency) : null;
+  // One amount: the current quotation's neto, its number and revision (history is in the drawer).
+  const cm = cardMoney(card);
+  const money = cm.text || null;
   const { name, sub } = displayName(card);
   const contact = contactLine(card);
   // One clock per card: the status line says who touched the case last and for how long
@@ -374,31 +481,51 @@ export function BoardCard({
           {contact && !compact ? <p className="truncate text-[11px] leading-4 text-ink-muted">{contact}</p> : null}
         </div>
       </div>
-      <p className="mt-1.5 flex items-baseline gap-2 text-[11px] leading-4 tabular-nums text-ink-muted">
+      <p className="mt-1.5 flex min-w-0 items-baseline gap-1 text-[11px] leading-4 tabular-nums text-ink-muted">
         {latest ? (
-          <span className="min-w-0 truncate">
-            <span className="font-semibold text-ink">{latest.quote_number}</span>
-            {card.quote_numbers.length > 1 ? <span className="text-ink-faint"> +{card.quote_numbers.length - 1}</span> : null} ·{" "}
-            {shortDate(latest.sent_at, at)}
-          </span>
+          <>
+            <span className="shrink-0 font-semibold text-ink">{cm.cn ?? latest.quote_number}</span>
+            {cm.rev != null ? (
+              <span
+                className="shrink-0 rounded bg-canvas-sunken px-1 py-px text-[10px] font-semibold text-ink-muted"
+                title="Revisión vigente; el historial está en el caso"
+                data-testid="board-rev"
+              >
+                rev {cm.rev}
+              </span>
+            ) : null}
+            <span className="min-w-0 truncate">
+              {card.quote_numbers.length > 1 ? <span className="text-ink-faint"> +{card.quote_numbers.length - 1}</span> : null}
+              {` · ${shortDate(latest.sent_at, at)}`}
+            </span>
+          </>
         ) : (
           <span className="text-ink-faint">Sin cotización</span>
         )}
-        {money ? (
-          <span className="ml-auto shrink-0 text-[11.5px] font-semibold text-ink" title="Neto de la última cotización enviada" data-testid="board-money">
-            {money}
-          </span>
-        ) : null}
-        {(card.documents?.length ?? 0) > 0 ? (
-          <span
-            className={`${money ? "" : "ml-auto "}shrink-0 rounded bg-good-bg px-1 text-[10.5px] font-semibold text-good`}
-            title="Orden de compra adjunta"
-            data-testid="board-oc"
-          >
-            OC
-          </span>
-        ) : null}
       </p>
+      {/* One amount: the current quotation's neto — the number the month's goal counts. */}
+      {money || (card.documents?.length ?? 0) > 0 ? (
+        <p className="mt-0.5 flex items-baseline gap-1.5 tabular-nums">
+          {money ? (
+            <span
+              className={cm.text === "sin leer" ? "text-[11px] text-ink-faint" : "text-[13px] font-semibold text-ink"}
+              title={cm.text === "sin leer" ? "El PDF de la cotización vigente aún no se ha leído" : "Neto de la cotización vigente"}
+              data-testid="board-money"
+            >
+              {money}
+            </span>
+          ) : null}
+          {(card.documents?.length ?? 0) > 0 ? (
+            <span
+              className="shrink-0 rounded bg-good-bg px-1 text-[10.5px] font-semibold text-good"
+              title="Orden de compra adjunta"
+              data-testid="board-oc"
+            >
+              OC
+            </span>
+          ) : null}
+        </p>
+      ) : null}
       {product || card.origin ? (
         <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1">
           {product ? (
@@ -421,9 +548,24 @@ export function BoardCard({
           ) : null}
         </div>
       ) : null}
+      {step ? (
+        <p className="mt-1.5 text-[11px] font-semibold leading-4 text-warn" data-testid="board-followup-step">
+          Seguimiento {step} de 3
+        </p>
+      ) : null}
       <p className={`mt-1.5 line-clamp-2 text-[11px] font-medium leading-4 ${LINE_TONE[line.tone] ?? LINE_TONE.neutral}`} data-testid="board-status-line">
         {line.text}
       </p>
+      {onLose ? (
+        <button
+          type="button"
+          onClick={() => onLose(card)}
+          aria-label={`¿Marcar perdida? ${name}`}
+          className="mt-1.5 inline-flex min-h-11 w-full items-center justify-center rounded-md border border-line bg-canvas-raised px-2 text-[11.5px] font-medium text-ink hover:border-bad/50 hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        >
+          ¿Marcar perdida?
+        </button>
+      ) : null}
       {compact ? null : (
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 border-t border-line pt-1.5 text-[11px]">
           {driveUrl ? (

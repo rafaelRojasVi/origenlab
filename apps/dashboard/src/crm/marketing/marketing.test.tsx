@@ -364,7 +364,7 @@ describe("MarketingPage", () => {
     expect(dialog).toHaveTextContent("Dirección bloqueada");
     expect(dialog).toHaveTextContent("Pidió cotización");
     expect(dialog).toHaveTextContent("no registrado como interés en el CRM");
-    expect(within(dialog).getByRole("link", { name: /Ver caso/ })).toHaveAttribute("href", "#/crm/oportunidades/11111111-1111-4111-8111-111111111111");
+    expect(within(dialog).getByRole("link", { name: /Ver caso/ })).toHaveAttribute("href", "#/ventas/pipeline/11111111-1111-4111-8111-111111111111");
   });
 
   it.each(["sales", "admin"])("offers «Nueva campaña» to %s on Campañas and Calendario", async (role) => {

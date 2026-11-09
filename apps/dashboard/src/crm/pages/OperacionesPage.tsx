@@ -48,7 +48,7 @@ const STATUS: Record<OpsStatus, { word: string; dot: string; tone: "good" | "war
 
 const REFRESH_MS = 60_000;
 
-/** Where an old «Datos» link (`#/crm/datos/<tab>`) lands now. */
+/** Where an old «Datos» link (`#/ajustes/operaciones/<tab>`) lands now. */
 function landing(tab: DatosTab | undefined): { view: View; more: More; technical: DatosTab } {
   if (tab === "decidir") return { view: "decidir", more: "proveedores", technical: "bloqueos" };
   if (tab === "proveedores" || tab === "drive") return { view: "mas", more: tab, technical: "bloqueos" };

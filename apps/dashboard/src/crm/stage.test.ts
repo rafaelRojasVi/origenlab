@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
-import { HISTORICAL_STAGE_LABEL, stageBasis, stageDisplay } from "./stage";
+import { COLUMN_LABEL, moveRefusal } from "./pages/CaseMove";
+import {
+  BOARD_COLUMNS,
+  ENVIADA_BANDS,
+  HISTORICAL_STAGE_LABEL,
+  LOST_ON_BOARD_DAYS,
+  SILENT_AFTER_DAYS,
+  boardColumnOf,
+  closedAt,
+  enviadaBand,
+  isOnBoard,
+  isSilent,
+  monthKeySantiago,
+  stageBasis,
+  stageDisplay,
+} from "./stage";
 
 function rev(origin: string | null): RevisionCard {
   return {
@@ -74,5 +89,190 @@ describe("stage basis", () => {
     expect(stageBasis(fifteenDays, now)).toBe("historical_import");
     // The newest revision counts: a quote revised last week was decided last week.
     expect(stageBasis(revised, now)).toBe("crm_record");
+  });
+});
+
+/* ── board rules (Task 7) ─────────────────────────────────────────────────── */
+
+const NOW = new Date("2026-11-08T15:00:00Z");
+const DAY = 86_400_000;
+const ago = (days: number, hours = 0) => new Date(NOW.getTime() - days * DAY - hours * 3_600_000).toISOString();
+
+/** An open `quoting` case whose first quote went out `days` ago, nobody written since. */
+function sent(days: number, over: Partial<OpportunityCardData> = {}, status = "sent", origin: string | null = "authored"): OpportunityCardData {
+  const r = { ...rev(origin), status, sent_at: status === "sent" || origin === "historical_import" ? ago(days) : null };
+  return card({
+    quotes: [{ quote_id: "q", quote_number: "01999-26", number_origin: null, revisions: [r] }],
+    latest_revision: r,
+    version: 2,
+    ...over,
+  });
+}
+
+describe("Silenciosas", () => {
+  it("quoting 22 days, no reply → silenciosas", () => {
+    const c = sent(22);
+    expect(isSilent(c, NOW)).toBe(true);
+    expect(boardColumnOf(c, NOW)).toBe("silenciosas");
+    expect(SILENT_AFTER_DAYS).toBe(21);
+  });
+
+  it("21 days → enviada", () => {
+    const c = sent(21, {}, "sent");
+    expect(isSilent(c, NOW)).toBe(false);
+    expect(boardColumnOf(c, NOW)).toBe("enviada");
+  });
+
+  it("client replied after the quote → not silent", () => {
+    const c = sent(30, { last_contact: { inbound: { at: ago(25), subject: "Re: cotización", url: null }, outbound: null } });
+    expect(isSilent(c, NOW)).toBe(false);
+    expect(boardColumnOf(c, NOW)).toBe("enviada");
+  });
+
+  it("no_reply «gracias» → not silent", () => {
+    const c = sent(30, { last_contact: { inbound: { at: ago(25), subject: "Re: gracias", url: null, no_reply: true }, outbound: null } });
+    expect(isSilent(c, NOW)).toBe(false);
+  });
+
+  it("our follow-up emails only → still silent", () => {
+    const c = sent(30, { last_contact: { inbound: null, outbound: { at: ago(10), subject: "Seguimiento", url: null } } });
+    expect(isSilent(c, NOW)).toBe(true);
+    expect(boardColumnOf(c, NOW)).toBe("silenciosas");
+  });
+
+  it("contestó call after the quote → not silent", () => {
+    expect(isSilent(sent(30, { last_call: { at: ago(5), outcome: "contesto" } }), NOW)).toBe(false);
+    expect(isSilent(sent(30, { last_call: { at: ago(5), outcome: "reunion" } }), NOW)).toBe(false);
+    // A call nobody answered is not the client engaging; one before the quote is old news.
+    expect(isSilent(sent(30, { last_call: { at: ago(5), outcome: "no_contesto" } }), NOW)).toBe(true);
+    expect(isSilent(sent(30, { last_call: { at: ago(40), outcome: "contesto" } }), NOW)).toBe(true);
+  });
+
+  it("future task → pausa, not silenciosas", () => {
+    const task = { task_id: "t", title: "Retomar: fondos", due_at: ago(-5), version: 1, owner: null };
+    const c = sent(40, { open_tasks: [task] });
+    expect(isSilent(c, NOW)).toBe(false);
+    expect(boardColumnOf(c, NOW)).toBe("pausa");
+  });
+
+  it("draft first quote → not silent", () => {
+    const c = sent(40, {}, "draft", "authored");
+    expect(isSilent(c, NOW)).toBe(false);
+    expect(boardColumnOf(c, NOW)).toBe("enviada");
+  });
+
+  it("historical-import quoting 2024 → silenciosas", () => {
+    const r = { ...rev("historical_import"), sent_at: "2024-03-12T14:00:00Z" };
+    const c = card({ quotes: [{ quote_id: "q", quote_number: "00812", number_origin: null, revisions: [r] }], latest_revision: r });
+    expect(isSilent(c, NOW)).toBe(true);
+    expect(boardColumnOf(c, NOW)).toBe("silenciosas");
+  });
+
+  it("only an open quoting case is silent", () => {
+    expect(isSilent(sent(40, { stage: "negotiating" }), NOW)).toBe(false);
+    expect(isSilent(sent(40, { stage: "lost", closed_at: ago(1) }), NOW)).toBe(false);
+  });
+
+  it("columns run solicitada, enviada, silenciosas, conversacion, pausa, ganada, perdida; Silenciosas takes no drop", () => {
+    expect(BOARD_COLUMNS.map((c) => c.key)).toEqual(["solicitada", "enviada", "silenciosas", "conversacion", "pausa", "ganada", "perdida"]);
+    const col = BOARD_COLUMNS.find((c) => c.key === "silenciosas");
+    expect(col?.label).toBe("Silenciosas");
+    expect(col?.target).toBeNull();
+    expect(col?.stages).toEqual([]);
+  });
+
+  it("moveRefusal to silenciosas", () => {
+    expect(moveRefusal(sent(3), "silenciosas", NOW)).toBe("Silenciosas se llena sola: un caso entra a los 21 días sin respuesta.");
+    expect(COLUMN_LABEL.silenciosas).toBe("Silenciosas");
+  });
+});
+
+describe("Silenciosas · Task 7 review fixes", () => {
+  it("client replied, we answered, 30 days → not silent", () => {
+    // The client wrote on day 5 after the quote, we answered on day 6: our email is the last touch,
+    // but the client has written since the quote.
+    const c = sent(30, {
+      last_contact: {
+        inbound: { at: ago(25), subject: "Re: cotización", url: null },
+        outbound: { at: ago(24), subject: "Re: Re: cotización", url: null },
+      },
+    });
+    expect(isSilent(c, NOW)).toBe(false);
+  });
+
+  it("a «gracias» (no_reply) followed by our follow-up stays silent: only a real reply breaks it", () => {
+    const c = sent(30, {
+      last_contact: {
+        inbound: { at: ago(25), subject: "Re: gracias", url: null, no_reply: true },
+        outbound: { at: ago(24), subject: "Seguimiento", url: null },
+      },
+    });
+    expect(isSilent(c, NOW)).toBe(true);
+  });
+
+  it("a client email from before the quote does not break the silence", () => {
+    const c = sent(30, { last_contact: { inbound: { at: ago(31), subject: "Solicitud", url: null }, outbound: { at: ago(10), subject: "Seguimiento", url: null } } });
+    expect(isSilent(c, NOW)).toBe(true);
+  });
+
+  it("quoting ago(21, 23h) → not silent", () => {
+    const c = sent(21);
+    c.latest_revision = { ...c.latest_revision!, sent_at: ago(21, 23) };
+    expect(isSilent(c, NOW)).toBe(false);
+  });
+});
+
+describe("closed cases on the board", () => {
+  it("lost ago(7) → still on board", () => {
+    expect(isOnBoard(card({ stage: "lost", closed_at: ago(7) }), NOW)).toBe(true);
+  });
+
+  it("lost 8 days ago → not on board", () => {
+    expect(isOnBoard(card({ stage: "lost", closed_at: ago(8) }), NOW)).toBe(false);
+    expect(isOnBoard(card({ stage: "abandoned", closed_at: ago(8) }), NOW)).toBe(false);
+    expect(LOST_ON_BOARD_DAYS).toBe(7);
+  });
+
+  it("lost 6 days ago → on board", () => {
+    expect(isOnBoard(card({ stage: "lost", closed_at: ago(6) }), NOW)).toBe(true);
+  });
+
+  it("lost with closed_at null and updated_at 30 days ago → off board", () => {
+    const c = card({ stage: "lost", closed_at: null, updated_at: ago(30) });
+    expect(closedAt(c)).toBe(ago(30));
+    expect(isOnBoard(c, NOW)).toBe(false);
+  });
+
+  it("won 400 days ago → on board", () => {
+    expect(isOnBoard(card({ stage: "won", closed_at: ago(400) }), NOW)).toBe(true);
+  });
+
+  it("an open case is always on the board and has no closing date", () => {
+    const c = sent(400, { updated_at: ago(300) });
+    expect(closedAt(c)).toBeNull();
+    expect(isOnBoard(c, NOW)).toBe(true);
+  });
+});
+
+describe("Enviada bands", () => {
+  it("enviadaBand 0, 7, 8, 21", () => {
+    expect(enviadaBand(sent(0), NOW)).toBe("d0_7");
+    expect(enviadaBand(sent(7, {}), NOW)).toBe("d0_7");
+    expect(enviadaBand(sent(8), NOW)).toBe("d8_21");
+    expect(enviadaBand(sent(21), NOW)).toBe("d8_21");
+    expect(enviadaBand(sent(22), NOW)).toBeNull();
+    expect(enviadaBand(sent(3, {}, "draft"), NOW)).toBeNull();
+    expect(ENVIADA_BANDS).toEqual([
+      { key: "d0_7", label: "0–7 días" },
+      { key: "d8_21", label: "8–21 días" },
+    ]);
+  });
+});
+
+describe("monthKeySantiago", () => {
+  it("reads the month on Santiago's clock, not UTC's", () => {
+    expect(monthKeySantiago("2026-11-01T02:30:00Z")).toBe("2026-10");
+    expect(monthKeySantiago("2026-11-01T12:00:00Z")).toBe("2026-11");
+    expect(monthKeySantiago("2026-01-01T02:00:00Z")).toBe("2025-12");
   });
 });

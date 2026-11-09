@@ -178,7 +178,7 @@ beforeEach(() => {
   clearCatalogIndexMemory();
   resetImageUrls();
   sessionStorage.clear();
-  window.history.replaceState(null, "", "#/crm/catalogo");
+  window.history.replaceState(null, "", "#/catalogo");
 });
 
 afterEach(() => {
@@ -204,7 +204,7 @@ describe("Catálogo list", () => {
     stub();
     const navigate = renderCatalog();
     await waitFor(() => expect(rows()).toHaveLength(2));
-    expect(rows()[0]).toHaveAttribute("href", `#/crm/catalogo/${PRODUCT_ID}`);
+    expect(rows()[0]).toHaveAttribute("href", `#/catalogo/${PRODUCT_ID}`);
     fireEvent.click(rows()[0], { ctrlKey: true });
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -233,7 +233,7 @@ describe("Catálogo list", () => {
   });
 
   it("restores the supplier and the search from the address", async () => {
-    window.history.replaceState(null, "", `#/crm/catalogo?s=${OTHER.id}&q=balanza`);
+    window.history.replaceState(null, "", `#/catalogo?s=${OTHER.id}&q=balanza`);
     stub();
     renderCatalog();
     await waitFor(() => expect(rows()).toHaveLength(1));
@@ -273,7 +273,7 @@ describe("Catálogo list", () => {
   });
 
   it("restores «Con ficha» from the address", async () => {
-    window.history.replaceState(null, "", "#/crm/catalogo?ficha=1");
+    window.history.replaceState(null, "", "#/catalogo?ficha=1");
     stub();
     renderCatalog();
     await waitFor(() => expect(rows()).toHaveLength(1));

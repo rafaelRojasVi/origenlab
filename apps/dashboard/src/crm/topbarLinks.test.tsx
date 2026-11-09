@@ -60,26 +60,26 @@ describe("the Cotizador section", () => {
     return paths;
   }
 
-  it("is in the menu for sales, between Oportunidades and Organizaciones, lit while open", async () => {
+  it("is Ventas' «Cotizaciones» tab for sales, after Pipeline, lit while open", async () => {
     stubFetch();
     render(
       <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
         <CrmApp route={{ section: "cotizador", id: QUOTE }} />
       </AuthSessionContext.Provider>,
     );
-    expect(document.title).toBe("Cotizador · OrigenLab");
+    expect(document.title).toBe("Cotizaciones · OrigenLab");
     const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
     const names = menu.getAllByRole("link").map((a) => a.textContent);
-    expect(names.indexOf("Cotizador")).toBe(names.indexOf("Oportunidades") + 1);
-    expect(names.indexOf("Licitaciones")).toBe(names.indexOf("Cotizador") + 1);
-    expect(names.indexOf("Prospectos")).toBe(names.indexOf("Licitaciones") + 1);
-    expect(names.indexOf("Pagos")).toBe(names.indexOf("Prospectos") + 1);
-    expect(names.indexOf("Organizaciones")).toBe(names.indexOf("Pagos") + 1);
-    expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/crm/licitaciones");
-    expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("aria-current", "page");
-    expect(menu.getByRole("link", { name: "Cotizador" })).toHaveAttribute("href", "#/crm/cotizador");
-    // The Cotizador is its own chunk: it arrives a moment after the shell.
-    expect(await screen.findByRole("tablist", { name: "Cotizaciones abiertas" })).toBeInTheDocument();
+    expect(names.indexOf("Cotizaciones")).toBe(names.indexOf("Pipeline") + 1);
+    expect(names.indexOf("Clientes")).toBe(names.indexOf("Cotizaciones") + 1);
+    expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/ventas/licitaciones");
+    expect(menu.getByRole("link", { name: "Ventas" })).toHaveAttribute("aria-current", "true");
+    expect(menu.getByRole("link", { name: "Cotizaciones" })).toHaveAttribute("aria-current", "page");
+    expect(menu.getByRole("link", { name: "Cotizaciones" })).toHaveAttribute("href", "#/ventas/cotizaciones");
+    const tabs = within(screen.getByRole("navigation", { name: "Pestañas de Ventas" }));
+    expect(tabs.getByRole("link", { name: "Cotizaciones" })).toHaveAttribute("aria-current", "page");
+    // The Cotizador is its own chunk: it arrives a moment after the shell (a cold transform can take seconds).
+    expect(await screen.findByRole("tablist", { name: "Cotizaciones abiertas" }, { timeout: 5000 })).toBeInTheDocument();
     expect(await screen.findByText("Esta cotización no existe.")).toBeInTheDocument();
   });
 
@@ -91,10 +91,11 @@ describe("the Cotizador section", () => {
       </AuthSessionContext.Provider>,
     );
     const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
-    expect(menu.queryByRole("link", { name: "Cotizador" })).not.toBeInTheDocument();
-    expect(menu.getByRole("link", { name: "Oportunidades" })).toBeInTheDocument();
+    expect(menu.queryByRole("link", { name: "Cotizaciones" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Cotizaciones" })).not.toBeInTheDocument();
+    expect(menu.getByRole("link", { name: "Pipeline" })).toBeInTheDocument();
     expect(menu.getByRole("link", { name: "Licitaciones" })).toBeInTheDocument();
-    expect(await screen.findByText("Sólo ventas y administración pueden cotizar.")).toBeInTheDocument();
+    expect(await screen.findByText("Sólo ventas y administración pueden cotizar.", {}, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(paths.some((p) => p.startsWith("/v2/quotes"))).toBe(false);
     expect(localStorage.getItem("cotizador:tabs:op-viewer")).toBeNull();

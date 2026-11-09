@@ -130,7 +130,9 @@ describe("allowlist", () => {
       "/v2/cockpit/kpis",
       "/v2/cockpit/opportunities",
       `/v2/cockpit/opportunities/${uuid}`,
-      `/v2/cockpit/opportunities/${uuid}/timeline`,
+      `/v2/cockpit/opportunities/${uuid}/timeline/`,
+      `/v2/cockpit/opportunities/${uuid}/timeline/extra`,
+      "/v2/cockpit/opportunities/not-a-uuid/timeline",
       "/v2/cockpit/quotations",
       `/v2/cockpit/quotations/${uuid}`,
       `/v2/cockpit/evidence/${uuid}`,
@@ -138,6 +140,24 @@ describe("allowlist", () => {
       "/v2/cockpit/case-archive",
       "/v2/cockpit/import-review",
       `/v2/cockpit/import-review/documents/${sha}`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows the case timeline", () => {
+    const path = "/v2/cockpit/opportunities/96301691-af05-41ea-82e3-05f5fae40837/timeline";
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+  });
+
+  it("still refuses the cockpit opportunity detail", () => {
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    for (const path of [
+      `/v2/cockpit/opportunities/${uuid}`,
+      `/v2/cockpit/opportunities/${uuid}/`,
+      `/v2/cockpit/opportunities/${uuid.toUpperCase()}/timeline`,
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);

@@ -29,7 +29,7 @@ import { useResource } from "../useResource";
 
 /**
  * «Cotizador»: the workspace of one quote — one tab of the Cotizador module
- * (`CotizadorModulePage`, `#/crm/cotizador/<quoteId>`), which keeps several mounted at once and
+ * (`CotizadorModulePage`, `#/ventas/cotizaciones/<quoteId>`), which keeps several mounted at once and
  * shows one. `onMeta` tells the module's tab the quote's label, client and state each time the
  * workspace loads or changes. Only sales and administration may quote (the API answers 403
  * `role_may_not_view_costs` to anyone else), and the page says so instead of showing a generic error.

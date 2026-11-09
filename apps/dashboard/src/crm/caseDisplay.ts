@@ -4,6 +4,7 @@
  * model printed in the quote's file name, what the quote is for, the days since the quote went out and where the
  * conversation stands («respondió», «seguimiento», «sin respuesta»).
  */
+import type { CallOutcome } from "./callOutcome";
 import type { Attention, OpportunityCardData, RevisionCard } from "./crmTypes";
 import type { Tone } from "./ui";
 
@@ -152,6 +153,23 @@ export function lastTouch(card: OpportunityCardData): { by: "client" | "settled"
   if (mailAt) return { by: "us", at: mailAt, url: outbound?.url ?? null };
   if (sent) return { by: "quote", at: sent, url: card.latest_revision?.gmail?.url ?? null };
   return { by: "none", at: null, url: null };
+}
+
+/** Outcomes of a call that count as a follow-up touch: the client was reached. */
+export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion"]);
+
+/**
+ * When OrigenLab last reached the client by phone after the quote went out, or null. A newest
+ * revision still in the Cotizador (`lastTouch` → «none») has no clock yet, so an older call is
+ * not a touch on it.
+ */
+export function callTouch(card: OpportunityCardData): string | null {
+  if (lastTouch(card).by === "none") return null;
+  const call = card.last_call;
+  const sent = card.latest_revision?.sent_at ?? null;
+  if (!call?.at || !CALL_TOUCH_OUTCOMES.has(call.outcome) || Number.isNaN(Date.parse(call.at))) return null;
+  if (sent && Date.parse(call.at) <= Date.parse(sent)) return null;
+  return call.at;
 }
 
 /** Where the conversation stands since the latest quote went out, and for how many days. */

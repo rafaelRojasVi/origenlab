@@ -23,7 +23,7 @@
  * Writes go through the same commands as the drawer (`caseCommands.ts`, `crmAuthoringApi.ts`),
  * gated the same way; a viewer sees the lists without the buttons.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { addNote, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
@@ -46,7 +46,10 @@ import type { OpportunityCardData } from "../crmTypes";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
   buildParaTiQueue,
+  filterQueue,
+  followUpStep,
   followUpsDue,
+  HOME_FILTER_KINDS,
   historicalCount,
   organizationsToConfirm,
   tenderClosingLines,
@@ -59,18 +62,37 @@ import {
   type QueueItem,
   type ReplyQueueItem,
   type TaskQueueItem,
+  useHomeFilter,
 } from "../today";
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
-import { Badge, Button, FormField, Modal, TextInput, fmtDate, toast } from "../ui";
+import { Badge, Button, FormField, Modal, Segmented, TextInput, fmtDate, toast } from "../ui";
 import type { ResourceState } from "../useResource";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
+import { CaseDrawer } from "../drawer/CaseDrawer";
+import type { Mode } from "./CaseActions";
 import { CaseMoveForm } from "./CaseMove";
 import { MailReaderDrawer, useMayReadMail } from "./MailMessage";
 import { AutomaticActionsPanel, newsRows, type AutomaticAction } from "./AutomaticActionsPanel";
 import type { ForwardedRequest } from "./ForwardedRequestsPanel";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
+
+/** Open a case's drawer over Hoy, optionally on one of its forms (a call, «Resolver»). */
+type OpenCase = (id: string, mode?: Exclude<Mode, null>) => void;
+const OpenCaseContext = createContext<OpenCase | null>(null);
+
+/** Hoy's drawer when the row sits inside `TodayBody`; else the case page, as before. */
+function useOpenCase(navigate: Navigate): OpenCase {
+  const inPlace = useContext(OpenCaseContext);
+  return useCallback<OpenCase>(
+    (id, mode) => (inPlace ? inPlace(id, mode) : navigate("oportunidades", id)),
+    [inPlace, navigate],
+  );
+}
+
+/** «Mi cola» (the profile's own view) or «Todo el equipo»; session-only, never stored. */
+export type TodayScope = "mine" | "team";
 
 const WEEK_MS = 7 * 86_400_000;
 
@@ -102,6 +124,8 @@ export function TodayBody({
   people,
   tendersClosing,
   aside,
+  scope: scopeProp,
+  onScopeChange,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
@@ -118,33 +142,67 @@ export function TodayBody({
   tendersClosing?: { id: string; title: string }[];
   /** The main column's last panel: the quote number and the rates. */
   aside?: ReactNode;
+  /** «Mi cola» / «Todo el equipo» when the page holds it (so its header counts follow); else local. */
+  scope?: TodayScope;
+  onScopeChange?: (scope: TodayScope) => void;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const { session } = useAuthSession();
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
 
-  const queue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
+  // Each profile starts on its own queue (`profile.home_filter`); «Todo el equipo» shows everything.
+  const homeFilter = useHomeFilter();
+  const [localScope, setLocalScope] = useState<TodayScope>("mine");
+  const scope = scopeProp ?? localScope;
+  const setScope = (next: TodayScope) => {
+    setLocalScope(next);
+    onScopeChange?.(next);
+  };
+  const view = scope === "team" ? "todo" : homeFilter;
+
+  const fullQueue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
+  const queue = useMemo(() => filterQueue(fullQueue, view), [fullQueue, view]);
+  const showDecidir = HOME_FILTER_KINDS[view].has("decidir");
 
   // Forwarded requests — fetched separately, appended to the end of the queue.
   const [fwdState, reloadFwd] = useResource(useCallback(() =>
     fetchJsonGet<{ items: ForwardedRequest[] }>(operatorApiUrl("/v2/workspace/forwarded-requests")), []));
   const [fwdGone, setFwdGone] = useState<Set<string>>(new Set());
-  const forwards: ForwardedRequest[] = fwdState.kind === "ready" && Array.isArray(fwdState.data?.items)
+  const allForwards: ForwardedRequest[] = fwdState.kind === "ready" && Array.isArray(fwdState.data?.items)
     ? fwdState.data.items.filter((f) => !fwdGone.has(f.id))
     : [];
+  const forwards = showDecidir ? allForwards : [];
   // The header's «N para ti» counts them too, so it matches the list.
   useEffect(() => { onForwardCount?.(forwards.length); }, [forwards.length, onForwardCount]);
 
   // Housekeeping counts (local — no extra fetch needed).
   const orgs = useMemo(() => organizationsToConfirm(items), [items]);
   const historical = historicalCount(items, at);
-  const blocked = useMemo(() => items.filter((i) => i.status === "blocked" && !queue.some((q) => q.opportunity_id === i.opportunity_id)), [items, queue]);
+  const blocked = useMemo(() => items.filter((i) => i.status === "blocked" && !fullQueue.some((q) => q.opportunity_id === i.opportunity_id)), [items, fullQueue]);
   const peopleCount = people?.kind === "ready" ? people.data.total : 0;
-  const housekeepingCount = orgs.length + historical + blocked.length + peopleCount;
+  // Housekeeping is the whole team's: only the «todo» view offers it.
+  const housekeepingCount = view === "todo" ? orgs.length + historical + blocked.length + peopleCount : 0;
 
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
   const [closing, setClosing] = useState<OpportunityCardData | null>(null);
+
+  // A case opens in its drawer over Hoy (no trip to the Pipeline): a row's «Abrir caso», its name,
+  // «Resolver», «Registrar llamada». An id Hoy does not hold yet (a case just created from a
+  // forwarded request) still goes to the case page.
+  // The form request is kept with the id, not rebuilt each render: the drawer's effects watch it, so
+  // a fresh object on every Hoy reload would reset the tab and reopen a form the operator closed.
+  const [drawer, setDrawer] = useState<{ id: string; initial: { mode: Exclude<Mode, null> } | null } | null>(null);
+  const drawerCard = drawer ? (items.find((c) => c.opportunity_id === drawer.id) ?? null) : null;
+  const openCase = useCallback<OpenCase>((id, mode) => {
+    if (items.some((c) => c.opportunity_id === id)) setDrawer({ id, initial: mode ? { mode } : null });
+    else navigate("oportunidades", id);
+  }, [items, navigate]);
+  const inPlace = useCallback<Navigate>((...args) => {
+    const [s, id] = args;
+    if (s === "oportunidades" && id) openCase(id);
+    else navigate(...args);
+  }, [openCase, navigate]);
 
   // «Gone» IDs — items that left the queue in this render session (leave animation).
   const [goneIds, setGoneIds] = useState<Set<string>>(new Set());
@@ -153,21 +211,42 @@ export function TodayBody({
     onCleared?.();
   }, [onCleared]);
 
-  const tenderLines = useMemo(() => tenderClosingLines(tendersClosing), [tendersClosing]);
+  // A tender closing tomorrow is quoting work, and the empty state's preview is the next calls:
+  // each shows only in a view that holds that work, like the queue.
+  const showTenders = HOME_FILTER_KINDS[view].has("licitacion");
+  const tenderLines = useMemo(() => (showTenders ? tenderClosingLines(tendersClosing) : []), [tendersClosing, showTenders]);
   const totalQueue = queue.length + forwards.length + tenderLines.length;
-  const nextFollowUps = useMemo(() => followUpsDue(items, at).slice(0, 3), [items, at]);
+  const showPreview = HOME_FILTER_KINDS[view].has("followup");
+  const nextFollowUps = useMemo(() => (showPreview ? followUpsDue(items, at).slice(0, 3) : []), [items, at, showPreview]);
 
   return (
+    <OpenCaseContext.Provider value={openCase}>
     <div className="space-y-4" aria-busy={refreshing || undefined}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="min-w-0 space-y-4">
+
+          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue; a page
+              that holds the scope (OverviewPage) shows it in its header instead ─── */}
+          {homeFilter !== "todo" && scopeProp === undefined ? (
+            <div data-testid="today-scope">
+              <Segmented<TodayScope>
+                label="Qué cola ver"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  { value: "mine", label: me ? `Mi cola · ${me}` : "Mi cola" },
+                  { value: "team", label: "Todo el equipo" },
+                ]}
+              />
+            </div>
+          ) : null}
 
           {/* ─── «Para ti» queue ─── */}
           <ParaTiSection
             queue={queue}
             forwards={forwards}
             goneIds={goneIds}
-            navigate={navigate}
+            navigate={inPlace}
             mayDecide={mayDecide}
             mayAuthor={mayAuthor}
             onChanged={() => { onChanged(); reloadFwd(); }}
@@ -179,19 +258,19 @@ export function TodayBody({
           />
 
           {/* ─── «Licitación cierra mañana» — Hoy's one tender signal ─── */}
-          {tenderLines.length > 0 ? <TenderClosingSection lines={tenderLines} navigate={navigate} /> : null}
+          {tenderLines.length > 0 ? <TenderClosingSection lines={tenderLines} navigate={inPlace} /> : null}
 
           {/* ─── Empty state ─── */}
           {totalQueue === 0 && (
-            <EmptyState followUps={nextFollowUps} navigate={navigate} />
+            <EmptyState followUps={nextFollowUps} navigate={inPlace} />
           )}
 
           {/* ─── «Hecho automáticamente» — one collapsible line ─── */}
-          <SystemSummaryLine navigate={navigate} onChanged={onChanged} />
+          <SystemSummaryLine navigate={inPlace} onChanged={onChanged} />
 
           {/* ─── Housekeeping link → Operaciones ─── */}
           {housekeepingCount > 0 ? (
-            <HousekeepingLink count={housekeepingCount} navigate={navigate} />
+            <HousekeepingLink count={housekeepingCount} navigate={inPlace} />
           ) : null}
 
         </div>
@@ -220,7 +299,15 @@ export function TodayBody({
           />
         </Modal>
       ) : null}
+      <CaseDrawer
+        card={drawerCard}
+        onClose={() => setDrawer(null)}
+        onChanged={onChanged}
+        refreshing={refreshing}
+        initial={drawer?.initial ?? null}
+      />
     </div>
+    </OpenCaseContext.Provider>
   );
 }
 
@@ -254,7 +341,7 @@ function TenderClosingSection({ lines, navigate }: { lines: { id: string; text: 
 const CHIP: Record<string, { label: string; cls: string }> = {
   reply:   { label: "Responder",  cls: "bg-warn-bg text-warn" },
   task:    { label: "Tarea",      cls: "bg-bad-bg text-bad" },
-  followup:{ label: "Seguimiento",cls: "bg-good-bg text-good" },
+  followup:{ label: "Llamar",     cls: "bg-good-bg text-good" },
   forward: { label: "Decidir",    cls: "bg-info-bg text-info" },
 };
 
@@ -418,7 +505,7 @@ function CotizarQueueRow({
 }
 
 /**
- * Three sections (Cotizar / Responder / Seguimientos de hoy), then tasks and forwarded requests.
+ * Five sections in the order Cotizar · Responder · Llamar (the follow-ups) · Tareas · Decidir.
  * Each section has a heading, hint and count; rows are oldest-wait-first within every section.
  * A `data-testid="today-para-ti"` wrapper is kept so existing tests can still find the area.
  */
@@ -493,11 +580,11 @@ function ParaTiSection({
         </QueueSection>
       )}
 
-      {/* ─── Seguimientos de hoy ─── */}
+      {/* ─── Llamar: the follow-ups due today ─── */}
       {followItems.length > 0 && (
         <QueueSection
-          title="Seguimientos de hoy"
-          hint="cotización enviada, sin respuesta · ritmo 3 · 14 · 30 días"
+          title="Llamar"
+          hint="cotización enviada, sin respuesta · seguimiento N de 3 · ritmo 3 · 14 · 30 días"
           count={followItems.length}
         >
           {followItems.map((item, i) => (
@@ -569,6 +656,7 @@ function ReplyQueueRow({
   onClearItem: () => void;
   now: Date;
 }) {
+  const openCase = useOpenCase(navigate);
   const { card } = reply;
   const { leaving, gone, leave, restore } = useLeave(reply);
   const [busy, setBusy] = useState<null | "move" | "skip" | "handled">(null);
@@ -696,7 +784,7 @@ function ReplyQueueRow({
       <div className="flex shrink-0 gap-2">
         {/* Primary button */}
         {blocking ? (
-          <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Resolver</Button>
+          <Button variant="primary" onClick={() => openCase(card.opportunity_id, "resolve")}>Resolver</Button>
         ) : reply.url && mayRead && messageId ? (
           <Button variant="primary" onClick={() => setReading(true)}>Responder</Button>
         ) : reply.url ? (
@@ -919,6 +1007,7 @@ function FollowUpQueueRow({
   onClose: (c: OpportunityCardData) => void;
   now: Date;
 }) {
+  const openCase = useOpenCase(navigate);
   const f = followUp;
   const { leaving, gone, leave, restore } = useLeave(f);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1005,7 +1094,10 @@ function FollowUpQueueRow({
         >
           {name}
         </button>
-        <p className="truncate text-[12px] text-ink-muted">{what}</p>
+        <p className="truncate text-[12px] text-ink-muted">
+          <span className="font-semibold text-ink" data-testid="today-followup-step">Seguimiento {followUpStep(f)} de 3</span>
+          {what ? ` · ${what}` : null}
+        </p>
         {note || f.task ? (
           <p className="truncate text-[11.5px] text-ink" data-testid="today-followup-note">
             {f.task ? (
@@ -1019,14 +1111,21 @@ function FollowUpQueueRow({
         ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: «Escribir» — open the Gmail thread */}
+        {/* Primary: «Registrar llamada» — the case's drawer over Hoy, on the call form.
+            A viewer gets no action buttons. */}
+        {mayDecide ? (
+          <Button variant="primary" onClick={() => openCase(f.card.opportunity_id, "call")}>
+            Registrar llamada
+          </Button>
+        ) : null}
+        {/* Secondary: «Escribir» — open the Gmail thread («mejor por correo») */}
         <a
           href={write}
           target="_blank"
           rel="noopener noreferrer"
           title={thread ? "Abre el hilo de la cotización en Gmail" : "Abre un correo nuevo en Gmail"}
           aria-label={thread ? "Escribir en Gmail" : "Nuevo correo en Gmail"}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1"
         >
           <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2.5 4h11v8h-11zM2.5 4.5 8 8.5l5.5-4" strokeLinejoin="round" /></svg>
           Escribir

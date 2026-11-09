@@ -275,3 +275,92 @@ def test_the_note_read_models_expose_the_call_fields(db, operator) -> None:
                 by_body["Ordinaria."]["call_next_step"]) == (None, None, None)
         assert (by_body["Llamada."]["note_kind"], by_body["Llamada."]["call_outcome"],
                 by_body["Llamada."]["call_next_step"]) == ("llamada", "numero_malo", "Buscar otro teléfono")
+
+
+def _calls_today(reads: CrmWorkspaceRepository) -> dict[str, int]:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("America/Santiago")).date().isoformat()
+    return {row["outcome"]: row["count"] for row in reads.pipeline()["calls"] if row["day"] == today}
+
+
+@needs_db
+def test_pipeline_counts_live_calls_by_santiago_day_and_outcome(db, operator) -> None:
+    """Hoy's «Alcance» counts the team's calls per Santiago day and outcome. An edited call counts
+    once, on the day it was first logged; an ordinary note is not a call. The module database is
+    shared, so the test reads the counts before and after."""
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    before = _calls_today(reads)
+    pid, oid, cid = _person(db), _org(db), _case(db, operator)
+    first = _add(db, operator, subject_kind="opportunity", subject_id=cid, body="Contestó.",
+                 note_kind="llamada", call_outcome="contesto")
+    _add(db, operator, subject_kind="person", subject_id=pid, body="Contestó ella.",
+         note_kind="llamada", call_outcome="contesto")
+    _add(db, operator, subject_kind="organization", subject_id=oid, body="Nadie.",
+         note_kind="llamada", call_outcome="no_contesto")
+    _add(db, operator, subject_kind="opportunity", subject_id=cid, body="Ordinaria.")
+    V2CrmAuthoringRepository(psycopg.connect, runtime_dsn(db)).execute(
+        command_name="revise-note", operator=operator,
+        fields={"note_id": first["note_id"], "expected_version": 1, "body": "Contestó, corregido."},
+        idempotency_key=uuid.uuid4().hex, digest="f" * 64)
+
+    after = _calls_today(reads)
+    assert after.get("contesto", 0) - before.get("contesto", 0) == 2
+    assert after.get("no_contesto", 0) - before.get("no_contesto", 0) == 1
+    assert {k for k in after if after[k] != before.get(k, 0)} == {"contesto", "no_contesto"}
+
+    payload = reads.pipeline()
+    [card] = [c for c in payload["items"] if c["opportunity_id"] == cid]
+    assert card["requested_at"] is not None
+    # The case's answered call is a follow-up touch: one, at the time it was first logged.
+    assert card["last_call"] is not None and card["last_call"]["outcome"] == "contesto"
+    assert card["last_call"]["at"].endswith("Z")
+
+
+@needs_db
+def test_an_unanswered_call_is_not_the_cards_last_call(db, operator) -> None:
+    cid = _case(db, operator)
+    _add(db, operator, subject_kind="opportunity", subject_id=cid, body="Buzón.",
+         note_kind="llamada", call_outcome="buzon")
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    [card] = [c for c in reads.pipeline()["items"] if c["opportunity_id"] == cid]
+    assert card["last_call"] is None
+
+
+@needs_db
+def test_a_malformed_origin_sent_at_falls_back_to_acquired_at(db, operator) -> None:
+    """`2026-13-40T99:99` has a timestamp's shape but is no date: the pipeline still answers, and
+    the case's `requested_at` is when the origin email was captured."""
+    from datetime import datetime
+
+    tag = uuid.uuid4().hex[:10]
+    [(sr_id,)] = _owner(
+        db,
+        "insert into evidence.source_record (kind, dedupe_key, payload, source_uri, acquired_at)"
+        " values ('gmail_message', %s, %s::jsonb, %s, '2026-01-02T03:04:05+00:00') returning id::text",
+        (f"pytest-bad-date:{tag}", '{"sent_at": "2026-13-40T99:99", "subject_raw": "Consulta"}',
+         f"gmail://msg/{tag}"),
+    )
+    [(cid,)] = _owner(
+        db,
+        "insert into crm.opportunity (title, stage, owner_operator_id, origin_source_record_id)"
+        " values ('Equipo con fecha rota', 'lead', %s, %s) returning id::text",
+        (operator.operator_id, sr_id),
+    )
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    [card] = [c for c in reads.pipeline()["items"] if c["opportunity_id"] == cid]
+    assert datetime.fromisoformat(card["requested_at"]) == datetime.fromisoformat("2026-01-02T03:04:05+00:00")
+
+
+@needs_db
+def test_a_closed_cases_call_is_not_its_last_call(db, operator) -> None:
+    """Only live cases carry a last call, like their last note."""
+    cid = _case(db, operator)
+    _add(db, operator, subject_kind="opportunity", subject_id=cid, body="Contestó.",
+         note_kind="llamada", call_outcome="contesto")
+    _owner(db, "update crm.opportunity set stage = 'abandoned', closed_at = now(),"
+               " close_reason = 'Sin respuesta' where id = %s", (cid,))
+    reads = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(db))
+    cards = [c for c in reads.pipeline()["items"] if c["opportunity_id"] == cid]
+    assert all(c["last_call"] is None for c in cards)

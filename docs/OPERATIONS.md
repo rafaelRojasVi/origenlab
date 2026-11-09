@@ -328,9 +328,10 @@ it carries (§1.2 steps 9 and 10; built, not deployed — [`STATUS.md`](STATUS.m
   Re-listing a prefix without one of the two reopens the unmasked read and is refused in
   review; `src/allowlist.test.ts` and `src/index.test.ts` pin every V1 prefix as refused.
 - **CRM workspace reads, by name:** `GET /v2/workspace/{overview,pipeline,providers,drive,review}`,
-  `GET /v2/workspace/equipment-interests`, the Marketing reads under `/v2/workspace/marketing*`
-  and `GET /v2/cockpit/work-queue` are listed, exactly — the reads the dashboard's CRM
-  (`#/crm/*`) needs (`apps/dashboard-proxy/README.md`). Upstream they require the dashboard
+  `GET /v2/workspace/equipment-interests`, the Marketing reads under `/v2/workspace/marketing*`,
+  `GET /v2/cockpit/work-queue` and `GET /v2/cockpit/opportunities/<uuid>/timeline` (the case
+  drawer's history) are listed, exactly — the reads the dashboard's five areas (`#/hoy`,
+  `#/ventas/…`, …) need (`apps/dashboard-proxy/README.md`). Upstream they require the dashboard
   session (401 without one) and mask contact addresses for `viewer`; the Worker forwards only
   the session cookie and refuses every other method (405). `src/v2WorkspaceReads.test.ts` pins it.
 - **Still not exposed:** every other `/v2/cockpit/*` path — the other cockpit reads, the
@@ -2628,7 +2629,7 @@ feature stays **inactive until a quote number seed exists**, because `create-quo
    `create-quote-revision`. The dashboard Worker allows exactly those paths; `save-quote-draft` and
    the preview accept bodies up to 256 KiB, every other command the usual limit. Sales and admin
    only; a viewer gets 403.
-2. **Set the parameters** in the dashboard: Cotizador → «Preferencias» (`#/crm/cotizador/preferencias`,
+2. **Set the parameters** in the dashboard: Cotizador → «Preferencias» (`#/ventas/cotizaciones/preferencias`,
    [`WORKFLOWS.md`](WORKFLOWS.md) §W3-Cotizador, «The module») saves each value below with a reason;
    «Numeración» is shown to admin only for editing. Underneath it is
    `POST /v2/commands/set-cost-parameter` (an operator session —
