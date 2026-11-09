@@ -371,11 +371,11 @@ function NextStepLine({ card, inFooter }: { card: OpportunityCardData; inFooter:
       <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-reminder">
         {reminderDue ? (
           <>
-            Está hoy en <strong>Hoy → Seguimientos</strong>
+            Está hoy en <strong>Hoy → Llamar</strong>
           </>
         ) : (
           <>
-            Te lo recuerdo el <strong>{fmtDate(reminder.due_at)}</strong> en <strong>Hoy → Seguimientos</strong>
+            Te lo recuerdo el <strong>{fmtDate(reminder.due_at)}</strong> en <strong>Hoy → Llamar</strong>
           </>
         )}
         {reminderNote ? <span className="block text-[12px] text-ink-muted">{reminderNote}</span> : null}
