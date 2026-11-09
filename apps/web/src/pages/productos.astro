@@ -3,7 +3,6 @@ import { getCollection } from 'astro:content';
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import ApplicationList from '../components/ui/ApplicationList.astro';
 import FamilyModels from '../components/product/FamilyModels.astro';
@@ -97,10 +96,6 @@ const families = rankFamilies(
   <section class="shell pf pf--tipos" aria-labelledby="tipos-title">
     <h2 id="tipos-title" class="t-h2">Si prefiere partir del tipo de laboratorio<span class="dot">.</span></h2>
     <ApplicationList class="mt-10" />
-    <Notice class="mt-10">
-      {company.catalogNote} Cotización y disponibilidad sujetas a confirmación comercial. Los datos de
-      cada ficha se redactaron desde la documentación pública del fabricante, enlazada en la ficha.
-    </Notice>
   </section>
 
   <ClosingQuoteBand

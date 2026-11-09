@@ -6,7 +6,6 @@ import FamilyConsult from '../../../components/product/FamilyConsult.astro';
 import CompareTable from '../../../components/ui/CompareTable.astro';
 import BrandLogo from '../../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
-import Notice from '../../../components/ui/Notice.astro';
 import Icon from '../../../components/ui/Icon.astro';
 import { getCollection } from 'astro:content';
 import type { Modelo } from '../../../content.config';
@@ -117,7 +116,6 @@ const relatedCategories = categories.filter((category) =>
         )
       }
     </div>
-    {brand && <Notice class="mt-10">{brand.manufacturerAttribution} {brand.commercialNote}</Notice>}
   </section>
 
   <FamilyConsult brandName={brand?.name} />
