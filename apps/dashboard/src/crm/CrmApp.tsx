@@ -34,6 +34,7 @@ const FinanzasSociosPage = lazyPage(() => import("./finanzas/FinanzasSociosPage"
 const MarketingPage = lazyPage(() => import("./pages/MarketingPage").then((m) => m.MarketingPage));
 const HistoryPage = lazyPage(() => import("./pages/HistoryPage").then((m) => m.HistoryPage));
 const OperacionesPage = lazyPage(() => import("./pages/OperacionesPage").then((m) => m.OperacionesPage));
+const AjustesMeta = lazyPage(() => import("./pages/AjustesMeta").then((m) => m.AjustesMeta));
 
 /**
  * The dashboard: one shell, one navigation, one sign-in. Five areas (Hoy · Ventas · Finanzas ·
@@ -122,6 +123,7 @@ function Section({
   pane?: CotizadorPane;
   navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
+  const { admin } = useNavAccess();
   switch (section) {
     case "oportunidades":
       return <PipelinePage key={id ?? "all"} initialOpportunityId={id} />;
@@ -149,6 +151,7 @@ function Section({
     case "fin-financiamiento":
       return <FinanzasFinanciamientoPage />;
     case "fin-socios":
+      if (!admin) return <div className="py-6 text-sm text-ink-muted">Sólo administración.</div>;
       return <FinanzasSociosPage />;
     case "pagos":
       return <PagosPage navigate={navigate} />;
@@ -158,6 +161,8 @@ function Section({
       return <HistoryPage navigate={navigate} />;
     case "datos":
       return <OperacionesPage navigate={navigate} tab={tab} />;
+    case "ajustes-meta":
+      return <AjustesMeta />;
     default:
       return <OverviewPage navigate={navigate} />;
   }

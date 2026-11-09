@@ -196,11 +196,14 @@ function CaseDrawerBody({
             ) : null}
           </span>
         ) : null}
-        <span data-testid="case-origin-badge">
-          <Badge glyph={false} title="Por dónde llegó el caso">
-            Origen: {originLabel(card.origin)}
-          </Badge>
-        </span>
+        {/* Only a known origin: «Sin origen» in the header said nothing (it is set in Resumen). */}
+        {card.origin ? (
+          <span data-testid="case-origin-badge">
+            <Badge glyph={false} title="Por dónde llegó el caso">
+              Origen: {originLabel(card.origin)}
+            </Badge>
+          </span>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2" data-testid="case-drawer-actions">
         {lifted.call ? (
@@ -258,14 +261,13 @@ function CaseDrawerBody({
       <TabPanel base={base} tab="resumen" current={tab}>
         <CaseLinks card={card} />
         <CaseActions card={card} initial={request} onChanged={onChanged} hoisted />
-        <NextStepLine card={card} />
+        {/* The footer already says the plain next step; this line only adds a reminder or task. */}
+        <NextStepLine card={card} inFooter={footer !== null} />
         {/* Qualify before quoting: five short questions saved as a case note. */}
         {!card.closed_at ? <QualifyCard card={card} mayAuthor={mayAuthor} onChanged={onChanged} /> : null}
         {/* What the conversation says so far, first: the case memory (owner, 2026-10-15). */}
         <CaseMemory opportunityId={card.opportunity_id} />
-        <Section title="Origen">
-          <OriginSelect card={card} onChanged={onChanged} />
-        </Section>
+        <OriginSelect card={card} onChanged={onChanged} />
         <CompleteFromMail card={card} onChanged={onChanged} />
         <CaseDocumentsBlock card={card} onChanged={onChanged} />
         <CaseTimeline key={`${card.opportunity_id}:${card.version ?? ""}`} opportunityId={card.opportunity_id} />
@@ -358,7 +360,7 @@ function TabPanel({ base, tab, current, children }: { base: string; tab: DrawerT
 /* ── Resumen ─────────────────────────────────────────────────────────────── */
 
 /** The case's follow-up reminder («Recordarme…») when it has one, else its next task or suggestion. */
-function NextStepLine({ card }: { card: OpportunityCardData }) {
+function NextStepLine({ card, inFooter }: { card: OpportunityCardData; inFooter: boolean }) {
   // The same pending reminder the chip and footer read: one our later email or call already met is done.
   const reminder = pendingFollowUpTasks(card)[0] ?? null;
   const reminderNote = reminder ? (card.last_note?.body?.trim() ?? null) : null;
@@ -369,11 +371,11 @@ function NextStepLine({ card }: { card: OpportunityCardData }) {
       <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-reminder">
         {reminderDue ? (
           <>
-            Está hoy en <strong>Hoy → Seguimientos</strong>
+            Está hoy en <strong>Hoy → Llamar</strong>
           </>
         ) : (
           <>
-            Te lo recuerdo el <strong>{fmtDate(reminder.due_at)}</strong> en <strong>Hoy → Seguimientos</strong>
+            Te lo recuerdo el <strong>{fmtDate(reminder.due_at)}</strong> en <strong>Hoy → Llamar</strong>
           </>
         )}
         {reminderNote ? <span className="block text-[12px] text-ink-muted">{reminderNote}</span> : null}
@@ -393,6 +395,7 @@ function NextStepLine({ card }: { card: OpportunityCardData }) {
       </p>
     );
   }
+  if (inFooter) return null;
   return (
     <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
       <span className="text-ink-faint">Siguiente: </span>

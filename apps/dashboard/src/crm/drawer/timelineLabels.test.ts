@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineEntry } from "../crmTypes";
-import { timelineLabel } from "./timelineLabels";
+import { timelineLabel, timelineLines } from "./timelineLabels";
 
 function entry(over: Partial<TimelineEntry>): TimelineEntry {
   return {
@@ -46,5 +46,20 @@ describe("timelineLabel", () => {
     expect(timelineLabel(entry({ event_type: "opportunity.created", actor_display_name: "Vendedora Ficticia" }))).toBe(
       "Caso creado · Vendedora Ficticia",
     );
+  });
+});
+
+describe("timelineLines", () => {
+  it("is newest first, drops wordless events and a same-day repeat", () => {
+    const lines = timelineLines([
+      entry({ event_type: "opportunity.created", occurred_at: "2026-11-05T13:00:00Z" }),
+      entry({ event_type: "quote.updated", occurred_at: "2026-11-05T13:05:00Z" }),
+      entry({ event_type: "opportunity.staged", payload: { to_stage: "lead" }, occurred_at: "2026-11-05T13:10:00Z" }),
+      entry({ event_type: "opportunity.staged", payload: { to_stage: "lead" }, occurred_at: "2026-11-05T13:20:00Z" }),
+      entry({ event_type: "opportunity.staged", payload: { to_stage: "lead" }, occurred_at: "2026-11-08T13:20:00Z" }),
+    ]);
+    const lead = timelineLabel(entry({ event_type: "opportunity.staged", payload: { to_stage: "lead" } }));
+    expect(lines.map((l) => l.label)).toEqual([lead, lead, "Caso creado"]);
+    expect(lines[0].at).toBe("2026-11-08T13:20:00Z");
   });
 });

@@ -106,6 +106,8 @@ function Pipeline({
   function open(id: string | null, withForm: typeof openWith = null) {
     setOpenWith(withForm);
     setOpenId(id);
+    // Replace, not push: «back» after closing must not reopen the case just closed.
+    if (id === null) history.replaceState(null, "", crmHash("oportunidades"));
   }
 
   /** A card dropped on another Tablero column: ask for what the move needs, or say why not. */

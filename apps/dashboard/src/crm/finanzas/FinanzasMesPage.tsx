@@ -11,6 +11,7 @@
  * CSV export: downloads vendido + gastos summary as CSV.
  */
 import { useState } from "react";
+import { crmHash } from "../crmRoute";
 import { formatMoney } from "../money";
 import { EmptyState, PageHeader, ResourceGate, Skeleton, fmtInt } from "../ui";
 import { useResource } from "../useResource";
@@ -428,13 +429,17 @@ function MesContent({ data, ivaMode }: { data: MesData; ivaMode: boolean }) {
                   if (v === 0) return null;
                   const urgent = b === "90+" || b === "61-90";
                   return (
-                    <div key={b} className="flex items-center justify-between rounded-md border border-line px-3 py-2">
+                    <a
+                      key={b}
+                      href={crmHash("pagos")}
+                      className="flex items-center justify-between rounded-md border border-line px-3 py-2 hover:border-line-strong hover:bg-canvas-sunken/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                    >
                       <span className={`text-sm font-medium ${urgent ? "text-bad" : "text-ink"}`}>
                         {AGE_LABEL[b]}
                         {urgent && <span className="ml-1.5 text-xs text-bad">⚠ cobrar urgente</span>}
                       </span>
                       <span className="font-mono text-sm font-medium text-ink">{M(v)}</span>
-                    </div>
+                    </a>
                   );
                 })}
               </div>

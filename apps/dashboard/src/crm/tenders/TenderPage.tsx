@@ -42,7 +42,15 @@ type Navigate = (section: CrmSection, id?: string | null) => void;
 export const VIEWER_LINE = "Solo ventas y administración pueden ver esta licitación.";
 const READING = "Leyendo los anexos… (unos minutos)";
 const FILLING = "Llenando los formularios… (unos minutos)";
-const BIDDER_MISSING = "Completa los Datos para licitaciones en Preferencias.";
+const BIDDER_MISSING = (
+  <>
+    Completa los{" "}
+    <a href={crmHash("cotizador", "preferencias")} className="underline">
+      Datos para licitaciones
+    </a>{" "}
+    en Preferencias.
+  </>
+);
 const NEEDS_READ = "Primero lee los anexos con «Preparar oferta».";
 const READ_RUNNING = "Espera a que termine la lectura.";
 const RETRYING = "No se pudo actualizar; reintentando…";
@@ -159,7 +167,7 @@ function StepButton({
 }: {
   label: string;
   ariaLabel?: string;
-  reason: string | null;
+  reason: ReactNode;
   busy: boolean;
   busyLabel: string;
   problem?: string;

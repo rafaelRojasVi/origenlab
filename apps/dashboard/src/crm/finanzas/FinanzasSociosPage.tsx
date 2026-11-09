@@ -9,6 +9,7 @@
  *
  * This tab is admin-only in the nav (adminOnly: true in nav.ts).
  */
+import { crmHash } from "../crmRoute";
 import { formatMoney } from "../money";
 import { EmptyState, PageHeader, Skeleton, fmtDate } from "../ui";
 import { useResource } from "../useResource";
@@ -129,7 +130,8 @@ function SociosContent({
       <>
         <PartnerEquation margen={margenBruto} gastos={gastosFijos} />
         <EmptyState title="Sin regla de socios configurada">
-          Configura la regla desde Ajustes → Metas y socios.
+          Configura la regla desde{" "}
+          <a href={crmHash("ajustes-meta")} className="underline">Ajustes → Meta y socios</a>.
         </EmptyState>
       </>
     );
@@ -202,7 +204,8 @@ function SociosContent({
         </div>
         <p className="mt-2 text-[11px] text-ink-faint">
           Las alternativas usan los parámetros de referencia; sólo la regla vigente usa los valores configurados.
-          Ajusta los parámetros desde Ajustes → Metas y socios.
+          Ajusta los parámetros desde{" "}
+          <a href={crmHash("ajustes-meta")} className="underline">Ajustes → Meta y socios</a>.
         </p>
       </div>
     </div>
