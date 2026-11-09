@@ -62,11 +62,11 @@ function weekdayDay(iso: string): string {
 }
 
 /**
- * «Seguimiento N de 4 · …» for the header: with a «Seguimiento …» reminder still pending (one an
- * email of ours already met is done: `pendingFollowUpTasks`), its step and its day — «hoy» when it
- * is due today or overdue, else its weekday; the step is the one the rhythm will be on that day,
- * read from `followUpsDue` as of then. Otherwise, when the case is due today by the rhythm alone,
- * «hoy». Null when neither.
+ * «Seguimiento N de 3 · …» (steps 1–3) or «Último correo · …» (step 4) for the header: with a
+ * «Seguimiento …» reminder still pending (one an email of ours already met is done:
+ * `pendingFollowUpTasks`), its step and its day — «hoy» when it is due today or overdue, else its
+ * weekday; the step is the one the rhythm will be on that day, read from `followUpsDue` as of
+ * then. Otherwise, when the case is due today by the rhythm alone, «hoy». Null when neither.
  */
 function followUpChip(card: OpportunityCardData, now: Date): { step: 1 | 2 | 3 | 4; day: string } | null {
   const reminder = pendingFollowUpTasks(card)[0] ?? null;
@@ -185,7 +185,7 @@ function CaseDrawerBody({
             className="inline-flex items-center rounded-full border border-warn/30 bg-warn-bg px-1.5 py-px text-[11px] font-semibold leading-4 text-warn"
             data-testid="case-drawer-followup"
           >
-            Seguimiento {followUp.step} de 4 · {followUp.day}
+            {followUp.step < 4 ? <>Seguimiento {followUp.step} de 3 · {followUp.day}</> : <>Último correo · {followUp.day}</>}
           </span>
         ) : null}
         {net ? (

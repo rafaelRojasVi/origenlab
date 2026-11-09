@@ -8,7 +8,6 @@ import {
   firstSentAt,
   formatMillions,
   formatWait,
-  needsFollowUp,
   quoteSpeed,
   reach,
   requiredPace,
@@ -101,41 +100,6 @@ describe("requiredPace", () => {
   });
   it("has no pace with no business day left", () => {
     expect(requiredPace(1_000_000, 6_000_000, "2026-10-31").perDay).toBeNull();
-  });
-});
-
-describe("needsFollowUp", () => {
-  it("a quote sent 8 days ago with nothing since is overdue", () => {
-    expect(needsFollowUp(card({}, [rev(ago(8 * DAY))]), NOW)).toBe(true);
-  });
-  it("7 days is not yet", () => {
-    expect(needsFollowUp(card({}, [rev(ago(7 * DAY))]), NOW)).toBe(false);
-  });
-  it("our email 3 days ago resets the clock", () => {
-    const c = card({ last_contact: { outbound: { at: ago(3 * DAY), subject: "Seguimiento", url: null }, inbound: null } }, [rev(ago(10 * DAY))]);
-    expect(needsFollowUp(c, NOW)).toBe(false);
-  });
-  it("a call the client answered resets the clock; an unanswered one does not", () => {
-    expect(needsFollowUp(card({ last_call: { at: ago(2 * DAY), outcome: "contesto" } }, [rev(ago(10 * DAY))]), NOW)).toBe(false);
-    expect(needsFollowUp(card({ last_call: { at: ago(2 * DAY), outcome: "buzon" } }, [rev(ago(10 * DAY))]), NOW)).toBe(true);
-  });
-  it("a client reply is not ours to chase", () => {
-    const c = card({ last_contact: { outbound: null, inbound: { at: ago(2 * DAY), subject: "Consulta", url: null } } }, [rev(ago(10 * DAY))]);
-    expect(needsFollowUp(c, NOW)).toBe(false);
-  });
-  it("a future task pauses it", () => {
-    const c = card({ open_tasks: [{ task_id: "t1", title: "Seguimiento", due_at: new Date(NOW.getTime() + 2 * DAY).toISOString(), version: 1, owner: null }] },
-      [rev(ago(10 * DAY))]);
-    expect(needsFollowUp(c, NOW)).toBe(false);
-  });
-  it("the historical import's trace is not chased", () => {
-    expect(needsFollowUp(card({}, [rev(ago(40 * DAY), { origin: "historical_import" })]), NOW)).toBe(false);
-  });
-  it("a draft is not sent", () => {
-    expect(needsFollowUp(card({}, [rev(null)]), NOW)).toBe(false);
-  });
-  it("a closed case is done", () => {
-    expect(needsFollowUp(card({ stage: "lost", closed_at: ago(DAY) }, [rev(ago(10 * DAY))]), NOW)).toBe(false);
   });
 });
 

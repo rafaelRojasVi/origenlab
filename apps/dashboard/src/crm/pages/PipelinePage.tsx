@@ -11,8 +11,8 @@ import { ClosedCases, ClosedNote } from "./ClosedCases";
 import { DecideCases, reviewableOpenCards } from "./DecideCases";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
-import { awaitsQuote, isCotizarCase } from "../today";
-import { boardViewFromHash, needsFollowUp, type BoardView } from "../goals";
+import { awaitsQuote, followUpsDue, isCotizarCase } from "../today";
+import { boardViewFromHash, type BoardView } from "../goals";
 import { contactLine, isDelivered } from "../caseDisplay";
 import { inSharedMailbox } from "../gmailLinks";
 import {
@@ -130,7 +130,7 @@ function Pipeline({
   const viewItems = useMemo(() => {
     if (vista === null) return items;
     const now = new Date();
-    return items.filter((c) => (vista === "seguimiento" ? needsFollowUp(c, now) : isCotizarCase(c, now)));
+    return items.filter((c) => (vista === "seguimiento" ? followUpsDue([c], now).length > 0 : isCotizarCase(c, now)));
   }, [items, vista]);
 
   const counts = useMemo(() => {

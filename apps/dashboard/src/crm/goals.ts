@@ -6,17 +6,13 @@
  * Pure: every figure is computed in the browser from the pipeline cards, the SII register and the
  * calls per day, and nothing is stored. Days are Santiago days (`YYYY-MM-DD`).
  */
-import { daysSince, lastTouch } from "./caseDisplay";
 import type { CallOutcome } from "./callOutcome";
 import type { CallDay, OpportunityCardData } from "./crmTypes";
 import type { Invoice } from "./pagos/invoiceApi";
-import { pausedUntil, stageBasis } from "./stage";
-import { callTouch, isOpenCase, type QueueItem } from "./today";
+import { type QueueItem } from "./today";
 
 /** The monthly sales target, net, in CLP — until it is a setting (`finance.monthly_target`). */
 export const MONTHLY_TARGET_CLP = 6_000_000;
-/** A sent quote nobody followed up for longer than this is «Seguimiento vencido». */
-export const FOLLOW_UP_MAX_DAYS = 7;
 /** The pilot's targets: calls per business day, and conversations in 30 days. */
 export const PILOT_CALLS_PER_DAY = 25;
 export const PILOT_CONVERSATIONS_30D = 50;
@@ -108,26 +104,6 @@ export function requiredPace(sold: number, target: number, today: string): { rem
   const remaining = Math.max(0, target - sold);
   const days = businessDaysLeft(today);
   return { remaining, days, perDay: days === 0 ? null : Math.ceil(remaining / days) };
-}
-
-/* ───────────────────────────────────────────────────────── follow-up ── */
-
-/**
- * «Seguimiento vencido»: an open, decided case in «Enviada» (not paused) whose last touch is
- * ours — the quote, a later email, or a call the client answered (owner ruling 2026-11-08) — and
- * is more than `FOLLOW_UP_MAX_DAYS` days old. A client reply, a draft or the historical import's
- * trace never counts.
- */
-export function needsFollowUp(card: OpportunityCardData, now: Date): boolean {
-  if (!isOpenCase(card) || card.stage !== "quoting") return false;
-  if (pausedUntil(card, now) !== null) return false;
-  if (stageBasis(card, now) === "historical_import") return false;
-  const touch = lastTouch(card);
-  if (touch.by !== "us" && touch.by !== "quote") return false;
-  const call = callTouch(card);
-  const at = call && (!touch.at || Date.parse(call) > Date.parse(touch.at)) ? call : touch.at;
-  const days = daysSince(at, now);
-  return days !== null && days > FOLLOW_UP_MAX_DAYS;
 }
 
 /* ───────────────────────────────────────────────────────────── cotizar ── */
