@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMayRunCaseCommands } from "../caseCommands";
-import type { CrmSection } from "../crmRoute";
+import { crmHash, type CrmSection } from "../crmRoute";
 import { Button, EmptyState, PageHeader, ResourceGate, Skeleton, toast } from "../ui";
 import { useResource } from "../useResource";
 import { ContactarDialog } from "./ContactarDialog";
@@ -231,10 +231,11 @@ export function ProspectosPage({ id = null, navigate, now }: { id?: string | nul
   const contact = async (item: ProspectItem, choice: Record<string, unknown> = {}) => {
     setBusyId(item.id);
     try {
-      await contactProspect({ finding_id: item.id, ...choice });
+      const result = await contactProspect({ finding_id: item.id, ...choice });
+      const orgId = typeof result.organization_id === "string" ? result.organization_id : null;
       setChoosing(null);
       hide([item.id]);
-      toast("Agregado al CRM");
+      toast("Agregado al CRM", "good", orgId ? { action: { label: "Ver en Clientes →", onClick: () => navigate("organizaciones", orgId) } } : undefined);
     } catch (err) {
       const candidates = ambiguousCandidates(err);
       if (candidates) setChoosing({ item, candidates });

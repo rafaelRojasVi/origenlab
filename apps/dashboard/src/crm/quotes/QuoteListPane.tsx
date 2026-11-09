@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { crmHash } from "../crmRoute";
 import { formatMoney } from "../money";
 import { Badge, Button, EmptyState, Skeleton } from "../ui";
 import { statusOf } from "./IssuedView";
@@ -357,10 +358,14 @@ export function QuoteListPane({ active = true, onOpen, onPreferences, onRentabil
                     </td>
                     <td className="max-w-[260px] px-3 py-3 align-middle">
                       <span className="block truncate font-semibold">{r.client?.name ?? "Sin institución"}</span>
-                      <span className="block truncate text-[12.5px] text-ink-muted">
+                      <a
+                        href={crmHash("oportunidades", r.opportunity.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="block truncate text-[12.5px] text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                      >
                         {r.opportunity.title ?? "Sin título"}
                         {r.outcome === "won" ? " · ganadora" : r.outcome === "not_chosen" ? " · no elegida" : r.opportunity.closed ? " · caso cerrado" : ""}
-                      </span>
+                      </a>
                     </td>
                     <td className="max-w-[260px] px-3 py-3 align-middle text-[13px] text-ink-muted" title={r.items.first.join(", ")}>
                       <span className="block truncate">{productsText(r)}</span>
