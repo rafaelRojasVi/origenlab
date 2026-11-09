@@ -122,6 +122,7 @@ function Section({
   pane?: CotizadorPane;
   navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
+  const { admin } = useNavAccess();
   switch (section) {
     case "oportunidades":
       return <PipelinePage key={id ?? "all"} initialOpportunityId={id} />;
@@ -149,6 +150,7 @@ function Section({
     case "fin-financiamiento":
       return <FinanzasFinanciamientoPage />;
     case "fin-socios":
+      if (!admin) return <div className="py-6 text-sm text-ink-muted">Sólo administración.</div>;
       return <FinanzasSociosPage />;
     case "pagos":
       return <PagosPage navigate={navigate} />;
