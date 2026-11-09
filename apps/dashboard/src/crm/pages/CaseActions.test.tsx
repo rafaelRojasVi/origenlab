@@ -1107,7 +1107,7 @@ describe("case drawer actions", () => {
     stubApi({ pipelines: [page([card({ open_tasks: [fu], last_note: { created_at: "2026-10-12T10:00:00Z", body: "Mandar correo esta semana", author: "Ana" } })])] });
     const dialog = await openDrawer(session("sales"));
     const box = within(dialog).getByTestId("drawer-reminder");
-    expect(box).toHaveTextContent("Te lo recuerdo el 19 oct 2099 en Hoy → Seguimientos");
+    expect(box).toHaveTextContent("Te lo recuerdo el 19 oct 2099 en Hoy → Llamar");
     expect(box).toHaveTextContent("Mandar correo esta semana");
   });
 
