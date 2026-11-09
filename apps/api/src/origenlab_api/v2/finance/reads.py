@@ -11,7 +11,7 @@
 débito (56) minus notas de crédito (61). «Por cobrar» is the total balance of unpaid invoices (not
 month-scoped). «Pipeline ponderado» is the sum of open-case amounts weighted by stage probability.
 «Capital atado» is the sum of supplier orders in-flight (ordered but not yet received). «Gastos mes»
-is the sum of finance.expense for the current month.
+is the sum of crm.expense for the current month.
 """
 
 from __future__ import annotations
@@ -164,20 +164,20 @@ with
   capital as (
     select coalesce(sum(so.amount_clp), 0) as total,
            count(*) as count
-      from finance.supplier_order so
+      from crm.supplier_order so
      where so.received_on is null
   ),
   -- gastos mes: manual operating expenses for the current month
   gastos as (
     select coalesce(sum(e.amount_clp), 0) as total,
            count(*) as count
-      from finance.expense e, month_bounds mb
+      from crm.expense e, month_bounds mb
      where e.month = mb.month_start
   ),
   -- monthly target
   target as (
     select sales_target_net
-      from finance.monthly_target, month_bounds mb
+      from crm.monthly_target, month_bounds mb
      where month = mb.month_start
      limit 1
   )
@@ -219,7 +219,7 @@ select e.id::text as expense_id, e.month::text, e.category, e.amount_clp,
        e.paid_by, e.notes, e.source, e.external_ref,
        e.created_at::text, e.updated_at::text,
        op.display_name as created_by
-  from finance.expense e
+  from crm.expense e
   left join platform.operator op on op.id = e.created_by_operator_id
  where e.month = %(month)s::date
  order by e.created_at desc
@@ -232,7 +232,7 @@ select so.id::text as order_id, so.supplier_name, so.ordered_on::text,
        so.created_at::text, so.updated_at::text,
        so.opportunity_id::text, so.quote_id::text,
        o.title as opportunity_title
-  from finance.supplier_order so
+  from crm.supplier_order so
   left join crm.opportunity o on o.id = so.opportunity_id
  where (%(opportunity_id)s::uuid is null or so.opportunity_id = %(opportunity_id)s::uuid)
  order by so.ordered_on desc, so.created_at desc
@@ -243,13 +243,13 @@ _SETTINGS_SQL = """
 with active_rule as (
   select rule_name, arriendo_clp, tasa_sebastian, sueldo_tatiana,
          arriendo_pct_empresa, split_pct, valid_from::text, notes
-    from finance.partner_rule
+    from crm.partner_rule
    order by valid_from desc
    limit 1
 ),
 current_target as (
   select sales_target_net, notes as target_notes, month::text
-    from finance.monthly_target
+    from crm.monthly_target
    order by month desc
    limit 1
 )

@@ -1,43 +1,25 @@
--- Slice 9 — «Finanzas»: the finance schema for the operator dashboard (DOMAIN.md §8, #73–#76).
+-- Slice 9 — «Finanzas»: the four finance tables live in the existing `crm` schema
+-- (DOMAIN.md §8, #73–#76). V2 is fixed at seven private schemas; a new schema cannot be
+-- added without granting CREATE ON DATABASE, which the release parser disallows.
 --
--- Owner 2026-11-09: Finanzas dashboard phase. Gastos are entered manually now; source + external_ref
--- allow SII purchase documents (SimpleAPI, next PR) to land as suggestions later. «Vendido» = invoiced
--- in the SII (crm.invoice doc_type 33/34/56/61); never «won». Everything neto unless the Neto/Con IVA
--- switch. Socios: admin only.
---
---   * #73 finance.expense — one manually-entered operating expense for a calendar month (category,
---     amount_clp, paid_by, notes); source text default 'manual' and external_ref text null so a future
---     SII purchase-document importer can land here as a suggestion. Never physically deleted: a wrong
---     entry is corrected by inserting a corrective row or updating the existing one (soft-replace).
---   * #74 finance.supplier_order — one order placed to a supplier for a case/quote: supplier_name,
---     ordered_on, paid_on, amount_original, currency, amount_clp (CLP equivalent), expected_arrival_on,
---     received_on, notes. Tracks capital atado and Por pagar.
---   * #75 finance.monthly_target — the monthly sales target (meta neto, editable). One row per calendar
---     month (PRIMARY KEY month date). The app reads the latest row when no row exists for the current
---     month; a default of $6 M is applied in the API when the table is empty.
---   * #76 finance.partner_rule — the partner distribution rule (50/50, opción A–D): one append-only
+--   * #73 crm.expense — one manually-entered operating expense for a calendar month (category,
+--     amount_clp, paid_by, notes); source text default 'manual' and external_ref text null so a
+--     future SII purchase-document importer can land here as a suggestion later. Never physically
+--     deleted: a wrong entry is corrected by inserting a corrective row or updating the existing
+--     one (soft-replace).
+--   * #74 crm.supplier_order — one order placed to a supplier for a case/quote: supplier_name,
+--     ordered_on, paid_on, amount_original, currency, amount_clp (CLP equivalent),
+--     expected_arrival_on, received_on, notes. Tracks capital atado and Por pagar.
+--   * #75 crm.monthly_target — the monthly sales target (meta neto, editable). One row per
+--     calendar month (PRIMARY KEY month date). The app reads the latest row when no row exists
+--     for the current month; a default of $6 M is applied in the API when the table is empty.
+--   * #76 crm.partner_rule — the partner distribution rule (50/50, opción A–D): one append-only
 --     row per rule change; the rule in force is the row with the greatest valid_from.
-
--- The finance schema is an eighth application schema. Slice 0 (M14) revoked CREATE ON DATABASE
--- from origenlab_owner after the original seven were created; we follow the same open/close shape
--- as slice4_procrastinate: grant it here, create the schema, revoke it again at the end.
-do $$
-begin
-  execute format('grant create on database %I to origenlab_owner', current_database());
-end
-$$;
 
 set role origenlab_owner;
 
--- ── schema ────────────────────────────────────────────────────────────────────────────────────
-create schema if not exists finance;
-
-grant usage on schema finance to origenlab_api;
--- worker has no finance access
-revoke all on schema finance from public, anon, authenticated, service_role;
-
--- ── #73 finance.expense ───────────────────────────────────────────────────────────────────────
-create table finance.expense (
+-- ── #73 crm.expense ───────────────────────────────────────────────────────────────────────────
+create table crm.expense (
   id                      uuid primary key default gen_random_uuid(),
   month                   date not null,  -- first day of the month (e.g. 2026-11-01)
   category                text not null,
@@ -62,30 +44,30 @@ create table finance.expense (
   constraint expense_source_check check (source in ('manual', 'sii_purchase'))
 );
 
-comment on table finance.expense is
+comment on table crm.expense is
   'DOMAIN.md §8 #73 — one operating expense for a calendar month: category, amount_clp, paid_by. '
   'source=''manual'' by default; source=''sii_purchase'' + external_ref when a future SII purchase '
   'importer lands here. Soft-replaced, never physically deleted.';
-comment on column finance.expense.month is 'First day of the calendar month (extract(day)=1).';
-comment on column finance.expense.source is
+comment on column crm.expense.month is 'First day of the calendar month (extract(day)=1).';
+comment on column crm.expense.source is
   'Entry origin: ''manual'' (operator typed it) or ''sii_purchase'' (future SII importer). '
   'external_ref carries the SII document identifier when source=''sii_purchase''.';
 
-create index expense_month_idx on finance.expense (month);
-create index expense_created_by_idx on finance.expense (created_by_operator_id) where created_by_operator_id is not null;
+create index expense_month_idx on crm.expense (month);
+create index expense_created_by_idx on crm.expense (created_by_operator_id) where created_by_operator_id is not null;
 
 -- ── grants & RLS: expense ────────────────────────────────────────────────────────────────────
-revoke all on finance.expense from public, anon, authenticated, service_role;
-grant select, insert, update on finance.expense to origenlab_api;
+revoke all on crm.expense from public, anon, authenticated, service_role;
+grant select, insert, update on crm.expense to origenlab_api;
 
-alter table finance.expense enable row level security;
+alter table crm.expense enable row level security;
 
-create policy origenlab_api_select on finance.expense for select to origenlab_api using (true);
-create policy origenlab_api_insert on finance.expense for insert to origenlab_api with check (true);
-create policy origenlab_api_update on finance.expense for update to origenlab_api using (true) with check (true);
+create policy origenlab_api_select on crm.expense for select to origenlab_api using (true);
+create policy origenlab_api_insert on crm.expense for insert to origenlab_api with check (true);
+create policy origenlab_api_update on crm.expense for update to origenlab_api using (true) with check (true);
 
--- ── #74 finance.supplier_order ────────────────────────────────────────────────────────────────
-create table finance.supplier_order (
+-- ── #74 crm.supplier_order ────────────────────────────────────────────────────────────────────
+create table crm.supplier_order (
   id                   uuid primary key default gen_random_uuid(),
   opportunity_id       uuid references crm.opportunity(id),
   quote_id             uuid references crm.quote(id),
@@ -114,27 +96,27 @@ create table finance.supplier_order (
   )
 );
 
-comment on table finance.supplier_order is
+comment on table crm.supplier_order is
   'DOMAIN.md §8 #74 — one order placed to a supplier for a case/quote: supplier_name, ordered_on, '
   'paid_on, amount in original currency and CLP equivalent, expected_arrival_on, received_on. '
   'Tracks capital atado (unpaid + undelivered orders) and «Por pagar y pedidos».';
 
-create index supplier_order_opportunity_idx on finance.supplier_order (opportunity_id) where opportunity_id is not null;
-create index supplier_order_quote_idx on finance.supplier_order (quote_id) where quote_id is not null;
-create index supplier_order_ordered_idx on finance.supplier_order (ordered_on);
+create index supplier_order_opportunity_idx on crm.supplier_order (opportunity_id) where opportunity_id is not null;
+create index supplier_order_quote_idx on crm.supplier_order (quote_id) where quote_id is not null;
+create index supplier_order_ordered_idx on crm.supplier_order (ordered_on);
 
 -- ── grants & RLS: supplier_order ─────────────────────────────────────────────────────────────
-revoke all on finance.supplier_order from public, anon, authenticated, service_role;
-grant select, insert, update on finance.supplier_order to origenlab_api;
+revoke all on crm.supplier_order from public, anon, authenticated, service_role;
+grant select, insert, update on crm.supplier_order to origenlab_api;
 
-alter table finance.supplier_order enable row level security;
+alter table crm.supplier_order enable row level security;
 
-create policy origenlab_api_select on finance.supplier_order for select to origenlab_api using (true);
-create policy origenlab_api_insert on finance.supplier_order for insert to origenlab_api with check (true);
-create policy origenlab_api_update on finance.supplier_order for update to origenlab_api using (true) with check (true);
+create policy origenlab_api_select on crm.supplier_order for select to origenlab_api using (true);
+create policy origenlab_api_insert on crm.supplier_order for insert to origenlab_api with check (true);
+create policy origenlab_api_update on crm.supplier_order for update to origenlab_api using (true) with check (true);
 
--- ── #75 finance.monthly_target ───────────────────────────────────────────────────────────────
-create table finance.monthly_target (
+-- ── #75 crm.monthly_target ───────────────────────────────────────────────────────────────────
+create table crm.monthly_target (
   month            date primary key,  -- first day of the month
   sales_target_net integer not null,
   notes            text,
@@ -144,25 +126,25 @@ create table finance.monthly_target (
   constraint monthly_target_positive check (sales_target_net > 0)
 );
 
-comment on table finance.monthly_target is
+comment on table crm.monthly_target is
   'DOMAIN.md §8 #75 — the monthly net-sales target (meta neto). One row per calendar month '
   '(PRIMARY KEY month). The API returns the latest row when the current month has no row; '
   'the application default is $6,000,000. Set by an admin from Ajustes › Meta mensual.';
 
 -- ── grants & RLS: monthly_target ─────────────────────────────────────────────────────────────
-revoke all on finance.monthly_target from public, anon, authenticated, service_role;
-grant select, insert, update on finance.monthly_target to origenlab_api;
+revoke all on crm.monthly_target from public, anon, authenticated, service_role;
+grant select, insert, update on crm.monthly_target to origenlab_api;
 
-alter table finance.monthly_target enable row level security;
+alter table crm.monthly_target enable row level security;
 
-create policy origenlab_api_select on finance.monthly_target for select to origenlab_api using (true);
-create policy origenlab_api_insert on finance.monthly_target for insert to origenlab_api with check (true);
-create policy origenlab_api_update on finance.monthly_target for update to origenlab_api using (true) with check (true);
+create policy origenlab_api_select on crm.monthly_target for select to origenlab_api using (true);
+create policy origenlab_api_insert on crm.monthly_target for insert to origenlab_api with check (true);
+create policy origenlab_api_update on crm.monthly_target for update to origenlab_api using (true) with check (true);
 
--- ── #76 finance.partner_rule ─────────────────────────────────────────────────────────────────
+-- ── #76 crm.partner_rule ─────────────────────────────────────────────────────────────────────
 -- Append-only: the rule in force is the row with the greatest valid_from.
 -- Never physically deleted: use a new row to change the rule.
-create table finance.partner_rule (
+create table crm.partner_rule (
   id                      serial primary key,
   valid_from              date not null,
   rule_name               text not null,
@@ -188,43 +170,33 @@ create table finance.partner_rule (
   constraint partner_rule_split_pct_range check (split_pct between 0 and 1)
 );
 
-comment on table finance.partner_rule is
+comment on table crm.partner_rule is
   'DOMAIN.md §8 #76 — partner distribution rule (append-only). The rule in force is the row with '
   'the greatest valid_from. rule_name: actual_50_50 (current) or opciones A–D from the strategy. '
   'Admin-only; set from Ajustes › Regla de socios.';
 
 create trigger partner_rule_never_deleted
-  before delete on finance.partner_rule
+  before delete on crm.partner_rule
   for each row execute function platform.reject_mutation('append-only: insert a new row to change the rule');
 
 -- Seed the current rule so the app always has something to read
-insert into finance.partner_rule
+insert into crm.partner_rule
   (valid_from, rule_name, arriendo_clp, tasa_sebastian, sueldo_tatiana, arriendo_pct_empresa, split_pct, notes)
 values
   ('2026-01-01', 'actual_50_50', 875000, null, 0, 0, 0.5000,
    'Regla actual 50/50: Tatiana paga el arriendo de su bolsillo (arriendo_pct_empresa=0).');
 
 -- ── grants & RLS: partner_rule ───────────────────────────────────────────────────────────────
-revoke all on finance.partner_rule from public, anon, authenticated, service_role;
-grant select, insert on finance.partner_rule to origenlab_api;
+revoke all on crm.partner_rule from public, anon, authenticated, service_role;
+grant select, insert on crm.partner_rule to origenlab_api;
 
-alter table finance.partner_rule enable row level security;
+alter table crm.partner_rule enable row level security;
 
-create policy origenlab_api_select on finance.partner_rule for select to origenlab_api using (true);
-create policy origenlab_api_insert on finance.partner_rule for insert to origenlab_api with check (true);
+create policy origenlab_api_select on crm.partner_rule for select to origenlab_api using (true);
+create policy origenlab_api_insert on crm.partner_rule for insert to origenlab_api with check (true);
 
 -- grant partner_rule sequences too (serial)
-grant usage, select on sequence finance.partner_rule_id_seq to origenlab_api;
-revoke all on sequence finance.partner_rule_id_seq from public, anon, authenticated, service_role;
+grant usage, select on sequence crm.partner_rule_id_seq to origenlab_api;
+revoke all on sequence crm.partner_rule_id_seq from public, anon, authenticated, service_role;
 
 reset role;
-
--- Close the schema-creation window; fail closed if the privilege is still present.
-do $$
-begin
-  execute format('revoke create on database %I from origenlab_owner', current_database());
-  if has_database_privilege('origenlab_owner', current_database(), 'CREATE') then
-    raise exception 'origenlab_owner still holds CREATE on database %', current_database();
-  end if;
-end
-$$;

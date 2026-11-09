@@ -5,10 +5,10 @@ The same `CommandTransaction` as every other V2 command: one transaction, one re
 three.
 
 What it writes:
-  * `finance.expense` — `upsert_expense` inserts a new row or updates an existing manual one
-  * `finance.supplier_order` — `upsert_supplier_order` inserts or updates
-  * `finance.monthly_target` — `set_monthly_target` upserts (one row per calendar month)
-  * `finance.partner_rule` — `set_partner_rule` inserts a new row (append-only by trigger)
+  * `crm.expense` — `upsert_expense` inserts a new row or updates an existing manual one
+  * `crm.supplier_order` — `upsert_supplier_order` inserts or updates
+  * `crm.monthly_target` — `set_monthly_target` upserts (one row per calendar month)
+  * `crm.partner_rule` — `set_partner_rule` inserts a new row (append-only by trigger)
 
 Nothing here touches durable CRM tables directly. `crm.domain_event` and
 `platform.command_receipt` are written by `CommandTransaction`.
@@ -40,7 +40,7 @@ class FinanceCommandRepository(CommandTransaction):
         if expense_id:
             # Update path: load the existing row and check it is a manual entry
             cur.execute(
-                "select id::text as id, source, month, category, amount_clp from finance.expense "
+                "select id::text as id, source, month, category, amount_clp from crm.expense "
                 "where id = %s for update",
                 (expense_id,),
             )
@@ -54,7 +54,7 @@ class FinanceCommandRepository(CommandTransaction):
                 )
             cur.execute(
                 """
-                update finance.expense
+                update crm.expense
                    set month = %s, category = %s, amount_clp = %s, paid_by = %s,
                        notes = %s, updated_at = now()
                  where id = %s
@@ -69,7 +69,7 @@ class FinanceCommandRepository(CommandTransaction):
             # Insert path
             cur.execute(
                 """
-                insert into finance.expense
+                insert into crm.expense
                     (month, category, amount_clp, paid_by, notes, source, created_by_operator_id)
                 values (%s, %s, %s, %s, %s, 'manual', %s)
                 returning id::text
@@ -105,7 +105,7 @@ class FinanceCommandRepository(CommandTransaction):
         order_id = fields.get("order_id")
         if order_id:
             cur.execute(
-                "select id::text as id from finance.supplier_order where id = %s for update",
+                "select id::text as id from crm.supplier_order where id = %s for update",
                 (order_id,),
             )
             existing = self._row(cur)
@@ -113,7 +113,7 @@ class FinanceCommandRepository(CommandTransaction):
                 raise CommandRefused(404, "supplier_order_not_found", "no such supplier order")
             cur.execute(
                 """
-                update finance.supplier_order
+                update crm.supplier_order
                    set opportunity_id = %s, quote_id = %s, supplier_name = %s,
                        ordered_on = %s, paid_on = %s, amount_original = %s, currency = %s,
                        amount_clp = %s, expected_arrival_on = %s, received_on = %s,
@@ -129,7 +129,7 @@ class FinanceCommandRepository(CommandTransaction):
         else:
             cur.execute(
                 """
-                insert into finance.supplier_order
+                insert into crm.supplier_order
                     (opportunity_id, quote_id, supplier_name, ordered_on, paid_on,
                      amount_original, currency, amount_clp, expected_arrival_on, received_on,
                      notes, created_by_operator_id)
@@ -167,7 +167,7 @@ class FinanceCommandRepository(CommandTransaction):
         """Upsert the sales target for a calendar month."""
         cur.execute(
             """
-            insert into finance.monthly_target (month, sales_target_net, notes, set_by_operator_id)
+            insert into crm.monthly_target (month, sales_target_net, notes, set_by_operator_id)
             values (%s, %s, %s, %s)
             on conflict (month) do update
                set sales_target_net = excluded.sales_target_net,
@@ -201,7 +201,7 @@ class FinanceCommandRepository(CommandTransaction):
         """Append a new partner distribution rule."""
         cur.execute(
             """
-            insert into finance.partner_rule
+            insert into crm.partner_rule
                 (valid_from, rule_name, arriendo_clp, tasa_sebastian, sueldo_tatiana,
                  arriendo_pct_empresa, split_pct, notes, set_by_operator_id)
             values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
