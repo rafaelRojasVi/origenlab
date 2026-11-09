@@ -5,7 +5,6 @@ import SectionIndex from '../../components/ui/SectionIndex.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../components/ui/ExternalLink.astro';
-import Notice from '../../components/ui/Notice.astro';
 import Icon from '../../components/ui/Icon.astro';
 import FamilyMotif from '../../components/home/FamilyMotif.astro';
 import LitCard from '../../components/ui/LitCard.astro';
@@ -16,7 +15,6 @@ import { applicationsForFamily } from '../../data/applications';
 import { getCollection } from 'astro:content';
 import type { Modelo } from '../../content.config';
 import { familyHref } from '../../lib/modelos';
-import { publishedImagesForBrand } from '../../data/productImages';
 import { brandEntries, has3d } from '../../lib/brandShowcase';
 
 /**
@@ -70,7 +68,6 @@ const scope = scopeById(brand.familyId);
 const familyDocs = familyDocsFor(brand.familyId, brand.id);
 const tasks = applicationsForFamily(brand.familyId);
 /** Fotografías con procedencia y permiso: sólo ellas se publican. */
-const publishedPhotos = publishedImagesForBrand(brand.id);
 
 /** Una disposición por marca. Ver la cabecera. */
 const layout = brand.layout;
@@ -368,7 +365,6 @@ const equipmentSectionLabel =
     <div class="brand-intro brand-line">
       <div class="prose-block">
         {brand.brandIntro && <p class="t-body">{brand.brandIntro}</p>}
-        <p class="t-small brand-intro__attr">{brand.manufacturerAttribution}</p>
       </div>
       <div class="aside-block">
         <h3 class="t-label aside-block__title">Áreas de aplicación</h3>
@@ -392,15 +388,6 @@ const equipmentSectionLabel =
         </p>
       )
     }
-    <Notice class="mt-8">
-      OrigenLab no declara representación oficial, distribución exclusiva ni certificación de esta
-      marca. Los datos de producto de esta página se redactaron desde la documentación pública del
-      fabricante y se enlaza la fuente en cada modelo.
-      {publishedPhotos.length === 0 &&
-        ' No se publica fotografía de equipo de esta marca: falta el permiso de reproducción documentado, y la familia se ilustra con un diagrama propio.'}
-      {publishedPhotos.length > 0 &&
-        ' Las fotografías de equipo son del fabricante y se publican con su autorización y con la procedencia registrada por imagen; una imagen rotulada como representativa muestra la familia, no un modelo concreto.'}
-    </Notice>
   </section>
 
   {

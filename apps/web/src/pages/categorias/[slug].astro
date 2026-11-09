@@ -3,7 +3,6 @@ import Layout from '../../layouts/Layout.astro';
 import PageIntro from '../../components/ui/PageIntro.astro';
 import FamilyModels from '../../components/product/FamilyModels.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
-import Notice from '../../components/ui/Notice.astro';
 import Icon from '../../components/ui/Icon.astro';
 import { categories } from '../../data/categories';
 import { company } from '../../data/company';
@@ -113,10 +112,6 @@ const metaDescription =
         <p class="t-lead mt-5">{company.catalogNote}</p>
       )
     }
-    <Notice class="mt-10">
-      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, los
-      accesorios y las condiciones se confirman en la cotización.
-    </Notice>
   </section>
 
   <ClosingQuoteBand

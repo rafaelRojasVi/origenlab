@@ -3,7 +3,6 @@ import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../components/ui/BrandLogo.astro';
-import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
 import LitCard from '../components/ui/LitCard.astro';
 import { brands, brandsWallHeading } from '../data/brands';
@@ -106,12 +105,6 @@ const cards = rankBrands(brands).map((brand) => {
       }
     </ul>
 
-    <Notice class="mt-12">
-      Es una lista cerrada de siete marcas. OrigenLab no declara representación oficial,
-      distribución exclusiva ni certificación de ninguna de ellas. El alcance comercial de cada
-      línea se confirma por escrito al cotizar. Los datos de producto se redactaron desde la
-      documentación pública de cada fabricante y la fuente se enlaza en cada modelo.
-    </Notice>
   </section>
 
   <ClosingQuoteBand
