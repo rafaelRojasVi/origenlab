@@ -11,10 +11,12 @@
  * page, so an unapproved quote is never taken for the final one. While it is open the window's
  * title names the quote and its institution, which becomes the saved file's name.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
+import { fitsQr, QrSvg } from "../../lib/qr";
 import { formatMoney } from "../money";
+import { formatWhatsappNumber, WHATSAPP_NUMBER, whatsappQuoteUrl } from "../company";
 import { isWithoutIva, type PrintableQuote } from "./printableQuote";
 import "./quotePrint.css";
 
@@ -22,12 +24,11 @@ import "./quotePrint.css";
 export const ISSUER = {
   signer: "Tatiana Vivanco",
   title: "Bioquímico · OrigenLab",
-  contactLines: [
-    "Tatiana Vivanco - OrigenLab",
-    "Casa Matriz: Oettinger 51, D206, Valdivia",
-    "contacto@origenlab.cl · +56 9 6256 7816",
-    "www.origenlab.cl · Horario: 09:00-18:00",
-  ],
+  contactLines: ["Tatiana Vivanco - OrigenLab", "Casa Matriz: Oettinger 51, D206, Valdivia"],
+  email: "contacto@origenlab.cl",
+  phone: "+56 9 6256 7816",
+  site: "www.origenlab.cl",
+  hours: "Horario: 09:00-18:00",
 } as const;
 
 const LOGO = "/logo/origenlab-mark-light.svg";
@@ -63,10 +64,13 @@ export function QuotePrintView({
   quote,
   onClose,
   loadIndex = loadCatalogIndex,
+  whatsapp = WHATSAPP_NUMBER,
 }: {
   quote: PrintableQuote;
   onClose: () => void;
   loadIndex?: () => Promise<CatalogIndex>;
+  /** OrigenLab's WhatsApp number (digits); defaults to the build setting. Null: no line, no QR. */
+  whatsapp?: string | null;
 }) {
   const [models, setModels] = useState<Map<string, string>>(() => new Map());
   const printRef = useRef<HTMLButtonElement>(null);
@@ -104,6 +108,16 @@ export function QuotePrintView({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // The QR and its caption print together or not at all: a link too long for the symbol (it should
+  // not happen: see company.test.ts) leaves only the WhatsApp text line.
+  const waUrl = whatsapp ? whatsappQuoteUrl(whatsapp, quote.label) : null;
+  const qrFits = useMemo(() => {
+    if (!waUrl) return false;
+    const fits = fitsQr(waUrl);
+    if (!fits && import.meta.env.DEV) console.warn("QuotePrintView: the WhatsApp link does not fit a QR; printing the number only.");
+    return fits;
+  }, [waUrl]);
 
   const money = (v: string | null) => formatMoney(v, quote.currency) ?? "—";
   const date = longDay(quote.date);
@@ -282,10 +296,36 @@ export function QuotePrintView({
             <span className="qp-sign-title">{ISSUER.title}</span>
             {quote.draft ? <span className="qp-strong qp-draft-note">Borrador sin aprobar: no válido como cotización.</span> : null}
           </div>
+          {waUrl && qrFits ? (
+            <a className="qp-wa qp-link" href={waUrl}>
+              <QrSvg text={waUrl} size="22mm" />
+              <span>Escanee o toque para escribir por WhatsApp sobre esta cotización</span>
+            </a>
+          ) : null}
           <div className="qp-muted qp-right">
             {ISSUER.contactLines.map((line) => (
               <span key={line}>{line}</span>
             ))}
+            <span>
+              <a className="qp-link" href={`mailto:${ISSUER.email}`}>
+                {ISSUER.email}
+              </a>
+              {" · "}
+              <a className="qp-link" href={`tel:${ISSUER.phone.replace(/\s+/g, "")}`}>
+                {ISSUER.phone}
+              </a>
+            </span>
+            <span>
+              <a className="qp-link" href={`https://${ISSUER.site}`}>
+                {ISSUER.site}
+              </a>
+              {` · ${ISSUER.hours}`}
+            </span>
+            {whatsapp && waUrl ? (
+              <a className="qp-link" href={waUrl}>
+                WhatsApp {formatWhatsappNumber(whatsapp)}
+              </a>
+            ) : null}
           </div>
         </footer>
       </article>

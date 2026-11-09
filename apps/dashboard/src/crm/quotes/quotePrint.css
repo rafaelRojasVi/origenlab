@@ -148,6 +148,10 @@
 .qp-sign-name { font-size: 14px; font-weight: 600; color: #14201d; }
 .qp-sign-title { font-size: 12px; color: #4b5c57; }
 .qp-draft-note { margin-top: 6px; }
+/* WhatsApp QR (only when a number is configured): black on white, never split from its caption. */
+.qp-wa { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 38mm; text-align: center; font-size: 10px; line-height: 1.3; color: #000000; break-inside: avoid; page-break-inside: avoid; }
+.qp-link { color: inherit; text-decoration: none; }
+.qp-wa svg { display: block; background: #ffffff; }
 .qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
 .qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
 

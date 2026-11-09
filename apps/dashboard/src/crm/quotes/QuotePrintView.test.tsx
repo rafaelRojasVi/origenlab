@@ -94,7 +94,8 @@ const index = (): Promise<CatalogIndex> =>
 
 function show(ws: QuoteWorkspace) {
   const q = printableQuote(ws, null, new Date("2026-10-17T12:00:00Z"))!;
-  render(<QuotePrintView quote={q} onClose={vi.fn()} loadIndex={index} />);
+  // No WhatsApp number whatever the machine's .env says: these tests are about the plain document.
+  render(<QuotePrintView quote={q} onClose={vi.fn()} loadIndex={index} whatsapp={null} />);
   return screen.getByRole("dialog");
 }
 
@@ -151,8 +152,9 @@ describe("Vista previa PDF — an approved revision", () => {
     expect(sheet.getByText("Atentamente,")).toBeInTheDocument();
     expect(sheet.getByText("Tatiana Vivanco")).toBeInTheDocument();
     expect(sheet.getByText("Bioquímico · OrigenLab")).toBeInTheDocument();
-    expect(sheet.getByText("www.origenlab.cl · Horario: 09:00-18:00")).toBeInTheDocument();
-    expect(sheet.getByText("contacto@origenlab.cl · +56 9 6256 7816")).toBeInTheDocument();
+    expect(sheet.getByRole("link", { name: "www.origenlab.cl" })).toHaveAttribute("href", "https://www.origenlab.cl");
+    expect(sheet.getByRole("link", { name: "contacto@origenlab.cl" })).toHaveAttribute("href", "mailto:contacto@origenlab.cl");
+    expect(sheet.getByRole("link", { name: "+56 9 6256 7816" })).toHaveAttribute("href", "tel:+56962567816");
     expect(sheet.queryByText(/BORRADOR/)).not.toBeInTheDocument();
     expect(sheet.getByRole("button", { name: "Imprimir / Guardar PDF" })).toBeEnabled();
     expect(document.title).toBe("Cotización CN01272 — Universidad de Prueba");
@@ -172,6 +174,54 @@ describe("Vista previa PDF — an approved revision", () => {
     const sheet = within(show(ws));
     expect(sheet.queryByText(/RUT/)).not.toBeInTheDocument();
     expect(sheet.queryByText("Garantía")).not.toBeInTheDocument();
+  });
+});
+
+describe("Vista previa PDF — WhatsApp line and QR", () => {
+  const PHONE = "56912345678"; // invented: the repository is public
+
+  function showWith(whatsapp: string | null) {
+    const q = printableQuote(approved(), null, new Date("2026-10-17T12:00:00Z"))!;
+    render(<QuotePrintView quote={q} onClose={vi.fn()} loadIndex={index} whatsapp={whatsapp} />);
+    return screen.getByRole("dialog");
+  }
+
+  it("prints the line, the QR and its caption beside the signature when a number is set", () => {
+    const sheet = within(showWith(PHONE));
+    expect(sheet.getByRole("link", { name: "WhatsApp +56 9 1234 5678" }).getAttribute("href")).toMatch(/^https:\/\/wa\.me\/56912345678/);
+    expect(sheet.getByRole("img", { name: "Código QR para escribir por WhatsApp" })).toBeInTheDocument();
+    expect(sheet.getByText("Escanee o toque para escribir por WhatsApp sobre esta cotización")).toBeInTheDocument();
+    // The existing contact lines stay.
+    expect(sheet.getByRole("link", { name: "www.origenlab.cl" })).toHaveAttribute("href", "https://www.origenlab.cl");
+  });
+
+  it("prints nothing new without a number, and the document is identical to before", () => {
+    const plain = show(approved()).innerHTML; // the build setting is unset in tests
+    cleanup();
+    const dialog = showWith(null);
+    expect(within(dialog).queryByRole("img", { name: /WhatsApp/ })).toBeNull();
+    expect(dialog.textContent).not.toMatch(/WhatsApp/);
+    expect(dialog.innerHTML).toBe(plain);
+  });
+
+  it("prints neither the QR nor its caption when the link cannot fit a QR, only the number", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const q = printableQuote(approved(), null, new Date("2026-10-17T12:00:00Z"))!;
+    render(<QuotePrintView quote={{ ...q, label: `CN${"9".repeat(60)}` }} onClose={vi.fn()} loadIndex={index} whatsapp={PHONE} />);
+    const sheet = within(screen.getByRole("dialog"));
+    expect(sheet.queryByRole("img", { name: /WhatsApp/ })).toBeNull();
+    expect(sheet.queryByText(/Escanee/)).toBeNull();
+    expect(sheet.getByRole("link", { name: "WhatsApp +56 9 1234 5678" }).getAttribute("href")).toMatch(/^https:\/\/wa\.me\/56912345678/);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it("encodes the wa.me link for this quote's number in the QR", () => {
+    const withQr = showWith(PHONE).querySelector("svg path")!.getAttribute("d");
+    cleanup();
+    const q = printableQuote(approved(), null, new Date("2026-10-17T12:00:00Z"))!;
+    render(<QuotePrintView quote={{ ...q, label: "CN09999" }} onClose={vi.fn()} loadIndex={index} whatsapp={PHONE} />);
+    expect(screen.getByRole("dialog").querySelector("svg path")!.getAttribute("d")).not.toBe(withQr);
   });
 });
 
