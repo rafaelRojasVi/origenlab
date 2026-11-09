@@ -1,27 +1,29 @@
-/* «Vista previa PDF» (QuotePrintView): one A4 quote. On screen it covers the page; printed, it is
-   the only thing on the paper. The PDF board's look: white sheet, teal accent, Plus Jakarta Sans
-   with IBM Plex Mono for numbers. */
+/* «Vista previa PDF» (QuotePrintView): A4-paginated quote preview.
+   On screen: white A4 sheets with shadows on a grey background, page-by-page.
+   On print:  each .qp-page is exactly one A4 sheet (break-after: page). */
+
+/* ── overlay & toolbar ───────────────────────────────────────────────────────*/
 
 .qp-root {
   position: fixed;
   inset: 0;
   z-index: 80;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   background: #e9edec;
   color: #14201d;
   font-family: var(--font-sans, "Plus Jakarta Sans Variable", system-ui, sans-serif);
 }
 
 .qp-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
   background: #ffffff;
   border-bottom: 1px solid #d9e2df;
+  z-index: 2;
 }
 .qp-toolbar-note {
   flex: 1;
@@ -29,6 +31,7 @@
   color: #4b5c57;
 }
 .qp-toolbar-hint { display: block; font-size: 12px; color: #6b7c77; }
+
 .qp-btn {
   min-height: 44px;
   padding: 0 16px;
@@ -40,6 +43,7 @@
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
 }
 .qp-btn:hover { background: #f4f6f5; }
 .qp-btn:focus-visible { outline: 2px solid #0f766e; outline-offset: 2px; }
@@ -47,6 +51,90 @@
 .qp-btn-primary:hover { background: #115e59; }
 .qp-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 
+/* zoom button group */
+.qp-zoom { display: flex; gap: 4px; }
+.qp-btn-zoom { min-height: 36px; padding: 0 12px; font-size: 13px; }
+.qp-btn-zoom-on { background: #f0fdfa; border-color: #0f766e; color: #0f766e; }
+
+/* ── scrollable viewport ─────────────────────────────────────────────────────*/
+
+.qp-viewport {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ── pages container ─────────────────────────────────────────────────────────*/
+
+.qp-pages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 24px 16px 48px;
+}
+
+/* ── one A4 page ─────────────────────────────────────────────────────────────*/
+
+.qp-page {
+  /* Exact A4 dimensions at 96 dpi */
+  position: relative;
+  box-sizing: border-box;
+  width: 210mm;
+  height: 297mm;
+  /* 14mm on all sides + extra bottom space reserved for the page-number label */
+  padding: 14mm 14mm calc(14mm + 9mm);
+  background: #ffffff;
+  border-top: 6px solid #0f766e;
+  box-shadow: 0 6px 28px rgba(20, 32, 29, 0.14);
+  /* Flex column so footer floats to the bottom of the last page */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  /* Use print-equivalent font sizes so the preview matches the PDF */
+  font-size: 12px;
+  line-height: 1.45;
+  /* Clip content that overflows (rare: an oversized single row) */
+  overflow: hidden;
+}
+
+/* Page-number label — absolutely positioned inside the bottom padding. */
+.qp-page-num {
+  position: absolute;
+  bottom: 5mm;
+  left: 14mm;
+  right: 14mm;
+  text-align: center;
+  font-size: 10px;
+  color: #9fb1ac;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── off-screen measurement container ───────────────────────────────────────*/
+
+/* Invisible, off-screen, never interactable.  Content is rendered here with
+   print-equivalent styles so measured heights match the printed output. */
+.qp-measure {
+  position: absolute;
+  top: -9999px;
+  left: -9999px;
+  /* Content width = A4 width − 2 × 14 mm padding = 182 mm */
+  width: calc(210mm - 2 * 14mm);
+  visibility: hidden;
+  pointer-events: none;
+  z-index: -1;
+  font-size: 12px;
+  line-height: 1.45;
+}
+/* Print cell padding for the measurement and the on-screen pages, so both match the PDF row for row. */
+.qp-measure .qp-lines td,
+.qp-page .qp-lines td { padding: 7px 6px; }
+/* Gap between sibling blocks (same as .qp-page gap). */
+.qp-measure > * + * { margin-top: 14px; }
+
+/* ── backward-compatible single-sheet fallback ───────────────────────────────*/
+
+/* Shown only before the first measurement completes (should be a brief flash). */
 .qp-sheet {
   position: relative;
   box-sizing: border-box;
@@ -64,10 +152,14 @@
   line-height: 1.45;
 }
 
+/* ── typography & shared utilities ──────────────────────────────────────────*/
+
 .qp-mono { font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace); font-variant-numeric: tabular-nums; }
 .qp-muted { display: block; font-size: 12px; color: #4b5c57; }
 .qp-strong { display: block; font-size: 14px; font-weight: 600; }
 .qp-right { text-align: right; }
+
+/* ── header ──────────────────────────────────────────────────────────────────*/
 
 .qp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
 .qp-brand { display: flex; align-items: center; gap: 12px; }
@@ -92,6 +184,8 @@
   letter-spacing: 0.08em;
 }
 
+/* ── client section ──────────────────────────────────────────────────────────*/
+
 .qp-client {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -102,6 +196,8 @@
 }
 .qp-client > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
 .qp-eyebrow-muted { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: #4b5c57; }
+
+/* ── lines table ─────────────────────────────────────────────────────────────*/
 
 .qp-lines { width: 100%; border-collapse: collapse; }
 .qp-lines th {
@@ -121,6 +217,8 @@
 .qp-model { font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace); font-weight: 500; color: #0f766e; }
 .qp-note { display: block; margin-top: 3px; font-size: 12px; color: #4b5c57; white-space: pre-line; }
 
+/* ── totals ──────────────────────────────────────────────────────────────────*/
+
 .qp-totals { align-self: flex-end; width: 300px; margin: 0 0 0 auto; display: flex; flex-direction: column; gap: 6px; break-inside: avoid; }
 .qp-totals > div { display: flex; justify-content: space-between; gap: 12px; }
 .qp-totals dt { color: #4b5c57; }
@@ -135,6 +233,8 @@
 .qp-totals .qp-total dt { color: #14201d; font-weight: 700; }
 .qp-totals .qp-total dd { font-weight: 700; }
 
+/* ── conditions & note ───────────────────────────────────────────────────────*/
+
 .qp-h2 { margin: 0 0 6px; font-size: 13px; font-weight: 700; }
 .qp-terms { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 24px; }
 .qp-terms > div { border-top: 1px solid #d9e2df; padding-top: 7px; min-width: 0; break-inside: avoid; }
@@ -142,18 +242,25 @@
 .qp-terms dd { margin: 2px 0 0; font-size: 12.5px; white-space: pre-line; overflow-wrap: anywhere; }
 .qp-client-note { margin: 0; font-size: 12.5px; white-space: pre-line; }
 
+/* ── footer & signature ──────────────────────────────────────────────────────*/
+
 .qp-sign { display: flex; flex-direction: column; gap: 3px; font-size: 13px; min-width: 200px; }
 .qp-sign-greet { color: #4b5c57; font-size: 12.5px; }
 .qp-sign-line { display: block; width: 190px; margin: 26px 0 6px; border-top: 1px solid #9fb1ac; }
 .qp-sign-name { font-size: 14px; font-weight: 600; color: #14201d; }
 .qp-sign-title { font-size: 12px; color: #4b5c57; }
 .qp-draft-note { margin-top: 6px; }
-/* WhatsApp QR (only when a number is configured): black on white, never split from its caption. */
+
+/* WhatsApp QR: black on white, never split from its caption. */
 .qp-wa { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 38mm; text-align: center; font-size: 10px; line-height: 1.3; color: #000000; break-inside: avoid; page-break-inside: avoid; }
 .qp-link { color: inherit; text-decoration: none; }
 .qp-wa svg { display: block; background: #ffffff; }
+
+/* Footer: pushed to the bottom of the last page via margin-top: auto. */
 .qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
 .qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+
+/* ── BORRADOR watermark ───────────────────────────────────────────────────────*/
 
 .qp-watermark {
   position: absolute;
@@ -170,9 +277,12 @@
   z-index: 0;
 }
 
+/* ── print ───────────────────────────────────────────────────────────────────*/
+
 @media print {
-  /* margin 0: the browser has no room for its own date/title/URL/page line; the sheet keeps the margins. */
+  /* @page margin 0: the page carries its own padding; no room for the browser's header/footer. */
   @page { size: A4; margin: 0; }
+
   html, body {
     margin: 0 !important;
     padding: 0 !important;
@@ -180,48 +290,75 @@
     overflow: visible !important;
     background: #ffffff !important;
   }
-  /* Only the quote prints: the app (menu, tabs, Cotizador) and anything else on the page are hidden. */
+
+  /* Only the quote prints. */
   body > *:not(.qp-root) { display: none !important; }
+
   .qp-root {
     position: static !important;
-    margin: 0 !important;
-    padding: 0 !important;
+    display: block !important;
     overflow: visible !important;
     background: #ffffff !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
   .qp-root * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  /* Hide the toolbar, zoom controls, the viewport wrapper, and the measurement pass. */
   .qp-toolbar { display: none !important; }
+  .qp-measure { display: none !important; }
+  .qp-zoom    { display: none !important; }
+  /* Unwrap the scroll containers so pages flow directly on the print surface. */
+  .qp-viewport { display: contents !important; }
+  .qp-pages   { display: contents !important; }
+
+  /* ── one .qp-page = exactly one physical A4 page ── */
+  .qp-page {
+    /* Force a page break after each page div so Chrome's PDF output matches the preview. */
+    break-after: page;
+    page-break-after: always;
+
+    /* Reset screen sizing: let the @page rule control the physical page size. */
+    width: 210mm;
+    height: 297mm;
+    margin: 0;
+    padding: 14mm 14mm calc(14mm + 9mm);
+    box-shadow: none;
+    overflow: visible;  /* don't clip on the last row */
+    gap: 14px;
+  }
+
+  /* The last page does not need a forced break after it. */
+  .qp-page:last-of-type {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  /* Page-number label prints in the same absolute position. */
+  .qp-page-num { display: block !important; }
+
+  /* Draft watermark: fixed positioning repeats it on every physical page.
+     (Each .qp-page is exactly one physical page, so position:absolute also works.) */
+  .qp-watermark { position: fixed; top: 45%; }
+
+  /* Fallback single-sheet (should never reach print in normal use). */
   .qp-sheet {
     width: 210mm;
-    min-height: 0;
     margin: 0;
     padding: 14mm 14mm 14mm;
     box-shadow: none;
-    /* The green line along the top prints too (owner, 2026-10-17); the page has no margin, so it sits on the edge. */
-    border-top: 6px solid #0f766e;
-    /* One A4 page tall at least, so the signature and contact sit at the foot of the page (owner,
-       2026-10-17); a longer quote simply grows onto more pages. 296mm, not 297, so rounding never
-       adds a blank page. */
     display: flex;
     flex-direction: column;
     min-height: 296mm;
     box-sizing: border-box;
-    /* Each page of a longer quote gets the sheet's padding and green line again: without it the
-       second page started at the paper's top edge, cut, with no margin (owner, 2026-10-21). */
+    font-size: 12px;
+    /* Each page of a longer quote gets the sheet's padding and green line again. */
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
   }
   .qp-sheet > * + * { margin-top: 14px; }
-  /* One page for an ordinary quote: a little tighter on paper than on screen. */
-  .qp-sheet { font-size: 12px; }
   .qp-lines td { padding: 7px 6px; }
-  .qp-foot { margin-top: auto; padding-top: 20px; }
-  /* The header row repeats on each page; a line never splits across two. */
   .qp-lines thead { display: table-header-group; }
   .qp-lines tr { break-inside: avoid; page-break-inside: avoid; }
   .qp-avoid { break-inside: avoid; page-break-inside: avoid; }
-  /* A draft says so on every page. */
-  .qp-watermark { position: fixed; top: 45%; }
 }
