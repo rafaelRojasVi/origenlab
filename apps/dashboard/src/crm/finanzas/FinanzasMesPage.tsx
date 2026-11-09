@@ -137,7 +137,7 @@ function BarChart({ series, meta }: { series: Array<{ month: string; neto: numbe
           <g key={i}>
             <line x1={padding.left} x2={W - padding.right} y1={y} y2={y} stroke="var(--line)" strokeWidth={1} />
             <text x={padding.left - 4} y={y + 4} textAnchor="end" style={{ font: "500 11px 'IBM Plex Mono',monospace", fill: "var(--ink-muted)" }}>
-              {v === 0 ? "0" : M(v).replace("$", "").replace(",00", "").trim()}
+              {v === 0 ? "0" : M(v).replaceAll("$", "").replaceAll(",00", "").trim()}
             </text>
           </g>
         );
@@ -161,7 +161,7 @@ function BarChart({ series, meta }: { series: Array<{ month: string; neto: numbe
             </rect>
             {(s.isCurrent || i === series.length - 2) && h > 0 && (
               <text x={cx} y={y - 3} textAnchor="middle" style={{ font: "600 11px 'IBM Plex Mono',monospace", fill: "var(--ink)" }}>
-                {M(s.neto).replace("$", "").replace(" M", "")}
+                {M(s.neto).replaceAll("$", "").replaceAll(" M", "")}
               </text>
             )}
             <text x={cx} y={H - 2} textAnchor="middle" style={{
