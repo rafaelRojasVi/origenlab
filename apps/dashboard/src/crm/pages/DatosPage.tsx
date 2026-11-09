@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { fetchReview, fetchWorkQueue } from "../crmApi";
 import type { ReviewResponse, WorkQueueItem } from "../crmTypes";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import {
   Badge,
+  Button,
   EmptyState,
   ExternalLink,
+  FormField,
   LocalDriveLink,
   PageHeader,
   Panel,
@@ -13,15 +15,22 @@ import {
   Segmented,
   Skeleton,
   StatLine,
+  TextInput,
+  TextareaInput,
+  fmtDate,
   fmtInt,
+  toast,
 } from "../ui";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { useResource } from "../useResource";
+import { newCaseCommandKey } from "../caseCommands";
 import { DataHealth } from "./DataHealth";
 import { MailRulesPanel } from "./MailRulesPanel";
 import { QuoteReadingsPanel } from "./QuoteReadingsPanel";
 import { ProvidersPage } from "./ProvidersPage";
 import { DrivePage } from "./DrivePage";
+import type { FinanceSettings } from "../finanzas/financeApi";
+import { fetchFinanceSettings, setMonthlyTarget, setPartnerRule } from "../finanzas/financeApi";
 
 const QUEUE_LABEL: Record<string, { label: string; action: string; blocking: boolean }> = {
   canonical_undetermined: { label: "Revisión canónica indeterminada", action: "Anular o reemplazar la revisión duplicada", blocking: true },
@@ -64,6 +73,7 @@ const TAB_LABEL: Record<DatosTab, string> = {
   drive: "Archivo Drive",
   // «decidir» is handled by OperacionesPage directly; DatosPage never renders it.
   decidir: "Por ordenar",
+  meta: "Metas y socios",
 };
 
 /**
@@ -132,6 +142,8 @@ export function DatosBody({
         <ProvidersPage />
       ) : tab === "drive" ? (
         <DrivePage navigate={navigate} />
+      ) : tab === "meta" ? (
+        <FinanceSettingsPanel />
       ) : tab === "bloqueos" ? (
         <ResourceGate state={queue} reload={reloadQueue} skeleton={<Skeleton rows={5} />}>
           {(q) => <CrmQueue items={q.items} counts={q.counts} navigate={navigate} />}
@@ -343,5 +355,167 @@ function Evidence({ review }: { review: ReviewResponse }) {
         La revisión detallada de evidencia está en la pantalla «Revisión de evidencia» del panel anterior (<a className="underline" href="#/revision">#/revision</a>).
       </p>
     </>
+  );
+}
+
+// ── «Metas y socios» finance-settings panel (admin only) ─────────────────────
+
+function FinanceSettingsPanel() {
+  const [state, reload] = useResource(fetchFinanceSettings);
+  return (
+    <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />} errorTitle="No se pudo leer ajustes de Finanzas">
+      {(data) => (
+        <div className="flex flex-col gap-5">
+          <MetaForm current={data} onDone={reload} />
+          <ReglaSociosForm current={data} onDone={reload} />
+        </div>
+      )}
+    </ResourceGate>
+  );
+}
+
+function MetaForm({ current, onDone }: { current: FinanceSettings; onDone: () => void }) {
+  const isDefault = current.monthly_target.is_default;
+  const [net, setNet] = useState(isDefault ? "" : String(current.monthly_target.net));
+  const [month, setMonth] = useState(() => {
+    const now = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit" }).format(new Date());
+    return now;
+  });
+  const [notes, setNotes] = useState(current.monthly_target.notes ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keyRef = useRef(newCaseCommandKey());
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const n = parseFloat(net.replace(/\./g, "").replace(",", "."));
+    if (!n || n <= 0) { setError("La meta debe ser mayor que 0."); return; }
+    setBusy(true); setError(null);
+    try {
+      await setMonthlyTarget({ month: `${month}-01`, sales_target_net: Math.round(n), ...(notes.trim() ? { target_notes: notes.trim() } : {}) }, keyRef.current);
+      toast("Meta mensual actualizada");
+      onDone();
+    } catch (err) {
+      keyRef.current = newCaseCommandKey();
+      setError(err instanceof Error ? err.message : "Error al guardar");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Panel title="Meta mensual de ventas" note="Neto facturado. Se guarda por mes; si no se configura, se usa el default de $6 M.">
+      <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3 p-3">
+        <div className="flex flex-wrap gap-3">
+          <FormField label="Mes" htmlFor="meta-month">
+            <input type="month" id="meta-month" className="h-10 w-full rounded-lg border border-line-strong bg-raised px-3 text-sm text-ink focus:border-accent focus:outline-none" value={month} onChange={(e) => setMonth(e.target.value)} required disabled={busy} />
+          </FormField>
+          <FormField label="Meta neta (CLP)" htmlFor="meta-net" required>
+            <input id="meta-net" type="number" min="1" step="1" value={net} onChange={(e) => setNet(e.target.value)} disabled={busy} required placeholder={isDefault ? String(current.monthly_target.net) : "Ej: 6000000"} className="w-full min-w-0 rounded-md border border-line bg-canvas-raised px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50" />
+          </FormField>
+        </div>
+        <FormField label="Notas" htmlFor="meta-notes">
+          <TextareaInput id="meta-notes" value={notes} onChange={setNotes} disabled={busy} rows={2} placeholder="Opcional" />
+        </FormField>
+        {!isDefault && (
+          <p className="text-xs text-ink-muted">Meta actual: <strong>{String(current.monthly_target.net)}</strong> para {fmtDate(current.monthly_target.month ?? "")}</p>
+        )}
+        {error && <p className="text-sm text-bad">{error}</p>}
+        <div>
+          <Button type="submit" variant="primary" disabled={busy}>{busy ? "Guardando…" : "Guardar meta"}</Button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+function ReglaSociosForm({ current, onDone }: { current: FinanceSettings; onDone: () => void }) {
+  const existing = current.partner_rule;
+  const [ruleName, setRuleName] = useState(existing?.rule_name ?? "actual_50_50");
+  const [validFrom, setValidFrom] = useState(() => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date()));
+  const [arriendo, setArriendo] = useState(String(existing?.arriendo_clp ?? 0));
+  const [sueldo, setSueldo] = useState(String(existing?.sueldo_tatiana ?? 0));
+  const [tasa, setTasa] = useState(existing?.tasa_sebastian != null ? String(existing.tasa_sebastian * 100) : "");
+  const [arrPct, setArrPct] = useState(String((existing?.arriendo_pct_empresa ?? 0.5) * 100));
+  const [splitPct, setSplitPct] = useState(String((existing?.split_pct ?? 0.5) * 100));
+  const [ruleNotes, setRuleNotes] = useState(existing?.notes ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const keyRef = useRef(newCaseCommandKey());
+
+  const RULE_OPTIONS = [
+    { value: "actual_50_50", label: "Actual 50/50" },
+    { value: "opcion_a", label: "Opción A — Tatiana cubre arriendo" },
+    { value: "opcion_b", label: "Opción B — Sueldo fijo + residual 50/50" },
+    { value: "opcion_c", label: "Opción C — Sueldo mayor + residual 50/50" },
+    { value: "opcion_d", label: "Opción D — Sebastián aporta capital" },
+  ];
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await setPartnerRule({
+        valid_from: validFrom,
+        rule_name: ruleName,
+        arriendo_clp: parseInt(arriendo, 10) || 0,
+        sueldo_tatiana: parseInt(sueldo, 10) || 0,
+        ...(tasa ? { tasa_sebastian: parseFloat(tasa) / 100 } : {}),
+        arriendo_pct_empresa: parseFloat(arrPct) / 100,
+        split_pct: parseFloat(splitPct) / 100,
+        ...(ruleNotes.trim() ? { rule_notes: ruleNotes.trim() } : {}),
+      }, keyRef.current);
+      toast("Regla de socios actualizada");
+      onDone();
+    } catch (err) {
+      keyRef.current = newCaseCommandKey();
+      setError(err instanceof Error ? err.message : "Error al guardar");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <Panel title="Regla de distribución entre socios" note="Configura cómo se reparten las ganancias. El cambio se registra con fecha de inicio.">
+      <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3 p-3">
+        {(() => {
+          const N = "w-full min-w-0 rounded-md border border-line bg-canvas-raised px-2.5 py-1.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-50";
+          return (<>
+        <div className="flex flex-wrap gap-3">
+          <FormField label="Regla" htmlFor="rs-rule">
+            <select id="rs-rule" className="h-10 w-full rounded-lg border border-line-strong bg-raised px-3 text-sm text-ink focus:border-accent focus:outline-none" value={ruleName} onChange={(e) => setRuleName(e.target.value)} disabled={busy}>
+              {RULE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Vigente desde" htmlFor="rs-from">
+            <TextInput id="rs-from" type="date" value={validFrom} onChange={setValidFrom} disabled={busy} required />
+          </FormField>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <FormField label="Arriendo mensual (CLP)" htmlFor="rs-arriendo">
+            <input id="rs-arriendo" type="number" min="0" step="1" value={arriendo} onChange={(e) => setArriendo(e.target.value)} disabled={busy} placeholder="0" className={N} />
+          </FormField>
+          <FormField label="Sueldo Tatiana (CLP)" htmlFor="rs-sueldo">
+            <input id="rs-sueldo" type="number" min="0" step="1" value={sueldo} onChange={(e) => setSueldo(e.target.value)} disabled={busy} placeholder="0" className={N} />
+          </FormField>
+          <FormField label="Tasa Sebastián (% / mes)" htmlFor="rs-tasa">
+            <input id="rs-tasa" type="number" min="0" step="0.1" value={tasa} onChange={(e) => setTasa(e.target.value)} disabled={busy} placeholder="Ej: 2 (= 2%)" className={N} />
+          </FormField>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <FormField label="Empresa cubre arriendo (%)" htmlFor="rs-arr-pct">
+            <input id="rs-arr-pct" type="number" min="0" max="100" step="1" value={arrPct} onChange={(e) => setArrPct(e.target.value)} disabled={busy} placeholder="50" className={N} />
+          </FormField>
+          <FormField label="Split % (Tatiana → Sebastián)" htmlFor="rs-split">
+            <input id="rs-split" type="number" min="0" max="100" step="1" value={splitPct} onChange={(e) => setSplitPct(e.target.value)} disabled={busy} placeholder="50" className={N} />
+          </FormField>
+        </div>
+        <FormField label="Notas" htmlFor="rs-notes">
+          <TextareaInput id="rs-notes" value={ruleNotes} onChange={setRuleNotes} disabled={busy} rows={2} placeholder="Opcional" />
+        </FormField>
+          </>);
+        })()}
+        {error && <p className="text-sm text-bad">{error}</p>}
+        <div>
+          <Button type="submit" variant="primary" disabled={busy}>{busy ? "Guardando…" : "Guardar regla"}</Button>
+        </div>
+      </form>
+    </Panel>
   );
 }

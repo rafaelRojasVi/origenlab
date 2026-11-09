@@ -32,6 +32,60 @@ _STAGE_WEIGHTS: dict[str, float] = {
 
 _DEFAULT_TARGET_NET = 6_000_000  # pesos CLP
 
+_POR_COBRAR_AGING_SQL = """
+with month_bounds as (
+  select (now() at time zone 'America/Santiago')::date as today
+),
+invoice_balance as (
+  select
+    i.id,
+    i.issued_on,
+    (i.total_amount
+     + coalesce((
+         select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
+           from crm.invoice n
+          where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
+     ), 0)
+     - coalesce((
+         select sum(p.amount) from crm.invoice_payment p
+          where p.invoice_id = i.id and p.removed_at is null
+     ), 0)
+    ) as balance_iva
+  from crm.invoice i
+  where i.doc_type in (33, 34) and i.paid_on is null
+)
+select
+  case
+    when (mb.today - ib.issued_on) <= 30 then '0-30'
+    when (mb.today - ib.issued_on) <= 60 then '31-60'
+    when (mb.today - ib.issued_on) <= 90 then '61-90'
+    else '90+'
+  end as bucket,
+  coalesce(sum(ib.balance_iva), 0) as total_iva
+from invoice_balance ib, month_bounds mb
+where ib.balance_iva > 0
+group by 1
+"""
+
+_MONTHLY_HISTORY_SQL = """
+select
+  date_trunc('month', i.issued_on at time zone 'America/Santiago')::date::text as month,
+  coalesce(sum(
+    case i.doc_type
+      when 33 then i.net_amount
+      when 34 then i.net_amount
+      when 56 then i.net_amount
+      when 61 then -i.net_amount
+      else 0
+    end
+  ), 0) as neto
+from crm.invoice i
+where i.issued_on >= (date_trunc('month', now() at time zone 'America/Santiago') - interval '5 months')::date
+  and i.doc_type in (33, 34, 56, 61)
+group by 1
+order by 1
+"""
+
 _MES_SQL = """
 with
   -- current Santiago month boundaries
@@ -249,6 +303,14 @@ class FinanceReadRepository:
             cur.execute(_PIPELINE_BY_STAGE_SQL)
             pipe_rows = cur.fetchall()
 
+            # por_cobrar aging breakdown (IVA-inclusive)
+            cur.execute(_POR_COBRAR_AGING_SQL)
+            aging_rows = cur.fetchall()
+
+            # monthly history (last 6 months)
+            cur.execute(_MONTHLY_HISTORY_SQL)
+            history_rows = cur.fetchall()
+
         pipeline_net = 0
         pipeline_by_stage: dict[str, dict[str, Any]] = {}
         for stage, amount_clp, opp_id, title in pipe_rows:
@@ -261,15 +323,27 @@ class FinanceReadRepository:
             pipeline_by_stage[stage]["total_clp"] += int(amount_clp)
             pipeline_by_stage[stage]["weighted_clp"] += weighted
 
+        by_age: dict[str, int] = {"0-30": 0, "31-60": 0, "61-90": 0, "90+": 0}
+        for bucket, total_iva in aging_rows:
+            if bucket in by_age:
+                by_age[bucket] = int(total_iva)
+
+        monthly_history = [{"month": r[0], "neto": int(r[1])} for r in history_rows]
+
         pct = (row["vendido_net"] / row["meta_net"] * 100) if row["meta_net"] > 0 else 0.0
         return {
             "mes": row["mes"],
             "today": row["today"],
             "vendido": {"net": row["vendido_net"], "meta_net": row["meta_net"], "pct_meta": round(pct, 1)},
-            "por_cobrar": {"total": row["por_cobrar_total"], "count": row["por_cobrar_count"]},
+            "por_cobrar": {
+                "total": row["por_cobrar_total"],
+                "count": row["por_cobrar_count"],
+                "by_age": by_age,
+            },
             "pipeline": {"ponderado_net": pipeline_net, "by_stage": pipeline_by_stage},
             "capital_atado": {"total": row["capital_atado_total"], "count": row["capital_atado_count"]},
             "gastos": {"total": row["gastos_total"], "count": row["gastos_count"]},
+            "monthly_history": monthly_history,
         }
 
     def expenses(self, month: str | None = None) -> dict[str, Any]:

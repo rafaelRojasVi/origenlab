@@ -21,8 +21,8 @@ export type CrmSection =
 
 /** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive.
  *  «decidir» is the «Por ordenar» section linked from «Hoy». */
-export type DatosTab = "bloqueos" | "no_importadas" | "evidencia" | "estado" | "acciones" | "proveedores" | "drive" | "decidir";
-const DATOS_TABS = new Set<string>(["bloqueos", "no_importadas", "evidencia", "estado", "acciones", "proveedores", "drive", "decidir"]);
+export type DatosTab = "bloqueos" | "no_importadas" | "evidencia" | "estado" | "acciones" | "proveedores" | "drive" | "decidir" | "meta";
+const DATOS_TABS = new Set<string>(["bloqueos", "no_importadas", "evidencia", "estado", "acciones", "proveedores", "drive", "decidir", "meta"]);
 
 /** Every page, in the order of the five areas (`nav.ts` groups them into tabs). */
 export interface CrmNavItem {

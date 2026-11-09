@@ -24,14 +24,17 @@ export interface PipelineStage {
   weighted_clp: number;
 }
 
+export type AgeBucket = "0-30" | "31-60" | "61-90" | "90+";
+
 export interface MesData {
   mes: string;        // "2026-11-01"
   today: string;      // "2026-11-09"
   vendido: { net: number; meta_net: number; pct_meta: number };
-  por_cobrar: { total: number; count: number };
+  por_cobrar: { total: number; count: number; by_age: Record<AgeBucket, number> };
   pipeline: { ponderado_net: number; by_stage: Record<string, PipelineStage> };
   capital_atado: { total: number; count: number };
   gastos: { total: number; count: number };
+  monthly_history: Array<{ month: string; neto: number }>;
 }
 
 export interface Expense {
@@ -138,7 +141,7 @@ export interface UpsertExpenseArgs {
 }
 
 export async function upsertExpense(args: UpsertExpenseArgs, idempotencyKey = newCaseCommandKey()) {
-  return post("/v2/commands/upsert-expense", args, idempotencyKey);
+  return post("/v2/commands/upsert-expense", args as unknown as Record<string, unknown>, idempotencyKey);
 }
 
 export interface UpsertSupplierOrderArgs {
@@ -157,7 +160,7 @@ export interface UpsertSupplierOrderArgs {
 }
 
 export async function upsertSupplierOrder(args: UpsertSupplierOrderArgs, idempotencyKey = newCaseCommandKey()) {
-  return post("/v2/commands/upsert-supplier-order", args, idempotencyKey);
+  return post("/v2/commands/upsert-supplier-order", args as unknown as Record<string, unknown>, idempotencyKey);
 }
 
 export interface SetMonthlyTargetArgs {
@@ -167,7 +170,7 @@ export interface SetMonthlyTargetArgs {
 }
 
 export async function setMonthlyTarget(args: SetMonthlyTargetArgs, idempotencyKey = newCaseCommandKey()) {
-  return post("/v2/commands/set-monthly-target", args, idempotencyKey);
+  return post("/v2/commands/set-monthly-target", args as unknown as Record<string, unknown>, idempotencyKey);
 }
 
 export interface SetPartnerRuleArgs {
@@ -182,5 +185,5 @@ export interface SetPartnerRuleArgs {
 }
 
 export async function setPartnerRule(args: SetPartnerRuleArgs, idempotencyKey = newCaseCommandKey()) {
-  return post("/v2/commands/set-partner-rule", args, idempotencyKey);
+  return post("/v2/commands/set-partner-rule", args as unknown as Record<string, unknown>, idempotencyKey);
 }

@@ -18,6 +18,15 @@
 --   * #76 finance.partner_rule — the partner distribution rule (50/50, opción A–D): one append-only
 --     row per rule change; the rule in force is the row with the greatest valid_from.
 
+-- The finance schema is an eighth application schema. Slice 0 (M14) revoked CREATE ON DATABASE
+-- from origenlab_owner after the original seven were created; we follow the same open/close shape
+-- as slice4_procrastinate: grant it here, create the schema, revoke it again at the end.
+do $$
+begin
+  execute format('grant create on database %I to origenlab_owner', current_database());
+end
+$$;
+
 set role origenlab_owner;
 
 -- ── schema ────────────────────────────────────────────────────────────────────────────────────
@@ -209,3 +218,13 @@ grant usage, select on sequence finance.partner_rule_id_seq to origenlab_api;
 revoke all on sequence finance.partner_rule_id_seq from public, anon, authenticated, service_role;
 
 reset role;
+
+-- Close the schema-creation window; fail closed if the privilege is still present.
+do $$
+begin
+  execute format('revoke create on database %I from origenlab_owner', current_database());
+  if has_database_privilege('origenlab_owner', current_database(), 'CREATE') then
+    raise exception 'origenlab_owner still holds CREATE on database %', current_database();
+  end if;
+end
+$$;
