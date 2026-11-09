@@ -2,9 +2,10 @@
  * «Calificar»: five qualifying questions saved as one case note with prefix «Calificación:».
  *
  * - On the Resumen tab of the case drawer.
- * - When no «Calificación:» note exists: shows the form with 5 short inputs.
- * - When one exists: shows it read-only with «Editar» (editing writes a NEW note via `addNote` —
- *   no need for `reviseNote`; both old and new note are kept in history).
+ * - When no «Calificación:» note exists: one line, «Sin calificar» and «Calificar», which opens the
+ *   form with 5 short inputs (an empty form on every case was noise, owner 2026-11-09).
+ * - When one exists: only the answered questions, read-only, with «Editar» (editing writes a NEW
+ *   note via `addNote` — no need for `reviseNote`; both old and new note are kept in history).
  * - Saves via the existing `addNote(subject_kind="opportunity")` command — no new API routes.
  *
  * The prefix «Calificación:» is a recognizable marker so the note can be found later.
@@ -158,24 +159,30 @@ function QualifyReadOnly({
   onEdit: () => void;
 }) {
   const answers = parseQualifyNote(note.body);
+  // Only what was answered: «—» rows say nothing.
+  const answered = ([
+    ["Para qué lo usa", answers.uso],
+    ["Para cuándo", answers.plazo],
+    ["Presupuesto", answers.presupuesto],
+    ["Decisores", answers.decisores],
+    ["Destino", answers.destino],
+  ] as [string, string][]).filter(([, value]) => value && value !== "—");
   return (
     <div className="rounded-lg border border-line bg-canvas-raised p-3 text-[12.5px]" data-testid="qualify-readonly">
-      <dl className="space-y-1.5">
-        {([
-          ["Para qué lo usa", answers.uso],
-          ["Para cuándo", answers.plazo],
-          ["Presupuesto", answers.presupuesto],
-          ["Decisores", answers.decisores],
-          ["Destino", answers.destino],
-        ] as [string, string][]).map(([label, value]) => (
-          <div key={label} className="flex flex-col gap-0.5">
-            <dt className="text-[11px] font-semibold text-ink-muted">{label}</dt>
-            <dd className="text-ink">{value || <span className="text-ink-faint">—</span>}</dd>
-          </div>
-        ))}
-      </dl>
+      {answered.length ? (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+          {answered.map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-[11.5px] text-ink-faint">{label}</dt>
+              <dd className="text-ink">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-ink-faint">Calificado sin respuestas.</p>
+      )}
       {mayAuthor ? (
-        <div className="mt-3 border-t border-line pt-2">
+        <div className="mt-2">
           <Button type="button" onClick={onEdit}>
             Editar
           </Button>
@@ -187,7 +194,7 @@ function QualifyReadOnly({
 
 /**
  * «Calificar»: qualify-before-quote card for the case drawer's Resumen tab.
- * Fetches case notes to find an existing «Calificación:» note; shows the form if none found.
+ * Fetches case notes to find an existing «Calificación:» note; without one it is a single line.
  */
 export function QualifyCard({
   card,
@@ -216,41 +223,35 @@ export function QualifyCard({
     onChanged();
   }
 
-  const content = (() => {
-    if (state.kind === "loading") {
-      return <p className="text-[11px] text-ink-faint">Cargando…</p>;
-    }
-    if (state.kind !== "ready") {
-      return <p className="text-[11px] text-warn">No se pudieron leer las notas del caso.</p>;
-    }
-    if (existing && !editing) {
-      return <QualifyReadOnly note={existing} mayAuthor={mayAuthor} onEdit={() => setEditing(true)} />;
-    }
-    if (mayAuthor) {
-      return (
-        <QualifyForm
-          opportunityId={card.opportunity_id}
-          note={editing ? existing : null}
-          onDone={onDone}
-          onCancel={() => setEditing(false)}
-        />
-      );
-    }
-    return <p className="text-[12px] text-ink-faint">Sin calificación registrada.</p>;
-  })();
-
+  if (state.kind === "loading") return null;
+  if (state.kind !== "ready") {
+    return <p className="text-[11px] text-warn">No se pudieron leer las notas del caso.</p>;
+  }
+  if (mayAuthor && editing) {
+    return (
+      <Section title="Calificar">
+        <QualifyForm opportunityId={card.opportunity_id} note={existing} onDone={onDone} onCancel={() => setEditing(false)} />
+      </Section>
+    );
+  }
+  if (existing) {
+    return (
+      <Section title="Calificación">
+        <QualifyReadOnly note={existing} mayAuthor={mayAuthor} onEdit={() => setEditing(true)} />
+      </Section>
+    );
+  }
   return (
-    <Section
-      title="Calificar"
-      aside={
-        !existing && mayAuthor && state.kind === "ready" ? (
-          <span className="inline-flex items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent">
-            Sin calificar
-          </span>
-        ) : null
-      }
-    >
-      {content}
-    </Section>
+    <div className="flex flex-wrap items-center gap-2 text-[12.5px]" data-testid="qualify-collapsed">
+      <span className="inline-flex items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent">
+        Sin calificar
+      </span>
+      <span className="text-ink-faint">5 preguntas antes de cotizar</span>
+      {mayAuthor ? (
+        <Button type="button" className="ml-auto" onClick={() => setEditing(true)}>
+          Calificar
+        </Button>
+      ) : null}
+    </div>
   );
 }
