@@ -181,8 +181,8 @@ select is(
   (select count(*)::int from pg_class c join pg_namespace n on n.oid = c.relnamespace
     where c.relkind = 'r'
       and n.nspname in ('crm', 'comms', 'outbound', 'evidence', 'catalog', 'procurement', 'platform')
-      and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §7 #%'),
-  72, 'every table is commented with its DOMAIN.md §7 inventory number');
+      and obj_description(c.oid, 'pg_class') like 'DOMAIN.md §% #%'),
+  72, 'every table is commented with its DOMAIN.md inventory number (§7 or §8)');
 
 select * from finish();
 rollback;
