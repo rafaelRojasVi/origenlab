@@ -433,7 +433,7 @@ function CotizadorWorkspace({
       <CotizadorHeader
         workspace={ws}
         leaving={leaving}
-        onBack={() => void leaveTo(() => navigate("oportunidades", ws.quote.opportunity_id))}
+        onBack={() => void leaveTo(() => ws.tender != null ? navigate("licitaciones") : navigate("oportunidades", ws.quote.opportunity_id))}
         actions={actions}
         status={
           authored ? (
@@ -670,8 +670,11 @@ function CotizadorHeader({
   const { quote, case: opportunity, current, revisions } = workspace;
   const badge = statusOf(current?.status ?? revisions[revisions.length - 1]?.status ?? "draft");
   const label = quoteLabel({ label: current?.label, quote_number: quote.quote_number, revision_no: current?.revision_no });
-  const caseTitle = opportunity.title || opportunity.institution?.name || "la oportunidad";
-  const caseHref = crmHash("oportunidades", quote.opportunity_id);
+  const isTender = workspace.tender != null;
+  const caseTitle = isTender
+    ? (workspace.tender?.code ? `Licitación ${workspace.tender.code}` : "Licitaciones")
+    : (opportunity.title || opportunity.institution?.name || "la oportunidad");
+  const caseHref = isTender ? crmHash("licitaciones") : crmHash("oportunidades", quote.opportunity_id);
   return (
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">

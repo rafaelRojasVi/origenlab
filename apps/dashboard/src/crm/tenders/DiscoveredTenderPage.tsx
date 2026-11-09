@@ -76,7 +76,7 @@ export function DiscoveredTenderPage({ noticeId, navigate, now }: { noticeId: st
         }}
         className="text-xs font-medium text-accent hover:underline"
       >
-        ← En Mercado Público
+        ← Licitaciones
       </a>
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} />}>
         {(n) => (
