@@ -89,6 +89,11 @@ EXPECTED_EXTRA_TABLES = {
     "invoice_payment",
     # 20261108100000_slice8_web_consent.sql — DOMAIN.md §7 #72.
     "consent",
+    # 20261112100000_slice9_finance_schema.sql — DOMAIN.md §8 #73–#76.
+    "expense",
+    "supplier_order",
+    "monthly_target",
+    "partner_rule",
 }
 
 # Functions added after Slice 0, by migration. The audit reports only a count
@@ -383,6 +388,13 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     # 20261108100000_slice8_web_consent.sql — person_id is covered by a plain unconditional index
     # (source_record_id is a logical id with no foreign key).
     "crm.consent.consent_person_id_fkey",
+    # 20261112100000_slice9_finance_schema.sql — all six covered by partial IS NOT NULL indexes.
+    "crm.expense.expense_created_by_operator_id_fkey",
+    "crm.supplier_order.supplier_order_opportunity_id_fkey",
+    "crm.supplier_order.supplier_order_quote_id_fkey",
+    "crm.supplier_order.supplier_order_created_by_operator_id_fkey",
+    "crm.monthly_target.monthly_target_set_by_operator_id_fkey",
+    "crm.partner_rule.partner_rule_set_by_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(
@@ -403,18 +415,18 @@ EXPECTED_COVERED_UNCONDITIONALLY = (
 
 EXPECTED_SUMMARIES = {
     "a04": {
-        "relation_count": 69,
+        "relation_count": 74,
     },
     "a05": {
         "function_count": EXPECTED_FUNCTION_COUNT,
         "security_definer_count": len(EXPECTED_SECURITY_DEFINERS),
     },
     "a08": {
-        "table_count": 68,
+        "table_count": 72,
         "schema_count": 7,
     },
     "a09": {
-        "policy_count": 238,
+        "policy_count": 249,
     },
     "a10": {
         "foreign_key_count": EXPECTED_FOREIGN_KEY_COUNT,
@@ -529,8 +541,8 @@ def main() -> int:
     if unreviewed_tables:
         refuse(f"a08 names unreviewed tables: {unreviewed_tables!r}")
 
-    if "35 entr(y|ies) are present here and not in the baseline" not in a08_text:
-        refuse("a08 does not report exactly thirty-five extra tables")
+    if "39 entr(y|ies) are present here and not in the baseline" not in a08_text:
+        refuse("a08 does not report exactly thirty-nine extra tables")
 
     # The 93 policy additions must belong to those same twenty-nine reviewed tables, plus one each on
     # two existing tables (crm.quote_line and procurement.notice, below):
@@ -584,8 +596,8 @@ def main() -> int:
     if len(extra) != 1:
         refuse("a09 does not report the extra policies")
     a09_text = extra[0]
-    if "113 entr(y|ies) are present here and not in the baseline" not in a09_text:
-        refuse("a09 does not report exactly one hundred and thirteen extra policies")
+    if "124 entr(y|ies) are present here and not in the baseline" not in a09_text:
+        refuse("a09 does not report exactly one hundred and twenty-four extra policies")
 
     # The audit lists at most twelve entries and then "...", so a long delta cannot name every
     # table. What it does name must all be reviewed tables; only an untruncated list must
@@ -609,7 +621,7 @@ def main() -> int:
     # reviewed one would each add or change an a05 finding, and an uncovered
     # foreign key an a10 finding.
     expected_findings = {
-        "a04": ["relations in scope: observed 69, expected 34"],
+        "a04": ["relations in scope: observed 74, expected 34"],
         "a05": [
             "SECURITY DEFINER functions (the closed list of ARCHITECTURE.md §6.2): "
             f"{len(EXPECTED_SECURITY_DEFINERS)} entr(y|ies) are present here and not in the baseline: "
@@ -630,7 +642,8 @@ def main() -> int:
         "reviewed commercial-case, historical-quotation, slice-5 campaign, W10 "
         "unsubscribe, campaign-block, shared-sign-in, slice-6 campaign-content-archive "
         "and crm-authoring, slice-7 catalog and document-line, notice-relevance-review, "
-        "prospect-findings, prospect-edit and prospect-search-run schema delta, "
+        "prospect-findings, prospect-edit and prospect-search-run, slice-8 web-consent "
+        "and slice-9 finance schema delta, "
         "less the revoked runtime writes on platform.operator"
     )
     return 0
