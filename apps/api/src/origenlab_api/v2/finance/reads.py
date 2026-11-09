@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from decimal import Decimal
 from typing import Any
 
 # Stage-to-probability weights for the pipeline ponderado.
@@ -197,13 +198,21 @@ left join target t on true
 """
 
 _PIPELINE_BY_STAGE_SQL = """
+-- Each open case's neto in CLP, from its current quote revision (not void, not superseded): the
+-- Cotizador's own `tax_base`, else what the quote reader read from the PDF (`quote_document`) —
+-- the same two sources the case panel and the board use (`quote_documents.quote_contents`).
 select o.stage,
        coalesce(
-         (select qr.tax_base
+         (select coalesce(
+                   case when qr.quote_currency = 'CLP' then qr.tax_base end,
+                   case when qd.payload ->> 'currency' = 'CLP'
+                         and qd.payload ->> 'net_total' ~ '^[0-9]+(\.[0-9]+)?$'
+                        then (qd.payload ->> 'net_total')::numeric end)
             from crm.quote q
             join crm.quote_revision qr on qr.quote_id = q.id
-           where q.opportunity_id = o.id and qr.status = 'active'
-             and qr.quote_currency = 'CLP' and qr.tax_base is not null
+            left join evidence.source_record qd
+                   on qd.dedupe_key = 'quote_document:' || lower(qr.pdf_sha256) and qd.kind = 'quote_document'
+           where q.opportunity_id = o.id and qr.status <> 'void' and qr.superseded_at is null
            order by qr.created_at desc limit 1),
          0
        ) as amount_clp,
@@ -315,7 +324,8 @@ class FinanceReadRepository:
         pipeline_by_stage: dict[str, dict[str, Any]] = {}
         for stage, amount_clp, opp_id, title in pipe_rows:
             w = _STAGE_WEIGHTS.get(stage, 0.0)
-            weighted = int(amount_clp * w)
+            # amount_clp is a numeric (Decimal) column and the weights are floats: Decimal * float raises.
+            weighted = int(Decimal(amount_clp) * Decimal(str(w)))
             pipeline_net += weighted
             if stage not in pipeline_by_stage:
                 pipeline_by_stage[stage] = {"weight": w, "count": 0, "total_clp": 0, "weighted_clp": 0}
