@@ -20,6 +20,7 @@ interface Props {
 }
 const { heading = false } = Astro.props;
 const line = publicClaim('proveedor-inscrito');
+const sello = publicClaim('sello-empresa-mujer');
 const approved = new Set(publicClaimNames('proveedor-inscrito'));
 const logos = registrationLogos.filter((logo) => approved.has(logo.name));
 ---
@@ -33,6 +34,7 @@ const logos = registrationLogos.filter((logo) => approved.has(logo.name));
           <p class="reg__line">{line}.</p>
         </div>
       )}
+      {sello && <p class="reg__sello t-label">{sello}</p>}
       <div class="reg__view" tabindex="0" role="region" aria-label="Instituciones donde estamos inscritos como proveedor">
         <div class="reg__track">
           {[0, 1].map((copy) => (
@@ -69,6 +71,10 @@ const logos = registrationLogos.filter((logo) => approved.has(logo.name));
     display: grid;
     gap: 0.75rem;
     margin-bottom: 2rem;
+  }
+  .reg__sello {
+    margin-bottom: 1.5rem;
+    color: var(--color-teal-700);
   }
   .reg__line {
     max-width: 52ch;
