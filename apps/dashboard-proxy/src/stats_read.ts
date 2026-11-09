@@ -9,9 +9,9 @@
  * When either secret is absent the route answers 503 `not_configured` and the dashboard
  * shows a configuration notice instead of an error.
  *
- * Session validation: a HEAD /auth/session subrequest to the API (same session cookie,
+ * Session validation: a GET /auth/session subrequest (only a 2xx counts as a session) to the API (same session cookie,
  * same API token and CF Access headers the Worker sends for every other dashboard read).
- * Any result other than 200 is forwarded unchanged to the browser.
+ * A 403 or 5xx is forwarded; any other non-2xx (401, redirect, 404, 405) answers 401.
  *
  * Caching: `caches.default` for 5 minutes under a canonical internal key so the dashboard
  * does not hammer the SQL API; the cache entry is invalidated if the account id changes.
@@ -222,10 +222,14 @@ async function validateSession(request: Request, env: StatsReadEnv): Promise<num
 
   try {
     const res = await fetch(`${upstream}${AUTH_SESSION_PATH}`, {
-      method: "HEAD",
+      method: "GET",
       headers,
+      redirect: "manual",
     });
-    return res.status;
+    // Only a 2xx proves a live session. Anything else (redirect, 404, 405, ...) is not a session.
+    if (res.ok) return 200;
+    if (res.status === 403 || res.status >= 500) return res.status;
+    return 401;
   } catch {
     return 502;
   }

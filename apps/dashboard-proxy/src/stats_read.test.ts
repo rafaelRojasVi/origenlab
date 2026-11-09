@@ -92,6 +92,22 @@ describe("session validation", () => {
     expect(res.status).toBe(401);
   });
 
+  it.each([302, 404, 405])("treats an upstream %i from /auth/session as no session (401), never as authorized", async (status) => {
+    const fetchMock = stubFetchSequence([new Response(null, { status })]);
+    const res = await handleWebStatsRequest(withSession(), BASE_ENV);
+    expect(res.status).toBe(401);
+    // Only the session check ran; no analytics query.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks the session with GET and does not follow redirects", async () => {
+    const fetchMock = stubFetchSequence([sessionOk(), new Response(JSON.stringify({ data: [] })), new Response(JSON.stringify({ data: [] }))]);
+    await handleWebStatsRequest(withSession(), BASE_ENV);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.method).toBe("GET");
+    expect(init.redirect).toBe("manual");
+  });
+
   it("forwards only the session cookie to /auth/session, never the full cookie jar", async () => {
     const fetchMock = stubFetchSequence([
       sessionOk(),
