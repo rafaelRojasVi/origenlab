@@ -177,3 +177,10 @@ def test_run_checks_passes_on_disposable_db(_db_with_fixture: str) -> None:
     assert result == 0, (
         f"run_checks returned {result}; check the FAIL lines printed above"
     )
+
+
+def test_hosted_env_dir_holds_hosted_env() -> None:
+    """The release step imports hosted_env from here; a wrong parent count failed the 11-09 release."""
+    from release_read_check import HOSTED_ENV_DIR
+
+    assert (HOSTED_ENV_DIR / "hosted_env.py").is_file()
