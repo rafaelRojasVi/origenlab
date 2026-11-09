@@ -15,7 +15,6 @@ import { useState } from "react";
 import { useResource } from "../useResource";
 import { Skeleton } from "../ui";
 import { fetchWebStats, NOT_CONFIGURED_CODE, type WebStatsWindow, type WebStatsPeriod } from "./webStatsApi";
-import { OperatorApiError } from "../../api/operatorClient";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 

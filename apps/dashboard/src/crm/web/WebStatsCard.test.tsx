@@ -213,16 +213,12 @@ describe("fetch call", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<WebStatsCard />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    const req = fetchMock.mock.calls[0][0] as RequestInfo;
-    const url = typeof req === "string" ? req : req instanceof Request ? req.url : String(req);
+    // calls[0] is the tuple of args; cast through unknown to avoid tuple inference issues.
+    const [firstArg] = fetchMock.mock.calls[0] as unknown as [RequestInfo, RequestInit?];
+    const url = typeof firstArg === "string" ? firstArg : firstArg instanceof Request ? firstArg.url : String(firstArg);
     expect(url).toContain("/api/stats/web-stats");
-    if (req instanceof Request) {
-      // credentials: "include" sets no header; it instructs the browser to attach cookies.
-      // We check the init option instead.
-    }
-    // Verify method.
-    if (req instanceof Request) {
-      expect(req.method).toBe("GET");
+    if (firstArg instanceof Request) {
+      expect(firstArg.method).toBe("GET");
     }
   });
 });
