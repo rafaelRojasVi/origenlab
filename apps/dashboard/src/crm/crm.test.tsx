@@ -366,7 +366,7 @@ describe("dashboard shell", () => {
     const links = within(nav).getAllByRole("link");
     const areas = AREA_NAMES.map((name) => within(nav).getByRole("link", { name }));
     expect(areas.map((a) => links.indexOf(a))).toEqual([...areas.map((a) => links.indexOf(a))].sort((x, y) => x - y));
-    expect(areas.map((a) => a.getAttribute("href"))).toEqual(["#/hoy", "#/ventas/pipeline", "#/finanzas/por-cobrar", "#/catalogo", "#/ajustes/operaciones"]);
+    expect(areas.map((a) => a.getAttribute("href"))).toEqual(["#/hoy", "#/ventas/pipeline", "#/finanzas/mes", "#/catalogo", "#/ajustes/operaciones"]);
     expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveAttribute("aria-current", "true");
     expect(within(nav).getByRole("link", { name: "Hoy" })).not.toHaveAttribute("aria-current");
   });
@@ -544,6 +544,8 @@ describe("no write path in the CRM workspace", () => {
   const PAGOS_API_CLIENT = "./pagos/invoiceApi.ts";
   //  - the «Catálogo web» client (web/webPublishApi.ts) POSTs one model sheet to the site's repository (the page is shown to admins only).
   const WEB_PUBLISH_CLIENT = "./web/webPublishApi.ts";
+  //  - the «Finanzas» client (finanzas/financeApi.ts) POSTs four finance commands (upsert-expense, upsert-supplier-order, set-monthly-target, set-partner-rule).
+  const FINANCE_API_CLIENT = "./finanzas/financeApi.ts";
 
   it("never issues a non-GET request or references a command route", () => {
     const sources = import.meta.glob(["./**/*.ts", "./**/*.tsx", "!./**/*.test.tsx", "!./**/*.test.ts"], {
@@ -557,7 +559,7 @@ describe("no write path in the CRM workspace", () => {
       if (
         f === DRAFT_CLIENT || f === CRM_AUTHORING_CLIENT || f === MAIL_RULES_CLIENT || f === CASE_COMMANDS_CLIENT ||
         f === CASE_DOCUMENTS_CLIENT || f === QUOTE_API_CLIENT || f === TENDER_API_CLIENT || f === PROSPECT_API_CLIENT ||
-        f === TODO_API_CLIENT || f === PAGOS_API_CLIENT || f === WEB_PUBLISH_CLIENT
+        f === TODO_API_CLIENT || f === PAGOS_API_CLIENT || f === WEB_PUBLISH_CLIENT || f === FINANCE_API_CLIENT
       ) continue;
       expect(src, f).not.toMatch(/method:\s*["'](POST|PUT|PATCH|DELETE)/i);
       expect(src, f).not.toMatch(/\/v2\/commands/);

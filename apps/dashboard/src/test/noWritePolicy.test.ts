@@ -146,6 +146,10 @@ describe("dashboard read-only policy", () => {
   const PAGOS_API_FILE = "../crm/pagos/invoiceApi.ts";
   const PAGOS_API_PATHS = ["/v2/commands/import-invoices", "/v2/commands/mark-invoice-paid",
     "/v2/commands/mark-invoice-unpaid", "/v2/commands/set-invoice-case"];
+  // «Finanzas» (Slice 9): expenses, supplier orders, monthly target, partner rule.
+  const FINANCE_API_FILE = "../crm/finanzas/financeApi.ts";
+  const FINANCE_API_PATHS = ["/v2/commands/upsert-expense", "/v2/commands/upsert-supplier-order",
+    "/v2/commands/set-monthly-target", "/v2/commands/set-partner-rule"];
   // «Catálogo web» (shown to admins only; the API lets any writing role through): webPublishApi.ts's one POST commits a model sheet to the site's repository
   // and starts its deployment; the API checks the schema and the role. Two GETs read a sheet and the
   // deployment's status. It writes no commercial record and sends nothing to anyone.
@@ -286,6 +290,17 @@ describe("dashboard read-only policy", () => {
         }
         continue;
       }
+      if (path === FINANCE_API_FILE) {
+        const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
+        if (methods.length !== 1 || methods[0] !== "POST") {
+          hits.push(`${path} (expected exactly one POST site, found ${methods.join(", ") || "none"})`);
+        }
+        const commandPaths = [...text.matchAll(/["'](\/v2\/commands\/[^"']*)["']/g)].map((m) => m[1]).sort();
+        if (JSON.stringify(commandPaths) !== JSON.stringify([...FINANCE_API_PATHS].sort())) {
+          hits.push(`${path} (finance command paths mismatch: found ${commandPaths.join(", ")})`);
+        }
+        continue;
+      }
       if (path === WEB_PUBLISH_FILE) {
         const methods = [...text.matchAll(/method:\s*["'](POST|PUT|PATCH|DELETE)["']/gi)].map((m) => m[1].toUpperCase());
         if (methods.length !== 1 || methods[0] !== "POST") {
@@ -364,7 +379,7 @@ describe("dashboard read-only policy", () => {
   });
 
   it("names no V2 command outside the campaign, CRM authoring, email-rules, case-command and quote clients", () => {
-    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE, TODO_API_FILE, PAGOS_API_FILE]);
+    const owners = new Set([CAMPAIGN_DRAFT_FILE, CRM_AUTHORING_FILE, MAIL_RULES_FILE, CASE_COMMANDS_FILE, CASE_DOCUMENTS_FILE, QUOTE_API_FILE, TENDER_API_FILE, PROSPECT_API_FILE, TODO_API_FILE, PAGOS_API_FILE, FINANCE_API_FILE]);
     const hits = entries
       .filter(([path, text]) => !owners.has(path) && /\/v2\/commands\//.test(text))
       .map(([path]) => path);

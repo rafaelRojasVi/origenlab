@@ -33,7 +33,18 @@ export const AREAS: Area[] = [
       { label: "Licitaciones", sections: ["licitaciones"] },
     ],
   },
-  { key: "finanzas", label: "Finanzas", tabs: [{ label: "Por cobrar", sections: ["pagos"] }] },
+  {
+    key: "finanzas",
+    label: "Finanzas",
+    tabs: [
+      { label: "Mes", sections: ["fin-mes"] },
+      { label: "Por cobrar", sections: ["pagos"] },
+      { label: "Por pagar y pedidos", sections: ["fin-por-pagar"] },
+      { label: "Gastos", sections: ["fin-gastos"] },
+      { label: "Financiamiento", sections: ["fin-financiamiento"] },
+      { label: "Socios", sections: ["fin-socios"], adminOnly: true },
+    ],
+  },
   {
     key: "catalogo",
     label: "Catálogo",

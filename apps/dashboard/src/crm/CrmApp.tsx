@@ -26,6 +26,11 @@ const CotizadorModulePage = lazyPage(() => import("./pages/CotizadorModulePage")
 const LicitacionesPage = lazyPage(() => import("./tenders/LicitacionesPage").then((m) => m.LicitacionesPage));
 const ProspectosPage = lazyPage(() => import("./prospects/ProspectosPage").then((m) => m.ProspectosPage));
 const PagosPage = lazyPage(() => import("./pagos/PagosPage").then((m) => m.PagosPage));
+const FinanzasMesPage = lazyPage(() => import("./finanzas/FinanzasMesPage").then((m) => m.FinanzasMesPage));
+const FinanzasPorPagarPage = lazyPage(() => import("./finanzas/FinanzasPorPagarPage").then((m) => m.FinanzasPorPagarPage));
+const FinanzasGastosPage = lazyPage(() => import("./finanzas/FinanzasGastosPage").then((m) => m.FinanzasGastosPage));
+const FinanzasFinanciamientoPage = lazyPage(() => import("./finanzas/FinanzasFinanciamientoPage").then((m) => m.FinanzasFinanciamientoPage));
+const FinanzasSociosPage = lazyPage(() => import("./finanzas/FinanzasSociosPage").then((m) => m.FinanzasSociosPage));
 const MarketingPage = lazyPage(() => import("./pages/MarketingPage").then((m) => m.MarketingPage));
 const HistoryPage = lazyPage(() => import("./pages/HistoryPage").then((m) => m.HistoryPage));
 const OperacionesPage = lazyPage(() => import("./pages/OperacionesPage").then((m) => m.OperacionesPage));
@@ -135,6 +140,16 @@ function Section({
       return <LicitacionesPage key={id ?? "all"} id={id} navigate={navigate} />;
     case "prospectos":
       return <ProspectosPage key={id ?? "all"} id={id} navigate={navigate} />;
+    case "fin-mes":
+      return <FinanzasMesPage />;
+    case "fin-por-pagar":
+      return <FinanzasPorPagarPage />;
+    case "fin-gastos":
+      return <FinanzasGastosPage />;
+    case "fin-financiamiento":
+      return <FinanzasFinanciamientoPage />;
+    case "fin-socios":
+      return <FinanzasSociosPage />;
     case "pagos":
       return <PagosPage navigate={navigate} />;
     case "marketing":

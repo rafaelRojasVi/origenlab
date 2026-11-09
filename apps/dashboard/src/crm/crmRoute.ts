@@ -12,7 +12,12 @@ export type CrmSection =
   | "cotizador"
   | "licitaciones"
   | "prospectos"
-  | "pagos";
+  | "pagos"
+  | "fin-mes"
+  | "fin-por-pagar"
+  | "fin-gastos"
+  | "fin-financiamiento"
+  | "fin-socios";
 
 /** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive.
  *  «decidir» is the «Por ordenar» section linked from «Hoy». */
@@ -39,7 +44,12 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "prospectos", label: "Prospectos" },
   { id: "marketing", label: "Campañas" },
   { id: "licitaciones", label: "Licitaciones" },
+  { id: "fin-mes", label: "Mes" },
   { id: "pagos", label: "Por cobrar" },
+  { id: "fin-por-pagar", label: "Por pagar y pedidos" },
+  { id: "fin-gastos", label: "Gastos" },
+  { id: "fin-financiamiento", label: "Financiamiento" },
+  { id: "fin-socios", label: "Socios", adminOnly: true },
   { id: "catalogo", label: "Productos" },
   { id: "catalogo-web", label: "Catálogo web", adminOnly: true },
   { id: "datos", label: "Operaciones" },
@@ -66,7 +76,12 @@ export const SECTION_PATH: Record<CrmSection, string> = {
   prospectos: "ventas/listas",
   marketing: "ventas/listas/campanas",
   licitaciones: "ventas/licitaciones",
+  "fin-mes": "finanzas/mes",
   pagos: "finanzas/por-cobrar",
+  "fin-por-pagar": "finanzas/por-pagar",
+  "fin-gastos": "finanzas/gastos",
+  "fin-financiamiento": "finanzas/financiamiento",
+  "fin-socios": "finanzas/socios",
   catalogo: "catalogo",
   "catalogo-web": "catalogo/web",
   datos: "ajustes/operaciones",
@@ -77,7 +92,7 @@ export const SECTION_PATH: Record<CrmSection, string> = {
 export const AREA_HOME: Record<AreaKey, CrmSection> = {
   hoy: "resumen",
   ventas: "oportunidades",
-  finanzas: "pagos",
+  finanzas: "fin-mes",
   catalogo: "catalogo",
   ajustes: "datos",
 };

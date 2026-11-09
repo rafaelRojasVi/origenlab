@@ -97,6 +97,15 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // `?opportunity_id=` the only query. Its three JSON commands are in `CASE_COMMAND_POST_PATHS`, the
   // CSV upload in `CATALOG_UPLOAD_POST_PATHS`.
   /^\/v2\/workspace\/invoices$/,
+  // «Finanzas» reads (`apps/api` v2/finance/routes.py): four exact paths, GET-only.
+  // mes = 5 KPI cards; expenses and supplier-orders accept query params but no wildcard segment;
+  // settings = active target + partner rule. The four finance commands are in
+  // `FINANCE_COMMAND_POST_PATHS` below; `set-partner-rule` is additionally gated to admin-only
+  // upstream. Nothing else under `/v2/workspace/finance/` is reachable until listed here.
+  /^\/v2\/workspace\/finance\/mes$/,
+  /^\/v2\/workspace\/finance\/expenses$/,
+  /^\/v2\/workspace\/finance\/supplier-orders$/,
+  /^\/v2\/workspace\/finance\/settings$/,
   // CRM authoring reads (ContactRedactingRoute; viewer sees addresses masked as ***@domain).
   // Three exact paths: person detail, organization authoring detail, and merge preview (with
   // query string). Named individually — not `/v2/workspace/.+` — so nothing else becomes
@@ -399,6 +408,14 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   // The case panel's «Origen» select (2026-11-09): set or correct the channel a case came from. The case
   // version shown is the case's; upstream refuses a stale one (409) and a value outside the nine (422).
   /^\/v2\/commands\/set-case-origin$/,
+  // «Finanzas» commands (`apps/api` v2/finance/routes.py): expenses, supplier orders, monthly target,
+  // and partner rule. `upsert-expense` and `upsert-supplier-order` insert or update; `set-monthly-target`
+  // upserts one row per calendar month; `set-partner-rule` appends a new rule (admin-only upstream).
+  // All four require Deciding (viewer → 403) and Idempotency-Key.
+  /^\/v2\/commands\/upsert-expense$/,
+  /^\/v2\/commands\/upsert-supplier-order$/,
+  /^\/v2\/commands\/set-monthly-target$/,
+  /^\/v2\/commands\/set-partner-rule$/,
 ];
 
 /** A case command is UUIDs, a version, a stage, a revision or a quote number, and short texts. */

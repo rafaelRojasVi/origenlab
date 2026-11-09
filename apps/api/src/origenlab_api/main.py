@@ -735,6 +735,22 @@ def _mount_v2_command_boundary(
     )
     app.include_router(invoice_command_router)
     app.include_router(invoice_read_router)
+    # «Finanzas» (Slice 9, 2026-11-09): finance.expense/supplier_order/monthly_target/partner_rule.
+    # Same database (origenlab_api role) and V2 switch. The read repository serves the Mes KPI
+    # cards and the sub-tabs; the command repository records expenses, supplier orders, the monthly
+    # target and partner rule changes.
+    from origenlab_api.v2.finance.reads import FinanceReadRepository
+    from origenlab_api.v2.finance.repository import FinanceCommandRepository
+    from origenlab_api.v2.finance.routes import finance_command_router, finance_read_router
+
+    app.state.v2_finance_command_repository = FinanceCommandRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.state.v2_finance_read_repository = FinanceReadRepository(
+        connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
+    )
+    app.include_router(finance_command_router)
+    app.include_router(finance_read_router)
     # «Licitaciones» (spec 2026-10-19 §6.10): tender cases, same database, role and switch. The
     # Mercado Público ticket reads a tender's detail by code; without one the operator types the buyer.
     from origenlab_api.v2.tenders.mercado_publico import resolve_ticket

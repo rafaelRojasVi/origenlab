@@ -159,16 +159,16 @@ describe("five-area redirects", () => {
   it("sends an area root, and a path no page of the area has, to the area's first page", () => {
     expect(redirectHash("#/ventas")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/ventas/")).toBe("#/ventas/pipeline");
-    expect(redirectHash("#/finanzas")).toBe("#/finanzas/por-cobrar");
+    expect(redirectHash("#/finanzas")).toBe("#/finanzas/mes");
     expect(redirectHash("#/ajustes")).toBe("#/ajustes/operaciones");
     expect(redirectHash("#/hoy")).toBeNull();
     expect(redirectHash("#/catalogo")).toBeNull();
     expect(redirectHash("#/ventas/nope")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/ventas/foo/bar")).toBe("#/ventas/pipeline");
-    expect(redirectHash("#/finanzas/mes")).toBe("#/finanzas/por-cobrar");
+    expect(redirectHash("#/finanzas/mes")).toBeNull();  // now a known path
     expect(redirectHash("#/ajustes/perfiles")).toBe("#/ajustes/operaciones");
     // Every redirect target is itself final.
-    for (const h of ["#/ventas", "#/finanzas", "#/ajustes", "#/ventas/nope", "#/finanzas/mes", "#/Ventas/Nope", "#/crm/catalogo?q=x", "#/today"]) {
+    for (const h of ["#/ventas", "#/finanzas", "#/ajustes", "#/ventas/nope", "#/Ventas/Nope", "#/crm/catalogo?q=x", "#/today"]) {
       expect(redirectHash(redirectHash(h)!), h).toBeNull();
     }
   });
@@ -176,7 +176,7 @@ describe("five-area redirects", () => {
   it("reads an area path without regard to case, keeping the query as typed", () => {
     expect(redirectHash("#/Ventas/Pipeline")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/VENTAS")).toBe("#/ventas/pipeline");
-    expect(redirectHash("#/Finanzas/Mes")).toBe("#/finanzas/por-cobrar");
+    expect(redirectHash("#/Finanzas/Mes")).toBe("#/finanzas/mes");  // case normalization only
     expect(redirectHash("#/HOY")).toBe("#/hoy");
     expect(redirectHash("#/Catalogo?q=UP400St")).toBe("#/catalogo?q=UP400St");
     expect(redirectHash(`#/Ventas/Clientes/Personas/${id}`)).toBe(`#/ventas/clientes/personas/${id}`);
