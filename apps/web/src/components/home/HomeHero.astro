@@ -1,0 +1,189 @@
+---
+import Button from '../ui/Button.astro';
+import Showroom from './Showroom.astro';
+import { company } from '../../data/company';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { site } from '../../config/site';
+import { rankModels } from '../../lib/ranking';
+
+/**
+ * Portada, primera pantalla («Blanco con color»): titular centrado, línea de
+ * valor, las dos acciones de «Mensaje B» y, debajo, la sala 3D sobre el blanco
+ * de la página (sin caja ni resplandor detrás del equipo), con las tareas debajo.
+ *
+ * El titular B sólo sale si la promesa «cotización el mismo día hábil» está
+ * aprobada en el registro de afirmaciones (`headlineB`, que decide
+ * `pages/index.astro`); si no, el titular es el de siempre. Cada grupo de
+ * palabras es un `<span>` que sube 12 px con un escalón de 60 ms.
+ *
+ * Todo el movimiento vive bajo `prefers-reduced-motion: no-preference`: con
+ * movimiento reducido la primera pantalla se pinta entera y quieta. Nada de
+ * aquí lleva `.rv`: el revelado al desplazarse empieza en la sección siguiente.
+ */
+interface Props {
+  headlineB: boolean;
+}
+const { headlineB } = Astro.props;
+
+// Tareas de la sala en el orden comercial (`lib/ranking.ts`): 3D primero, IKA al final.
+const rooms = rankModels([
+  { id: 'hielscher-up400st', task: 'Sonicar' },
+  { id: 'ika-t25-digital', task: 'Dispersar' },
+  { id: 'ortoalresa-digicen-22-r', task: 'Centrifugar' },
+  { id: 'ohaus-pioneer-px', task: 'Pesar' },
+  { id: 'adam-highland', task: 'Pesar en terreno' },
+  { id: 'loeser-i-osmometer', task: 'Osmolalidad' },
+  { id: 'serva-bluevertical-prime', task: 'Electroforesis' },
+]);
+
+const title = headlineB
+  ? ['Cotización', 'el mismo día.', 'Directo con', 'el fabricante.']
+  : ['Equipos', 'para', 'cada etapa', 'de su muestra.'];
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="shell hero__copy">
+    <p class="hero__eyebrow">Equipos para laboratorio, <b>en todo Chile</b></p>
+    <h1 id="hero-title" class="hero__title">
+      {
+        title.map((group, index) => (
+          <>
+            <span>
+              {group.endsWith('.') ? <>{group.slice(0, -1)}<i class="hero__dot">.</i></> : group}
+            </span>
+            {index < title.length - 1 && ' '}
+          </>
+        ))
+      }
+    </h1>
+    <p class="hero__sub">{company.homeHeroLine}</p>
+    <div class="hero__cta">
+      <Button href={site.quoteHref} track="cotizacion_click">{ctaLabels.solicitarCotizacion}</Button>
+      <Button href={buildWhatsAppQuoteUrl()} variant="whatsapp" external track="whatsapp_click">
+        {ctaLabels.porWhatsapp}
+      </Button>
+    </div>
+  </div>
+
+  <div class="shell hero__scene">
+    <Showroom
+      frame="wide"
+      items={rooms}
+    />
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    background-color: var(--color-paper);
+    color: var(--color-ink-950);
+    padding: clamp(2.75rem, 4vw, 3.25rem) 0 clamp(3rem, 6vw, 5rem);
+    text-align: center;
+  }
+  .hero__copy {
+    position: relative;
+    z-index: 1;
+  }
+  .hero__eyebrow {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--color-ink-600);
+  }
+  .hero__eyebrow b {
+    color: var(--color-teal-700);
+    font-weight: 700;
+  }
+  .hero__title {
+    max-width: 14ch;
+    margin: 0.75rem auto 0;
+    color: var(--color-ink-950);
+    font-size: clamp(2.75rem, 6.4vw, 5.875rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.052em;
+    text-wrap: balance;
+  }
+  @media (min-width: 1024px) {
+    .hero__title {
+      max-width: 22ch;
+    }
+  }
+  .hero__title span {
+    display: inline-block;
+  }
+  /* El punto del 800 trae un hueco a la izquierda que a 90 px se lee como un espacio. */
+  .hero__dot {
+    color: var(--color-teal-600);
+    margin-left: -0.07em;
+    font-style: normal;
+  }
+  .hero__sub {
+    max-width: 38ch;
+    margin: 1.125rem auto 0;
+    color: var(--color-ink-600);
+    font-size: clamp(1.0625rem, 1.5vw, 1.25rem);
+    line-height: 1.5;
+  }
+  .hero__cta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 1.75rem;
+  }
+  .hero__scene {
+    position: relative;
+    margin-top: clamp(1.5rem, 3vw, 2.5rem);
+  }
+  .hero__scene > :global(*) {
+    position: relative;
+  }
+  @media (max-width: 639.98px) {
+    .hero__title {
+      font-size: 2.75rem;
+    }
+    .hero__cta :global(.btn) {
+      width: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .hero__title span {
+      animation: rise 400ms ease-out backwards;
+    }
+    .hero__title span:nth-child(2) {
+      animation-delay: 60ms;
+    }
+    .hero__title span:nth-child(3) {
+      animation-delay: 120ms;
+    }
+    .hero__title span:nth-child(4) {
+      animation-delay: 180ms;
+    }
+    .hero__sub {
+      animation: rise 400ms ease-out 240ms backwards;
+    }
+    .hero__cta {
+      animation: rise 400ms ease-out 300ms backwards;
+    }
+    /* Sólo opacidad: una transformación aislaría la escena y el póster
+       dejaría de fundirse con la página (lo hace por multiply). */
+    .hero__scene {
+      animation: fadein 560ms cubic-bezier(0.16, 1, 0.3, 1) 120ms backwards;
+    }
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+    }
+    @keyframes fadein {
+      from {
+        opacity: 0;
+      }
+    }
+  }
+</style>

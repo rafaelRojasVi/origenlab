@@ -2,27 +2,22 @@
 import Layout from '../../layouts/Layout.astro';
 import PageIntro from '../../components/ui/PageIntro.astro';
 import SectionIndex from '../../components/ui/SectionIndex.astro';
-import ModelList from '../../components/ui/ModelList.astro';
-import ModelRow from '../../components/ui/ModelRow.astro';
-import ModelSheet from '../../components/ui/ModelSheet.astro';
-import SkuList from '../../components/ui/SkuList.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
 import BrandLogo from '../../components/ui/BrandLogo.astro';
 import ExternalLink from '../../components/ui/ExternalLink.astro';
 import Notice from '../../components/ui/Notice.astro';
 import Icon from '../../components/ui/Icon.astro';
 import FamilyMotif from '../../components/home/FamilyMotif.astro';
-import {
-  getBrandBySlug,
-  getEditorialBrands,
-  getProductsByBrandId,
-  productPageHref,
-} from '../../lib/catalog';
-import { productFamilies } from '../../data/productFamilies';
+import LitCard from '../../components/ui/LitCard.astro';
+import { getBrandBySlug, getEditorialBrands } from '../../lib/catalog';
 import { familyDocsFor, modelsForBrand } from '../../data/brandModels';
 import { scopeById } from '../../data/equipmentScope';
 import { applicationsForFamily } from '../../data/applications';
-import { imageForModel, publishedImagesForBrand } from '../../data/productImages';
+import { getCollection } from 'astro:content';
+import type { Modelo } from '../../content.config';
+import { familyHref } from '../../lib/modelos';
+import { publishedImagesForBrand } from '../../data/productImages';
+import { brandEntries, has3d } from '../../lib/brandShowcase';
 
 /**
  * Página de marca. Las siete.
@@ -52,6 +47,11 @@ import { imageForModel, publishedImagesForBrand } from '../../data/productImages
  * La condición comercial es lo único que sigue dependiendo de la confirmación
  * del negocio: sin ella la página dice qué fabrica el fabricante y que
  * OrigenLab cotiza la línea, nunca en qué calidad.
+ *
+ * Sitio claro (2026-11-08): la página abre con quién fabrica (datos de
+ * `brands.ts`) y luego cada modelo de la colección `modelos` es una `LitCard`
+ * (el modelo 3D que gira o la foto del fabricante sobre el tinte de su familia,
+ * un dato de la ficha, «Ver ficha» y «Cotizar») que lleva directo a la ficha.
  */
 export function getStaticPaths() {
   return getEditorialBrands().map((brand) => ({ params: { slug: brand.slug } }));
@@ -61,15 +61,11 @@ const { slug } = Astro.params;
 const brand = slug ? getBrandBySlug(slug) : undefined;
 if (!brand) return Astro.redirect('/marcas');
 
-const products = getProductsByBrandId(brand.id);
-/** Modelos con ficha propia frente a referencias que sólo se cotizan. */
-const withPages = products.filter((product) => productPageHref(product) !== undefined);
-const skuOnly = products.filter((product) => productPageHref(product) === undefined);
-const family = productFamilies.find((item) =>
-  withPages.some((product) => product.productFamilySlug === item.slug),
-);
-
 const models = modelsForBrand(brand.id);
+/** Cada modelo de la marca con ficha (colección `modelos`), en el orden de la marca. */
+const entries = brandEntries(brand.id, (await getCollection('modelos')).map((item) => item.data as Modelo));
+const spinning = entries.filter(has3d).length;
+const familySlug = entries[0]?.family;
 const scope = scopeById(brand.familyId);
 const familyDocs = familyDocsFor(brand.familyId, brand.id);
 const tasks = applicationsForFamily(brand.familyId);
@@ -78,8 +74,6 @@ const publishedPhotos = publishedImagesForBrand(brand.id);
 
 /** Una disposición por marca. Ver la cabecera. */
 const layout = brand.layout;
-const sheetVariant =
-  layout === 'mecanismo' || layout === 'medicion' || layout === 'tarea' ? 'split' : layout === 'instrumento' ? 'compact' : 'stack';
 
 /**
  * Escalera de potencia (sólo Hielscher). Se deriva del criterio «Potencia» de
@@ -139,16 +133,18 @@ const equipmentSectionLabel =
 ---
 
 <Layout title={brand.name} description={brand.metaDescription}>
-  <div class="shell">
-    <PageIntro
-      title={brand.name}
-      lead={brand.pageSubtitle}
-      crumbs={[{ label: 'Marcas', href: '/marcas/' }, { label: brand.name }]}
-    >
-      <div slot="aside">
-        <BrandLogo brand={brand} scale={1.6} />
-      </div>
-    </PageIntro>
+  <div class="brand-stage">
+    <div class="shell">
+      <PageIntro
+        title={brand.name}
+        lead={brand.pageSubtitle}
+        crumbs={[{ label: 'Marcas', href: '/marcas/' }, { label: brand.name }]}
+      >
+        <div slot="aside" class="brand-stage__logo">
+          <BrandLogo brand={brand} scale={1.8} loading="eager" />
+        </div>
+      </PageIntro>
+    </div>
   </div>
 
   <section class="shell section rule-top" aria-labelledby="marca-title">
@@ -158,8 +154,6 @@ const equipmentSectionLabel =
         <h2 id="marca-title" class="t-h2">Quién fabrica</h2>
         {brand.legalName && <p class="t-small brand-intro__legal">{brand.legalName}</p>}
         <p class="t-body brand-intro__text">{brand.summary}</p>
-        {brand.brandIntro && <p class="t-body">{brand.brandIntro}</p>}
-        <p class="t-small brand-intro__attr">{brand.manufacturerAttribution}</p>
         <p class="brand-intro__site">
           <ExternalLink href={brand.websiteUrl} context="sitio del fabricante">
             Sitio del fabricante
@@ -173,15 +167,15 @@ const equipmentSectionLabel =
             <div class="aside-block">
               <h3 class="t-label aside-block__title">Familia de equipo</h3>
               <p class="aside-block__lead">{scope.name}</p>
-              <p class="t-small aside-block__body">{scope.purpose}</p>
             </div>
           )
         }
         <div class="aside-block">
-          <h3 class="t-label aside-block__title">Áreas de aplicación</h3>
-          <ul class="areas__list">
-            {brand.applicationAreas.map((area) => <li>{area}</li>)}
-          </ul>
+          <h3 class="t-label aside-block__title">En este sitio</h3>
+          <p class="aside-block__lead">
+            {entries.length} {entries.length === 1 ? 'modelo con ficha' : 'modelos con ficha'}
+            {spinning > 0 && <span class="aside-block__spin">· {spinning} en 3D</span>}
+          </p>
         </div>
       </div>
     </div>
@@ -217,10 +211,10 @@ const equipmentSectionLabel =
       layout === 'fotografia' && (
         <div class="models-head">
           <h2 id="equipos-title" class="t-h2">
-            {withPages.length} modelos con ficha publicada
+            {entries.length} modelos con ficha publicada
           </h2>
-          {family && (
-            <a href={`/productos/${family.slug}/`} class="link-arrow">
+          {familySlug && (
+            <a href={familyHref(familySlug)} class="link-arrow">
               Ver la familia y la comparativa
               <Icon name="arrow-right" size={18} class="arrow" />
             </a>
@@ -336,43 +330,16 @@ const equipmentSectionLabel =
       )
     }
 
-    <!-- Modelos con ficha propia (Ortoalresa), con su fotografía del registro. -->
+    <!-- Cada modelo, una tarjeta iluminada: 3D que gira o fotografía en la caja de luz. -->
     {
-      withPages.length > 0 && (
-        <ModelList class="mt-6">
-          {withPages.map((product) => <ModelRow product={product} size="compact" />)}
-        </ModelList>
-      )
-    }
-
-    <!-- Modelos documentados desde la fuente oficial, sin ficha interna. Cada
-         ficha abre con la fotografía oficial que productImages.ts respalda,
-         rotulada como modelo exacto o como imagen representativa de la familia. -->
-    {
-      models.length > 0 && (
-        <ul class:list={['sheets', withPages.length > 0 && 'sheets--after']}>
-          {models.map((model) => (
-            <ModelSheet
-              model={model}
-              image={imageForModel(model.id)}
-              brandName={brand.name}
-              variant={sheetVariant}
-              headingLevel={3}
-            />
+      entries.length > 0 && (
+        <ul class="model-grid" style={`--n: ${Math.min(entries.length, 5)}`}>
+          {entries.map((entry) => (
+            <li>
+              <LitCard entry={entry} />
+            </li>
           ))}
         </ul>
-      )
-    }
-
-    {
-      skuOnly.length > 0 && (
-        <div class="skus">
-          <h3 class="t-h3 skus__title">Consumibles con ficha publicada</h3>
-          <p class="t-small skus__lead">
-            Se cotizan por pedido y la documentación se entrega durante la cotización.
-          </p>
-          <SkuList products={skuOnly} withApplication class="mt-6" />
-        </div>
       )
     }
 
@@ -398,6 +365,18 @@ const equipmentSectionLabel =
 
   <section class="shell section rule-top" aria-labelledby="condiciones-title">
     <SectionIndex index={3} label="Cómo trabajamos esta línea" />
+    <div class="brand-intro brand-line">
+      <div class="prose-block">
+        {brand.brandIntro && <p class="t-body">{brand.brandIntro}</p>}
+        <p class="t-small brand-intro__attr">{brand.manufacturerAttribution}</p>
+      </div>
+      <div class="aside-block">
+        <h3 class="t-label aside-block__title">Áreas de aplicación</h3>
+        <ul class="areas__list">
+          {brand.applicationAreas.map((area) => <li>{area}</li>)}
+        </ul>
+      </div>
+    </div>
     <h2 id="condiciones-title" class="t-h2">
       {brand.commercialScopeConfirmed ? 'Condiciones confirmadas' : 'Qué podemos decir hoy'}
     </h2>
@@ -448,7 +427,6 @@ const equipmentSectionLabel =
   }
 
   <ClosingQuoteBand
-    index={5}
     title={`Cotizar equipos ${brand.name}`}
     body="Indique el modelo o la referencia, la aplicación y su institución. Confirmamos disponibilidad, configuración y condiciones por escrito."
     brandName={brand.name}
@@ -456,6 +434,16 @@ const equipmentSectionLabel =
 </Layout>
 
 <style>
+  /* El logotipo de la marca, en su tinta, grande junto al titular. */
+  .brand-stage__logo :global(.brand-logo) {
+    max-height: 4.5rem;
+  }
+  .aside-block__spin {
+    margin-left: 0.375rem;
+    font-weight: 500;
+    color: var(--color-teal-700);
+  }
+
   .brand-intro {
     display: grid;
     gap: 2.5rem;
@@ -484,17 +472,13 @@ const equipmentSectionLabel =
   .aside-block__title {
     color: var(--color-ink-950);
     padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--color-ink-950);
+    border-bottom: 1px solid var(--color-hairline-strong);
   }
   .aside-block__lead {
     margin-top: 0.875rem;
     font-size: 1.0625rem;
     font-weight: 600;
     color: var(--color-ink-950);
-  }
-  .aside-block__body {
-    margin-top: 0.5rem;
-    color: var(--color-ink-600);
   }
   .areas__list {
     list-style: none;
@@ -520,7 +504,7 @@ const equipmentSectionLabel =
     list-style: none;
     margin: 0;
     padding: 0;
-    border-top: 1px solid var(--color-ink-950);
+    border-top: 1px solid var(--color-hairline-strong);
     counter-reset: step;
   }
   .ladder__step {
@@ -557,7 +541,7 @@ const equipmentSectionLabel =
 
   .grid-facts {
     margin: 0;
-    border-top: 1px solid var(--color-ink-950);
+    border-top: 1px solid var(--color-hairline-strong);
   }
   .grid-facts__row {
     display: grid;
@@ -585,23 +569,29 @@ const equipmentSectionLabel =
     margin-bottom: 1rem;
   }
 
-  .sheets {
-    list-style: none;
-    margin: 0;
+  .model-grid {
+    display: grid;
+    gap: 1.5rem;
+    margin: 2.5rem 0 0;
     padding: 0;
-    border-top: 1px solid var(--color-ink-950);
+    list-style: none;
   }
-  .sheets--after {
-    margin-top: 3.5rem;
+  .model-grid > li {
+    display: flex;
   }
-
-  .skus {
-    margin-top: 3.5rem;
+  .model-grid > li > :global(*) {
+    flex: 1;
   }
-  .skus__lead {
-    margin-top: 0.625rem;
-    color: var(--color-ink-600);
-    max-width: 62ch;
+  .model-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem 0.875rem;
+  }
+  /* Escritorio: una sola fila con todos los modelos de la marca (3 a 5). */
+  @media (min-width: 1024px) {
+    .model-grid {
+      grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr));
+      gap: 2.5rem 1.375rem;
+    }
   }
 
   .family-docs {
@@ -623,6 +613,9 @@ const equipmentSectionLabel =
 
   .conditions {
     margin-top: 1.5rem;
+  }
+  .brand-line {
+    margin-bottom: 3.5rem;
   }
 
   @media (min-width: 768px) {

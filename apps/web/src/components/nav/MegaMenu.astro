@@ -1,0 +1,467 @@
+---
+import { getCollection } from 'astro:content';
+import type { Modelo } from '../../content.config';
+import { brands } from '../../data/brands';
+import { applications } from '../../data/applications';
+import { equipmentScope } from '../../data/equipmentScope';
+import { familyForScope, familyHref, familyInfo, modelHref } from '../../lib/modelos';
+import { brandEntries, rankEntries } from '../../lib/brandShowcase';
+import { rankBrands, rankFamilies } from '../../lib/ranking';
+import { modelThumb as thumb } from '../../lib/modelThumb';
+
+/**
+ * Contenido de un menú desplegable de la cabecera: columnas de grupos, cada
+ * grupo con su enlace (familia, marca o aplicación) y sus modelos, cada modelo
+ * con una miniatura iluminada y directo a su ficha (regla del dueño,
+ * 2026-11-08: «just take me to the ficha»).
+ *
+ * - `productos`: las seis familias.
+ * - `marcas`: las siete marcas.
+ * - `aplicaciones`: las tareas de `applications.ts`, con los modelos de sus
+ *   familias.
+ *
+ * Familias, marcas y modelos van en el orden comercial de `ranking.ts`
+ * (ficha 3D primero, IKA al final). Todo sale de la colección `modelos` y de los datos de marca y aplicación;
+ * aquí no hay listas de modelos escritas a mano. Miniatura blanca con filete
+ * claro (sin tinte de familia): la miniatura 3D de 240 px (`<slug>-thumb.webp`, de
+ * `npm run posters`; si falta, el póster) o la fotografía verificada (derivado
+ * de 480 px), las dos fundidas por multiply. `loading="lazy"` dentro de un
+ * panel oculto: no se descarga nada hasta que el panel se abre.
+ */
+interface Props {
+  menu: 'productos' | 'marcas' | 'aplicaciones';
+  variant: 'panel' | 'accordion';
+}
+
+const { menu, variant } = Astro.props;
+const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+
+interface Group {
+  label: string;
+  href: string;
+  models: Modelo[];
+}
+
+const familyGroup = (slug: NonNullable<ReturnType<typeof familyForScope>>): Group => ({
+  label: familyInfo(slug).short,
+  href: familyHref(slug),
+  models: rankEntries(all.filter((entry) => entry.family === slug)),
+});
+
+/** Orden comercial (`ranking.ts`): por el segmento de URL de cada familia. */
+const families = rankFamilies(
+  equipmentScope.map((scope) => familyForScope(scope.id)).filter((slug) => slug !== undefined),
+  (slug) => familyHref(slug).split('/')[2] ?? slug,
+);
+
+/** Las tareas, como en `/aplicaciones/`: por la familia de su primer equipo (dispersión al final). */
+const familySegment = (familyId: string) => {
+  const slug = familyForScope(familyId);
+  return slug ? (familyHref(slug).split('/')[2] ?? '') : '';
+};
+
+const groups: Group[] =
+  menu === 'productos'
+    ? families.map(familyGroup)
+    : menu === 'marcas'
+      ? rankBrands(brands).map((brand) => ({ label: brand.name, href: `/marcas/${brand.slug}/`, models: brandEntries(brand.id, all) }))
+      : rankFamilies(applications, (application) => familySegment(application.familyIds[0] ?? '')).map((application) => ({
+          label: application.name,
+          href: `/aplicaciones/#${application.slug}`,
+          models: rankEntries(
+            application.familyIds
+              .map((id) => familyForScope(id))
+              .filter((slug) => slug !== undefined)
+              .flatMap((slug) => familyGroup(slug).models),
+          ),
+        }));
+
+const brandName = (entry: Modelo) => brands.find((brand) => brand.id === entry.brand)?.name ?? '';
+---
+
+{
+  variant === 'panel' ? (
+    <div class:list={['mm-split', `mm-split--${menu}`]} data-mm-split>
+      <ul class="mm-tabs" role="list">
+        {groups.map((group, i) => (
+          <li>
+            <a
+              href={group.href}
+              class="mm-tab"
+              data-mm-tab={i}
+              aria-current={i === 0 ? 'true' : undefined}
+              translate={menu === 'marcas' ? 'no' : undefined}
+            >
+              <span class="mm-tab__label">{group.label}</span>
+              <span class="mm-tab__count">{group.models.length}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+      <div class="mm-panes">
+        {groups.map((group, i) => (
+          <section class="mm-pane" data-mm-pane={i} data-active={i === 0 ? '' : undefined} aria-label={group.label}>
+            <div class="mm-pane__head">
+              <p class="mm-pane__title" translate={menu === 'marcas' ? 'no' : undefined}>{group.label}</p>
+              <a href={group.href} class="mm-pane__all">
+                Ver {menu === 'marcas' ? 'la marca' : menu === 'aplicaciones' ? 'la aplicación' : 'la familia'} <span aria-hidden="true">→</span>
+              </a>
+            </div>
+            <ul class="mm-tiles">
+              {group.models.map((entry, n) => {
+                const t = thumb(entry);
+                return (
+                  <li style={`--n: ${n}`}>
+                    <a href={modelHref(entry)} class="mm-model mm-tile">
+                      <span class="mm-thumb" data-kind={t?.kind}>
+                        {t && (
+                          <img
+                            src={t.src}
+                            srcset={t.srcset}
+                            sizes={t.srcset ? '160px' : undefined}
+                            width={t.width}
+                            height={t.height}
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        )}
+                      </span>
+                      <span class="mm-model__name" translate="no">{entry.name}</span>
+                      {menu !== 'marcas' && <span class="mm-model__brand" translate="no">{brandName(entry)}</span>}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </div>
+  ) : (
+    <div class:list={['mm-groups', `mm-groups--${variant}`, `mm-groups--${menu}`]}>
+      {groups.map((group) => (
+        <div class="mm-group">
+          <a href={group.href} class="mm-group__head" translate={menu === 'marcas' ? 'no' : undefined}>
+            {group.label}
+          </a>
+          <ul class="mm-group__list">
+            {group.models.map((entry) => {
+              const t = thumb(entry);
+              return (
+                <li>
+                  <a href={modelHref(entry)} class="mm-model">
+                    <span class="mm-thumb" data-kind={t?.kind}>
+                      {t && (
+                        <img
+                          src={t.src}
+                          srcset={t.srcset}
+                          sizes={t.srcset ? '72px' : undefined}
+                          width={t.width}
+                          height={t.height}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      )}
+                    </span>
+                    <span class="mm-model__text">
+                      <span class="mm-model__name" translate="no">{entry.name}</span>
+                      {menu !== 'marcas' && <span class="mm-model__brand" translate="no">{brandName(entry)}</span>}
+                    </span>
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+<script>
+  /* Panel de escritorio: pasar o enfocar un grupo (familia, marca o aplicación) muestra sus modelos. */
+  for (const split of document.querySelectorAll<HTMLElement>('[data-mm-split]')) {
+    const tabs = [...split.querySelectorAll<HTMLElement>('[data-mm-tab]')];
+    const panes = [...split.querySelectorAll<HTMLElement>('[data-mm-pane]')];
+    let timer = 0;
+    const show = (i: string) => {
+      for (const tab of tabs) {
+        if (tab.dataset.mmTab === i) tab.setAttribute('aria-current', 'true');
+        else tab.removeAttribute('aria-current');
+      }
+      for (const pane of panes) pane.toggleAttribute('data-active', pane.dataset.mmPane === i);
+    };
+    for (const tab of tabs) {
+      tab.addEventListener('pointerenter', () => {
+        clearTimeout(timer);
+        timer = window.setTimeout(() => show(tab.dataset.mmTab!), 70);
+      });
+      tab.addEventListener('focus', () => show(tab.dataset.mmTab!));
+    }
+  }
+</script>
+
+<style is:global>
+  /* --- Panel de escritorio: grupos a la izquierda, modelos a la derecha --- */
+  .mm-split {
+    display: grid;
+    grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+    gap: clamp(1.5rem, 3vw, 3rem);
+    min-height: 22rem;
+  }
+  .mm-tabs {
+    display: grid;
+    align-content: start;
+    gap: 0.125rem;
+    margin: 0;
+    padding: 0 1.5rem 0 0;
+    list-style: none;
+    border-right: 1px solid var(--color-hairline);
+  }
+  .mm-tab {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.75rem;
+    color: var(--color-ink-800);
+    font-weight: 600;
+    transition: background-color 180ms var(--ease-out), color 180ms var(--ease-out);
+  }
+  .mm-tab::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.625rem;
+    bottom: 0.625rem;
+    width: 3px;
+    border-radius: 3px;
+    background: var(--color-teal-700);
+    transform: scaleY(0);
+    transition: transform 220ms var(--ease-out);
+  }
+  .mm-tab[aria-current] {
+    background: var(--color-surface);
+    color: var(--color-ink-950);
+  }
+  .mm-tab[aria-current]::before {
+    transform: scaleY(1);
+  }
+  .mm-tab:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+  .mm-tab__count {
+    min-width: 1.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
+    color: var(--color-ink-500);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: center;
+  }
+  .mm-panes {
+    position: relative;
+    min-width: 0;
+  }
+  .mm-pane {
+    display: none;
+  }
+  .mm-pane[data-active] {
+    display: block;
+  }
+  .mm-pane__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .mm-pane__title {
+    font-size: 1.375rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--color-ink-950);
+  }
+  .mm-pane__all {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2.75rem;
+    color: var(--color-teal-700);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .mm-pane__all:hover {
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .mm-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+    gap: 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .mm-tiles .mm-tile {
+    display: grid;
+    align-content: start;
+    gap: 0.125rem;
+    min-height: 0;
+    margin: 0;
+    padding: 0.625rem 0.625rem 0.875rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-card);
+    background: var(--color-paper);
+    transition: box-shadow 220ms var(--ease-out), border-color 220ms var(--ease-out), transform 220ms var(--ease-out);
+  }
+  .mm-tiles .mm-tile .mm-thumb {
+    width: 100%;
+    margin-bottom: 0.625rem;
+    border: 0;
+    border-radius: 0.625rem;
+  }
+  .mm-tiles .mm-tile .mm-model__name {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    line-height: 1.25;
+  }
+  .mm-tiles .mm-tile .mm-model__brand {
+    overflow: visible;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+    white-space: normal;
+  }
+  .mm-tiles .mm-tile:hover,
+  .mm-tiles .mm-tile:focus-visible {
+    border-color: var(--color-band-line);
+    box-shadow: var(--shadow-card);
+  }
+  .mm-tile:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+  /* Animación: el panel baja y los modelos entran escalonados. */
+  @media (prefers-reduced-motion: no-preference) {
+    .mm-pane[data-active] .mm-pane__head {
+      animation: mm-rise 260ms var(--ease-out) both;
+    }
+    .mm-pane[data-active] .mm-tiles > li {
+      animation: mm-rise 320ms var(--ease-out) both;
+      animation-delay: calc(min(var(--n), 10) * 28ms + 40ms);
+    }
+    .mm-tile:hover {
+      transform: translateY(-3px);
+    }
+  }
+  @keyframes mm-rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .mm-groups {
+    display: grid;
+    gap: 1.75rem 1.5rem;
+  }
+  .mm-groups--panel {
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  }
+  .mm-group {
+    min-width: 0;
+  }
+  .mm-group__head {
+    display: block;
+    padding-bottom: 0.625rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-hairline);
+    font-size: 1.0625rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--color-ink-950);
+  }
+  .mm-group__head:hover {
+    color: var(--color-teal-700);
+  }
+  .mm-group__list {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .mm-model {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    padding: 0.25rem;
+    margin-inline: -0.25rem;
+    border-radius: 0.75rem;
+    transition: background-color 150ms;
+  }
+  .mm-model:hover {
+    background-color: var(--color-surface);
+  }
+  /* Miniatura blanca con filete claro; la imagen se funde con el blanco. */
+  .mm-thumb {
+    flex: none;
+    width: 4.5rem;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border: 1px solid var(--color-hairline);
+    border-radius: 0.75rem;
+    background: #fff;
+  }
+  .mm-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: brightness(1.037);
+    mix-blend-mode: multiply;
+    transition: transform 600ms var(--ease-out);
+  }
+  .mm-thumb[data-kind='photo'] img {
+    padding: 8%;
+    object-fit: contain;
+  }
+  .mm-model:hover .mm-thumb img {
+    transform: scale(1.06);
+  }
+  .mm-model__text {
+    display: grid;
+    min-width: 0;
+  }
+  .mm-model__name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--color-ink-950);
+  }
+  .mm-model__brand {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .mm-model__brand {
+    font-size: 0.8125rem;
+    line-height: 1.3;
+    color: var(--color-ink-500);
+  }
+  .mm-groups--accordion {
+    padding: 0.5rem 0 1.25rem;
+  }
+</style>

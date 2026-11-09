@@ -25,7 +25,7 @@ derivados, fecha de comprobación, clasificación (`modelo-exacto` o
 `familia-representativa`), alt en español y estado (`VERIFIED`,
 `ASSET_PERMISSION_NEEDED`, `CONTENT_NEEDED`, `REJECTED`). Sólo las filas
 `VERIFIED` llegan a una plantilla, siempre a través de `ModelPhoto`,
-`ProductFigure`, `ModelRow` o `SkuList`; `npm run validate:images` comprueba el
+`LightBox` o `LitCard`; `npm run validate:images` comprueba el
 registro contra el catálogo, los archivos y el HTML construido.
 
 ### Base de permiso de la fotografía de producto (2026-09-07)

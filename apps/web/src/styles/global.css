@@ -1,9 +1,18 @@
-@import "tailwindcss";
+/* Utilidades sólo de lo que usa `src/` (no de scripts, docs ni correos). */
+@import "tailwindcss" source("../");
 
 /* ============================================================================
-   OrigenLab Website V2 — design tokens
-   Paper, ink, one accent. See docs/design/DESIGN_SYSTEM.md.
-   Every value below is a token; components must not invent colors or radii.
+   OrigenLab Website — design tokens: «Blanco con color» (2026-11-08)
+   One light world: white page, ink text, one teal accent, white cards lifted
+   by a soft teal shadow. Machines sit on plain white (no glow behind them) and
+   no product family gets its own backdrop. No grey or dark
+   surface anywhere (company owner's rule); the ONE exception is the site
+   footer (`--color-footer`, owner ruling 2026-11-08). Shadows are teal-tinted,
+   never black. See docs/design/DESIGN_SYSTEM.md. Components must not invent
+   colours or radii: everything below is a token.
+
+   Token names predate the redesigns and keep their roles: `paper` is the page
+   ground (white), `ink-*` is text and strong lines (higher = more contrast).
    ============================================================================ */
 
 /* --- Self-hosted type (SIL OFL). Provenance: scripts/sync-fonts.mjs -------- */
@@ -52,62 +61,108 @@
   --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Ground and structure */
-  --color-paper: #fafaf7;
-  --color-surface: #f2f2ee;
-  --color-hairline: #e3e3de;
+  /* Ground and structure. All light; measured against ink below. */
+  --color-paper: #ffffff; /* page ground; posters and strips are baked on white */
+  --color-surface: #effaf8; /* pale teal tint: alternate sections, inset fields */
+  --color-raised: #ffffff; /* cards, menus, panels (lifted by a teal shadow) */
+  --color-pressed: #e2f3ef; /* hover/active fill */
+  --color-hairline: #e5eeeb; /* decorative dividers (not control edges) */
+  --color-hairline-strong: #cfdeda; /* decorativo: subrayados; no es borde de control */
 
-  /* Ink */
-  --color-ink-950: #141617;
-  --color-ink-900: #1d2022;
-  --color-ink-800: #2b2e30;
-  --color-ink-600: #54595d;
-  --color-ink-500: #676d71;
+  /* Ink. ≥ 4.5:1 on paper, surface, pressed and the teal washes. */
+  --color-ink-950: #0d1918; /* headings (18:1 on white) */
+  --color-ink-900: #172524;
+  --color-ink-800: #263432; /* body text (13:1) */
+  --color-ink-600: #465755; /* secondary text (7.6:1 white, ≥ 6.4:1 on surface/band) */
+  --color-ink-500: #5a6b68; /* tertiary text (5.6:1 white, ≥ 4.7:1 on surface/band) */
+  --color-ink-disabled: #8a9997;
 
-  /* Ink-on-dark (used only inside the closing band and footer) */
-  --color-onink-100: #ececeb;
-  --color-onink-300: #b9bcbd;
-  --color-onink-500: #8d9295;
+  /* Ink on the dark footer (`--color-footer`), the only dark surface. */
+  --color-onink-100: #ececeb; /* 15:1 on the footer */
+  --color-onink-300: #b9bcbd; /* 9.5:1 */
+  --color-onink-500: #8d9295; /* 5.8:1 */
   --color-onink-hairline: #33383a;
+  --color-onink-line: #4b5154;
 
-  /* Accent — one teal, used for action, place, and one rule per page */
-  --color-teal-800: #115e59;
-  --color-teal-700: #0f766e;
-  --color-teal-500: #14b8a6;
-  --color-teal-100: #ccfbf1;
-  --color-teal-50: #f0fdfa;
-
-  /*
-   * Familias de equipo. Seis tintas, y sólo para la constelación del hero y la
-   * fila del índice que le corresponde.
-   *
-   * El sistema tiene un acento, el teal, y sigue teniéndolo: estas seis no son
-   * un segundo acento suelto sino una escala de identificación, y no aparecen
-   * en ningún otro sitio del sitio. Existen porque el hero tiene que decir de
-   * un vistazo que hay seis capacidades distintas, y seis puntos del mismo
-   * color dicen lo contrario.
-   *
-   * Las seis están medidas: todas superan 5,6:1 sobre papel y sobre superficie,
-   * de modo que pueden teñir texto y no sólo un punto. Centrifugación reutiliza
-   * el teal del sistema en vez de inventar un séptimo verde.
-   */
-  --color-family-sonicacion: #1d4f7c;
-  --color-family-dispersion: #6b3f96;
-  --color-family-centrifugacion: #115e59;
-  --color-family-pesaje: #7d5310;
-  --color-family-osmometria: #15697f;
-  --color-family-electroforesis: #8f2f4f;
-
-  /* Radius: one step, everywhere */
-  --radius-edge: 2px;
+  /* Accent: one teal. 700 is the action colour, 800 links, 500 highlights
+     (never text: 2.5:1 on white). */
+  --color-teal-800: #115e59; /* links (7.6:1 white) */
+  --color-teal-700: #0f766e; /* buttons, labels, focus ring (5.5:1 white, ≥ 4.6:1 surface/band) */
+  --color-teal-600: #0d9488; /* the headline period (3.7:1, large text) */
+  --color-teal-500: #14b8a6; /* dots, LEDs */
+  --color-teal-100: #ccfbf1; /* selection fill */
+  --color-teal-50: #f0fdfa; /* faint teal fill */
 
   /* Page shell */
   --spacing-gutter: 1.25rem;
 }
 
+/* Estáticos: Tailwind poda las variables de @theme que ningún utilitario usa, y
+   estos las usan los componentes por nombre. */
+@theme static {
+  /* Familias: tinta de texto/punto (≥ 5.6:1 sobre blanco). Tarjetas y
+     miniaturas son blancas (dueña, 2026-11-08): sin fondos pastel por familia. */
+  --color-family-sonicacion: #1d4f7c;
+  --color-family-dispersion: #1f5f7a;
+  --color-family-centrifugacion: #5b3f96;
+  --color-family-pesaje: #7d5310;
+  --color-family-osmometria: #6d5a0e;
+  --color-family-electroforesis: #2f4a8f;
+
+  /* Text that must stay readable on any light surface. */
+  --color-fg: #0d1918;
+  --color-fg-muted: #465755;
+  /* Control edges (secondary buttons, inputs): ≥ 3.5:1 on white and the teal washes. */
+  --color-edge: #6d7e7b;
+  /* Closing band and other teal washes (light). Text on them is ink. */
+  --color-band: #dcf6f0;
+  --color-band-line: #bfe6dd;
+  /* Primary action: teal with white text (5.5:1; 7.6:1 on hover). */
+  --color-accent: #0f766e;
+  --color-accent-hover: #115e59;
+  --color-accent-active: #134e4a;
+  --color-on-accent: #ffffff;
+  /* 3D studio: what posters and strips are baked on (= paper). `.pz`
+     (brightness lift + multiply) blends them into any light surface. */
+  --color-studio: #ffffff;
+  /* Washes for `.surface-band` only (never behind a machine). */
+  --color-glow-teal: #c4f1e6;
+  --color-glow-aqua: #c9ecfb;
+  --color-glow-mint: #e4faf5;
+  --color-quote: #f4f9fe; /* the quote section's pale blue */
+  /* The only dark surface: the site footer (owner ruling 2026-11-08). */
+  --color-footer: #141617;
+  /* Header: white glass. */
+  --color-header: rgb(255 255 255 / 0.82);
+  /* Teal halo: focus/hover ring around cards and the primary button. */
+  --color-glow: rgb(20 184 166 / 0.18);
+  /* Teal-tinted shadows (rgb 15 90 80), never black. */
+  --shadow-card: 0 1px 2px rgb(15 90 80 / 0.06), 0 24px 48px -28px rgb(15 90 80 / 0.28);
+  --shadow-lift: 0 40px 60px -40px rgb(15 90 80 / 0.35);
+  --shadow-btn: 0 10px 24px -12px rgb(15 90 80 / 0.55);
+  --shadow-sheet: 0 1px 2px rgb(15 90 80 / 0.08), 0 30px 60px -24px rgb(15 90 80 / 0.28), 0 60px 90px -50px rgb(15 90 80 / 0.25);
+
+  /* Radios: 2 px etiquetas y tablas, píldora botones, 26 px escenarios. */
+  --radius-edge: 2px;
+  --radius-btn: 999px;
+  --radius-field: 0.75rem; /* inputs, textareas, small panels */
+  --radius-card: 1.625rem;
+  --radius-band: 1.75rem;
+  --radius-scene: 1.625rem;
+
+  /* Botones */
+  --btn-h: 3.125rem;
+  --btn-h-sm: 2.5rem;
+  --btn-px: 1.75rem;
+  --btn-px-sm: 1.25rem;
+  --ease-ui: 150ms ease-out;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @layer base {
   html {
     color-scheme: light;
+    background-color: var(--color-paper);
     -webkit-text-size-adjust: 100%;
     /* La cabecera es fija: sin este margen el navegador deja el elemento
        enfocado o anclado justo debajo de ella y queda invisible. */
@@ -117,6 +172,15 @@
   @media (prefers-reduced-motion: no-preference) {
     html {
       scroll-behavior: smooth;
+    }
+  }
+  /* Red de seguridad: con movimiento reducido ninguna transición corre, sea cual sea el componente. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0s !important;
+      transition-delay: 0s !important;
     }
   }
 
@@ -153,12 +217,30 @@
   :focus-visible {
     outline: 2px solid var(--color-teal-700);
     outline-offset: 2px;
-    border-radius: var(--radius-edge);
   }
 
-  /* Inverted surfaces get a light focus ring so it stays visible. */
-  .on-ink :focus-visible {
-    outline-color: var(--color-teal-500);
+  /* `.pz`: a poster or turntable strip baked on the white studio, placed on any
+     light surface. The brightness lift pushes the studio white (and JPEG noise)
+     to pure white; multiply then lets the floor take the colour underneath
+     (white, the pale surface, a band). The surface must be in the same stacking
+     context: never put a transformed or isolated wrapper between them. */
+  .pz {
+    filter: brightness(1.037);
+    mix-blend-mode: multiply;
+  }
+
+  /* Debajo de 1024 px el botón pequeño sube a 44 px (objetivo táctil) y los
+     radios grandes se acortan. */
+  @media (max-width: 1023.98px) {
+    :root {
+      --btn-h-sm: 2.75rem;
+    }
+  }
+  @media (max-width: 639.98px) {
+    :root {
+      --radius-band: 1.25rem;
+      --radius-scene: 1rem;
+    }
   }
 }
 
@@ -182,12 +264,13 @@
   }
 
   /* Vertical rhythm: one section spacing scale for the whole site. */
+  /* Ritmo vertical más apretado (dueño 2026-11-08: «demasiado espacio en blanco»). */
   .section {
-    padding-block: 4rem;
+    padding-block: 3rem;
   }
   @media (min-width: 768px) {
     .section {
-      padding-block: 6rem;
+      padding-block: 4.5rem;
     }
   }
 
@@ -196,26 +279,26 @@
   }
 
   /* --- Type roles ---------------------------------------------------------- */
-  .t-display {
-    font-size: clamp(2rem, 1.45rem + 2.2vw, 3rem);
-    line-height: 1.06;
-    letter-spacing: -0.022em;
-    font-weight: 600;
-  }
   .t-h2 {
-    font-size: clamp(1.5rem, 1.24rem + 1.05vw, 2rem);
-    line-height: 1.15;
-    letter-spacing: -0.014em;
-    font-weight: 600;
+    font-size: clamp(2rem, 1.78rem + 0.9vw, 2.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    font-weight: 800;
   }
   .t-h3 {
     font-size: clamp(1.125rem, 1.08rem + 0.2vw, 1.25rem);
     line-height: 1.3;
     font-weight: 600;
   }
+  /* Rol h3 del tablero Sistema (28/34, 700): los títulos de sección a tres columnas; `.t-h3` queda para títulos de tarjeta. */
+  .t-h3-lg {
+    font-size: clamp(1.375rem, 1.1rem + 1.1vw, 1.75rem);
+    line-height: 1.21;
+    font-weight: 700;
+  }
   .t-lead {
-    font-size: clamp(1.0625rem, 1.02rem + 0.2vw, 1.25rem);
-    line-height: 1.5;
+    font-size: 1.125rem;
+    line-height: 1.5556;
     color: var(--color-ink-600);
     max-width: 58ch;
   }
@@ -230,11 +313,12 @@
   /* Mono label: the only place uppercase tracking is allowed. */
   .t-label {
     font-family: var(--font-mono);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    line-height: 1.3333;
     font-weight: 500;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--color-ink-500);
+    color: var(--color-ink-600);
   }
   /* Mono data: measurements, model codes, item numbers. */
   .t-data {
@@ -244,81 +328,170 @@
     color: var(--color-ink-800);
   }
 
-  /* --- Actions ------------------------------------------------------------- */
+  /* --- Actions -------------------------------------------------------------
+   * Píldoras sobre blanco. Primario: teal con texto blanco y sombra teal.
+   * Secundario, WhatsApp e icono: sin relleno, borde `--color-edge` de 1,5 px
+   * (≥ 3,5:1 sobre blanco y sobre cada tinte; qa:contrast exige 3:1).
+   * ------------------------------------------------------------------------- */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    min-height: 2.875rem;
-    padding: 0.75rem 1.375rem;
-    border-radius: var(--radius-edge);
-    border: 1px solid transparent;
-    font-size: 0.9375rem;
+    height: var(--btn-h);
+    padding-inline: var(--btn-px);
+    border-radius: var(--radius-btn);
+    border: 1.5px solid transparent;
+    background: none;
+    color: var(--color-fg);
+    font-size: 1rem;
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1;
+    letter-spacing: -0.005em;
+    white-space: nowrap;
     text-align: center;
+    cursor: pointer;
     touch-action: manipulation;
-    transition-property: background-color, border-color, color;
-    transition-duration: 150ms;
+    transition:
+      background-color var(--ease-ui),
+      border-color var(--ease-ui),
+      color var(--ease-ui),
+      box-shadow var(--ease-ui),
+      transform 200ms var(--ease-out);
+    &:is(:disabled, [aria-disabled='true']) {
+      cursor: not-allowed;
+    }
+    .arrow {
+      flex: none;
+      transition: transform var(--ease-ui);
+    }
   }
-  .btn-primary {
-    background-color: var(--color-teal-700);
-    color: #fff;
-  }
-  .btn-primary:hover {
-    background-color: var(--color-teal-800);
-  }
-  .btn-secondary {
-    border-color: var(--color-ink-950);
-    color: var(--color-ink-950);
-  }
-  .btn-secondary:hover {
-    background-color: var(--color-ink-950);
-    color: var(--color-paper);
-  }
-  /* On the inverted band only. */
-  .btn-invert {
-    background-color: var(--color-paper);
-    color: var(--color-ink-950);
-  }
-  .btn-invert:hover {
-    background-color: #fff;
-  }
-  .btn-invert-outline {
-    border-color: var(--color-onink-hairline);
-    color: var(--color-onink-100);
-  }
-  .btn-invert-outline:hover {
-    border-color: var(--color-onink-500);
-    background-color: rgb(255 255 255 / 0.06);
+  .btn-sm {
+    height: var(--btn-h-sm);
+    padding-inline: var(--btn-px-sm);
+    font-size: 0.9375rem;
   }
 
-  /* Quiet action: text plus arrow. Never competes with the primary button. */
+  .btn-primary {
+    background-color: var(--color-accent);
+    color: var(--color-on-accent);
+    box-shadow: var(--shadow-btn);
+    &:hover {
+      background-color: var(--color-accent-hover);
+    }
+    &:active {
+      background-color: var(--color-accent-active);
+    }
+    &:is(:disabled, [aria-disabled='true']) {
+      background-color: var(--color-pressed);
+      color: var(--color-ink-500);
+      box-shadow: none;
+    }
+  }
+  .btn-primary:focus-visible {
+    outline-color: var(--color-teal-700);
+    outline-offset: 3px;
+  }
+
+  .btn-secondary,
+  .btn-whatsapp,
+  .btn-icon {
+    border-color: var(--color-edge);
+    &:hover {
+      border-color: var(--color-ink-950);
+    }
+    &:active {
+      border-color: var(--color-ink-950);
+      background-color: var(--color-pressed);
+    }
+    &:is(:disabled, [aria-disabled='true']) {
+      border-color: var(--color-hairline-strong);
+      background-color: transparent;
+      color: var(--color-ink-disabled);
+    }
+  }
+  .btn-icon {
+    width: var(--btn-h);
+    padding: 0;
+    &.btn-sm {
+      width: var(--btn-h-sm);
+    }
+  }
+
+  /* Terciario: enlace teal; el subrayado crece de 0 a 100 %.
+     `.link-arrow` es un alias para los enlaces con flecha ya existentes. */
+  .btn-tertiary,
   .link-arrow {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.375rem;
+    height: auto;
     min-height: 1.75rem;
-    font-weight: 600;
+    padding: 0;
+    border-radius: var(--radius-edge);
+    color: var(--color-teal-700);
     font-size: 0.9375rem;
-    color: var(--color-teal-800);
-    transition: color 150ms;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color var(--ease-ui);
+    /* 44 px de alto en pantallas táctiles. */
+    @media (width < 1024px) {
+      min-height: 2.75rem;
+    }
+    .arrow {
+      flex: none;
+      transition: transform var(--ease-ui);
+    }
+    &:hover {
+      color: var(--color-teal-800);
+    }
   }
-  .link-arrow:hover {
-    color: var(--color-ink-950);
+  .btn-tertiary .lbl {
+    padding-bottom: 3px;
+    background: linear-gradient(currentColor, currentColor) 0 100% / 0% 1.5px no-repeat;
+    transition: background-size 250ms var(--ease-out);
   }
-  .link-arrow > .arrow {
-    transition: transform 150ms;
+  .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .lbl {
+    background-size: 100% 1.5px;
+  }
+  .btn-tertiary:is(:disabled, [aria-disabled='true']) {
+    color: var(--color-ink-disabled);
+    cursor: not-allowed;
+  }
+  .link-arrow {
+    text-decoration: underline 1px transparent;
+    text-underline-offset: 0.3em;
+    transition: color var(--ease-ui), text-decoration-color var(--ease-ui);
+    &:hover:not([aria-disabled='true']) {
+      text-decoration-color: currentColor;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn,
+    .btn .arrow,
+    .btn-tertiary,
+    .btn-tertiary .arrow,
+    .btn-tertiary .lbl,
+    .link-arrow,
+    .link-arrow .arrow {
+      transition: none;
+    }
   }
   @media (prefers-reduced-motion: no-preference) {
-    .link-arrow:hover > .arrow {
-      transform: translateX(2px);
+    .btn:active:not(:is(:disabled, [aria-disabled='true'])) {
+      transform: scale(0.98);
+    }
+    .btn:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow,
+    .btn-tertiary:hover:not(:is(:disabled, [aria-disabled='true'])) .arrow,
+    .link-arrow:hover:not([aria-disabled='true']) .arrow {
+      transform: translateX(4px);
     }
   }
 
   /* Fila de enlaces con flecha: se apila en móvil y se alinea en una fila
-     desde 768 px. Usada en las páginas que enlazan a varias aplicaciones. */
+     desde 768 px. */
   .link-row {
     list-style: none;
     margin: 0;
@@ -348,7 +521,6 @@
   }
 
   /* --- Structure ----------------------------------------------------------- */
-  /* Index row: the default grouping device. Replaces cards across the site. */
   .index-list {
     border-top: 1px solid var(--color-hairline);
   }
@@ -362,53 +534,95 @@
     background-color: var(--color-surface);
   }
 
+  /* --- Superficies compartidas ---------------------------------------------
+   * `.surface-reading`  sección alterna a ancho completo: el tinte teal pálido.
+   * `.surface-band`     lavado teal/aqua (banda de cierre y destacados); texto tinta.
+   * `.surface-quote`    el azul pálido de la sección de la cotización.
+   * Las tarjetas de modelo son `ui/LitCard.astro`.
+   * ------------------------------------------------------------------------- */
+  .surface-reading {
+    background-color: var(--color-surface);
+  }
+  .surface-band {
+    background:
+      radial-gradient(60% 120% at 85% 20%, var(--color-glow-aqua) 0%, transparent 70%),
+      radial-gradient(60% 120% at 10% 90%, var(--color-glow-teal) 0%, transparent 70%),
+      var(--color-band);
+    color: var(--color-ink-950);
+  }
+  .surface-quote {
+    background:
+      radial-gradient(50% 70% at 72% 50%, #e6eefd 0%, transparent 100%),
+      var(--color-quote);
+  }
   .prose-block p + p {
     margin-top: 1rem;
   }
 
-  /* --- Revelado al desplazarse --------------------------------------------
-   * Mejora progresiva estricta. El estado inicial oculto sólo existe cuando el
-   * script ha marcado el documento con `data-reveal-ready`, de modo que sin
-   * JavaScript no se oculta nada nunca y la portada se lee entera. Todo el
-   * bloque vive bajo `prefers-reduced-motion: no-preference`, así que con
-   * movimiento reducido tampoco llega a aplicarse.
-   *
-   * Es una transición, no una animación en bucle: no hay parallax, no hay
-   * secuestro del desplazamiento y ningún contenido depende del movimiento
-   * para entenderse. Ningún elemento de la primera pantalla lleva la marca,
-   * porque ahí el script llegaría después del primer pintado y se vería el
-   * parpadeo.
-   */
+  /* --- Portada: ritmo de secciones y revelado -----------------------------
+   * `.home-sec` pone el aire superior de cada sección; `.home-head` es el par
+   * etiqueta mono + titular que abre cada una. `.rv` revela al entrar en
+   * cuadro con una animación ligada al desplazamiento (CSS puro, sin script):
+   * sin soporte de `animation-timeline` o con movimiento reducido no hace nada y
+   * el contenido está siempre pintado. `backwards` y no `both`: al terminar el
+   * rango la animación deja de aplicarse y el hover de la tarjeta sigue
+   * pudiendo moverla. Nada de la primera pantalla lleva `.rv`.
+   * ------------------------------------------------------------------------- */
+  .home-sec {
+    padding-top: clamp(3.5rem, 6vw, 5.5rem);
+  }
+  .home-head {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    margin-bottom: clamp(2rem, 3.5vw, 3rem);
+    .t-label {
+      color: var(--color-teal-700);
+    }
+  }
+  /* Titular de sección del sitio claro: 800, apretado, punto teal (`.dot`). */
+  .home-h2 {
+    font-size: clamp(2.375rem, 5vw, 4.375rem);
+    line-height: 1;
+    letter-spacing: -0.045em;
+    font-weight: 800;
+  }
+  .lede {
+    font-size: clamp(1.0625rem, 1.4vw, 1.25rem);
+    line-height: 1.5;
+    color: var(--color-ink-600);
+    max-width: 44ch;
+  }
+  .dot {
+    color: var(--color-teal-600);
+    font-style: normal;
+    margin-left: -0.07em;
+  }
   @media (prefers-reduced-motion: no-preference) {
-    [data-reveal-ready] [data-reveal] {
-      opacity: 0;
-      transform: translateY(0.75rem);
-      transition:
-        opacity 500ms cubic-bezier(0.22, 0.61, 0.36, 1),
-        transform 500ms cubic-bezier(0.22, 0.61, 0.36, 1);
-    }
-    [data-reveal-ready] [data-reveal].is-revealed {
-      opacity: 1;
-      transform: none;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='1'] {
-      transition-delay: 70ms;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='2'] {
-      transition-delay: 140ms;
-    }
-    [data-reveal-ready] [data-reveal][data-reveal-delay='3'] {
-      transition-delay: 210ms;
-    }
-
-    /* Al imprimir no hay desplazamiento que dispare nada: sin esto, una sección
-       aún sin revelar saldría en blanco sobre el papel. */
-    @media print {
-      [data-reveal-ready] [data-reveal] {
-        opacity: 1;
-        transform: none;
-        transition: none;
+    @supports (animation-timeline: view()) {
+      .rv {
+        animation-name: rv;
+        animation-timing-function: linear;
+        animation-fill-mode: backwards;
+        animation-timeline: view();
+        animation-range: entry 0% entry 35%;
+      }
+      @media print {
+        .rv {
+          animation: none;
+        }
       }
     }
+  }
+}
+
+@keyframes rv {
+  from {
+    opacity: 0.15;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }

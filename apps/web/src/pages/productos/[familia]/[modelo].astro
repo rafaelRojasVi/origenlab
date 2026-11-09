@@ -1,0 +1,281 @@
+---
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { getCollection } from 'astro:content';
+import Layout from '../../../layouts/Layout.astro';
+import Button from '../../../components/ui/Button.astro';
+import Icon from '../../../components/ui/Icon.astro';
+import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
+import ModelHero from '../../../components/product/ModelHero.astro';
+import ProductStory from '../../../components/product/ProductStory.astro';
+import ModelHeroCopy from '../../../components/product/ModelHeroCopy.astro';
+import LitCard from '../../../components/ui/LitCard.astro';
+import SpecTable from '../../../components/product/SpecTable.astro';
+import AccessoryCards from '../../../components/product/AccessoryCards.astro';
+import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
+import ModelFaq from '../../../components/product/ModelFaq.astro';
+import TrustStrip from '../../../components/product/TrustStrip.astro';
+import { site } from '../../../config/site';
+import { getBrandById } from '../../../lib/catalog';
+import { publicClaim } from '../../../data/claims';
+import { rankModels } from '../../../lib/ranking';
+import { faqJsonLd } from '../../../lib/jsonld';
+import { familyHref, familyInfo, hasCollectionPages, imageForEntry, modelHref, modelSections, relatedFor } from '../../../lib/modelos';
+import { PRODUCT_IMAGE_WIDTHS, imageSourcesFor } from '../../../lib/productImage';
+import { showroomEntry } from '../../../lib/showroom/catalog';
+import type { ProductStoryConfig } from '../../../lib/showroom/productStory';
+import type { Modelo } from '../../../content.config';
+
+/**
+ * Página de modelo: una por archivo de `src/content/modelos/`, en
+ * `/productos/{family}/{slug}/` (centrifugación conserva sus fichas de
+ * `/productos/centrifugas/`, ver `lib/modelos.ts`).
+ *
+ * Orden (tablero Modelo): primera pantalla (con historia por scroll,
+ * `stories/<showroom_id>.ts`, el escenario 3D con el texto de entrada en su
+ * slot `intro`) → resto de la historia → aplicaciones → ficha técnica →
+ * accesorios → relacionados → cómo trabajamos → preguntas → banda de cierre →
+ * barra fija. Una sección sin contenido no se dibuja.
+ */
+export async function getStaticPaths() {
+  const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+  return all
+    .filter((entry) => hasCollectionPages(entry.family))
+    .map((entry) => ({ params: { familia: entry.family, modelo: entry.slug }, props: { entry, all } }));
+}
+
+const { entry, all } = Astro.props as { entry: Modelo; all: Modelo[] };
+const brand = getBrandById(entry.brand);
+const brandName = brand?.name ?? entry.brand;
+const family = familyInfo(entry.family);
+const href = modelHref(entry);
+const quoteHref = `/contacto/?producto=${entry.slug}`;
+
+const stories = import.meta.glob<{ story: ProductStoryConfig }>('../../../lib/showroom/stories/*.ts', { eager: true });
+const story = entry.showroom_id
+  ? Object.entries(stories).find(([path]) => path.endsWith(`/${entry.showroom_id}.ts`))?.[1].story
+  : undefined;
+const media = story ? 'story' : entry.showroom_id && showroomEntry(entry.showroom_id) ? 'showroom' : 'photo';
+
+// Relacionados: los que nombra la ficha y su familia, en el orden comercial (`rankModels`), hasta cuatro.
+const related = rankModels(relatedFor(entry, all, 8).map((other) => ({ id: other.slug, other }))).slice(0, 4).map(({ other }) => other);
+const { applications, accessories, faqs } = modelSections(entry, story);
+const verified = new Date(`${entry.verified_on}T12:00:00Z`).toLocaleDateString('es-CL', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
+/* Datos estructurados: el equipo, sin oferta (no se publica precio). */
+const photo = imageSourcesFor(imageForEntry(entry));
+const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`))
+  ? `/products/${entry.slug}-poster.jpg`
+  : undefined;
+const image = photo?.src ?? poster;
+// og:image: el póster 3D; sin él, la fotografía verificada en WebP (los rastreadores sociales no leen AVIF, el formato maestro).
+const ogImage = poster ?? (photo ? photo.src.replace(/\.[a-z0-9]+$/, `-${Math.max(...PRODUCT_IMAGE_WIDTHS)}.webp`) : undefined);
+const productLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Product',
+  name: `${brandName} ${entry.name}`,
+  description: entry.lead,
+  category: family.name,
+  url: `${site.baseUrl}${href}`,
+  ...(image ? { image: `${site.baseUrl}${image}` } : {}),
+  brand: { '@type': 'Brand', name: brandName },
+  manufacturer: {
+    '@type': 'Organization',
+    name: brand?.legalName ?? brandName,
+    url: brand?.websiteUrl ?? entry.official_url,
+  },
+  additionalProperty: entry.specs.map((spec) => ({ '@type': 'PropertyValue', name: spec.label, value: spec.value })),
+};
+const jsonLd = [
+  productLd,
+  ...(faqs.length > 0 ? [faqJsonLd(faqs.map((faq) => ({ question: faq.q, answer: faq.a })))] : []),
+];
+
+const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
+const longTitle = `${entry.name} de ${brandName} en Chile`;
+const title = longTitle.length + ' | OrigenLab'.length <= 70 ? longTitle : entry.name;
+const fullDescription = `Cotice el ${entry.name} de ${brandName} en Chile. ${entry.lead}`;
+const description =
+  fullDescription.length <= 158 ? fullDescription : `${fullDescription.slice(0, 157).replace(/\s+\S*$/, '')}…`;
+---
+
+<Layout title={title} description={description} jsonLd={jsonLd} ogImagePath={ogImage} ogImageSize={poster || !photo ? undefined : { width: photo.width, height: photo.height }}>
+  <ModelHero entry={entry} brand={brand} family={family} media={media} quoteHref={quoteHref}>
+    {
+      story && (
+        <ProductStory config={story} entry={entry}>
+          <Fragment slot="intro">
+            <ModelHeroCopy entry={entry} brand={brand} family={family} quoteHref={quoteHref} />
+          </Fragment>
+        </ProductStory>
+      )
+    }
+
+    {
+      applications.length > 0 && (
+        <section class="msec msec--alt" aria-labelledby="aplicaciones-title">
+          <div class="shell rv">
+            <h2 id="aplicaciones-title" class="mh2">
+              Para qué se usa el <span translate="no">{entry.name}</span>
+            </h2>
+            <ol class="model-apps">
+              {applications.map((item, i) => (
+                <li>
+                  <span>{String(i + 1).padStart(2, '0')}</span>
+                  <h3>{item}</h3>
+                </li>
+              ))}
+            </ol>
+            <p class="model-apps-note">
+              ¿No sabe qué modelo necesita? <a href={familyHref(entry.family)} class="link-plain">Compare la familia</a> o cuéntenos su aplicación al cotizar.
+            </p>
+          </div>
+        </section>
+      )
+    }
+
+    {
+      entry.specs.length > 0 && (
+        <section class="msec" aria-labelledby="ficha-title">
+          <div class="shell model-spec rv">
+            <div class="model-spec__aside">
+              <div>
+                <p class="t-label">Ficha técnica</p>
+                <h2 id="ficha-title" class="mh2">Datos del fabricante</h2>
+              </div>
+              <p>Cada valor indica su fuente en el ícono de información. Verificado el {verified}.</p>
+              {entry.official_pdf_url && (
+                <Button href={entry.official_pdf_url} variant="secondary" arrow={false} external track="pdf_download" modelo={entry.slug}>
+                  <Icon name="file" size={18} />
+                  Ficha técnica del fabricante (PDF)
+                </Button>
+              )}
+              <Button href={entry.official_url} variant="tertiary" external>Ver en el sitio del fabricante</Button>
+            </div>
+            <SpecTable entry={entry} />
+          </div>
+        </section>
+      )
+    }
+
+    {
+      accessories.length > 0 && (
+        <section class="msec msec--alt" aria-labelledby="accesorios-title">
+          <div class="shell rv">
+            <h2 id="accesorios-title" class="mh2">Accesorios e insumos</h2>
+            <AccessoryCards items={accessories} quoteHref={quoteHref} />
+          </div>
+        </section>
+      )
+    }
+
+    {
+      related.length > 0 && (
+        <section class="msec" aria-labelledby="relacionados-title">
+          <div class="shell rv">
+            <h2 id="relacionados-title" class="mh2">Otros modelos</h2>
+            <div class="model-rel">
+              {related.map((other) => (
+                <LitCard entry={other} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )
+    }
+
+    <TrustStrip />
+
+    {
+      faqs.length > 0 && (
+        <section class="msec" aria-labelledby="preguntas-title">
+          <div class="shell rv">
+            <ModelFaq faqs={faqs} whatsappHref={buildWhatsAppQuoteUrl({ productName: entry.name })} modelo={entry.slug} />
+          </div>
+        </section>
+      )
+    }
+  </ModelHero>
+
+  <ClosingQuoteBand
+    title={sameDay ? `${publicClaim('cotizacion-mismo-dia-habil')}.` : `Le cotizamos el ${entry.name}.`}
+    body={`Cuéntenos su muestra, el volumen y su institución. Le respondemos por el ${entry.name} con alternativas y condiciones por escrito.`}
+    productName={entry.name}
+    brandName={brandName}
+    quoteHref={quoteHref}
+    modelo={entry.slug}
+  >
+    <a href="/como-comprar/#cotizacion" class="model-quote-link">Así se ve su cotización →</a>
+  </ClosingQuoteBand>
+</Layout>
+
+<style is:global>
+  /* Aplicaciones: baldosas blancas con numeral en la tinta de la familia, sobre la franja teal pálida. */
+  .model-apps {
+    list-style: none;
+    margin: 3rem 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+  .model-apps li {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 1.5rem;
+    border-radius: var(--radius-field);
+    background: var(--color-paper);
+    box-shadow: var(--shadow-card);
+  }
+  .model-apps span {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--fam);
+  }
+  .model-apps h3 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+  }
+  .model-apps-note {
+    margin-top: 2rem;
+    color: var(--color-ink-600);
+  }
+  .model-spec {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+    align-items: start;
+  }
+  .model-spec__aside {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
+  }
+  .model-spec__aside p:not(.t-label) {
+    max-width: 21rem;
+    color: var(--color-ink-600);
+  }
+  @media (min-width: 960px) {
+    .model-apps {
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    }
+    .model-spec {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+      gap: 3rem;
+    }
+    .model-spec__aside {
+      position: sticky;
+      top: calc(var(--hd-h, 56px) + 2rem);
+    }
+  }
+</style>

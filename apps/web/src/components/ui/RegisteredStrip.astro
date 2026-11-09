@@ -1,0 +1,170 @@
+---
+import { publicClaim, publicClaimNames } from '../../data/claims';
+import { registrationLogos } from '../../data/registrations';
+
+/**
+ * «Proveedor inscrito en»: franja lenta de logotipos (dueña, 2026-11-08), sólo
+ * los nombres aprobados en `claims.ts` (`proveedor-inscrito`). Sin la
+ * afirmación aprobada no se dibuja nada.
+ *
+ * - Marquesina CSS sin script: dos copias de la lista (la segunda oculta al
+ *   lector) que se desplazan media pista y vuelven sin salto. Se detiene al
+ *   pasar el cursor o con el foco del teclado (la franja es enfocable), y con
+ *   el botón «Pausar» (en pantallas táctiles no hay cursor; WCAG 2.2.2).
+ * - Con movimiento reducido: una fila quieta que se ajusta, sin la copia.
+ * - `heading`: la portada lleva título y la frase del registro; en
+ *   /como-comprar/ la frase ya está encima y sólo van los logos.
+ */
+interface Props {
+  heading?: boolean;
+}
+const { heading = false } = Astro.props;
+const line = publicClaim('proveedor-inscrito');
+const approved = new Set(publicClaimNames('proveedor-inscrito'));
+const logos = registrationLogos.filter((logo) => approved.has(logo.name));
+---
+
+{
+  line && logos.length > 0 && (
+    <div class="reg">
+      {heading && (
+        <div class="reg__head">
+          <h2 id="inscrito-title" class="t-label">Proveedor inscrito en</h2>
+          <p class="reg__line">{line}.</p>
+        </div>
+      )}
+      <div class="reg__view" tabindex="0" role="region" aria-label="Instituciones donde estamos inscritos como proveedor">
+        <div class="reg__track">
+          {[0, 1].map((copy) => (
+            <ul class="reg__list" aria-hidden={copy === 1 ? 'true' : undefined}>
+              {logos.map((logo) => (
+                <li>
+                  <img src={logo.src} alt={logo.name} width={logo.width} height={logo.height} loading="lazy" decoding="async" />
+                </li>
+              ))}
+            </ul>
+          ))}
+        </div>
+      </div>
+      <button type="button" class="reg__toggle" aria-pressed="false" data-reg-toggle>
+        <span class="reg__toggle-pause">Pausar</span>
+        <span class="reg__toggle-play">Reanudar</span>
+      </button>
+    </div>
+  )
+}
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>('[data-reg-toggle]')) {
+    button.addEventListener('click', () => {
+      const paused = button.getAttribute('aria-pressed') !== 'true';
+      button.setAttribute('aria-pressed', String(paused));
+      button.closest('.reg')?.toggleAttribute('data-paused', paused);
+    });
+  }
+</script>
+
+<style>
+  .reg__head {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+  }
+  .reg__line {
+    max-width: 52ch;
+    color: var(--color-ink-600);
+  }
+  /* `contain`: la pista mide max-content y no debe ensanchar su columna. */
+  .reg__view {
+    contain: inline-size;
+    overflow: hidden;
+    border-radius: var(--radius-card);
+    mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  }
+  .reg__view:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+  .reg__track {
+    display: flex;
+    width: max-content;
+  }
+  .reg__list {
+    display: flex;
+    align-items: center;
+    gap: clamp(2.5rem, 5vw, 4.5rem);
+    margin: 0;
+    padding: 1.25rem clamp(1.25rem, 2.5vw, 2.25rem);
+    list-style: none;
+  }
+  .reg__list img {
+    display: block;
+    width: auto;
+    height: 2.75rem;
+    max-width: 11rem;
+    object-fit: contain;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .reg__track {
+      animation: reg-scroll 48s linear infinite;
+    }
+    .reg__view:is(:hover, :focus-within) .reg__track,
+    .reg[data-paused] .reg__track {
+      animation-play-state: paused;
+    }
+  }
+  .reg__toggle {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin: 0.5rem auto 0;
+    padding: 0 1.125rem;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-btn);
+    background: var(--color-paper);
+    color: var(--color-ink-800);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .reg__toggle:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 2px;
+  }
+  .reg__toggle[aria-pressed='true'] .reg__toggle-pause,
+  .reg__toggle[aria-pressed='false'] .reg__toggle-play {
+    display: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reg__toggle {
+      display: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reg__view {
+      mask-image: none;
+    }
+    .reg__track {
+      width: auto;
+    }
+    .reg__list {
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .reg__list[aria-hidden] {
+      display: none;
+    }
+  }
+  @keyframes reg-scroll {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+  @media (max-width: 639.98px) {
+    .reg__list img {
+      height: 2.25rem;
+      max-width: 8.5rem;
+    }
+  }
+</style>

@@ -121,15 +121,72 @@ for (const file of pages) {
   }
 }
 
+/* -- 4b. La casilla de consentimiento es real, no decorativa --------------
+ *
+ * El formulario de contacto exige consentimiento (Ley 21.719). Una casilla de
+ * consentimiento que no sea `required` o no lleve la versión del texto sería
+ * justo el adorno que la comprobación 3 busca evitar.
+ */
+for (const file of pages) {
+  const html = readFileSync(file, 'utf8');
+  const rel = relative(dist, file);
+  for (const tag of html.matchAll(/<input\b[^>]*name="consent_version"[^>]*>/g)) {
+    const consentCheckboxPresent = /type="checkbox"/.test(tag[0]);
+    const checkboxHasRequired = /\brequired\b/.test(tag[0]);
+    assert(!consentCheckboxPresent || checkboxHasRequired, `${rel}: consent checkbox must have required attribute`);
+    assert(/value="consent-v[^"]+"/.test(tag[0]), `${rel}: la casilla de consentimiento lleva la versión del texto`);
+  }
+}
+
 /* -- 5. Ninguna petición a otro dominio desde el JavaScript --------------- */
 for (const file of scripts) {
   const body = readFileSync(file, 'utf8');
   const rel = relative(dist, file);
-  const remote = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)]
+  // Los URI de espacio de nombres XML del W3C (`http://www.w3.org/2000/svg`)
+  // son identificadores que el navegador nunca pide; three.js crea elementos con
+  // ellos. Se exceptúan sólo esos, por su forma exacta.
+  const remote = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)(\/[^"'`]*)?/gi)]
+    .filter((match) => !(match[2] === 'www.w3.org' && /^\/(1999\/xhtml|2000\/svg|1998\/Math\/MathML|1999\/xlink|XML\/1998\/namespace)$/.test(match[3] ?? '')))
     .map((match) => match[2])
     .filter((host) => host && !host.endsWith('origenlab.cl'));
   assert(remote.length === 0, `${rel}: sin destino remoto${remote.length ? ` (${[...new Set(remote)].join(', ')})` : ''}`);
 }
+
+/* -- 6. La medición propia es de primera mano ------------------------------
+ *
+ * `src/lib/stats.ts` envía seis nombres de evento (cinco acciones y la `visita`) con `navigator.sendBeacon` a una ruta
+ * del propio dominio (`/api/stats/event`). La medición sólo es compatible con
+ * lo que dicen `/privacidad/` y `/cookies/` si ese archivo no guarda nada en el
+ * navegador y no habla con nadie más: aquí se busca el archivo construido que
+ * contiene la ruta y se exige que no toque almacenamiento ni cookies ni
+ * dominios ajenos. El «sin destino remoto» de la comprobación 5 ya cubre los
+ * dominios; esta comprobación lo repite sobre ese archivo en concreto para que
+ * un cambio en `stats.ts` falle aquí con nombre propio.
+ */
+const statsFiles = scripts.filter((file) => /api\/stats\/event/.test(readFileSync(file, 'utf8')));
+assert(statsFiles.length > 0, 'existe un JavaScript construido que envía a /api/stats/event');
+for (const file of statsFiles) {
+  const body = readFileSync(file, 'utf8');
+  const rel = relative(dist, file);
+  assert(!/^scene-/.test(rel.split(/[\\/]/).pop()), `${rel}: la medición no vive dentro de un trozo scene-*`);
+  for (const word of ['localStorage', 'sessionStorage', 'document.cookie', 'indexedDB']) {
+    assert(!body.includes(word), `${rel}: la medición no usa ${word}`);
+  }
+  const hosts = [...body.matchAll(/["'`](https?:)?\/\/([a-z0-9.-]+)/gi)].map((m) => m[2]).filter((h) => !h.endsWith('origenlab.cl'));
+  assert(hosts.length === 0, `${rel}: la medición no nombra dominios ajenos`);
+  assert(/sendBeacon/.test(body), `${rel}: la medición usa sendBeacon`);
+}
+// El sexto nombre es `visita`: origen y página, nunca el referente entero ni la query (vive en visit.ts).
+// Astro incrusta en el HTML el guion de visita (es pequeño): se busca en los JavaScript construidos y en los guiones en línea de la portada.
+const inlineScripts = [...readFileSync(join(dist, 'index.html'), 'utf8').matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+const visitBodies = [...statsFiles.map((file) => readFileSync(file, 'utf8')), ...inlineScripts].filter((body) => body.includes('visita'));
+assert(visitBodies.length > 0, 'el sexto nombre de evento, visita, está en un JavaScript construido o en línea');
+for (const body of visitBodies) {
+  for (const word of ['localStorage', 'sessionStorage', 'document.cookie', 'indexedDB']) assert(!body.includes(word), `el guion de visita no usa ${word}`);
+  assert(/sendBeacon/.test(body), 'el guion de visita usa sendBeacon');
+}
+const visitSource = readFileSync(join(root, 'src/lib/visit.ts'), 'utf8');
+assert(/const body = JSON\.stringify\(\{ name: 'visita', props: \{ origen: classifyOrigin\([^)]*\), pagina \} \}\)/.test(visitSource), 'visit.ts: la carga útil es sólo origen y página; el referente entra por el clasificador');
 
 if (failed) {
   console.error('\nvalidate:privacy FALLÓ');

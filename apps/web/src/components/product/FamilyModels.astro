@@ -1,0 +1,93 @@
+---
+import LitCard from '../ui/LitCard.astro';
+import { rankModels } from '../../lib/ranking';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Rejilla de tarjetas iluminadas (`LitCard`) del catálogo: `/productos/`, cada
+ * página de familia, centrífugas y `/categorias/…`. Cada tarjeta lleva directo
+ * a la ficha (regla del dueño) y a «Cotizar» con el modelo. Orden comercial
+ * siempre (`rankModels`: 3D primero, IKA al final), aunque la página pase los
+ * modelos en otro orden.
+ *
+ * Fotos del fabricante con fondo gris o fotográfico (`MAT`): el multiply no
+ * las funde con el tinte y quedarían como cajas grises. Se presentan sobre un
+ * panel blanco dentro del escenario tintado, hasta que haya originales con
+ * fondo blanco. Varias fotos de fabricante son pequeñas (menos de 200 px): el
+ * tope de tamaño de `LightBox` se mide con el relleno incluido y las dejaba
+ * diminutas, así que aquí la foto llena su caja.
+ *
+ * Dos por fila en teléfono, tres desde 768 px, cuatro desde 1024 px.
+ */
+interface Props {
+  models: readonly Modelo[];
+  /** Nivel del nombre de cada tarjeta en el esquema de la página. */
+  heading?: 'h3' | 'h4';
+  /** Línea superior de la tarjeta: `brand` (por omisión, la familia ya está en el titular) o `family`. */
+  kicker?: 'family' | 'brand';
+  /** Cuántas tarjetas cargan sin diferir (sólo en la primera pantalla). */
+  eager?: number;
+  label?: string;
+  class?: string;
+}
+
+const MAT = new Set(['loeser-i-osmometer-basic', 'loeser-osmometer-basic', 'loeser-i-cryometer', 'serva-bluemarine-100', 'serva-blueslick-42500']);
+
+const { models, heading = 'h3', kicker = 'brand', eager = 0, label, class: className = '' } = Astro.props;
+const ranked = rankModels(models.map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry);
+---
+
+<ul class:list={['fm', className]} aria-label={label}>
+  {
+    ranked.map((entry, i) => (
+      <li>
+        <LitCard entry={entry} heading={heading} kicker={kicker} loading={i < eager ? 'eager' : 'lazy'} class={MAT.has(entry.slug) ? 'lc--mat' : ''} />
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .fm {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.25rem 0.875rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .fm > li {
+    display: flex;
+  }
+  .fm > li > :global(.lc) {
+    flex: 1;
+  }
+  .fm :global(.lc__photo img) {
+    max-width: none !important;
+    max-height: none !important;
+  }
+  /* Panel blanco para las fotos de fondo gris: enmarcadas, sin multiply. */
+  .fm :global(.lc--mat .lc__photo) {
+    inset: 11% 13% 13%;
+    background: #fff;
+    border-radius: 1rem;
+    box-shadow: var(--shadow-card);
+  }
+  .fm :global(.lc--mat .lc__photo img) {
+    padding: 0.625rem;
+    border-radius: 1rem;
+    filter: none;
+    mix-blend-mode: normal;
+  }
+  @media (min-width: 768px) {
+    .fm {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 3rem 1.5rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .fm {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+</style>

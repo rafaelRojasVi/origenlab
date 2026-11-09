@@ -1,0 +1,95 @@
+{
+  "slug": "ortoalresa-consul-22",
+  "family": "centrifugacion",
+  "brand": "ortoalresa",
+  "name": "Consul 22",
+  "headline": "Ortoalresa Consul 22: centrífuga de gran capacidad",
+  "lead": "Centrífuga ventilada de gran capacidad para volúmenes mayores con rotores y adaptadores según configuración.",
+  "applications": [
+    "Gran capacidad",
+    "Tubos hasta 400 ml",
+    "Microplacas",
+    "Preparación de muestras",
+    "Control de calidad",
+    "Investigación"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad máxima",
+      "value": "4 × 400 ml",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Pantalla",
+      "value": "TFT táctil a color",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Velocidad máxima",
+      "value": "14.300 RPM / 21.948 ×g",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Versión",
+      "value": "Ventilada",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Cámara",
+      "value": "Acero inoxidable",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Motor",
+      "value": "Inducción sin escobillas",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Rotor",
+      "value": "Reconocimiento automático",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Nivel de ruido",
+      "value": "Inferior a 60 dB",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Control",
+      "value": "ULS (localización de desequilibrio)",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Aceleración / frenado",
+      "value": "Sistema PCBS progresivo",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Dimensiones (CE 226 / CE 227)",
+      "value": "490 × 600 × 400 mm",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Peso neto",
+      "value": "59 kg",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Alimentación CE 226",
+      "value": "220-230 V, 50-60 Hz, 600 W",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    },
+    {
+      "label": "Alimentación CE 227",
+      "value": "110-120 V, 50-60 Hz, 600 W",
+      "source": "https://ortoalresa.com/centrifugas/consul-22/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://ortoalresa.com/centrifugas/consul-22/",
+  "official_pdf_url": "https://ortoalresa.com/catalogo_producto/Catalogo_serie_Consul_22_ESP.pdf",
+  "image_id": "ortoalresa-consul-22",
+  "verified_on": "2026-09-07"
+}

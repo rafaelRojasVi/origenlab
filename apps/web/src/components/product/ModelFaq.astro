@@ -1,0 +1,125 @@
+---
+import Icon from '../ui/Icon.astro';
+import Button from '../ui/Button.astro';
+
+/**
+ * Preguntas frecuentes del modelo: a la izquierda el título y la invitación a
+ * escribir; a la derecha un `<details>` por pregunta, con el chevron que gira
+ * al abrir. La altura se anima con `::details-content` sólo si el navegador la
+ * soporta y el visitante no pidió movimiento reducido.
+ */
+interface Props {
+  faqs: { q: string; a: string }[];
+  /** wa.me con el modelo (buildWhatsAppQuoteUrl). */
+  whatsappHref: string;
+  modelo: string;
+}
+
+const { faqs, whatsappHref, modelo } = Astro.props;
+---
+
+<div class="mfaq">
+  <div>
+    <p class="t-label">Preguntas frecuentes</p>
+    <h2 id="preguntas-title" class="mh2">Antes de cotizar</h2>
+    <p class="mfaq__lead">
+      ¿Otra duda? <Button href={whatsappHref} variant="tertiary" arrow={false} external track="whatsapp_click" modelo={modelo}>Escríbanos por WhatsApp</Button> y le respondemos.
+    </p>
+  </div>
+  <div class="mfaq__list">
+    {
+      faqs.map((faq) => (
+        <details>
+          <summary>
+            {faq.q}
+            <Icon name="chevron-down" size={22} class="mfaq__chev" />
+          </summary>
+          <p>{faq.a}</p>
+        </details>
+      ))
+    }
+  </div>
+</div>
+
+<style is:global>
+  .mfaq {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+  }
+  .mfaq__lead {
+    max-width: 20rem;
+    margin-top: 1rem;
+    color: var(--color-ink-600);
+  }
+  .mfaq details {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .mfaq details:last-child {
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .mfaq summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    min-height: 4rem;
+    padding-block: 0.875rem;
+    list-style: none;
+    cursor: pointer;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-950);
+  }
+  .mfaq summary::-webkit-details-marker {
+    display: none;
+  }
+  .mfaq summary:hover {
+    color: var(--color-teal-800);
+  }
+  .mfaq summary .mfaq__chev {
+    flex: none;
+    transition: transform 0.25s ease-out;
+  }
+  .mfaq details[open] summary .mfaq__chev {
+    transform: rotate(180deg);
+  }
+  .mfaq details p {
+    max-width: 64ch;
+    padding: 0 0 1.5rem;
+    color: var(--color-ink-600);
+  }
+  @media (min-width: 640px) {
+    .mfaq summary {
+      font-size: 1.1875rem;
+    }
+    .mfaq details p {
+      padding-right: 3rem;
+    }
+  }
+  @media (min-width: 960px) {
+    .mfaq {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+      gap: 3rem;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    :root {
+      interpolate-size: allow-keywords;
+    }
+    @supports selector(::details-content) {
+      .mfaq details::details-content {
+        overflow: clip;
+        block-size: 0;
+        transition:
+          block-size 0.25s ease-out,
+          content-visibility 0.25s allow-discrete;
+      }
+      .mfaq details[open]::details-content {
+        block-size: auto;
+      }
+    }
+  }
+</style>

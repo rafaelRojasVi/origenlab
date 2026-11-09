@@ -1,0 +1,107 @@
+---
+import { getCollection } from 'astro:content';
+import Layout from '../../../layouts/Layout.astro';
+import PageIntro from '../../../components/ui/PageIntro.astro';
+import Icon from '../../../components/ui/Icon.astro';
+import FamilyModels from '../../../components/product/FamilyModels.astro';
+import FamilyConsult from '../../../components/product/FamilyConsult.astro';
+import CompareTable from '../../../components/ui/CompareTable.astro';
+import { site } from '../../../config/site';
+import { getBrandsByFamilyId } from '../../../lib/catalog';
+import { rankModels } from '../../../lib/ranking';
+import { familyInfo, hasCollectionPages, modelHref, type FamilySlug } from '../../../lib/modelos';
+import type { Modelo } from '../../../content.config';
+
+/**
+ * Página de familia: una por familia con modelos en la colección, en
+ * `/productos/{family}/`. Intro con las marcas que los fabrican, las tarjetas
+ * iluminadas (cada una a su ficha, orden comercial de `lib/ranking.ts`), una
+ * comparativa compacta con las cifras del fabricante y la banda «¿No sabe
+ * cuál?». Centrifugación tiene su página propia en
+ * `/productos/centrifugas/` y no se genera aquí (ver `lib/modelos.ts`).
+ */
+export async function getStaticPaths() {
+  const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+  const families = [...new Set(all.map((entry) => entry.family))].filter(hasCollectionPages);
+  return families.map((slug) => ({
+    params: { familia: slug },
+    props: { slug, models: rankModels(all.filter((entry) => entry.family === slug).map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry) },
+  }));
+}
+
+const { slug, models } = Astro.props as { slug: FamilySlug; models: Modelo[] };
+const family = familyInfo(slug);
+const brands = getBrandsByFamilyId(family.scopeId);
+const brandNames = brands.map((brand) => brand.name).join(' y ');
+
+
+const itemList = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: family.name,
+  itemListElement: models.map((model, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: `${brands.find((brand) => brand.id === model.brand)?.name ?? model.brand} ${model.name}`,
+    url: `${site.baseUrl}${modelHref(model)}`,
+  })),
+};
+
+const fullDescription = `${family.purpose} Modelos de ${brandNames} con las cifras del fabricante y cotización en Chile a través de OrigenLab.`;
+const description =
+  fullDescription.length <= 158 ? fullDescription : `${fullDescription.slice(0, 157).replace(/\s+\S*$/, '')}…`;
+---
+
+<Layout title={family.name} description={description} jsonLd={[itemList]}>
+  <div class="shell">
+    <PageIntro
+      title={family.short}
+      lead={family.purpose}
+      crumbs={[{ label: 'Productos', href: '/productos/' }, { label: family.short }]}
+    />
+    {
+      brands.length > 0 && (
+        <ul class="link-row fam-brands" aria-label="Quién los fabrica">
+          {brands.map((brand) => (
+            <li>
+              <a href={`/marcas/${brand.slug}/`} class="btn-tertiary">
+                <span class="lbl" translate="no">{brand.name}</span>
+                <Icon name="arrow-right" size={16} class="arrow" />
+              </a>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </div>
+
+  <section class="shell fam-sec" aria-labelledby="modelos-title">
+    <h2 id="modelos-title" class="sr-only">Modelos de {family.short.toLowerCase()}</h2>
+    <FamilyModels models={models} eager={4} label={`Modelos de ${family.short.toLowerCase()}`} />
+  </section>
+
+  <section class="shell fam-sec fam-cmp" aria-labelledby="comparar-title">
+    <h2 id="comparar-title" class="t-h2">Compárelos<span class="dot">.</span></h2>
+    <p class="lede fam-cmp__lede">Las cifras del fabricante, lado a lado. El detalle completo está en cada ficha.</p>
+    <CompareTable models={models} family={slug} caption={`Comparativa de ${family.short.toLowerCase()}`} />
+  </section>
+
+  <FamilyConsult brandName={brands.length === 1 ? brands[0].name : undefined} />
+</Layout>
+
+<style>
+  .fam-brands {
+    margin-top: 1rem;
+  }
+  .fam-sec {
+    padding-block: 2.5rem 3rem;
+  }
+  .fam-cmp__lede {
+    margin: 0.75rem 0 2rem;
+  }
+  @media (min-width: 768px) {
+    .fam-sec {
+      padding-block: 3rem 4.5rem;
+    }
+  }
+</style>

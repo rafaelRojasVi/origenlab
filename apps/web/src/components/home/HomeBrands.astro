@@ -1,0 +1,422 @@
+---
+import BrandLogo from '../ui/BrandLogo.astro';
+import { brandRailOrder } from '../../data/brands';
+import { publicClaim } from '../../data/claims';
+import { getBrandById } from '../../lib/catalog';
+import { rankBrands } from '../../lib/ranking';
+
+/**
+ * Marcas (tablero HomeA): una fila fija de logotipos entre dos filetes, en el
+ * orden comercial (`rankBrands`: IKA al final) de la lista cerrada
+ * (`brandRailOrder`, sin las marcas ocultas en la portada). Sin marquesina ni control de pausa: no se mueve, y en teléfono se
+ * desplaza con el dedo. El logotipo va con alt vacío porque el enlace ya lleva
+ * el nombre de la marca. El riel no lleva animación propia: sólo el contenedor
+ * se revela una vez al entrar en cuadro.
+ *
+ * Sitio claro: los logotipos en su tinta, en una rejilla de celdas iguales
+ * separadas por filetes (maqueta «Blanco con color»), con el titular en dos
+ * tonos: la cifra de marcas y «directo con el fabricante», ambos del registro.
+ *
+ * Mapa (dueño 2026-11-08: «líneas desde esos países a Chile»): a la derecha del
+ * titular, el contorno claro del mundo (`/mapa/mundo.svg`, Natural Earth
+ * 1:110m, equirectangular lon −130…45, lat 72…−58, 1000×743) y, encima, un
+ * arco teal desde el país de cada fabricante hasta Santiago. Los cuatro
+ * fabricantes alemanes comparten un punto. Los arcos se dibujan al entrar la
+ * sección en cuadro (`animation-timeline: view()`, CSS puro); sin soporte o con
+ * movimiento reducido se ven ya trazados. Las coordenadas salen de la misma
+ * proyección que el contorno.
+ */
+const heading = publicClaim('directo-con-el-fabricante');
+const count = publicClaim('marcas-con-las-que-trabajamos');
+/** Origen de cada fabricante (sede pública), en píxeles del mapa de 1000×743. */
+const ORIGINS = [
+  { country: 'Alemania', x: 819, y: 112, slugs: ['hielscher', 'loeser-messtechnik', 'serva-electrophoresis', 'ika'], lx: 0, ly: -22, anchor: 'middle' },
+  { country: 'Reino Unido', x: 739, y: 114, slugs: ['adam-equipment'], lx: -14, ly: -14, anchor: 'end' },
+  { country: 'España', x: 722, y: 180, slugs: ['ortoalresa'], lx: -14, ly: 26, anchor: 'end' },
+  { country: 'EE. UU.', x: 318, y: 178, slugs: ['ohaus'], lx: -14, ly: -12, anchor: 'end' },
+] as const;
+const CHILE = { x: 339, y: 603 };
+/** Arco cuadrático hacia Chile, combado hacia arriba y al centro del Atlántico. */
+const arc = (o: { x: number; y: number }) => {
+  const cx = (o.x + CHILE.x) / 2 - (o.x > 600 ? 40 : -90);
+  const cy = Math.min(o.y, CHILE.y) + (CHILE.y - Math.min(o.y, CHILE.y)) * 0.25;
+  return `M${o.x} ${o.y}Q${Math.round(cx)} ${Math.round(cy)} ${CHILE.x} ${CHILE.y}`;
+};
+const rail = rankBrands(
+  brandRailOrder.map((id) => getBrandById(id)).filter((brand): brand is NonNullable<typeof brand> => brand !== undefined),
+);
+/** Índice del origen de cada marca, para enlazar riel, lista y mapa. */
+const originOf = (slug: string) => ORIGINS.findIndex((origin) => (origin.slugs as readonly string[]).includes(slug));
+const groups = ORIGINS.map((origin) => ({ ...origin, brands: rail.filter((brand) => (origin.slugs as readonly string[]).includes(brand.slug)) }));
+---
+
+<section class="shell home-sec" id="marcas" aria-labelledby={heading ? 'marcas-title' : undefined} aria-label={heading ? undefined : 'Marcas'} data-home-brands>
+  <div class="brands-intro">
+    <div class="brands-intro__text rv">
+      {
+        heading && (
+          <h2 id="marcas-title" class="brands__h">
+            {count && <>{count}. </>}
+            <span>{heading}.</span>
+          </h2>
+        )
+      }
+      <ul class="origins" aria-label="De dónde vienen los equipos">
+        {groups.map((origin, i) => origin.brands.length > 0 && (
+          <li data-origin={i}>
+            <span class="origins__country">{origin.country}</span>
+            <span class="origins__brands" translate="no">{origin.brands.map((brand) => brand.name).join(' · ')}</span>
+          </li>
+        ))}
+        <li class="origins__to">
+          <span class="origins__country">Chile</span>
+          <span class="origins__brands">Lo traemos y cotizamos aquí</span>
+        </li>
+      </ul>
+    </div>
+    <figure class="brand-map" aria-hidden="true">
+      <img src="/mapa/mundo.svg" alt="" width="1000" height="743" loading="lazy" decoding="async" />
+      <svg viewBox="0 0 1000 743" class="brand-map__arcs">
+        {ORIGINS.map((origin, i) => (
+          <path class="brand-map__arc" d={arc(origin)} pathLength="1" style={`--i: ${i}`} data-origin={i} />
+        ))}
+        {ORIGINS.map((origin, i) => (
+          <circle class="brand-map__pkg" r="5" data-origin={i}>
+            <animateMotion dur="4.2s" begin={`${i * 1.05}s`} repeatCount="indefinite" path={arc(origin)} keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines="0.45 0 0.25 1" />
+          </circle>
+        ))}
+        {ORIGINS.map((origin, i) => (
+          <g class="brand-map__origin" data-origin={i}>
+            <circle cx={origin.x} cy={origin.y} r="14" class="brand-map__ring" />
+            <circle cx={origin.x} cy={origin.y} r="6" />
+            <text x={origin.x + origin.lx} y={origin.y + origin.ly} text-anchor={origin.anchor}>{origin.country}</text>
+          </g>
+        ))}
+        <g class="brand-map__chile">
+          <circle cx={CHILE.x} cy={CHILE.y} r="16" class="brand-map__halo" />
+          <circle cx={CHILE.x} cy={CHILE.y} r="8" />
+          <text x={CHILE.x + 18} y={CHILE.y + 6}>Chile</text>
+        </g>
+      </svg>
+      {groups.map((origin, i) => origin.brands.length > 0 && (
+        <div class="brand-map__pop" data-origin={i} style={`left: ${origin.x / 10}%; top: ${origin.y / 7.43}%`}>
+          {origin.brands.map((brand) => <BrandLogo brand={brand} scale={0.7} alt="" />)}
+        </div>
+      ))}
+    </figure>
+  </div>
+  <div class="rv">
+    <ul class="home-rail" style={`--n: ${rail.length}`}>
+      {
+        rail.map((brand) => (
+          <li data-origin={originOf(brand.slug)}>
+            <a href={`/marcas/${brand.slug}/`}>
+              <BrandLogo brand={brand} scale={1.15} alt="" class="home-rail__logo" />
+              <span class="home-rail__name sr-only">{brand.name}</span>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</section>
+
+<script>
+  // Mapa interactivo: pasar el cursor por un país (lista o punto) o pasar/enfocar un logo del riel lo destaca en el mapa.
+  for (const section of document.querySelectorAll<HTMLElement>('[data-home-brands]')) {
+    const map = section.querySelector<HTMLElement>('.brand-map');
+    if (!map) continue;
+    const set = (value: string | null) => (value === null ? map.removeAttribute('data-active') : map.setAttribute('data-active', value));
+    for (const item of section.querySelectorAll<HTMLElement>('li[data-origin], .brand-map__origin[data-origin]')) {
+      const on = () => set(item.dataset.origin ?? item.getAttribute('data-origin'));
+      const off = () => set(null);
+      item.addEventListener('pointerenter', on);
+      item.addEventListener('pointerleave', off);
+      item.addEventListener('focusin', on);
+      item.addEventListener('focusout', off);
+    }
+  }
+</script>
+
+<style>
+  .brands-intro {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    align-items: center;
+    gap: clamp(2rem, 4vw, 4rem);
+    margin-bottom: clamp(2.5rem, 5vw, 3.5rem);
+  }
+  .origins {
+    display: grid;
+    gap: 0.875rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .origins li {
+    display: grid;
+    gap: 0.125rem;
+    padding-left: 1rem;
+    border-left: 2px solid var(--color-band-line);
+  }
+  .origins__country {
+    font-weight: 700;
+    color: var(--color-ink-950);
+  }
+  .origins__brands {
+    font-size: 0.9375rem;
+    color: var(--color-ink-600);
+  }
+  .origins__to {
+    border-left-color: var(--color-teal-700) !important;
+  }
+  .brand-map {
+    position: relative;
+    margin: 0;
+    aspect-ratio: 1000 / 743;
+  }
+  .brand-map > img,
+  .brand-map__arcs {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .brand-map__arcs {
+    overflow: visible;
+  }
+  .brand-map__arc {
+    fill: none;
+    stroke: var(--color-teal-700);
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 0;
+  }
+  .brand-map__origin circle,
+  .brand-map__chile circle {
+    fill: var(--color-teal-700);
+    stroke: var(--color-paper);
+    stroke-width: 3;
+  }
+  .brand-map__chile .brand-map__halo {
+    fill: var(--color-teal-500);
+    stroke: none;
+    opacity: 0.25;
+  }
+  .brand-map text {
+    font: 700 22px var(--font-sans);
+    fill: var(--color-ink-800);
+    paint-order: stroke;
+    stroke: var(--color-paper);
+    stroke-width: 5px;
+    stroke-linejoin: round;
+  }
+  .brand-map__chile text {
+    font-size: 26px;
+    fill: var(--color-teal-800);
+  }
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      .brand-map__arc {
+        animation-name: arc-draw;
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: view();
+        animation-range: entry calc(10% + var(--i) * 6%) cover calc(45% + var(--i) * 6%);
+      }
+    }
+  }
+  /* --- Interacción: un país activo (lista, logo o punto) se destaca --------- */
+  .brand-map__arc,
+  .brand-map__origin,
+  .brand-map__pkg {
+    transition: opacity 250ms var(--ease-out), stroke-width 250ms var(--ease-out);
+  }
+  .brand-map__origin {
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  /* Zona de toque invisible alrededor de cada punto. */
+  .brand-map__origin .brand-map__ring {
+    fill: transparent;
+    stroke: none;
+  }
+  .brand-map[data-active='0'] svg [data-origin]:not([data-origin='0']),
+  .brand-map[data-active='1'] svg [data-origin]:not([data-origin='1']),
+  .brand-map[data-active='2'] svg [data-origin]:not([data-origin='2']),
+  .brand-map[data-active='3'] svg [data-origin]:not([data-origin='3']) {
+    opacity: 0.18;
+  }
+  .brand-map[data-active='0'] .brand-map__arc[data-origin='0'],
+  .brand-map[data-active='1'] .brand-map__arc[data-origin='1'],
+  .brand-map[data-active='2'] .brand-map__arc[data-origin='2'],
+  .brand-map[data-active='3'] .brand-map__arc[data-origin='3'] {
+    stroke-width: 4.5;
+  }
+  .brand-map__pkg {
+    fill: var(--color-teal-500);
+    stroke: var(--color-paper);
+    stroke-width: 2;
+  }
+  /* Logos del país activo junto a su punto. */
+  .brand-map__pop {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.875rem;
+    align-items: center;
+    width: max-content;
+    max-width: 16rem;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-btn);
+    background: var(--color-paper);
+    box-shadow: var(--shadow-card);
+    opacity: 0;
+    pointer-events: none;
+    transform: translate(-50%, calc(-100% - 2.25rem)) scale(0.96);
+    transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+  }
+  .brand-map__pop[data-origin='3'] {
+    transform: translate(-30%, calc(-100% - 2.25rem)) scale(0.96);
+  }
+  /* Alemania está cerca del borde derecho: su tarjeta se abre hacia la izquierda. */
+  .brand-map__pop[data-origin='0'] {
+    transform: translate(-85%, calc(-100% - 2.25rem)) scale(0.96);
+  }
+  .brand-map[data-active='0'] .brand-map__pop[data-origin='0'] {
+    transform: translate(-85%, calc(-100% - 2.25rem)) scale(1);
+  }
+  .brand-map[data-active='0'] .brand-map__pop[data-origin='0'],
+  .brand-map[data-active='1'] .brand-map__pop[data-origin='1'],
+  .brand-map[data-active='2'] .brand-map__pop[data-origin='2'],
+  .brand-map[data-active='3'] .brand-map__pop[data-origin='3'] {
+    opacity: 1;
+    transform: translate(-50%, calc(-100% - 2.25rem)) scale(1);
+  }
+  .brand-map[data-active='3'] .brand-map__pop[data-origin='3'] {
+    transform: translate(-30%, calc(-100% - 2.25rem)) scale(1);
+  }
+  .origins li[data-origin] {
+    transition: border-color 200ms var(--ease-out), background-color 200ms var(--ease-out);
+  }
+  .origins li[data-origin]:is(:hover, :focus-within) {
+    border-left-color: var(--color-teal-700);
+    background: linear-gradient(90deg, var(--color-surface), transparent 70%);
+  }
+  /* Vida: Chile late y los puntos de origen respiran. Sin movimiento, quietos y sin paquetes. */
+  @media (prefers-reduced-motion: no-preference) {
+    .brand-map__chile .brand-map__halo {
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: chile-pulse 2.4s ease-out infinite;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .brand-map__pkg {
+      display: none;
+    }
+  }
+  @keyframes chile-pulse {
+    0% {
+      transform: scale(0.8);
+      opacity: 0.45;
+    }
+    100% {
+      transform: scale(2.2);
+      opacity: 0;
+    }
+  }
+  @keyframes arc-draw {
+    from {
+      stroke-dashoffset: 1;
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @media (max-width: 899.98px) {
+    .brands-intro {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  /* En teléfono el mapa mide ~350 px: rótulos, puntos y arcos más gruesos en
+     unidades del dibujo para que sigan legibles (≈ 13–15 px reales). */
+  @media (max-width: 639.98px) {
+    .brand-map text {
+      font-size: 40px;
+      stroke-width: 8px;
+    }
+    .brand-map__chile text {
+      font-size: 46px;
+    }
+    .brand-map__arc {
+      stroke-width: 5;
+    }
+    .brand-map__origin circle {
+      r: 10;
+    }
+  }
+  .brands__h {
+    max-width: 30ch;
+    margin-bottom: 2rem;
+    font-size: clamp(1.5rem, 2.4vw, 1.875rem);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+  }
+  .brands__h span {
+    color: var(--color-ink-500);
+  }
+  .home-rail {
+    /* Contiene los nombres `sr-only` (absolutos). */
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(var(--n, 7), minmax(0, 1fr));
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border-block: 1px solid var(--color-hairline);
+  }
+  .home-rail li + li {
+    border-left: 1px solid var(--color-hairline);
+  }
+  .home-rail a {
+    display: grid;
+    place-items: center;
+    height: 8.25rem;
+    padding: 0 1rem;
+  }
+  .home-rail :global(.home-rail__logo) {
+    max-width: 100%;
+    transition: transform 400ms var(--ease-out);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .home-rail a:hover :global(.home-rail__logo) {
+      transform: scale(1.06);
+    }
+  }
+  @media (max-width: 899.98px) {
+    .home-rail {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .home-rail li {
+      border-bottom: 1px solid var(--color-hairline);
+    }
+    .home-rail li + li {
+      border-left: 0;
+    }
+    .home-rail li:nth-child(2n) {
+      border-left: 1px solid var(--color-hairline);
+    }
+    .home-rail li:last-child:nth-child(odd) {
+      grid-column: span 2;
+      border-bottom: 0;
+    }
+    .home-rail a {
+      height: 5.75rem;
+    }
+  }
+</style>

@@ -1,0 +1,53 @@
+{
+  "slug": "adam-pmb",
+  "family": "pesaje-humedad",
+  "brand": "adam-equipment",
+  "name": "PMB",
+  "headline": "Adam Equipment PMB: pesaje y análisis de humedad",
+  "lead": "Analizador de humedad por termogravimetría: pesa la muestra, la calienta con una lámpara halógena y calcula el contenido de humedad por la pérdida de masa.",
+  "applications": [
+    "Humedad en alimentos, granos y harinas",
+    "Control de secado en línea de producción",
+    "Humedad en aceites, cremas y cosméticos",
+    "Sustituir el ensayo de estufa cuando el tiempo de respuesta importa"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad y legibilidad",
+      "value": "50 y 160 g con 0,001 g / 0,01 %; 200 g con 0,01 g / 0,05 %",
+      "source": "https://adamequipment.com/pmb-moisture-analyzers-us.html"
+    },
+    {
+      "label": "Calentamiento",
+      "value": "Lámpara halógena de 400 W",
+      "source": "https://adamequipment.com/pmb-moisture-analyzers-us.html"
+    },
+    {
+      "label": "Temperatura",
+      "value": "50 a 160 °C en pasos de 1 °C",
+      "source": "https://adamequipment.com/pmb-moisture-analyzers-us.html"
+    },
+    {
+      "label": "Modos de secado",
+      "value": "Rampa, escalonado y temperatura única",
+      "source": "https://adamequipment.com/pmb-moisture-analyzers-us.html"
+    },
+    {
+      "label": "Memoria",
+      "value": "49 recetas y hasta 99 resultados",
+      "source": "https://adamequipment.com/pmb-moisture-analyzers-us.html"
+    },
+    {
+      "label": "Interfaces",
+      "value": "RS-232 y dos puertos USB",
+      "source": "https://adamequipment.com/pmb-moisture-analyzers-us.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://adamequipment.com/pmb-moisture-analyzers-us.html",
+  "official_pdf_url": "https://adamequipment.com/media/docs/data_sheets/PMB-DS-A4-EN.pdf",
+  "image_id": "adam-pmb",
+  "verified_on": "2026-09-07"
+}

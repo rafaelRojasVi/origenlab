@@ -1,27 +1,33 @@
 ---
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { getCollection } from 'astro:content';
 import Layout from '../../../layouts/Layout.astro';
-import PageIntro from '../../../components/ui/PageIntro.astro';
-import SectionIndex from '../../../components/ui/SectionIndex.astro';
-import ProductFigure from '../../../components/ui/ProductFigure.astro';
-import KeyFacts from '../../../components/ui/KeyFacts.astro';
 import SpecGroups from '../../../components/ui/SpecGroups.astro';
-import ModelList from '../../../components/ui/ModelList.astro';
-import ModelRow from '../../../components/ui/ModelRow.astro';
+import LitCard from '../../../components/ui/LitCard.astro';
 import ClosingQuoteBand from '../../../components/ui/ClosingQuoteBand.astro';
 import ExternalLink from '../../../components/ui/ExternalLink.astro';
+import Button from '../../../components/ui/Button.astro';
 import Icon from '../../../components/ui/Icon.astro';
 import FamilyMotif from '../../../components/home/FamilyMotif.astro';
-import { site } from '../../../config/site';
-import { ctaLabels } from '../../../lib/ctaLabels';
+import ModelHero from '../../../components/product/ModelHero.astro';
+import ModelHeroCopy from '../../../components/product/ModelHeroCopy.astro';
+import ProductStory from '../../../components/product/ProductStory.astro';
+import AccessoryCards from '../../../components/product/AccessoryCards.astro';
 import { buildWhatsAppQuoteUrl } from '../../../lib/whatsapp';
-import { getProductFamilyBySlug } from '../../../data/productFamilies';
+import ModelFaq from '../../../components/product/ModelFaq.astro';
+import TrustStrip from '../../../components/product/TrustStrip.astro';
+import { publicClaim } from '../../../data/claims';
+import { rankModels } from '../../../lib/ranking';
+import { faqJsonLd, productJsonLd } from '../../../lib/jsonld';
+import { familyInfo, modelSections } from '../../../lib/modelos';
 import {
   getBrandById,
   getOrtoalresaCentrifuges,
   getProductByFamilyAndSlug,
-  keyFactsFor,
 } from '../../../lib/catalog';
-import { productJsonLd } from '../../../lib/jsonld';
+import type { ProductStoryConfig } from '../../../lib/showroom/productStory';
+import type { Modelo } from '../../../content.config';
 
 export function getStaticPaths() {
   return getOrtoalresaCentrifuges().map((product) => ({ params: { slug: product.slug } }));
@@ -32,10 +38,31 @@ const product = slug ? getProductByFamilyAndSlug('centrifugas', slug) : undefine
 if (!product) return Astro.redirect('/productos/centrifugas');
 
 const brand = getBrandById(product.brandId);
-const family = getProductFamilyBySlug('centrifugas');
-const facts = keyFactsFor(product);
-const related = getOrtoalresaCentrifuges().filter((item) => item.slug !== product.slug);
-const whatsappHref = buildWhatsAppQuoteUrl({ productName: product.name, brandName: brand?.name });
+
+/*
+ * Centrifugación conserva estas fichas (`lib/modelos.ts`), pero su primera
+ * pantalla es la de toda página de modelo (`ModelHero`): el texto sale de la
+ * ficha de la colección `modelos` del mismo equipo (`entry.slug === product.id`)
+ * y, si ésta tiene historia por scroll (`stories/<showroom_id>.ts`), el
+ * escenario 3D la acompaña. Una centrífuga sin ficha en la colección detiene
+ * el build. Quedan aquí las secciones propias de la ficha heredada: ficha por
+ * grupos, lista de modelos y condiciones comerciales.
+ */
+const modelos = (await getCollection('modelos')).map((item) => item.data as Modelo);
+const entry = modelos.find((item) => item.slug === product.id);
+if (!entry) throw new Error(`centrifugas/${product.slug}: la centrífuga «${product.id}» no tiene ficha en la colección modelos`);
+const family = familyInfo(entry.family);
+// Las otras centrífugas, como tarjetas (`LitCard`) en el orden comercial (`rankModels`).
+const related = rankModels(modelos.filter((item) => item.family === entry.family && item.slug !== entry.slug).map((item) => ({ id: item.slug, item }))).map(({ item }) => item);
+const quoteHref = `/contacto/?producto=${entry.slug}`;
+const stories = import.meta.glob<{ story: ProductStoryConfig }>('../../../lib/showroom/stories/*.ts', { eager: true });
+const story = entry.showroom_id
+  ? Object.entries(stories).find(([path]) => path.endsWith(`/${entry.showroom_id}.ts`))?.[1].story
+  : undefined;
+const poster = story && existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`)) ? `/products/${entry.slug}-poster.jpg` : undefined;
+const media = story ? 'story' : 'photo';
+const { accessories, faqs } = modelSections(entry, story);
+const sameDay = Boolean(publicClaim('cotizacion-mismo-dia-habil'));
 
 const metaTitle = product.metaTitle
   ? product.metaTitle.replace(/\s*\|\s*OrigenLab\s*$/, '')
@@ -49,172 +76,126 @@ const metaDescription = (
 <Layout
   title={metaTitle}
   description={metaDescription}
-  jsonLd={[productJsonLd(product, brand)]}
+  jsonLd={[productJsonLd(product, brand), faqJsonLd(faqs.map((faq) => ({ question: faq.q, answer: faq.a })))]}
+  ogImagePath={poster}
 >
-  <div class="shell">
-    <PageIntro
-      title={product.name}
-      crumbs={[
-        { label: 'Productos', href: '/productos/' },
-        { label: family?.name ?? 'Centrífugas', href: '/productos/centrifugas/' },
-        { label: product.name },
-      ]}
-    />
-  </div>
+  <ModelHero entry={entry} brand={brand} family={family} media={media} quoteHref={quoteHref}>
+    {
+      story && (
+        <ProductStory config={story} entry={entry}>
+          <Fragment slot="intro">
+            <ModelHeroCopy entry={entry} brand={brand} family={family} quoteHref={quoteHref} />
+          </Fragment>
+        </ProductStory>
+      )
+    }
 
-  <section class="shell product-hero" aria-label={`${product.name}, resumen`}>
-    <div class="product-hero__media">
-      <ProductFigure
-        product={product}
-        priority
-        sizes="(min-width: 1024px) 460px, (min-width: 768px) 45vw, 82vw"
-        caption={brand ? `${product.name}, ${brand.name}` : product.name}
-      />
-    </div>
-
-    <div class="product-hero__body">
-      <p class="t-label product-hero__type">{product.equipmentType}</p>
-      {
-        brand && (
-          <p class="product-hero__brand">
-            <a href={`/marcas/${brand.slug}/`} class="link-plain" translate="no">{brand.name}</a>
-            {brand.legalName && <span class="product-hero__legal">{brand.legalName}</span>}
-          </p>
-        )
-      }
-      <p class="t-body product-hero__desc">{product.description ?? product.summary}</p>
-
-      <KeyFacts facts={facts} class="product-hero__facts" />
-
-      <div class="product-hero__actions">
-        <a href={site.quoteHref} class="btn btn-primary">{ctaLabels.solicitarCotizacion}</a>
-        <a href={whatsappHref} class="link-arrow" target="_blank" rel="noopener noreferrer">
-          <Icon name="whatsapp" size={18} />
-          Cotizar por WhatsApp
-          <span class="sr-only">
-            {product.name} (abre WhatsApp en una pestaña nueva)
-          </span>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  {
-    product.applications && product.applications.length > 0 && (
-      <section class="shell section rule-top" aria-labelledby="aplicaciones-title">
-        <SectionIndex index={1} label="Aplicaciones" />
-        <div class="product-apps__grid">
-          <div>
-            <h2 id="aplicaciones-title" class="t-h2">Para qué se usa</h2>
-            <p class="t-body product-apps">{product.applications.join(', ')}.</p>
-            <p class="t-small product-apps__note">{product.application}</p>
-          </div>
-          {/* El diagrama de la familia acompaña a la fotografía: la fotografía
-              dice cómo es el equipo y el diagrama qué le hace a la muestra. */}
-          {brand && (
-            <div class="product-apps__motif">
-              <FamilyMotif familyId={brand.familyId} />
+    {
+      product.applications?.length ? (
+        <section class="msec msec--alt" aria-labelledby="aplicaciones-title">
+          <div class="shell product-apps__grid rv">
+            <div>
+              <h2 id="aplicaciones-title" class="mh2">
+                Para qué se usa el <span translate="no">{entry.name}</span>
+              </h2>
+              <p class="t-body product-apps">{product.applications.join(', ')}.</p>
+              <p class="t-small product-apps__note">{product.application}</p>
             </div>
-          )}
-        </div>
-      </section>
-    )
-  }
+            {/* El diagrama de la familia acompaña a la fotografía: la fotografía
+                dice cómo es el equipo y el diagrama qué le hace a la muestra. */}
+            {brand && (
+              <div class="product-apps__motif">
+                <FamilyMotif familyId={brand.familyId} />
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null
+    }
 
-  {
-    product.keySpecs && product.keySpecs.length > 0 && (
-      <section class="shell section rule-top" aria-labelledby="especificaciones-title">
-        <SectionIndex index={2} label="Especificaciones" />
-        <h2 id="especificaciones-title" class="t-h2">Ficha técnica</h2>
-        <div class="mt-10">
-          <SpecGroups specs={product.keySpecs} attribution={product.specsAttribution} />
-        </div>
-        <div class="product-docs">
-          {product.datasheetUrl && (
-            <ExternalLink href={product.datasheetUrl} context="catálogo PDF del fabricante">
-              <Icon name="file" size={18} />
-              Catálogo PDF del fabricante
-            </ExternalLink>
-          )}
-          {product.manufacturerUrl && (
-            <ExternalLink href={product.manufacturerUrl} context="ficha en el sitio del fabricante">
-              Ficha en el sitio del fabricante
-            </ExternalLink>
-          )}
-        </div>
-      </section>
-    )
-  }
+    {
+      product.keySpecs?.length ? (
+        <section class="msec" aria-labelledby="ficha-title">
+          <div class="shell rv">
+            <p class="t-label">Ficha técnica</p>
+            <h2 id="ficha-title" class="mh2">Datos del fabricante</h2>
+            <div class="mt-10">
+              <SpecGroups specs={product.keySpecs} attribution={product.specsAttribution} />
+            </div>
+            <div class="product-docs">
+              {product.datasheetUrl && (
+                <ExternalLink href={product.datasheetUrl} context="catálogo PDF del fabricante">
+                  <Icon name="file" size={18} />
+                  Catálogo PDF del fabricante
+                </ExternalLink>
+              )}
+              {product.manufacturerUrl && (
+                <ExternalLink href={product.manufacturerUrl} context="ficha en el sitio del fabricante">
+                  Ficha en el sitio del fabricante
+                </ExternalLink>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null
+    }
 
-  <section class="shell section rule-top" aria-labelledby="relacionados-title">
-    <SectionIndex index={3} label="Modelos relacionados" />
-    <h2 id="relacionados-title" class="t-h2">Otros modelos de la familia</h2>
-    <ModelList class="mt-10">
-      {related.map((item) => <ModelRow product={item} size="compact" />)}
-    </ModelList>
-    <a href="/productos/centrifugas/" class="link-arrow mt-8">
-      Ver la familia y la comparativa
-      <Icon name="arrow-right" size={18} class="arrow" />
-    </a>
-  </section>
+    {
+      accessories.length > 0 && (
+        <section class="msec msec--alt" aria-labelledby="accesorios-title">
+          <div class="shell rv">
+            <h2 id="accesorios-title" class="mh2">Accesorios e insumos</h2>
+            <AccessoryCards items={accessories} quoteHref={quoteHref} />
+          </div>
+        </section>
+      )
+    }
 
-  <section class="shell section rule-top" aria-labelledby="condiciones-title">
-    <SectionIndex index={4} label="Condiciones" />
-    <h2 id="condiciones-title" class="t-h2">Condiciones comerciales</h2>
-    <div class="prose-block conditions">
-      <p class="t-body">{product.commercialNote}</p>
-      <p class="t-body">
-        Equipo disponible bajo cotización a través de OrigenLab. Esta ficha no compromete plazos de
-        entrega, stock ni términos de garantía: se confirman por escrito en la cotización.
-      </p>
-    </div>
-  </section>
+    <section class="msec" aria-labelledby="relacionados-title">
+      <div class="shell rv">
+        <h2 id="relacionados-title" class="mh2">Otras centrífugas</h2>
+        <div class="model-rel">
+          {related.map((item) => <LitCard entry={item} />)}
+        </div>
+        <Button href="/productos/centrifugas/" variant="tertiary" class="mt-8">Ver la familia y la comparativa</Button>
+      </div>
+    </section>
+
+    <TrustStrip />
+
+    <section class="msec" aria-labelledby="preguntas-title">
+      <div class="shell rv">
+        <ModelFaq faqs={faqs} whatsappHref={buildWhatsAppQuoteUrl({ productName: entry.name })} modelo={entry.slug} />
+      </div>
+    </section>
+
+    <section class="msec msec--alt" aria-labelledby="condiciones-title">
+      <div class="shell rv">
+        <h2 id="condiciones-title" class="mh2">Condiciones comerciales</h2>
+        <div class="prose-block conditions">
+          <p class="t-body">{product.commercialNote}</p>
+          <p class="t-body">
+            Equipo disponible bajo cotización a través de OrigenLab. Esta ficha no compromete plazos de
+            entrega, stock ni términos de garantía: se confirman por escrito en la cotización.
+          </p>
+        </div>
+      </div>
+    </section>
+  </ModelHero>
 
   <ClosingQuoteBand
-    index={5}
-    title={`Cotizar ${product.name}`}
-    body="Comparta la aplicación, la configuración de rotor que necesita y su institución. Respondemos con alternativas y condiciones por escrito."
+    title={sameDay ? `${publicClaim('cotizacion-mismo-dia-habil')}.` : `Le cotizamos el ${entry.name}.`}
+    body={`Comparta la aplicación, la configuración de rotor que necesita y su institución. Le respondemos por el ${entry.name} con alternativas y condiciones por escrito.`}
     productName={product.name}
     brandName={brand?.name}
-  />
+    modelo={entry.slug}
+    quoteHref={quoteHref}
+  >
+    <a href="/como-comprar/#cotizacion" class="model-quote-link">Así se ve su cotización →</a>
+  </ClosingQuoteBand>
 </Layout>
 
-<style>
-  .product-hero {
-    display: grid;
-    gap: 2.5rem;
-    padding-bottom: 4rem;
-  }
-  .product-hero__media {
-    max-width: 22rem;
-  }
-  .product-hero__type {
-    color: var(--color-ink-500);
-    text-transform: none;
-    letter-spacing: 0.01em;
-  }
-  .product-hero__brand {
-    margin-top: 0.5rem;
-    font-size: 0.9375rem;
-  }
-  .product-hero__legal {
-    margin-left: 0.75rem;
-    color: var(--color-ink-500);
-  }
-  .product-hero__desc {
-    margin-top: 1.5rem;
-  }
-  .product-hero__facts {
-    margin-top: 2rem;
-  }
-  .product-hero__actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 1rem 2rem;
-    margin-top: 2.5rem;
-  }
-
+<style is:global>
   .product-apps {
     margin-top: 1.25rem;
     color: var(--color-ink-800);
@@ -232,7 +213,7 @@ const metaDescription = (
   }
   .product-apps__motif {
     max-width: 12rem;
-    color: var(--color-ink-800);
+    color: var(--fam);
   }
   .product-docs {
     display: flex;
@@ -243,19 +224,7 @@ const metaDescription = (
   .conditions {
     margin-top: 1.5rem;
   }
-
   @media (min-width: 768px) {
-    .product-hero {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      gap: 4rem;
-      align-items: start;
-      padding-bottom: 5rem;
-    }
-    .product-hero__media {
-      max-width: none;
-      position: sticky;
-      top: 6rem;
-    }
     .product-apps__grid {
       grid-template-columns: minmax(0, 1fr) 12rem;
       gap: 4rem;

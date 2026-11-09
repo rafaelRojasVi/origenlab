@@ -1,0 +1,79 @@
+---
+import Icon from './Icon.astro';
+
+/**
+ * Botón del sistema (tablero Sistema). Renderiza un `<a>` cuando hay `href` y un
+ * `<button>` en caso contrario; el CSS vive en global.css (`.btn-*`), sin JS.
+ *
+ * - Sitio claro «Blanco con color»: píldoras; primario teal con texto blanco, el
+ *   resto sin relleno con borde `--color-edge`. `tone` se acepta por
+ *   compatibilidad y no cambia nada.
+ * - `variant="icon"` exige `label`: es el nombre accesible del botón; el glifo va en el slot.
+ * - `external` abre una pestaña nueva y la anuncia a lectores de pantalla.
+ * - Cualquier `data-*` / `aria-*` extra se reenvía al elemento.
+ */
+interface Props {
+  /** `<a>` cuando se indica; `<button>` en caso contrario. */
+  href?: string;
+  variant?: 'primary' | 'secondary' | 'tertiary' | 'whatsapp' | 'icon';
+  size?: 'md' | 'sm';
+  /** Compatibilidad: ya no cambia nada (un solo aspecto claro). */
+  tone?: 'paper' | 'ink';
+  /** Por defecto true en primary, secondary y tertiary. */
+  arrow?: boolean;
+  /** Nombre accesible. Obligatorio en `icon`. */
+  label?: string;
+  external?: boolean;
+  /** Sólo `<button>`: por defecto `button`. */
+  type?: 'button' | 'submit' | 'reset';
+  /** `data-track` / `data-modelo`. */
+  track?: string;
+  modelo?: string;
+  class?: string;
+  [key: string]: unknown;
+}
+
+const {
+  href,
+  variant = 'primary',
+  size = 'md',
+  arrow = variant === 'primary' || variant === 'secondary' || variant === 'tertiary',
+  label,
+  external = false,
+  type = 'button',
+  track,
+  modelo,
+  class: className = '',
+  ...rest
+} = Astro.props;
+
+const classes = [
+  variant === 'tertiary' ? 'btn-tertiary' : `btn btn-${variant}`,
+  size === 'sm' && variant !== 'tertiary' && 'btn-sm',
+  className,
+];
+const newTab = '(abre en una pestaña nueva)';
+const ariaLabel = variant === 'icon' && label ? (external && href ? `${label} ${newTab}` : label) : undefined;
+const glyph = variant === 'whatsapp';
+const showNote = external && href && variant !== 'icon';
+const Tag = href ? 'a' : 'button';
+// Sólo se añade lo que está definido: un `aria-label` o un `data-*` del
+// llamador nunca se pisa con `undefined`.
+const attrs: Record<string, unknown> = { ...rest };
+if (ariaLabel !== undefined) attrs['aria-label'] = ariaLabel;
+if (track !== undefined) attrs['data-track'] = track;
+if (modelo !== undefined) attrs['data-modelo'] = modelo;
+if (href) {
+  attrs.href = href;
+  if (external) Object.assign(attrs, { target: '_blank', rel: 'noopener noreferrer' });
+} else {
+  attrs.type = type;
+}
+---
+
+<Tag class:list={classes} {...attrs}>
+  {glyph && <Icon name="whatsapp" size={18} />}
+  {variant === 'tertiary' ? <span class="lbl"><slot /></span> : <slot />}
+  {arrow && <Icon name="arrow-right" size={16} class="arrow" />}
+  {showNote && <span class="sr-only">{newTab}</span>}
+</Tag>

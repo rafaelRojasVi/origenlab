@@ -20,7 +20,8 @@ Sitio estático para **OrigenLab**, empresa de equipamiento y soluciones para la
 | `npm run build` | Build de producción → carpeta `dist/` |
 | `npm run preview` | Vista previa del build local |
 | `npm run check` | Verificación de tipos y contenido (Astro) |
-| `npm run validate` | **Puerta completa:** check, build, validate:catalog, validate:dist, qa:contrast y qa:interaction |
+| `npm run validate` | **Puerta completa:** check, pruebas (scroll-story, models, message, visit), build, validate:catalog, validate:dist, qa:contrast y qa:interaction |
+| `npm run test:message` / `npm run test:visit` | Escáner de cifras no aprobadas y sus variantes; clasificador de origen de `visita` |
 | `npm run validate:catalog` | Verdad de catálogo: marcas, productos, activos, especificaciones agrupadas, copy comercial |
 | `npm run validate:dist` | Invariantes del HTML construido: cero terceros, encabezados, imágenes, sitemap, presupuesto de peso |
 | `npm run qa:screens` | Recorrido en Chromium a 375 / 768 / 1440 px con capturas e informe en `.qa/` |
@@ -38,6 +39,9 @@ se versiona.
 | `npm run build:brand-logos` | `public/brands/*.png` a tinta única desde `public/email/brands/*-source.*` |
 | `npm run build:product-images` | Derivados 480/960 px en AVIF y WebP, con el fondo blanco recortado |
 | `npm run build:social` | `public/og/origenlab-og.png` y `public/apple-touch-icon.png` |
+| `npm run posters` | `public/products/<slug>-poster.jpg` por cada modelo con historia 3D (paso manual: necesita `npm run build` antes y Chromium con WebGL; no forma parte de `validate`) |
+
+Tras añadir un modelo con escena, ejecute `npm run build && npm run posters` y vuelva a construir para que la página y su `og:image` usen el póster nuevo.
 
 ## Despliegue (HostGator)
 
@@ -71,7 +75,8 @@ Checklist completo y pasos: [docs/deployment.md](docs/deployment.md). Estado act
 El sitio público se rediseñó por completo en la V2. Antes de añadir un color, un
 radio, una sombra o un componente, leer
 [docs/design/DESIGN_SYSTEM.md](docs/design/DESIGN_SYSTEM.md): define los tokens,
-las primitivas y lo que el sistema no admite. Lo que el negocio todavía debe
+las primitivas y lo que el sistema no admite. Tokens (color, radios, botones,
+movimiento): [DESIGN_SYSTEM.md §2](docs/design/DESIGN_SYSTEM.md#2-tokens). Lo que el negocio todavía debe
 aportar está en [docs/design/CONTENT_NEEDED.md](docs/design/CONTENT_NEEDED.md).
 
 **El sitio no carga nada de terceros.** Ni scripts, ni tipografías, ni imágenes,

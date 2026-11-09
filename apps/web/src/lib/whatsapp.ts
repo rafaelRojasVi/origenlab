@@ -5,20 +5,19 @@ export interface WhatsAppQuoteOptions {
   brandName?: string;
 }
 
-const GENERIC_QUOTE_MESSAGE =
-  'Hola OrigenLab, quiero solicitar una cotización para equipamiento de laboratorio. ¿Me pueden orientar con disponibilidad, configuración y condiciones comerciales?';
-
-/** Mensaje prefilled para wa.me; codificación segura vía encodeURIComponent. */
+/**
+ * Mensaje prellenado de WhatsApp (tablero «Mensaje»). Nombra el modelo cuando
+ * lo hay, o la marca si sólo se conoce esa, y no promete plazo ni condiciones:
+ * es lo que la persona le dice a OrigenLab, no lo que OrigenLab le promete.
+ * Con modelo y marca, nombra sólo el modelo: el nombre del modelo ya identifica
+ * el equipo y la marca alargaba el mensaje sin añadir nada.
+ */
 export function buildWhatsAppQuoteMessage(options?: WhatsAppQuoteOptions): string {
   const { productName, brandName } = options ?? {};
 
-  if (productName && brandName) {
-    return `Hola OrigenLab, quiero cotizar ${productName} de ${brandName}. ¿Me pueden enviar información técnica, configuración disponible y condiciones comerciales?`;
-  }
-  if (brandName) {
-    return `Hola OrigenLab, quiero cotizar productos de ${brandName}. ¿Me pueden enviar información técnica, configuración disponible y condiciones comerciales?`;
-  }
-  return GENERIC_QUOTE_MESSAGE;
+  if (productName) return `Hola OrigenLab, quiero cotizar el ${productName}.`;
+  if (brandName) return `Hola OrigenLab, quiero cotizar un equipo ${brandName}.`;
+  return 'Hola OrigenLab, quiero cotizar un equipo.';
 }
 
 export function buildWhatsAppQuoteUrl(options?: WhatsAppQuoteOptions): string {

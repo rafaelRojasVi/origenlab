@@ -2,7 +2,7 @@
 
 Status: canonical
 Owner: web-maintainers
-Last reviewed: 2026-09-07
+Last reviewed: 2026-11-07
 
 Lo que el sitio **no** publica porque nadie lo ha confirmado. Ningún elemento de
 esta lista puede redactarse desde el repositorio: o lo aporta el negocio
@@ -320,3 +320,29 @@ los laboratorios, no con testimonios inventados.
     elemento fuera del ancho del documento aunque un ancestro lo recortara; y
     los logotipos del riel iban diferidos, de modo que uno sin cargar aparecía
     en blanco al entrar en cuadro por el propio movimiento.
+
+---
+
+## 7. Preguntas abiertas para el titular tras la 1b (2026-11-07)
+
+Decidido el 2026-11-07 y ya aplicado (no es pendiente): cotización el mismo día
+hábil aprobada; «pago 50/50» no va en el sitio público; Mercado Público se dice
+«Vendemos por Mercado Público y participamos en licitaciones»; ninguna
+afirmación de garantía; OHAUS visible en la portada (siete marcas).
+
+1. **URL de la empresa en LinkedIn.** Es `site.linkedinUrl`. Con valor, el pie
+   dibuja el enlace y `Organization.sameAs` lo incluye; vacío, ninguno de los dos.
+2. **URL del perfil de empresa en Google.** Es `site.googleProfileUrl`, vacío hoy;
+   misma regla. Las visitas desde ese perfil se cuentan como `perfil-google` si
+   el enlace del perfil lleva `?utm_source=gbp`.
+3. **Número nuevo de WhatsApp (eSIM).** El sitio usa una sola constante
+   (`contact.whatsappE164`); basta cambiarla ahí, y el PDF del cotizador va en la
+   rama aparte.
+4. **¿El 50/50 aplica a pedidos por Mercado Público?** Hasta que se responda, la
+   página «Cómo comprar» no menciona anticipo y el titular C queda fuera.
+5. **Páginas propias de NV2201 y SB900.** Hoy no tienen ficha; confirmar si se
+   publican y con qué fuente oficial.
+6. **Contenido de las notas de aplicación.** `HomeNotes` y «Aplicaciones típicas»
+   de la familia no se dibujan hasta que existan notas aprobadas.
+7. **FactSheet de Hielscher para UIP2000hdT.** Sin él la página sigue en modo
+   fotografía; con él se puede hacer la escena 3D.

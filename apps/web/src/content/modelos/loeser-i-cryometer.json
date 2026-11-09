@@ -1,0 +1,51 @@
+{
+  "slug": "loeser-i-cryometer",
+  "family": "osmometria",
+  "brand": "loeser",
+  "name": "i Cryometer",
+  "headline": "Löser Messtechnik i Cryometer: osmometría",
+  "lead": "Criómetro automático programado de fábrica para soluciones de benceno, con el mismo cuerpo y la misma documentación que el i Osmometer.",
+  "applications": [
+    "Determinación de masa molar por crioscopía",
+    "Control de concentración en disolvente orgánico",
+    "Investigación en química de polímeros y de materiales"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de muestra",
+      "value": "100 o 200 µl",
+      "source": "http://www.loeser-osmometer.de/typ21-eng.html"
+    },
+    {
+      "label": "Tiempo de medición",
+      "value": "Aprox. 1,3 min con 150 µl",
+      "source": "http://www.loeser-osmometer.de/typ21-eng.html"
+    },
+    {
+      "label": "Rango",
+      "value": "0 a 1.000 mmol/kg de benceno, resolución 1 mmol/kg",
+      "source": "http://www.loeser-osmometer.de/typ21-eng.html"
+    },
+    {
+      "label": "Reproducibilidad",
+      "value": "±1 % o ±2 mmol",
+      "source": "http://www.loeser-osmometer.de/typ21-eng.html"
+    },
+    {
+      "label": "Memoria",
+      "value": "600 mediciones con fecha, hora y usuario",
+      "source": "http://www.loeser-osmometer.de/typ21-eng.html"
+    },
+    {
+      "label": "Otros disolventes",
+      "value": "A consultar con el fabricante",
+      "source": "http://www.loeser-osmometer.de/typ21-eng.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "http://www.loeser-osmometer.de/typ21-eng.html",
+  "image_id": "loeser-i-cryometer",
+  "verified_on": "2026-09-07"
+}

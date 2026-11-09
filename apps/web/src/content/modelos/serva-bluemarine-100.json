@@ -1,0 +1,48 @@
+{
+  "slug": "serva-bluemarine-100",
+  "family": "electroforesis",
+  "brand": "serva",
+  "name": "BlueMarine 100",
+  "headline": "SERVA Electrophoresis BlueMarine 100: electroforesis",
+  "lead": "Cámara submarina de acrílico para geles de agarosa de 7 × 10 cm, para análisis rápido de hasta 28 muestras de ácidos nucleicos.",
+  "applications": [
+    "Comprobación de productos de PCR",
+    "Control de integridad de ADN y de ARN",
+    "Digestión con enzimas de restricción",
+    "Docencia en biología molecular"
+  ],
+  "specs": [
+    {
+      "label": "Formato de gel",
+      "value": "7 × 10 cm",
+      "source": "https://www.serva.de/enDE/ProductDetails/2291_BM-100_BlueMarine_TM_100_0_208.html"
+    },
+    {
+      "label": "Muestras",
+      "value": "Hasta 28 por corrida",
+      "source": "https://www.serva.de/enDE/ProductDetails/2291_BM-100_BlueMarine_TM_100_0_208.html"
+    },
+    {
+      "label": "Construcción",
+      "value": "Acrílico, con material de electrodo resistente",
+      "source": "https://www.serva.de/enDE/ProductDetails/2291_BM-100_BlueMarine_TM_100_0_208.html"
+    },
+    {
+      "label": "Técnica",
+      "value": "Electroforesis submarina en agarosa",
+      "source": "https://www.serva.de/enDE/ProductDetails/2291_BM-100_BlueMarine_TM_100_0_208.html"
+    },
+    {
+      "label": "Formato mayor",
+      "value": "BlueMarine 200, de 15 × 15 cm y 15 × 20 cm",
+      "source": "https://www.serva.de/enDE/ProductDetails/2291_BM-100_BlueMarine_TM_100_0_208.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.serva.de/enDE/ProductDetails/2291_BM-100_BlueMarine_TM_100_0_208.html",
+  "official_pdf_url": "https://www.serva.de/www_root/documents/Electrophoresis%20by%20SERVA_web.pdf",
+  "image_id": "serva-bluemarine-100",
+  "verified_on": "2026-09-07"
+}

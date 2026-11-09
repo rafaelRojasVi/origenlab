@@ -16,6 +16,18 @@ export const ctaLabels = {
   /** Forma compacta de la misma intención, sólo en la cabecera estrecha. */
   cotizar: 'Cotizar',
   viewProductDetail: 'Ver ficha',
-  whatsapp: 'Cotizar por WhatsApp',
   email: 'Solicitar por email',
+  /** Vocabulario del tablero «Mensaje» (2026-11-07). */
+  /** Formulario: «Pedir cotización». */
+  pedirCotizacion: 'Pedir cotización',
+  /** WhatsApp, ancho normal. Sustituye a «Cotizar por WhatsApp». */
+  escribirWhatsapp: 'Escribir por WhatsApp',
+  /** WhatsApp con poco ancho. */
+  porWhatsapp: 'Por WhatsApp',
+  /** WhatsApp junto a otro botón o en una barra fija. */
+  whatsappCorto: 'WhatsApp',
+  verModelo: 'Ver modelo',
+  verEquipos: 'Ver los equipos',
+  fichaPdf: 'Ficha técnica del fabricante (PDF)',
+  cuentenosAplicacion: 'Cuéntenos su aplicación',
 } as const;

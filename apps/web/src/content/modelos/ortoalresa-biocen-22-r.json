@@ -1,0 +1,110 @@
+{
+  "slug": "ortoalresa-biocen-22-r",
+  "family": "centrifugacion",
+  "brand": "ortoalresa",
+  "name": "Biocen 22 R",
+  "headline": "Ortoalresa Biocen 22 R: microcentrífuga refrigerada",
+  "lead": "Microcentrífuga refrigerada para alta velocidad, control de temperatura y distintos formatos de tubos según rotor.",
+  "applications": [
+    "Microtubos",
+    "Tubos cónicos",
+    "Refrigeración",
+    "Investigación",
+    "Biotecnología",
+    "Laboratorio clínico"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad máxima",
+      "value": "8 × 15 ml",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Pantalla",
+      "value": "LCD",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Velocidad máxima",
+      "value": "18.100 RPM / 31.865 ×g",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Versión",
+      "value": "Refrigerada",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Temperatura",
+      "value": "Regulable de -20 °C a 40 °C",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Temperatura a máximas RPM",
+      "value": "4 °C según ficha del fabricante",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Pre-enfriamiento",
+      "value": "Programa con rotor girando",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Sensor",
+      "value": "Temperatura en cámara",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Refrigerante",
+      "value": "Gas R 449A HFO libre de CFC",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Motor",
+      "value": "Inducción sin escobillas",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Nivel de ruido",
+      "value": "Inferior a 60 dB",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Rotor",
+      "value": "Reconocimiento automático",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Cámara",
+      "value": "Acero inoxidable",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Dimensiones (CE 148 / CE 149)",
+      "value": "270 × 650 × 280 mm",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Peso neto",
+      "value": "41 kg",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Alimentación CE 148",
+      "value": "220-230 V, 50 Hz, 580 W",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    },
+    {
+      "label": "Alimentación CE 149",
+      "value": "110-120 V, 60 Hz, 580 W",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22-r/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://ortoalresa.com/centrifugas/biocen-22-r/",
+  "official_pdf_url": "https://ortoalresa.com/catalogo_producto/Catalogo_Biocen_22_R_ESP.pdf",
+  "image_id": "ortoalresa-biocen-22-r",
+  "verified_on": "2026-09-07"
+}

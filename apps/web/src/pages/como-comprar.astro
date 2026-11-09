@@ -1,0 +1,238 @@
+---
+import Layout from '../layouts/Layout.astro';
+import PageIntro from '../components/ui/PageIntro.astro';
+import StepList from '../components/ui/StepList.astro';
+import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
+import Button from '../components/ui/Button.astro';
+import FaqList from '../components/ui/FaqList.astro';
+import HomeSteps from '../components/home/HomeSteps.astro';
+import QuoteShowcase from '../components/home/QuoteShowcase.astro';
+import { consultationProcess } from '../data/consultation';
+import { buyingFaqs } from '../data/faq';
+import { contact } from '../data/contact';
+import { publicClaim } from '../data/claims';
+import { site } from '../config/site';
+import { faqJsonLd } from '../lib/jsonld';
+import RegisteredStrip from '../components/ui/RegisteredStrip.astro';
+
+/**
+ * Cómo se compra: los cuatro pasos de `buyingSteps()` (los mismos de la
+ * portada), «Así se ve su cotización» (`#cotizacion`, la hoja de ejemplo que
+ * se arma sola: `QuoteShowcase`), lo que pasa dentro del primero, la vía de las compras públicas y
+ * las preguntas de `buyingFaqs()`.
+ *
+ * Sin precios y sin cifras. Cada frase que es una afirmación sale de
+ * `publicClaim`: si el registro la retira, la frase desaparece. La forma de
+ * pago se dice en neutro («condiciones de pago en la cotización»): la
+ * proporción del abono no está aprobada para el sitio público, y tampoco que
+ * rija en las órdenes de compra de Mercado Público.
+ *
+ * La nota de datos repite, en prosa, lo que la casilla de consentimiento del
+ * formulario de `/contacto/` pide aceptar, para que nadie llegue al formulario
+ * sin saberlo.
+ */
+const trust = [
+  'directo-con-el-fabricante',
+  'cotizacion-mismo-dia-habil',
+  'despacho-todo-chile',
+  'puesta-en-marcha-con-fabrica',
+  'vende-mercado-publico',
+]
+  .map((id) => publicClaim(id))
+  .filter((text): text is string => Boolean(text));
+
+// Junto a la vía de Mercado Público: dónde estamos inscritos como proveedor, por tipo
+// de institución, y debajo los logos aprobados (`RegisteredStrip`). Si el registro
+// la retira, el párrafo y los logos desaparecen.
+const registered = publicClaim('proveedor-inscrito');
+
+const faqs = buyingFaqs();
+// La descripción promete el plazo sólo si el registro de afirmaciones lo aprueba.
+const description = publicClaim('cotizacion-mismo-dia-habil')
+  ? 'Cómo comprar: cuéntenos su aplicación, reciba la cotización el mismo día hábil y coordine entrega y puesta en marcha.'
+  : 'Cómo comprar: cuéntenos su aplicación, reciba la cotización por escrito y coordine entrega y puesta en marcha.';
+---
+
+<Layout
+  title="Cómo comprar"
+  description={description}
+  jsonLd={[faqJsonLd(faqs.map((item) => ({ question: item.q, answer: item.a })))]}
+>
+  <div class="shell">
+    <PageIntro
+      title="Cómo comprar"
+      lead="De la primera consulta a la entrega del equipo, con las condiciones por escrito en cada paso. No publicamos precios: cada cotización se arma con la configuración, los accesorios y el flete que su caso pide."
+      crumbs={[{ label: 'Cómo comprar' }]}
+    >
+      {
+        trust.length > 0 && (
+          <ul class="t-label trust" aria-label="Lo que ofrecemos">
+            {trust.map((text) => <li>{text}</li>)}
+          </ul>
+        )
+      }
+    </PageIntro>
+  </div>
+
+  <HomeSteps
+    tone="paper"
+    id="pasos"
+    label="Los pasos"
+    title="Cuatro pasos, de la cotización a la entrega"
+    claims={false}
+  />
+
+  <section id="cotizacion" class="home-sec quote-sec surface-quote" aria-labelledby="cotizacion-title">
+    <div class="shell">
+    <div class="home-head quote-sec__head">
+      <p class="t-label">Su cotización</p>
+      <h2 id="cotizacion-title" class="home-h2">Así se ve su cotización<i class="dot">.</i></h2>
+      <p class="t-body guide__body guide__body--flush">
+        Cada cotización se arma para su institución y su laboratorio: el modelo exacto con su
+        descripción, los montos con IVA a la vista y las condiciones por escrito, firmada por una
+        persona del equipo.
+      </p>
+    </div>
+    <QuoteShowcase />
+    </div>
+  </section>
+
+  <section class="shell home-sec" aria-labelledby="asesoria-title">
+    <div class="guide">
+      <div>
+        <div class="home-head">
+          <p class="t-label">El primer paso</p>
+          <h2 id="asesoria-title" class="t-h2">Qué pasa antes de la cotización</h2>
+        </div>
+        <p class="t-body guide__body">
+          No hace falta traer un modelo ni una especificación cerrada. Con la aplicación, la muestra
+          y el volumen de trabajo acotamos las alternativas antes de hablar de precio.
+        </p>
+        <p class="t-small guide__note" data-consent-note>
+          Si nos escribe por el formulario de contacto, le pediremos que acepte que OrigenLab use sus
+          datos sólo para responder su solicitud y contactarle sobre ella. Puede pedir su eliminación
+          en <a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a>. Más detalle
+          en la <a href="/privacidad/" class="link-plain">política de privacidad</a>.
+        </p>
+      </div>
+      <StepList steps={consultationProcess} />
+    </div>
+  </section>
+
+  <section id="compras-publicas" class="shell home-sec" aria-labelledby="publicas-title">
+    <div class="guide">
+      <div class="home-head">
+        <p class="t-label">Compras públicas</p>
+        <h2 id="publicas-title" class="t-h2">Mercado Público y Compra Ágil</h2>
+      </div>
+      <div>
+        <p class="t-body guide__body guide__body--flush">
+          Cotizamos también para licitaciones y para Compra Ágil en Mercado Público. Si su
+          institución compra por esa vía, indíquenos el número de la licitación o de la solicitud de
+          Compra Ágil y preparamos la oferta con lo que piden sus bases: equipo, configuración,
+          accesorios y puesta en marcha.
+        </p>
+        {registered && <p class="t-body guide__body guide__registered">{registered}.</p>}
+        <RegisteredStrip />
+        <p class="t-body guide__body">
+          En una compra pública, la forma de pago y los plazos son los que fijan las bases o la orden
+          de compra, no los pasos de esta página. La asesoría técnica previa es la misma.
+        </p>
+        <p class="guide__link">
+          <Button href={site.quoteHref} variant="tertiary">Escribirnos por una licitación</Button>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell home-sec faq-sec" aria-labelledby="faq-title">
+    <div class="home-head">
+      <p class="t-label">Preguntas frecuentes</p>
+      <h2 id="faq-title" class="t-h2">Lo que más preguntan antes de comprar</h2>
+    </div>
+    <FaqList items={faqs} />
+  </section>
+
+  <ClosingQuoteBand
+    title="¿Tiene un requerimiento hoy?"
+    body="Cuéntenos la aplicación, la institución y la ciudad. Le respondemos con alternativas y, cuando corresponde, con una cotización formal por escrito."
+    primary="whatsapp"
+  />
+</Layout>
+
+<style>
+  .trust {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 2rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .trust li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .trust li::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--color-teal-700);
+  }
+  .guide {
+    display: grid;
+    gap: 2.5rem;
+  }
+  .guide .home-head {
+    margin-bottom: 0;
+  }
+  .guide__body {
+    margin-top: 1.5rem;
+    color: var(--color-ink-600);
+    max-width: 60ch;
+  }
+  .guide__registered {
+    color: var(--color-ink-950);
+    font-weight: 600;
+  }
+  .guide__body--flush {
+    margin-top: 0;
+  }
+  .guide__note {
+    margin-top: 1.5rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--color-teal-700);
+    color: var(--color-ink-600);
+    max-width: 52ch;
+  }
+  .guide__link {
+    margin-top: 2rem;
+  }
+  /* La hoja, papel con sombra teal, sobre el azul pálido de la sección. */
+  .quote-sec {
+    margin-top: clamp(2.5rem, 5vw, 4rem);
+    padding-bottom: clamp(3rem, 6vw, 5rem);
+  }
+  .quote-sec__head {
+    align-items: center;
+    text-align: center;
+  }
+  .quote-sec__head .guide__body {
+    margin-inline: auto;
+  }
+  .faq-sec {
+    padding-bottom: clamp(3rem, 6vw, 5.5rem);
+  }
+  .faq-sec :global(.faq) {
+    margin-top: 0;
+  }
+  @media (min-width: 1024px) {
+    .guide {
+      grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+      column-gap: 4.5rem;
+      align-items: start;
+    }
+  }
+</style>

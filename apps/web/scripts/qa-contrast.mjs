@@ -5,7 +5,9 @@
  * Recorre cada texto visible, resuelve el color de fondo efectivo subiendo por
  * los ancestros y comprueba WCAG 2.x: 4,5:1 para texto normal y 3:1 para texto
  * grande (>= 24 px, o >= 18,66 px en negrita) y para los bordes que delimitan
- * un control.
+ * un control. Además mide el borde de los botones secundarios, de WhatsApp y de
+ * icono (>= 3:1 contra el fondo del padre, WCAG 1.4.11) y el anillo de foco de
+ * cada elemento al tabular (>= 3:1 y >= 2 px).
  *
  * Ejecutar: node scripts/qa-contrast.mjs
  */
@@ -23,13 +25,22 @@ const ROUTES = [
   '/productos/',
   '/productos/centrifugas/',
   '/productos/centrifugas/biocen-22-r/',
+  '/productos/sonicacion/',
+  '/productos/sonicacion/hielscher-up400st/',
+  '/productos/pesaje-humedad/',
+  '/productos/pesaje-humedad/ohaus-mb32/',
+  '/productos/pesaje-humedad/ohaus-ranger-count-3000/',
+  '/productos/centrifugas/digicen-22-r/',
   '/marcas/',
   '/marcas/ortoalresa/',
   '/marcas/serva-electrophoresis/',
+  '/marcas/ohaus/',
+  '/marcas/hielscher/',
   '/aplicaciones/',
   '/categorias/control-de-calidad/',
   '/categorias/laboratorio-clinico/',
   '/servicios/',
+  '/como-comprar/',
   '/nosotros/',
   '/contacto/',
   '/privacidad/',
@@ -66,9 +77,25 @@ const base = `http://localhost:${server.address().port}`;
 const browser = await chromium.launch();
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 
+/**
+ * WCAG 1.4.11: el borde de un control que no lleva relleno debe separarse del
+ * fondo con 3:1. Showroom oscuro: el borde es ink-500 (#8d9396) sobre todos los
+ * grafitos (6,2:1 sobre paper, 4,8:1 sobre pressed, 5,1:1 sobre la banda); el
+ * hairline (1,4:1) nunca sirve de borde de control.
+ */
+const CONTROL_EDGE_MIN = 3;
+const FOCUS_RING_MIN = 3;
+const FOCUS_RING_WIDTH_MIN = 2;
+const FOCUS_TABS = 15;
+const FOCUS_CONTROLS = '.btn, .btn-tertiary, .link-arrow';
+
 const failures = [];
 let checked = 0;
 let minimum = { ratio: 99, where: '' };
+let edgesChecked = 0;
+let minimumEdge = { ratio: 99, where: '' };
+let ringsChecked = 0;
+let minimumRing = { ratio: 99, where: '' };
 
 for (const route of ROUTES) {
   const page = await context.newPage();
@@ -113,6 +140,19 @@ for (const route of ROUTES) {
     };
 
     const out = [];
+    const edges = [];
+    for (const el of document.querySelectorAll('.btn-secondary, .btn-whatsapp, .btn-icon')) {
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      if (rect.width === 0 || rect.height === 0 || style.visibility === 'hidden') continue;
+      const edge = parse(style.borderTopColor);
+      if (!edge || parseFloat(style.borderTopWidth) === 0) continue;
+      const bg = backgroundOf(el.parentElement);
+      edges.push({
+        ratio: Math.round(contrast(over(edge, bg), bg) * 100) / 100,
+        selector: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ').slice(0, 2).join('.')}`,
+      });
+    }
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     const seen = new Set();
     let node;
@@ -127,6 +167,12 @@ for (const route of ROUTES) {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
       if (el.closest('.sr-only') || el.classList.contains('skip-link')) continue;
+      // WCAG 1.4.3 exime los componentes inactivos.
+      if (el.closest(':disabled, [aria-disabled="true"]')) continue;
+      // WCAG 1.4.3 exime el texto puramente decorativo: sólo el que se declara así
+      // a la vez para el lector de pantalla (`aria-hidden`) y para esta prueba
+      // (`data-decorative`), como el nombre gigante del revelado de la portada.
+      if (el.closest('[aria-hidden="true"][data-decorative]')) continue;
 
       const fg = parse(style.color);
       if (!fg) continue;
@@ -142,13 +188,28 @@ for (const route of ROUTES) {
         size,
         pass: ratio >= required,
         sample: text.slice(0, 40),
+        band: Boolean(el.closest('.band')),
         selector: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`,
       });
     }
-    return out;
+    return { out, edges, hasBand: document.querySelector('.band') !== null };
   });
 
-  for (const entry of result) {
+  for (const edge of result.edges) {
+    edgesChecked += 1;
+    if (edge.ratio < minimumEdge.ratio) minimumEdge = { ratio: edge.ratio, where: `${route} ${edge.selector}` };
+    if (edge.ratio < CONTROL_EDGE_MIN) {
+      failures.push(`${route} ${edge.selector} borde ${edge.ratio}:1 (mínimo ${CONTROL_EDGE_MIN}:1)`);
+    }
+  }
+
+  // La banda de cierre (`--color-band`, botones encima) debe haberse medido: título, texto y los dos botones.
+  if (result.hasBand) {
+    const inBand = result.out.filter((entry) => entry.band).length;
+    if (inBand < 4) failures.push(`${route}: la banda de cierre sólo midió ${inBand} textos (mínimo 4: título, texto, dos botones)`);
+  }
+
+  for (const entry of result.out) {
     checked += 1;
     if (entry.ratio < minimum.ratio) {
       minimum = { ratio: entry.ratio, where: `${route} ${entry.selector} "${entry.sample}"` };
@@ -156,6 +217,59 @@ for (const route of ROUTES) {
     if (!entry.pass) {
       failures.push(
         `${route} ${entry.selector} ${entry.ratio}:1 (necesita ${entry.required}:1, ${entry.size}px) "${entry.sample}"`,
+      );
+    }
+  }
+
+  // Anillo de foco: tabular y medir el contorno de cada elemento enfocado; después
+  // enfocar con `.focus()` cada botón y enlace con flecha (barra fija, banda de
+  // cierre, enlaces en página) para medir también los anillos sobre tinta.
+  const controlCount = await page.evaluate((sel) => document.querySelectorAll(sel).length, FOCUS_CONTROLS);
+  for (let i = 0; i < FOCUS_TABS + controlCount; i += 1) {
+    const controlIndex = i - FOCUS_TABS;
+    if (controlIndex < 0) await page.keyboard.press('Tab');
+    const ring = await page.evaluate(([sel, idx]) => {
+      if (idx >= 0) document.querySelectorAll(sel)[idx]?.focus();
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      const style = getComputedStyle(el);
+      if (style.outlineStyle === 'none') return null;
+      const parse = (color) => {
+        const m = color.match(/rgba?\(([^)]+)\)/);
+        if (!m) return null;
+        const p = m[1].split(',').map((v) => parseFloat(v));
+        return { r: p[0], g: p[1], b: p[2], a: p[3] ?? 1 };
+      };
+      const lum = ({ r, g, b }) => {
+        const f = (v) => ((v / 255) <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4);
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+      };
+      let bg = { r: 255, g: 255, b: 255 };
+      const stack = [];
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        const c = parse(getComputedStyle(node).backgroundColor);
+        if (c && c.a > 0) stack.push(c);
+        if (c && c.a === 1) break;
+      }
+      for (const c of stack.reverse()) {
+        bg = { r: c.r * c.a + bg.r * (1 - c.a), g: c.g * c.a + bg.g * (1 - c.a), b: c.b * c.a + bg.b * (1 - c.a) };
+      }
+      const fg = parse(style.outlineColor);
+      if (!fg) return null;
+      const a = lum(fg);
+      const b = lum(bg);
+      return {
+        ratio: Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 100) / 100,
+        width: parseFloat(style.outlineWidth),
+        selector: `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`,
+      };
+    }, [FOCUS_CONTROLS, controlIndex]);
+    if (!ring) continue;
+    ringsChecked += 1;
+    if (ring.ratio < minimumRing.ratio) minimumRing = { ratio: ring.ratio, where: `${route} ${ring.selector}` };
+    if (ring.ratio < FOCUS_RING_MIN || ring.width < FOCUS_RING_WIDTH_MIN) {
+      failures.push(
+        `${route} ${ring.selector} anillo de foco ${ring.ratio}:1, ${ring.width}px (mínimo ${FOCUS_RING_MIN}:1 y ${FOCUS_RING_WIDTH_MIN}px)`,
       );
     }
   }
@@ -167,6 +281,8 @@ server.close();
 
 console.log(`${checked} textos comprobados en ${ROUTES.length} rutas`);
 console.log(`Mínimo: ${minimum.ratio}:1 en ${minimum.where}`);
+console.log(`${edgesChecked} bordes de control comprobados; mínimo ${minimumEdge.ratio}:1 en ${minimumEdge.where || '-'}`);
+console.log(`${ringsChecked} anillos de foco comprobados; mínimo ${minimumRing.ratio}:1 en ${minimumRing.where || '-'}`);
 if (failures.length) {
   console.error(`\n${failures.length} por debajo del mínimo WCAG AA:`);
   for (const failure of failures.slice(0, 25)) console.error(`  x ${failure}`);

@@ -1,0 +1,54 @@
+{
+  "slug": "hielscher-up400st",
+  "family": "sonicacion",
+  "brand": "hielscher",
+  "name": "UP400St",
+  "headline": "Hielscher Ultrasonics UP400St: sonicación y procesamiento ultrasónico",
+  "lead": "Sonicador de laboratorio de 400 W que acepta sonotrodos de 3 a 40 mm, con lo que un mismo equipo cubre desde 5 ml hasta unos 4 litros por lote.",
+  "applications": [
+    "Extracción de compuestos de matrices vegetales y de alimentos",
+    "Homogeneización de lotes de hasta varios litros",
+    "Desarrollo de método antes de escalar a proceso",
+    "Trabajo en celda de flujo a 20 a 200 ml por minuto"
+  ],
+  "specs": [
+    {
+      "label": "Potencia",
+      "value": "400 W",
+      "source": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm"
+    },
+    {
+      "label": "Frecuencia",
+      "value": "24 kHz",
+      "source": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm"
+    },
+    {
+      "label": "Amplitud",
+      "value": "Regulable del 20 al 100 %",
+      "source": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm"
+    },
+    {
+      "label": "Volumen de muestra",
+      "value": "5 ml a aprox. 4 l según sonotrodo",
+      "source": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm"
+    },
+    {
+      "label": "Sonotrodos",
+      "value": "Diámetros de 3 a 40 mm",
+      "source": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm"
+    },
+    {
+      "label": "Registro",
+      "value": "Pantalla en color, registro de datos y sensor de temperatura",
+      "source": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.hielscher.com/up400st-powerful-ultrasonicator.htm",
+  "official_pdf_url": "https://www.hielscher.com/wp-content/uploads/UP400St-FactSheet-ultrasonicator-eng-HielscherUltrasonics-v04082022.pdf",
+  "image_id": "hielscher-up400st",
+  "showroom_id": "hielscher-up400st",
+  "verified_on": "2026-09-07"
+}
