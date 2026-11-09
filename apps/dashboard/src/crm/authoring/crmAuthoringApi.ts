@@ -7,6 +7,7 @@
 
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import { refusalOfError } from "../../api/refusalEnvelope";
+import type { CallOutcome } from "../callOutcome";
 import type { PersonGuess } from "../crmTypes";
 
 /* ── command paths ─────────────────────────────────────────────────────── */
@@ -86,6 +87,12 @@ export interface NoteRow {
   archive_reason: string | null;
   version: number;
   is_latest: boolean;
+  /** `"llamada"` for a recorded phone call, else null. Absent from an older API. */
+  note_kind?: "llamada" | null;
+  /** How the call ended (`callOutcome.ts`); only on a call. */
+  call_outcome?: string | null;
+  /** What was agreed next; only on a call, and optional there. */
+  call_next_step?: string | null;
 }
 
 export interface ContactPointRow {
@@ -676,7 +683,15 @@ export function rejectSupplierCandidate(
 /* ── note commands ───────────────────────────────────────────────────────── */
 
 export function addNote(
-  body: { subject_kind: "person" | "organization" | "opportunity"; subject_id: string; body: string },
+  body: {
+    subject_kind: "person" | "organization" | "opportunity";
+    subject_id: string;
+    body: string;
+    /** A recorded phone call: needs `call_outcome`; `call_next_step` is optional (≤ 500). */
+    note_kind?: "llamada";
+    call_outcome?: CallOutcome;
+    call_next_step?: string;
+  },
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<CommandReceipt> {
   return postCommand<CommandReceipt>(CRM_COMMAND_PATHS.addNote, body, idempotencyKey);

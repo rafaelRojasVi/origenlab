@@ -1,10 +1,36 @@
 ---
 import { site } from '../config/site';
 import { ctaLabels } from '../lib/ctaLabels';
+import { buildWhatsAppQuoteUrl } from '../lib/whatsapp';
 import SiteLogo from './SiteLogo.astro';
+import Button from './ui/Button.astro';
 import Icon from './ui/Icon.astro';
+import MegaMenu from './nav/MegaMenu.astro';
 
+/**
+ * Cabecera fija. 72 px arriba, 56 px con scroll (sólo CSS donde existe
+ * `animation-timeline: scroll()`; si no, un observador alterna `data-scrolled`).
+ * Una sola apariencia («Blanco con color»): vidrio blanco con desenfoque y un
+ * filete teal pálido, sobre la portada y sobre el resto. El panel de los menús es una hoja
+ * blanca que baja sobre la página, con sombra teal.
+ *
+ * Menús desplegables (dueño, 2026-11-08): Productos, Aplicaciones y Marcas
+ * abren un panel con sus modelos, cada uno con miniatura iluminada y directo a
+ * su ficha (`nav/MegaMenu.astro`). La palabra sigue llevando a su índice; el
+ * botón de flecha a su lado abre el panel (Intro, Espacio o ↓; ↓ también desde
+ * la palabra), Escape lo cierra y devuelve el foco al botón, el mouse lo abre
+ * con un pequeño retardo de intención. Sin JavaScript el panel se abre con
+ * `:hover` / `:focus-within` y todo son enlaces. En el teléfono el menú
+ * despliega los mismos modelos en acordeones (`<details>`, sin script).
+ */
 const path = Astro.url.pathname;
+const whatsappUrl = buildWhatsAppQuoteUrl();
+/** Destinos del menú con panel de modelos. */
+const MEGA: Record<string, 'productos' | 'marcas' | 'aplicaciones'> = {
+  '/productos/': 'productos',
+  '/aplicaciones/': 'aplicaciones',
+  '/marcas/': 'marcas',
+};
 
 /** Las rutas de `site.nav` llevan barra final, igual que `Astro.url.pathname`. */
 function isActive(href: string, matches?: readonly string[]): boolean {
@@ -14,265 +40,549 @@ function isActive(href: string, matches?: readonly string[]): boolean {
 ---
 
 <header class="site-header">
-  <div class="shell site-header__bar">
+  <noscript><style>.site-menu__btn{display:none}</style></noscript>
+  <div class="site-header__bar shell">
     <a href="/" class="site-header__home" aria-label="OrigenLab, ir al inicio">
-      <SiteLogo />
+      <SiteLogo motion />
     </a>
 
-    <nav class="site-header__nav" aria-label="Navegación principal">
+    <nav class="site-header__nav" aria-label="Navegación principal" data-mm-nav>
       <ul>
         {
-          site.nav.map((item) => (
-            <li>
-              <a
-                href={item.href}
-                aria-current={isActive(item.href, item.matches) ? 'page' : undefined}
-              >
-                {item.label}
-              </a>
-            </li>
-          ))
+          site.nav.map((item) => {
+            const key = MEGA[item.href];
+            return (
+              <li class:list={[key && 'mm']} data-mm={key}>
+                <a href={item.href} aria-current={isActive(item.href, item.matches) ? 'page' : undefined}>
+                  {item.label}
+                </a>
+                {key && (
+                  <button type="button" class="mm__btn" aria-expanded="false" aria-controls={`mm-${key}`}>
+                    <span class="sr-only">Modelos de {item.label}</span>
+                    <Icon name="chevron-down" size={14} />
+                  </button>
+                )}
+                {key && (
+                  <div class="mm__panel" id={`mm-${key}`}>
+                    <div class="shell">
+                      <MegaMenu menu={key} variant="panel" />
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })
         }
       </ul>
     </nav>
 
     <div class="site-header__actions">
-      <a
+      <Button
         href={site.quoteHref}
-        class="btn btn-primary site-header__cta"
-        aria-label={ctaLabels.solicitarCotizacion}
+        size="sm"
+        track="cotizacion_click"
+        class="site-header__cta"
       >
         <span class="site-header__cta-long">{ctaLabels.solicitarCotizacion}</span>
         <span class="site-header__cta-short">{ctaLabels.cotizar}</span>
-      </a>
+      </Button>
+      <Button
+        href={whatsappUrl}
+        variant="icon"
+        size="sm"
+        label={ctaLabels.escribirWhatsapp}
+        external
+        track="whatsapp_click"
+        class="site-header__wa"
+      >
+        <Icon name="whatsapp" size={18} />
+      </Button>
+      <button
+        type="button"
+        class="btn btn-icon site-menu__btn"
+        aria-expanded="false"
+        aria-controls="site-menu"
+        aria-label="Menú de navegación"
+        data-menu-toggle
+      >
+        <span class="site-menu__open"><Icon name="menu" size={22} /></span>
+        <span class="site-menu__close"><Icon name="close" size={22} /></span>
+      </button>
+    </div>
+  </div>
 
-      <details class="site-menu" data-site-menu>
-        <summary aria-label="Abrir menú de navegación">
-          <span class="site-menu__open"><Icon name="menu" size={22} /></span>
-          <span class="site-menu__close"><Icon name="close" size={22} /></span>
-        </summary>
-        <div class="site-menu__panel">
-          <nav aria-label="Navegación">
-            <ul>
-              {
-                site.nav.map((item) => (
-                  <li>
-                    <a
-                      href={item.href}
-                      aria-current={isActive(item.href, item.matches) ? 'page' : undefined}
-                    >
-                      {item.label}
-                    </a>
-                  </li>
-                ))
-              }
-            </ul>
-          </nav>
-          <a href={site.quoteHref} class="btn btn-primary site-menu__cta">
-            {ctaLabels.solicitarCotizacion}
-          </a>
-        </div>
-      </details>
+  <div class="site-menu__panel" id="site-menu" data-menu-panel hidden>
+    <nav aria-label="Navegación">
+      <ul>
+        {
+          site.nav.map((item) => {
+            const key = MEGA[item.href];
+            return (
+              <li class:list={[key && 'acc']}>
+                <a href={item.href} aria-current={isActive(item.href, item.matches) ? 'page' : undefined}>
+                  {item.label}
+                </a>
+                {key && (
+                  <details class="acc__more">
+                    <summary aria-label={`Modelos de ${item.label}`}>
+                      <Icon name="chevron-down" size={22} />
+                    </summary>
+                    <MegaMenu menu={key} variant="accordion" />
+                  </details>
+                )}
+              </li>
+            );
+          })
+        }
+      </ul>
+    </nav>
+    <div class="site-menu__actions">
+      <Button href={site.quoteHref}>{ctaLabels.solicitarCotizacion}</Button>
+      <Button href={whatsappUrl} variant="whatsapp" external track="whatsapp_click">
+        {ctaLabels.escribirWhatsapp}
+      </Button>
     </div>
   </div>
 </header>
 
 <script>
-  /**
-   * Mejora progresiva del menú móvil: sin este script el <details> ya abre y
-   * cierra. Con él, Escape y el clic fuera cierran el panel y el foco vuelve al
-   * disparador, que es lo que espera quien navega con teclado.
-   */
-  const menu = document.querySelector<HTMLDetailsElement>('[data-site-menu]');
-  if (menu) {
-    const summary = menu.querySelector('summary');
-    const close = (returnFocus: boolean) => {
-      if (!menu.open) return;
-      menu.open = false;
-      if (returnFocus) summary?.focus();
+  /* Menú móvil: botón con aria-expanded. Escape y el clic fuera lo cierran y el
+     foco vuelve al botón, que es lo que espera quien navega con teclado. Abierto,
+     todo lo que no es la cabecera queda `inert` y Tab da la vuelta dentro de ella,
+     así el foco nunca cae detrás del panel (WCAG 2.4.11). `pagehide` lo cierra
+     para que volver con Atrás (bfcache) no traiga el panel abierto. */
+  const toggle = document.querySelector<HTMLButtonElement>('[data-menu-toggle]');
+  const panel = document.querySelector<HTMLElement>('[data-menu-panel]');
+  const bar = document.querySelector<HTMLElement>('.site-header');
+  if (toggle && panel && bar) {
+    const set = (open: boolean, focus = false) => {
+      toggle.setAttribute('aria-expanded', String(open));
+      panel.hidden = !open;
+      document.documentElement.style.overflow = open ? 'hidden' : '';
+      for (const el of document.body.children) if (el !== bar) (el as HTMLElement).inert = open;
+      if (focus) toggle.focus();
     };
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') close(true);
+    toggle.addEventListener('click', () => set(panel.hidden));
+    document.addEventListener('keydown', (e) => {
+      if (panel.hidden) return;
+      if (e.key === 'Escape') return set(false, true);
+      if (e.key !== 'Tab') return;
+      const items = [...bar.querySelectorAll<HTMLElement>('a[href], button, summary')].filter((el) => el.offsetParent);
+      const edge = e.shiftKey ? items[0] : items[items.length - 1];
+      if (document.activeElement === edge || !bar.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? items[items.length - 1] : items[0])?.focus();
+      }
     });
-    document.addEventListener('click', (event) => {
-      if (menu.open && !menu.contains(event.target as Node)) close(false);
+    document.addEventListener('click', (e) => {
+      const t = e.target as Node;
+      if (!panel.hidden && !toggle.contains(t) && !panel.contains(t)) set(false);
     });
-    menu.addEventListener('toggle', () => {
-      document.documentElement.style.overflow = menu.open ? 'hidden' : '';
-    });
-    const wide = window.matchMedia('(min-width: 1024px)');
-    wide.addEventListener('change', (event) => {
-      if (event.matches) close(false);
-    });
+    matchMedia('(min-width: 1024px)').addEventListener('change', (e) => e.matches && set(false));
+    addEventListener('pagehide', () => set(false));
   }
+
+  /* Menús desplegables de escritorio (ver la cabecera del componente). */
+  const mmNav = document.querySelector<HTMLElement>('[data-mm-nav]');
+  if (mmNav) {
+    mmNav.dataset.mmNav = 'js';
+    const mms = [...mmNav.querySelectorAll<HTMLElement>('[data-mm]')];
+    let timer = 0;
+    const open = (li: HTMLElement | null) => {
+      clearTimeout(timer);
+      for (const el of mms) {
+        el.toggleAttribute('data-open', el === li);
+        el.querySelector('button')!.setAttribute('aria-expanded', String(el === li));
+      }
+    };
+    const later = (li: HTMLElement | null, ms: number) => {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => open(li), ms);
+    };
+    for (const li of mms) {
+      const btn = li.querySelector('button')!;
+      btn.addEventListener('click', () => open(li.hasAttribute('data-open') ? null : li));
+      li.addEventListener('pointerenter', (e) => e.pointerType === 'mouse' && later(li, mms.some((el) => el.hasAttribute('data-open')) ? 0 : 140));
+      li.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && later(null, 260));
+      li.addEventListener('focusout', (e) => li.contains(e.relatedTarget as Node) || (li.hasAttribute('data-open') && open(null)));
+      li.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && li.hasAttribute('data-open')) {
+          open(null);
+          btn.focus();
+        } else if (e.key === 'ArrowDown' && !(e.target as Element).closest('.mm__panel')) {
+          e.preventDefault();
+          open(li);
+          li.querySelector<HTMLElement>('.mm__panel a')?.focus();
+        }
+      });
+    }
+    document.addEventListener('click', (e) => mmNav.contains(e.target as Node) || open(null));
+  }
+
+  /* Sin `animation-timeline: scroll()` (o con movimiento reducido, donde esa
+     animación no se declara) un centinela de 1 px alterna `data-scrolled`. */
+  const header = document.querySelector('.site-header');
+  const sentinel = document.querySelector('[data-hd-sentinel]');
+  if (
+    header &&
+    sentinel &&
+    (!CSS.supports('animation-timeline: scroll()') || matchMedia('(prefers-reduced-motion: reduce)').matches)
+  ) {
+    new IntersectionObserver(([e]) => header.toggleAttribute('data-scrolled', !e.isIntersecting)).observe(sentinel);
+  }
+
+  /* La marca se repite al pasar el cursor. `pointerenter` y no `:hover`: así los
+     1,2 s llegan al final aunque el puntero salga. */
+  const logo = document.querySelector('[data-logo-motion]');
+  logo?.addEventListener('pointerenter', () => {
+    logo.classList.remove('is-playing');
+    void logo.getBoundingClientRect();
+    logo.classList.add('is-playing');
+  });
 </script>
 
-<style>
+<style is:global>
+  @property --mk-k {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 1;
+  }
+
   .site-header {
+    /* Estado compacto (bajo 1024 px y con scroll): barra 56, marca 24, trazo ×1,25, cuerpos ×1,12. */
+    --hd-s: 56px;
+    --m-s: 24px;
+    --sw-s: 4.5;
+    --k-s: 1.12;
+    --hd-h: var(--hd-s);
+    --m: var(--m-s);
+    --sw: var(--sw-s);
+    --k: var(--k-s);
+    --nav: var(--color-ink-600);
+    --nav-on: var(--color-ink-950);
+    --hd-line: var(--color-hairline);
+    --hd-glow: rgb(15 90 80 / 0.16);
+    --hd-shadow: 0 1px 0 var(--hd-line), 0 12px 28px -14px var(--hd-glow);
     position: sticky;
     top: 0;
     z-index: 40;
+    height: var(--hd-h);
+    /* Sin desenfoque (navegadores viejos) el fondo es blanco opaco: el texto de
+       la cabecera nunca queda sobre el contenido que pasa por debajo. */
     background-color: var(--color-paper);
-    border-bottom: 1px solid var(--color-hairline);
+    border-bottom: 1px solid var(--hd-line);
+  }
+  @supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .site-header {
+      background-color: var(--color-header);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      backdrop-filter: blur(20px) saturate(180%);
+    }
   }
   .site-header__bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
-    height: 4rem;
+    column-gap: 0.75rem;
+    height: 100%;
   }
   .site-header__home {
     display: inline-flex;
     align-items: center;
+    min-height: 2.75rem;
     border-radius: var(--radius-edge);
   }
+
+  .site-header .origen-mark {
+    width: var(--m);
+    height: var(--m);
+    stroke-width: var(--sw);
+    --mk-k: var(--k);
+    overflow: visible;
+  }
+  /* --- Navegación (escritorio) --- */
   .site-header__nav {
     display: none;
   }
-  .site-header__nav ul {
+  .site-header__nav > ul {
     display: flex;
-    align-items: center;
-    gap: 0.25rem;
-    list-style: none;
-    margin: 0;
-    padding: 0;
   }
-  .site-header__nav a {
+  .site-header__nav > ul > li > a {
     display: inline-flex;
     align-items: center;
-    height: 2.5rem;
-    padding-inline: 0.75rem;
+    min-height: 2.75rem;
+    padding-inline: 0.625rem;
     border-radius: var(--radius-edge);
-    font-size: 0.9375rem;
+    font-size: 0.90625rem;
     font-weight: 500;
-    color: var(--color-ink-600);
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--nav);
     transition: color 150ms;
   }
-  .site-header__nav a:hover {
-    color: var(--color-ink-950);
+  .site-header__nav > ul > li > a:hover,
+  .site-header__nav > ul > li > a[aria-current='page'] {
+    color: var(--nav-on);
   }
-  .site-header__nav a[aria-current='page'] {
-    color: var(--color-ink-950);
-    box-shadow: inset 0 -1px 0 0 var(--color-teal-700);
+  .site-header__nav > ul > li > a[aria-current='page'] {
+    font-weight: 600;
   }
+
+  /* --- Menús desplegables (escritorio) --- */
+  .site-header__nav .mm {
+    display: flex;
+    align-items: center;
+  }
+  .site-header__nav .mm > a {
+    padding-right: 0.25rem;
+  }
+  .mm__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 2.75rem;
+    margin-right: 0.25rem;
+    border-radius: var(--radius-edge);
+    color: var(--nav);
+    cursor: pointer;
+  }
+  .mm__btn:hover,
+  .mm__btn[aria-expanded='true'] {
+    color: var(--nav-on);
+  }
+  .mm__btn svg {
+    transition: transform 150ms ease-out;
+  }
+  .mm__btn[aria-expanded='true'] svg {
+    transform: rotate(180deg);
+  }
+  .mm__panel {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    /* Tope: el panel nunca tapa la pantalla entera (se cierra al bajar el cursor a la página). */
+    max-height: min(calc(100vh - var(--hd-h) - 5rem), 38rem);
+    padding-block: 2.25rem 2.75rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: var(--color-raised);
+    border-bottom: 1px solid var(--color-hairline);
+    box-shadow: 0 30px 60px -36px rgb(15 90 80 / 0.22);
+  }
+  /* Cerrado: `display: none` (no se enfoca, no se lee y sus miniaturas
+     diferidas no se descargan). Abierto: baja y aparece; `@starting-style` +
+     `allow-discrete` animan la entrada y la salida sin dejar el panel montado. */
+  .mm__panel {
+    display: none;
+    opacity: 0;
+    transform: translateY(-0.75rem);
+    transition:
+      opacity 180ms var(--ease-out),
+      transform 240ms var(--ease-out),
+      display 240ms allow-discrete;
+  }
+  [data-mm-nav]:not([data-mm-nav='js']) .mm:is(:hover, :focus-within) > .mm__panel,
+  [data-mm-nav='js'] .mm[data-open] > .mm__panel {
+    display: block;
+    opacity: 1;
+    transform: none;
+    transition:
+      opacity 220ms var(--ease-out),
+      transform 300ms var(--ease-out),
+      display 300ms allow-discrete;
+    @starting-style {
+      opacity: 0;
+      transform: translateY(-0.75rem);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mm__panel,
+    [data-mm-nav] .mm > .mm__panel {
+      transform: none;
+      transition: opacity 120ms linear, display 120ms allow-discrete;
+    }
+  }
+
+  /* --- Acciones --- */
   .site-header__actions {
     display: flex;
     align-items: center;
     gap: 0.5rem;
   }
-  .site-header__cta {
-    min-height: 2.5rem;
-    padding-inline: 1rem;
-    font-size: 0.875rem;
-    white-space: nowrap;
-  }
-  /* Bajo 1024 px la barra no cabe con la etiqueta larga; se usa la forma corta
-     de la misma intención y el nombre accesible se mantiene completo. */
-  .site-header__cta-long {
+  .site-header__cta-long,
+  .site-header .site-header__wa {
     display: none;
   }
-
-  /* --- Menú móvil --- */
-  .site-menu summary {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+  .site-menu__btn.btn {
     width: 2.75rem;
     height: 2.75rem;
-    margin-right: -0.5rem;
-    border-radius: var(--radius-edge);
-    color: var(--color-ink-950);
-    cursor: pointer;
-    list-style: none;
-    touch-action: manipulation;
   }
-  .site-menu summary::-webkit-details-marker {
+  .site-menu__close,
+  .site-menu__btn[aria-expanded='true'] .site-menu__open {
     display: none;
   }
-  .site-menu__open,
-  .site-menu__close {
-    display: flex;
-  }
-  .site-menu__close {
-    display: none;
-  }
-  .site-menu[open] .site-menu__open {
-    display: none;
-  }
-  .site-menu[open] .site-menu__close {
+  .site-menu__btn[aria-expanded='true'] .site-menu__close {
     display: block;
   }
-  /* Un <details> cerrado con contenido posicionado sigue generando caja en
-     Chromium y provoca desborde horizontal en móvil. Se oculta explícitamente. */
-  .site-menu:not([open]) .site-menu__panel {
-    display: none;
-  }
+
+  /* --- Panel del menú móvil --- */
   .site-menu__panel {
     position: fixed;
-    inset: 4rem 0 0;
-    z-index: 39;
+    /* El desenfoque de la cabecera la convierte en bloque contenedor de este
+       panel fijo: `bottom: 0` lo dejaría de la altura de la barra. Alto explícito. */
+    inset: var(--hd-h) 0 auto;
+    height: calc(100vh - var(--hd-h));
+    height: calc(100dvh - var(--hd-h));
     display: flex;
     flex-direction: column;
     gap: 2rem;
-    padding: 2rem 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
-    background-color: var(--color-paper);
+    padding: 1rem 1.25rem calc(2rem + env(safe-area-inset-bottom, 0px));
+    background-color: var(--color-raised);
     border-top: 1px solid var(--color-hairline);
     overflow-y: auto;
     overscroll-behavior: contain;
   }
-  .site-menu__panel ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
+  .site-menu__panel[hidden] {
+    display: none;
   }
-  .site-menu__panel li + li {
+  .site-menu__panel nav > ul > li + li {
     border-top: 1px solid var(--color-hairline);
   }
-  .site-menu__panel a {
+  .site-menu__panel nav > ul > li > a {
     display: flex;
     align-items: center;
-    min-height: 3.5rem;
-    font-size: 1.25rem;
-    font-weight: 500;
+    min-height: 4rem;
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 2.125rem;
+    letter-spacing: -0.03em;
+    font-weight: 700;
     color: var(--color-ink-950);
   }
-  .site-menu__panel a[aria-current='page'] {
-    color: var(--color-teal-800);
+  .site-menu__panel nav > ul > li > a[aria-current='page'] {
+    color: var(--color-teal-700);
   }
-  .site-menu__cta {
-    align-self: flex-start;
-    font-size: 1rem;
+  /* Acordeón del teléfono: la palabra lleva al índice, la flecha despliega los modelos. */
+  .acc {
+    position: relative;
+  }
+  .site-menu__panel .acc > a {
+    padding-right: 3.5rem;
+  }
+  .acc__more > summary {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 4rem;
+    list-style: none;
+    border-radius: var(--radius-edge);
+    color: var(--color-ink-600);
+    cursor: pointer;
+  }
+  .acc__more > summary::-webkit-details-marker {
+    display: none;
+  }
+  .acc__more > summary svg {
+    transition: transform 150ms ease-out;
+  }
+  .acc__more[open] > summary svg {
+    transform: rotate(180deg);
+  }
+  @media (min-width: 1200px) {
+    .mm-groups--panel.mm-groups--marcas {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+  }
+  .mm-groups--accordion {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  }
+  .site-menu__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  /* --- Estado con scroll: 56 px, sin borde, sombra hairline --- */
+  .site-header[data-scrolled] {
+    --hd-h: var(--hd-s);
+    --m: var(--m-s);
+    --sw: var(--sw-s);
+    --k: var(--k-s);
+    height: var(--hd-s);
+    border-bottom-color: transparent;
+    box-shadow: var(--hd-shadow);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    @supports not (animation-timeline: scroll()) {
+      .site-header,
+      .site-header .origen-mark {
+        transition: 200ms ease-out;
+        transition-property: height, box-shadow, border-color, width, stroke-width, --mk-k;
+      }
+    }
+    @supports (animation-timeline: scroll()) {
+      .site-header,
+      .site-header .origen-mark {
+        animation-timing-function: linear;
+        animation-fill-mode: both;
+        animation-timeline: scroll(root);
+        animation-range: 0 120px;
+      }
+      .site-header {
+        animation-name: hd-shrink;
+      }
+      .site-header .origen-mark {
+        animation-name: mark-shrink;
+      }
+    }
+    @keyframes hd-shrink {
+      to {
+        height: var(--hd-s);
+        border-bottom-color: transparent;
+        box-shadow: var(--hd-shadow);
+      }
+    }
+    @keyframes mark-shrink {
+      to {
+        width: var(--m-s);
+        height: var(--m-s);
+        stroke-width: var(--sw-s);
+        --mk-k: var(--k-s);
+      }
+    }
   }
 
   @media (min-width: 1024px) {
+    .site-header {
+      --hd-h: 72px;
+      --m: 30px;
+      --sw: 3.6;
+      --k: 1;
+    }
     .site-header__bar {
-      height: 4.5rem;
+      grid-template-columns: auto 1fr auto;
+      column-gap: 1.5rem;
     }
     .site-header__nav {
       display: block;
-    }
-    .site-menu {
-      display: none;
-    }
-    .site-header__cta {
-      min-height: 2.625rem;
-      font-size: 0.9375rem;
+      justify-self: center;
     }
     .site-header__cta-long {
       display: inline;
     }
-    .site-header__cta-short {
+    .site-header__cta-short,
+    .site-menu__btn {
       display: none;
     }
-  }
-  @media (max-width: 26rem) {
-    /* En pantallas muy estrechas el CTA cede espacio, nunca desaparece. */
-    .site-header__bar {
-      gap: 0.75rem;
-    }
-    .site-header__cta {
-      padding-inline: 0.875rem;
+    .site-header .site-header__wa {
+      display: inline-flex;
     }
   }
 </style>

@@ -41,11 +41,17 @@ export interface AuthOperator {
   role: string;
 }
 
+/** The «Hoy» view a profile opens on (`profile.home_filter`, set in the roster). */
+export type HomeFilter = "todo" | "llamadas" | "cotizar";
+const HOME_FILTERS: readonly string[] = ["todo", "llamadas", "cotizar"];
+
 /** The operator profile selected behind a shared sign-in, as the API labels it. */
 export interface AuthProfile {
   id: string;
   displayName: string;
   roleLabel: string;
+  /** Absent from an older API, null when the roster sets none; anything unknown reads as null. */
+  homeFilter?: HomeFilter | null;
 }
 
 export type AuthSessionState =
@@ -121,6 +127,9 @@ export function parseAuthSessionResponse(status: number, body: unknown): AuthSes
               id: profileId,
               displayName: asString(rawProfile.display_name) ?? "",
               roleLabel: asString(rawProfile.role_label) ?? "",
+              homeFilter: HOME_FILTERS.includes(rawProfile.home_filter as string)
+                ? (rawProfile.home_filter as HomeFilter)
+                : null,
             }
           : null,
       canSwitchProfile: data.can_switch_profile === true,

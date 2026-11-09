@@ -9,7 +9,8 @@ The roster is a JSON file **outside the repository** (the repository is public):
       "principal": {"email": "cuenta@<workspace domain>", "status": "active"},
       "profiles": [
         {"key": "ana", "display_name": "Ana", "role": "admin", "sort_order": 1},
-        {"key": "luis", "display_name": "Luis", "role": "sales", "status": "active"}
+        {"key": "luis", "display_name": "Luis", "role": "sales", "status": "active",
+         "home_filter": "llamadas"}
       ]
     }
 
@@ -32,6 +33,10 @@ The roster is a JSON file **outside the repository** (the repository is public):
 * `plan` reads only. `apply` recomputes the plan in one transaction and refuses unless the
   caller states the exact number of changes and the exact database name — a roster, PIN file
   or database that changed since the plan was reviewed cannot slip anything through.
+* `home_filter` (optional) is the «Hoy» view the profile opens on: `todo`, `llamadas` or
+  `cotizar`. Omitted means none (null, the dashboard's default) — the roster states the whole
+  profile, so dropping the field clears it. It is not a security field: changing it never ends
+  the profile's session. This tool is its only writer.
 * Profiles of the principal that the roster does not name are reported and left alone: this
   never disables or deletes anyone. Disable a person by setting `"status": "disabled"`.
 * Output masks every address and never shows a PIN or a hash.
@@ -56,10 +61,11 @@ from origenlab_api.v2.profile_pin import PinHasher, PinPolicyRefused, validate_n
 
 ROLES = ("admin", "sales", "viewer")
 STATUSES = ("active", "disabled")
+HOME_FILTERS = ("todo", "llamadas", "cotizar")
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _KEY = re.compile(r"^[a-z][a-z0-9_-]{1,39}$")
 _PRINCIPAL_KEYS = {"email", "status", "provider_subject"}
-_PROFILE_KEYS = {"key", "display_name", "role", "status", "sort_order"}
+_PROFILE_KEYS = {"key", "display_name", "role", "status", "sort_order", "home_filter"}
 
 
 class ProfileRosterRefused(ValueError):
@@ -80,6 +86,8 @@ class ProfileEntry:
     role: str
     status: str
     sort_order: int
+    #: The «Hoy» view this profile opens on; None = the dashboard default.
+    home_filter: str | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +174,10 @@ def parse_roster(raw: Any, *, workspace_domain: str) -> Roster:
         order = item.get("sort_order", i + 1)
         if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= 1000:
             raise ProfileRosterRefused(f"{where}: sort_order must be an integer from 0 to 1000")
-        profiles.append(ProfileEntry(slug, name, str(role), str(pstatus), order))
+        home_filter = item.get("home_filter")
+        if home_filter is not None and home_filter not in HOME_FILTERS:
+            raise ProfileRosterRefused(f"{where}: home_filter must be one of {', '.join(HOME_FILTERS)}")
+        profiles.append(ProfileEntry(slug, name, str(role), str(pstatus), order, home_filter))
     return Roster(principal, tuple(profiles))
 
 
@@ -250,16 +261,16 @@ def _read_state(cur: Any, roster: Roster) -> tuple[str, dict[str, Any] | None, d
         cur.execute(
             """
             select p.profile_key, p.operator_id::text, o.display_name, o.role, o.status,
-                   p.status, p.sort_order
+                   p.status, p.sort_order, p.home_filter
               from platform.operator_profile p join platform.operator o on o.id = p.operator_id
              where p.principal_id = %s::uuid
             """,
             (principal["id"],),
         )
-        for slug, oid, name, role, ostatus, pstatus, order in cur.fetchall():
+        for slug, oid, name, role, ostatus, pstatus, order, home_filter in cur.fetchall():
             profiles[slug] = {"operator_id": oid, "display_name": name, "role": role,
                              "operator_status": ostatus, "profile_status": pstatus,
-                             "sort_order": order}
+                             "sort_order": order, "home_filter": home_filter}
             total += 1
     return database, principal, profiles, total
 
@@ -300,11 +311,13 @@ def compute_plan(
         if row is None:
             if entry.slug not in pins:
                 raise ProfileRosterRefused(f"profile {entry.slug!r} is new and needs a PIN")
-            changes.append(Change(subject, "insert", ("display_name", "role", "status", "sort_order", "pin")))
+            changes.append(Change(subject, "insert", ("display_name", "role", "status", "sort_order", "pin")
+                                  + (("home_filter",) if entry.home_filter is not None else ())))
             continue
         fields = tuple(f for f, new in (
             ("display_name", entry.display_name), ("role", entry.role),
             ("status", entry.status), ("sort_order", entry.sort_order),
+            ("home_filter", entry.home_filter),
         ) if (row["operator_status"] if f == "status" else row[f]) != new
             or (f == "status" and row["profile_status"] != new))
         if fields:
@@ -389,9 +402,10 @@ def apply(
                 operator_id = cur.fetchone()[0]
                 cur.execute(
                     "insert into platform.operator_profile "
-                    "(operator_id, principal_id, profile_key, pin_hash, status, sort_order) "
-                    "values (%s::uuid, %s::uuid, %s, %s, %s, %s)",
-                    (operator_id, principal_id, entry.slug, pin_hash, entry.status, entry.sort_order),
+                    "(operator_id, principal_id, profile_key, pin_hash, status, sort_order, home_filter) "
+                    "values (%s::uuid, %s::uuid, %s, %s, %s, %s, %s)",
+                    (operator_id, principal_id, entry.slug, pin_hash, entry.status, entry.sort_order,
+                     entry.home_filter),
                 )
                 continue
             cur.execute(
@@ -402,12 +416,12 @@ def apply(
                  entry.display_name, entry.role, entry.status),
             )
             cur.execute(
-                "update platform.operator_profile set status = %s, sort_order = %s, "
+                "update platform.operator_profile set status = %s, sort_order = %s, home_filter = %s, "
                 "pin_hash = coalesce(%s::text, pin_hash), updated_at = now() "
-                "where operator_id = %s::uuid and ((status, sort_order) is distinct from (%s::text, %s::smallint) "
-                "or %s::text is not null)",
-                (entry.status, entry.sort_order, pin_hash, row["operator_id"],
-                 entry.status, entry.sort_order, pin_hash),
+                "where operator_id = %s::uuid and ((status, sort_order, home_filter) is distinct from "
+                "(%s::text, %s::smallint, %s::text) or %s::text is not null)",
+                (entry.status, entry.sort_order, entry.home_filter, pin_hash, row["operator_id"],
+                 entry.status, entry.sort_order, entry.home_filter, pin_hash),
             )
     return result
 

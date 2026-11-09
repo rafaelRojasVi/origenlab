@@ -76,6 +76,17 @@ describe("parseAuthSessionResponse", () => {
     });
   });
 
+  it("reads the profile's home_filter, and anything unknown or absent as null", () => {
+    const withProfile = (profile: Record<string, unknown>) =>
+      parseAuthSessionResponse(200, { ...SIGNED_IN, profile: { id: "p-1", display_name: "Ana", role_label: "Ventas", ...profile } });
+    const filter = (s: ReturnType<typeof parseAuthSessionResponse>) => (s.kind === "signed_in" ? s.profile?.homeFilter : "x");
+    expect(filter(withProfile({ home_filter: "llamadas" }))).toBe("llamadas");
+    expect(filter(withProfile({ home_filter: "cotizar" }))).toBe("cotizar");
+    expect(filter(withProfile({ home_filter: "zzz" }))).toBeNull();
+    expect(filter(withProfile({ home_filter: 7 }))).toBeNull();
+    expect(filter(withProfile({}))).toBeNull();
+  });
+
   it("reads 401 as signed out with the sign-in options", () => {
     expect(parseAuthSessionResponse(401, SIGNED_OUT)).toMatchObject({
       kind: "signed_out",

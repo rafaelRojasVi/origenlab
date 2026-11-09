@@ -611,6 +611,8 @@ class SelectiveRelease(unittest.TestCase):
         self.assertEqual(f("apps/email-pipeline/src/x.py"), {"worker", "api"})
         self.assertEqual(f("supabase/migrations/20261017000000_x.sql"), {"worker", "api"})
         self.assertEqual(f("supabase/roles.sql"), {"worker", "api"})
+        # The site's model-sheet schema is read by the API: it deploys the API, not the rest of apps/web.
+        self.assertEqual(f("apps/web/src/content/modelos.schema.json"), {"api"})
         for none in ("docs/OPERATIONS.md", "apps/web/src/index.astro", "apps/dashboard-proxy/src/index.ts",
                      "README.md", "AGENTS.md", "supabase/tests/database/x.sql"):
             self.assertEqual(f(none), set(), none)

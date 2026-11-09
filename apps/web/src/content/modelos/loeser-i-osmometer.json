@@ -1,0 +1,52 @@
+{
+  "slug": "loeser-i-osmometer",
+  "family": "osmometria",
+  "brand": "loeser",
+  "name": "i Osmometer",
+  "headline": "Löser Messtechnik i Osmometer: osmometría",
+  "lead": "Osmómetro automático con impresora térmica y lector de código integrados, pantalla en color y registro de cambios y de inicios de sesión.",
+  "applications": [
+    "Laboratorio clínico con volumen alto de muestras",
+    "Trazabilidad por muestra, usuario y estado de calibración",
+    "Puesto en que el resultado se imprime junto a la muestra"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de muestra",
+      "value": "100 o 50 µl",
+      "source": "http://www.loeser-osmometer.de/typ16-eng.html"
+    },
+    {
+      "label": "Tiempo de medición",
+      "value": "Aprox. 1,5 min con 100 µl",
+      "source": "http://www.loeser-osmometer.de/typ16-eng.html"
+    },
+    {
+      "label": "Rango",
+      "value": "0 a 2.500 mosm/kg H₂O, resolución 1 mosm/kg",
+      "source": "http://www.loeser-osmometer.de/typ16-eng.html"
+    },
+    {
+      "label": "Memoria",
+      "value": "600 mediciones con fecha, hora, usuario y estado de calibración",
+      "source": "http://www.loeser-osmometer.de/typ16-eng.html"
+    },
+    {
+      "label": "Documentación",
+      "value": "Impresora térmica y lector de código integrados",
+      "source": "http://www.loeser-osmometer.de/typ16-eng.html"
+    },
+    {
+      "label": "Interfaces",
+      "value": "1 USB y 2 RS-232",
+      "source": "http://www.loeser-osmometer.de/typ16-eng.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "http://www.loeser-osmometer.de/typ16-eng.html",
+  "image_id": "loeser-i-osmometer",
+  "showroom_id": "loeser-i-osmometer",
+  "verified_on": "2026-09-07"
+}

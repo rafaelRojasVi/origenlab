@@ -130,7 +130,9 @@ describe("allowlist", () => {
       "/v2/cockpit/kpis",
       "/v2/cockpit/opportunities",
       `/v2/cockpit/opportunities/${uuid}`,
-      `/v2/cockpit/opportunities/${uuid}/timeline`,
+      `/v2/cockpit/opportunities/${uuid}/timeline/`,
+      `/v2/cockpit/opportunities/${uuid}/timeline/extra`,
+      "/v2/cockpit/opportunities/not-a-uuid/timeline",
       "/v2/cockpit/quotations",
       `/v2/cockpit/quotations/${uuid}`,
       `/v2/cockpit/evidence/${uuid}`,
@@ -138,6 +140,24 @@ describe("allowlist", () => {
       "/v2/cockpit/case-archive",
       "/v2/cockpit/import-review",
       `/v2/cockpit/import-review/documents/${sha}`,
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows the case timeline", () => {
+    const path = "/v2/cockpit/opportunities/96301691-af05-41ea-82e3-05f5fae40837/timeline";
+    expect(isAllowedUpstreamPath(path)).toBe(true);
+    expect(isAllowedPostPath(path)).toBe(false);
+  });
+
+  it("still refuses the cockpit opportunity detail", () => {
+    const uuid = "96301691-af05-41ea-82e3-05f5fae40837";
+    for (const path of [
+      `/v2/cockpit/opportunities/${uuid}`,
+      `/v2/cockpit/opportunities/${uuid}/`,
+      `/v2/cockpit/opportunities/${uuid.toUpperCase()}/timeline`,
     ]) {
       expect(isAllowedUpstreamPath(path), path).toBe(false);
       expect(isAllowedPostPath(path), path).toBe(false);
@@ -524,8 +544,10 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/set-invoice-case",
       "/v2/commands/mark-invoice-paid",
       "/v2/commands/mark-invoice-unpaid",
+      // The case panel's «Origen» select (2026-11-09).
+      "/v2/commands/set-case-origin",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(25);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(26);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
@@ -684,7 +706,11 @@ describe("V2 durable read boundary allowlist", () => {
     expect(marketingCommandMaxBytes("/v2/commands/record-case-quotation")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/link-case-evidence")).toBe(16_384);
     expect(marketingCommandMaxBytes("/v2/commands/create-task")).toBe(16_384);
+    expect(marketingCommandMaxBytes("/v2/commands/set-case-origin")).toBe(16_384);
     for (const path of [
+      "/v2/commands/set-case-origin/",
+      "/v2/commands/set-case-origins",
+      "/v2/commands/SET-CASE-ORIGIN",
       "/v2/commands/advance-case-stage/",
       "/v2/commands/advance-case-stage-all",
       "/v2/commands/record-case-won/x",
@@ -1436,5 +1462,96 @@ describe("People first: weak guesses and «Confirmar» (Task 7)", () => {
         expect(isAllowedUpstreamPath(near), near).toBe(false);
       }
     }
+  });
+});
+
+describe("«Publicar web» (T7.3): publish a model sheet", () => {
+  const PUBLISH = "/v2/web/publish-model-sheet";
+
+  it("allows the exact path as a POST, never as a GET", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, isAllowedWebPublishPostPath } = await import("./allowlist");
+    expect(isAllowedWebPublishPostPath(PUBLISH)).toBe(true);
+    expect(isAllowedPostPath(PUBLISH)).toBe(true);
+    expect(isAllowedUpstreamPath(PUBLISH)).toBe(false);
+  });
+
+  it("refuses its near misses as POST and as GET", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath, isAllowedWebPublishPostPath } = await import("./allowlist");
+    for (const near of [
+      "/v2/web/publish-model-sheets",
+      "/v2/web/publish-model-sheet/x",
+      "/v2/web/publish-model-sheet/",
+      "/v2/web/PUBLISH-model-sheet",
+      "/v2/web/publish-model-sheet-x",
+      "/v2/commands/publish-model-sheet",
+    ]) {
+      expect(isAllowedWebPublishPostPath(near), near).toBe(false);
+      expect(isAllowedPostPath(near), near).toBe(false);
+      expect(isAllowedUpstreamPath(near), near).toBe(false);
+    }
+  });
+
+  it("caps the body at 32 KiB, which is more than four times the largest model sheet", async () => {
+    const { WEB_PUBLISH_MAX_BYTES, webPublishBodyWithinLimit } = await import("./allowlist");
+    expect(WEB_PUBLISH_MAX_BYTES).toBe(32_768);
+    expect(webPublishBodyWithinLimit(3_780 * 4)).toBe(true);
+    expect(webPublishBodyWithinLimit(WEB_PUBLISH_MAX_BYTES)).toBe(true);
+    expect(webPublishBodyWithinLimit(WEB_PUBLISH_MAX_BYTES + 1)).toBe(false);
+    expect(webPublishBodyWithinLimit(Number.NaN)).toBe(false);
+  });
+});
+
+describe("Publicar web (T7.3b): the editor's model-sheet and publish-status reads", () => {
+  const ID = "hielscher-up100h";
+  const READS = (id: string) => [`/v2/web/model-sheet/${id}`, `/v2/web/publish-status/${id}`];
+
+  it("allows both reads as exact GET paths, never as POST", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of READS(ID)) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("allows an id at the 1 and 60 character limits, with the id charset only", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    for (const id of ["a", "a".repeat(60), "ortoalresa-digicen-22-r", "0-9-a"]) {
+      for (const path of READS(id)) expect(isAllowedUpstreamPath(path), path).toBe(true);
+    }
+  });
+
+  it("refuses an empty id, uppercase, 61 characters, extra segments and a trailing slash", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    const bad = [
+      "/v2/web/model-sheet/",
+      "/v2/web/publish-status/",
+      "/v2/web/model-sheet/Hielscher-up100h",
+      "/v2/web/publish-status/HIELSCHER",
+      `/v2/web/model-sheet/${"a".repeat(61)}`,
+      `/v2/web/publish-status/${"a".repeat(61)}`,
+      "/v2/web/model-sheet/x/y",
+      "/v2/web/publish-status/x/y",
+      "/v2/web/model-sheet/x/",
+      "/v2/web/model-sheet/x_y",
+      "/v2/web/model-sheet/x.y",
+      "/v2/web/model-sheet/%2e%2e",
+      "/v2/web/model-sheets/x",
+      "/v2/web/model-sheet",
+    ];
+    for (const path of bad) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+      expect(isAllowedUpstreamPath(`${path}?x=1`), `${path}?x=1`).toBe(false);
+    }
+  });
+
+  it("refuses POST on either read", async () => {
+    const { isAllowedPostPath } = await import("./allowlist");
+    for (const path of READS(ID)) expect(isAllowedPostPath(path), path).toBe(false);
+  });
+
+  it("keeps the publish POST allowed and its own path GET-refused", async () => {
+    const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");
+    expect(isAllowedPostPath("/v2/web/publish-model-sheet")).toBe(true);
+    expect(isAllowedUpstreamPath("/v2/web/publish-model-sheet")).toBe(false);
   });
 });

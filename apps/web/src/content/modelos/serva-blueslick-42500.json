@@ -1,0 +1,42 @@
+{
+  "slug": "serva-blueslick-42500",
+  "family": "electroforesis",
+  "brand": "serva",
+  "name": "BlueSlick",
+  "headline": "SERVA Electrophoresis BlueSlick: reactivo de tratamiento de vidrio",
+  "lead": "Reactivo listo para usar que trata la placa de vidrio para que el gel no se adhiera al desmoldar.",
+  "applications": [
+    "SDS-PAGE",
+    "Enfoque isoeléctrico en gel",
+    "Secuenciación de ADN",
+    "Colado de geles propios"
+  ],
+  "specs": [
+    {
+      "label": "Presentación",
+      "value": "Pulverizador de 250 ml, sin propelente",
+      "source": "https://www.serva.de/enDE/ProductDetails/158_42500_BlueSlick_TM_0_214.html"
+    },
+    {
+      "label": "Dosis",
+      "value": "0,7 ml por pulsación",
+      "source": "https://www.serva.de/enDE/ProductDetails/158_42500_BlueSlick_TM_0_214.html"
+    },
+    {
+      "label": "Duración del tratamiento",
+      "value": "3 a 4 corridas de electroforesis",
+      "source": "https://www.serva.de/enDE/ProductDetails/158_42500_BlueSlick_TM_0_214.html"
+    },
+    {
+      "label": "Temperatura de almacenamiento",
+      "value": "De 15 a 30 °C",
+      "source": "https://www.serva.de/enDE/ProductDetails/158_42500_BlueSlick_TM_0_214.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.serva.de/enDE/ProductDetails/158_42500_BlueSlick_TM_0_214.html",
+  "image_id": "serva-blueslick-42500",
+  "verified_on": "2026-09-07"
+}

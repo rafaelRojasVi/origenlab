@@ -1039,7 +1039,7 @@ never also be an operator's address (both directions are refused by trigger).
 | # | Schema.table | Unique responsibility | Key invariant |
 |---|---|---|---|
 | 38 | `platform.auth_principal` | an external sign-in identity (one Google account), its principal-wide PIN throttle and the one PIN attempt in flight through it | `(provider, email_norm)` unique; the pinned Google account — `provider_issuer` (canonical `https://accounts.google.com`) and `provider_subject`, set together or not at all, `(provider, provider_subject)` unique — required by the API in production and set only by the migrator roster tool; never an operator's address; `version` bumps on any address, issuer, subject or status change; the attempt record (`pin_attempt_id`, `_xact`, `_operator_id`, 32-byte `_nonce`) is all set or all null, written only by the two PIN-attempt functions, and never bumps `version` |
-| 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored, and is the one column the runtime role cannot read (`20260929100000`); `version` bumps on any PIN, link, key or status change, never on a throttle update |
+| 39 | `platform.operator_profile` | a `shared_profile` operator selectable from one principal, its PIN and its per-profile throttle | the composite key `(operator_id, 'shared_profile')` → `platform.operator (id, sign_in_kind)` admits no other kind; `(principal_id, profile_key)` unique; `pin_hash` must be an Argon2id PHC string, so a plaintext PIN cannot be stored, and is the one column the runtime role cannot read (`20260929100000`); `version` bumps on any PIN, link, key or status change, never on a throttle update; `home_filter` `todo`/`llamadas`/`cotizar` or null (the «Hoy» view the profile opens on, `20261111100000`), written only by the roster tool, readable by the API, outside the version bump |
 | 40 | `platform.auth_event` | the append-only authentication audit: profile selected, refused, a profile or a whole principal locked, cleared, logout, and a migrator's early lockout clear (`lockout.cleared`) | closed `event_type` and closed `refusal_reason` (no free text, so no PIN can be recorded), the reason carried by every refusal and by the failure that started a lock; principal id and address recorded as a pair; append-only (`platform.reject_mutation`); the four PIN outcomes (`profile.selected`, `profile.selection_refused`, `profile.locked`, `principal.locked`) are written only by `platform.finish_pin_attempt`, exactly one per attempt, and `lockout.cleared` only by the migrator tool — each accepted only from a member of `origenlab_owner`, never from the runtime role (trigger `auth_event_actor_guard`, `20260928193000`, `20260929100000`) |
 | 41 | `platform.auth_session` | one dashboard session — a shared sign-in (a principal, and the profile selected through it) or an operator's own Google account — so logout and «Cambiar perfil» can revoke it | `token_hash` is a 32-byte keyed HMAC of the cookie's random identifier — never the identifier; lifetime at most seven days; `sign_in_kind` `shared_profile` (principal required, `operator_id` → `platform.operator_profile`) or `google_account` (no principal, no profile, `(account_operator_id, sign_in_kind)` → `platform.operator (id, sign_in_kind)`); a request is served only while its row is neither revoked nor expired (database clock); selecting or clearing a profile revokes the row and inserts its successor with the same `expires_at`; identity, kind, principal, operators and issue time immutable, `expires_at` only ever moves earlier, a revocation (closed reason: `logout`, `profile_selected`, `profile_cleared`) is final (trigger `auth_session_guard`); the runtime role never deletes — the migrator prunes |
 
@@ -1104,7 +1104,7 @@ and `assertion.supplier_candidate_confirmed / rejected`.
 |---|---|---|---|
 | 42 | `outbound.campaign_content` | immutable archive of one campaign's frozen HTML and plain-text bodies, keyed by the campaign's `content_sha256` | owned by `origenlab_owner`; INSERT-only (trigger `campaign_content_immutable`); `(campaign_id, content_sha256)` unique; no address or personal data columns; api and worker may SELECT |
 | 43 | `outbound.campaign_content_message` | per-send-attempt content snapshot linking a send attempt to the archived content | belongs to exactly one `campaign_content`; one row per `send_attempt_id`; INSERT-only through the same owner guard; api and worker may SELECT |
-| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point, product | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`) |
+| 44 | `crm.note` | operator-authored annotation on any CRM object — person, organization, case, contact point, product | body, author and subject are immutable once written (trigger `crm.note_guard`); archiving advances `version` by exactly one and is final; never deleted; a revision chains to a root note; api may INSERT and archive (column-level UPDATE: `status`, `archived_at`, `archived_by_operator_id`, `archive_reason`, `version`); a note may be a typed «Llamada» record (`note_kind`, `call_outcome`, `call_next_step` — §7.17, frozen after insert) |
 | 45 | `crm.organization_product_line` | links one organization to one product-line label — the brands and equipment families it handles | closed product-line vocabulary; at most one active link per `(organization_id, product_line)` (partial unique index excludes soft-removed rows); unlinked by setting `valid_to` (never deleted; trigger refuses DELETE); api may INSERT and unlink (column-level UPDATE: `valid_to`, `unlinked_by_operator_id`, `note`, `updated_at`) |
 
 ### 7.5 Catalog 1a — products, images, supplier terms, exchange rates, cost parameters, document lines
@@ -1398,15 +1398,57 @@ guessed again on every later import.
 |---|---|---|---|
 | 70 | `crm.invoice` | one SII sales document (factura 33, exenta 34, nota de débito 56, nota de crédito 61) | (`doc_type`, `folio`) unique — a re-uploaded month adds nothing; CLP amounts ≥ 0; a nota names the document it adjusts (`reference_doc_type`, `reference_folio`); `opportunity_id` set ⇔ `case_link` ∈ {`machine`,`operator`}; `paid_on` only on a 33/34; `version` ≥ 1; **never physically deleted** (`platform.reject_mutation`); `origenlab_api` select/insert/update, `origenlab_worker` no access |
 | 71 | `crm.invoice_payment` | one payment (abono) recorded against a factura: `paid_on`, `amount` | `amount` > 0 (CLP); the factura's `paid_on` is set by the payment that leaves nothing owed, cleared when a removal takes the payments below it; a wrong payment is removed once (`removed_at` ⇔ `removed_by_operator_id`), **never physically deleted**; `origenlab_api` select/insert + UPDATE of the two removal columns, `origenlab_worker` no access |
+| 72 | `crm.consent` | one explicit consent a person gave, per purpose (Ley 21.719): the address, the purpose, the version of the text shown, when it was accepted and where it came from | `purpose` ∈ {`quote_request`, `newsletter`}; `email` lower-cased, `text_version` and `source` not blank; `(email, purpose, text_version, source_record_id)` unique while `source_record_id` is set, so a replayed message records one row; `person_id` → `crm.person` is optional, `source_record_id` is a logical id with no foreign key; append-only — never updated, never deleted, a withdrawal is a new row (triggers `consent_never_updated`, `consent_never_deleted`); the API holds select and insert only, the worker nothing |
 
 A payment is recorded by `invoice.paid` (payload: `amount`, `payment_id`, `fully_paid`) and removed
 by `invoice.unpaid` (payload: `payment_id`) — no new event type.
 
+A consent row (#72) is written by the mail rules when a web quote form arrives with its consent
+checkbox (`purpose = quote_request`, `source = web-quote-form/v1`, `text_version` the version of the
+text shown), and later by the newsletter sign-up. It writes no domain event of its own.
+
+Two limits of that record, stated so nobody reads more into it:
+
+- **Trust.** The form's notification is a self-sent mail `From: contacto@origenlab.cl` with the
+  visitor in Reply-To and the `x-origenlab-origin` marker the triage worker saw. A consent is
+  recorded on exactly the same trust as rule R7 opening a case from that mail: an own-domain
+  sender, the marker and a Reply-To. Mail that spoofs `From: contacto@` with the marker would
+  record a consent the visitor never gave, just as it would open a case; SPF/DKIM/DMARC at the
+  mailbox are what stand between a forger and either. The row proves what the form mail said,
+  not who sent it.
+- **Person.** `person_id` is the person who held the address when the row was written, or null.
+  Rows are immutable, so merging two people does **not** repoint it; a consent belongs to its
+  address, and every lookup goes by `email` (lower-cased), never by `person_id`.
+
 Domain events added: aggregate kind `invoice` with `invoice.imported`, `invoice.case_set`,
 `invoice.paid`, `invoice.unpaid`.
 
-Counts by schema: `crm` 31, `comms` 4, `outbound` 9, `evidence` 7,
-`catalog` 8, `procurement` 1, `platform` 7 — **67**.
+Counts by schema: `crm` 32, `comms` 4, `outbound` 9, `evidence` 7,
+`catalog` 8, `procurement` 1, `platform` 7 — **68**.
+
+### 7.16 Where a case came from — `crm.opportunity.origin`, built 2026-11-09
+
+No table. `crm.opportunity` gains one nullable text column, `origin`: the channel the case came
+from, closed by `opportunity_origin_check` to nine values — `correo`, `web`, `whatsapp`, `campana`,
+`mercado_publico`, `fabricante`, `recomendacion`, `llamada`, `ex_labdelivery`. Null means *not
+recorded* (every case that exists today); there is no default and no `desconocido` value. It is
+**not** `origin_source_record_id` (the one evidence record a case was promoted from): `origin` is a
+channel an operator can set or correct. A partial index (`opportunity_origin_idx`, `origin IS NOT
+NULL`) serves "cases by origin". The API's existing table-level select/insert/update and the
+worker's select cover it, so no grant, policy or foreign key changes, and the column adds no domain
+event. Migration `20261109100000_slice8_opportunity_origin.sql`.
+
+Domain event added: `opportunity.origin_set` (aggregate kind `opportunity`, payload `from_origin`,
+`to_origin` — either may be null — and `note`), written by the operator command `set-case-origin`
+(an operator sets or corrects a case's origin; null clears it; compare-and-set on the case version).
+Migration `20261109110000_slice8_opportunity_origin_event.sql` only rebuilds
+`domain_event_type_check`. Counts are unchanged.
+
+The API sets it **only when a case is created**, and says so in the `opportunity.created` payload
+(`origin`): `open_commercial_case` takes it as an optional field; the mail rules pass `correo` (R7),
+`web` (a web-form message) and, through `create_request_from_forward`, `ex_labdelivery` or `correo`
+(R11); `open-tender-case` sets `mercado_publico`. Linking a message to an existing case never
+changes it. The nine values live once in `apps/api/src/origenlab_api/v2/case_origin.py`.
 
 **Deliberately absent.** A delivery-event table (attempt columns plus domain
 events suffice); a recontact-override table (immutable recipient columns
@@ -1416,9 +1458,28 @@ revision suffices); an address history, provenance or geocoding table
 association or association-label table; a parse-failure table (the archive
 holds them); per-aggregate event tables; any mart, mirror or projection table;
 a party supertype over organization and person; a combined person / company /
-address record; a lead table; a prospect table; a consent table. **A
+address record; a lead table; a prospect table. **A
 `commercial_case` table or any second case lifecycle** (the case is
 `crm.opportunity`, §3.6); **a case-level audience, subscription or marketing
 permission** (§3.6.4); **an inactivity, dormancy or auto-close state** (§3.4 —
 inactivity is computed at read time, never stored). Adding any of these
 reopens this decision.
+
+### 7.17 A note as a call record — `crm.note.note_kind`, built 2026-11-10
+
+No table and no `crm.activity` write path: logging a call reuses notes. `crm.note` gains three
+nullable columns, written at insert and frozen afterwards (`crm.note_guard` refuses any change, for
+every role, including the merge-people identity-repoint):
+
+| column | values | rule |
+|---|---|---|
+| `note_kind` | `llamada` or null | null is an ordinary note; no default, no backfill — every earlier note stays ordinary |
+| `call_outcome` | `contesto`, `no_contesto`, `buzon`, `numero_malo`, `reunion` | required on a call record, forbidden otherwise; a column so calls can be counted by outcome |
+| `call_next_step` | text, at most 500 characters | optional, only on a call record |
+
+`note_call_shape` ties them: a call record is `note_kind = 'llamada'` with an outcome; anything else
+has all three null. The API's existing table-level select/insert covers the columns; its column-level
+UPDATE list is unchanged, so it cannot alter them afterwards, and no policy, foreign key or domain
+event changes. Counts are unchanged. Migration `20261110100000_slice8_note_kind.sql`; pgTAP
+`112_note_kind.sql`.
+

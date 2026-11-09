@@ -148,11 +148,48 @@ for (const key of ['productId', 'modelId']) {
 const productsDir = join(root, 'public', 'products');
 const derivedSuffix = new RegExp(`-(${widths.join('|')})\\.(avif|webp)$`);
 const masters = new Set(rows.filter((row) => row.masterPath).map((row) => row.masterPath));
+// Generados, no fotografías: `npm run posters` (scripts/generate-posters.mjs) captura la
+// escena 3D propia. No llevan fila de procedencia, pero sí el tamaño y el peso del script.
+const GENERATED = /-poster\.jpg$/;
+const POSTER_MAX_BYTES = 150_000;
+// Tira de giro (`components/ui/Turntable.astro`): 24 cuadros 4:3 en una fila, ≤ 120 kB, junto a su póster.
+const STRIP = /-turntable\.webp$/;
+const STRIP_FRAMES = 24;
+const STRIP_MAX_BYTES = 120_000;
+// Miniatura del mega-menú (360x270 WebP), junto a su póster.
+const THUMB = /-thumb\.webp$/;
+// Póster mediano de las tarjetas (640x480 WebP, ≤ 40 kB), junto a su póster.
+const POSTER_SMALL = /-poster-640\.webp$/;
 
 if (existsSync(productsDir)) {
   for (const brandDir of readdirSync(productsDir)) {
     const dir = join(productsDir, brandDir);
-    if (!statSync(dir).isDirectory()) continue;
+    if (!statSync(dir).isDirectory()) {
+      if (GENERATED.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        assert(meta.width === 1200 && meta.height === 900, `/products/${brandDir}: el póster mide ${meta.width}x${meta.height}, no 1200x900`);
+        assert(statSync(dir).size <= POSTER_MAX_BYTES, `/products/${brandDir}: el póster pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 150 kB)`);
+      } else if (STRIP.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        const frame = meta.width / STRIP_FRAMES;
+        assert(Number.isInteger(frame) && frame * 3 === meta.height * 4, `/products/${brandDir}: la tira mide ${meta.width}x${meta.height}, no ${STRIP_FRAMES} cuadros 4:3 en una fila`);
+        assert(statSync(dir).size <= STRIP_MAX_BYTES, `/products/${brandDir}: la tira pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 120 kB)`);
+        assert(existsSync(join(productsDir, brandDir.replace(STRIP, '-poster.jpg'))), `/products/${brandDir}: tira de giro sin su póster`);
+      } else if (THUMB.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        assert(meta.width === 360 && meta.height === 270, `/products/${brandDir}: la miniatura mide ${meta.width}x${meta.height}, no 360x270`);
+        assert(statSync(dir).size <= 20_000, `/products/${brandDir}: la miniatura pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 20 kB)`);
+        assert(existsSync(join(productsDir, brandDir.replace(THUMB, '-poster.jpg'))), `/products/${brandDir}: miniatura sin su póster`);
+      } else if (POSTER_SMALL.test(brandDir)) {
+        const meta = await sharp(dir).metadata();
+        assert(meta.width === 640 && meta.height === 480, `/products/${brandDir}: el póster mediano mide ${meta.width}x${meta.height}, no 640x480`);
+        assert(statSync(dir).size <= 40_000, `/products/${brandDir}: el póster mediano pesa ${Math.round(statSync(dir).size / 1024)} kB (máx. 40 kB)`);
+        assert(existsSync(join(productsDir, brandDir.replace(POSTER_SMALL, '-poster.jpg'))), `/products/${brandDir}: póster mediano sin su póster`);
+      } else {
+        assert(false, `/products/${brandDir}: archivo suelto que no es un póster, una tira de giro, una miniatura ni un póster mediano generados`);
+      }
+      continue;
+    }
     assert(approved.includes(brandDir), `public/products/${brandDir}: carpeta de una marca fuera de la lista cerrada`);
     for (const file of readdirSync(dir)) {
       const rel = `/products/${brandDir}/${file}`;
@@ -234,6 +271,11 @@ if (!existsSync(dist)) {
       assert(!/^(https?:)?\/\//.test(src) || src.startsWith('https://origenlab.cl/'), at(`imagen remota: ${src}`));
       if (!src.startsWith('/products/')) continue;
       const tag = match[0];
+      if (GENERATED.test(src) || THUMB.test(src) || POSTER_SMALL.test(src)) {
+        assert(/\bwidth="\d+"/.test(tag) && /\bheight="\d+"/.test(tag), at(`póster sin dimensiones: ${src}`));
+        assert(existsSync(join(root, 'public', src)), at(`póster inexistente: ${src}`));
+        continue;
+      }
       assert(/\bwidth="\d+"/.test(tag) && /\bheight="\d+"/.test(tag), at(`imagen de producto sin dimensiones: ${src}`));
       const alt = tag.match(/\balt="([^"]*)"/)?.[1];
       const row = rows.find((candidate) => candidate.masterPath === src);

@@ -1,55 +1,46 @@
 ---
+import { getCollection } from 'astro:content';
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
 import SectionIndex from '../components/ui/SectionIndex.astro';
-import ApplicationList from '../components/ui/ApplicationList.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
+import LitCard from '../components/ui/LitCard.astro';
+import IndustryTiles from '../components/ui/IndustryTiles.astro';
 import { applications } from '../data/applications';
-import { scopeById } from '../data/equipmentScope';
-import { brandNamesForFamily } from '../lib/catalog';
-import { modelsForFamily } from '../data/brandModels';
-import { company } from '../data/company';
 import { ctaLabels } from '../lib/ctaLabels';
+import { familyForScope, familyHref } from '../lib/modelos';
+import { rankFamilies, rankModels } from '../lib/ranking';
 import { site } from '../config/site';
+import type { Modelo } from '../content.config';
 
 /**
- * Aplicaciones, por tarea.
+ * Aplicaciones, por tarea (dueño, 2026-11-08: «llévame directo a la ficha»).
  *
- * La versión anterior de esta página repetía las tres líneas comerciales
- * («alimentos, control de calidad, laboratorio clínico»), que son segmentos de
- * mercado y no tareas: quien llegaba buscando cómo romper una célula o cómo
- * medir osmolalidad no encontraba nada, y las tres filas llevaban a
- * `/categorias/*`, que vuelve a preguntar por el tipo de laboratorio.
+ * Cada tarea es un bloque: una línea que dice qué se intenta hacer con la
+ * muestra y, debajo, los modelos que la resuelven como `LitCard` (sobre el
+ * tinte de su familia) que llevan directo a su ficha (sin pasar por la página de familia). Lo que
+ * conviene traer a la conversación queda plegado bajo cada bloque.
  *
- * Ahora la página abre por la pregunta con la que llega un laboratorio, «qué
- * necesita hacer con la muestra», y los mercados quedan debajo, en su propia
- * sección, como lo que son: una segunda forma de entrar.
+ * Orden comercial de `lib/ranking.ts`: las tareas por su familia principal
+ * (`rankFamilies`: sonicación primero, dispersión al final) y los modelos por
+ * `rankModels` (3D primero, IKA al final). Los modelos salen de la colección
+ * `modelos`, nunca de este archivo; `validate:catalog` comprueba que ninguna
+ * aplicación se quede sin familia.
  *
- * Ninguna tarea es un callejón sin salida. Cada una nombra la familia de equipo
- * que la resuelve, con su fabricante y su destino, y `validate:catalog`
- * comprueba que ninguna aplicación se quede sin familia y que ninguna familia
- * publicada se quede sin aplicación que la reclame.
- *
- * La composición alterna de lado en las tareas pares: seis bloques idénticos
- * apilados se leen como un formulario, y el contenido de los seis es el mismo
- * tipo de contenido.
+ * Debajo, las industrias (`IndustryTiles`, las mismas de la portada), cada una
+ * hacia el bloque de su tarea: la otra forma de entrar.
  */
-const tasks = applications.map((application) => ({
-  application,
-  families: application.familyIds
-    .map((familyId) => {
-      const scope = scopeById(familyId);
-      if (!scope) return undefined;
-      return {
-        scope,
-        brandNames: brandNamesForFamily(familyId),
-        documented: modelsForFamily(familyId).length,
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
-}));
+const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+const ranked = rankModels(all.map((entry) => ({ id: entry.slug, entry }))).map(({ entry }) => entry);
+const segment = (familyId: string) => {
+  const slug = familyForScope(familyId);
+  return slug ? (familyHref(slug).split('/')[2] ?? '') : '';
+};
+const tasks = rankFamilies(applications, (application) => segment(application.familyIds[0] ?? '')).map((application) => {
+  const slugs = application.familyIds.map((id) => familyForScope(id)).filter(Boolean);
+  return { application, models: ranked.filter((entry) => slugs.includes(entry.family)) };
+});
 ---
 
 <Layout
@@ -59,7 +50,7 @@ const tasks = applications.map((application) => ({
   <div class="shell">
     <PageIntro
       title="Aplicaciones"
-      lead="Si sabe qué necesita hacer con la muestra pero no qué equipo pedir, empiece por aquí. Cada tarea nombra la familia de equipo que la resuelve y lo que conviene traer a la conversación antes de cotizar."
+      lead="Si sabe qué necesita hacer con la muestra pero no qué equipo pedir, empiece por aquí. Cada tarea muestra los equipos que la resuelven: toque uno y llega directo a su ficha."
       crumbs={[{ label: 'Aplicaciones' }]}
     />
   </div>
@@ -77,56 +68,33 @@ const tasks = applications.map((application) => ({
 
     <div class="tasks">
       {
-        tasks.map(({ application, families }, index) => (
-          <article
-            id={application.slug}
-            class:list={['task', index % 2 === 1 && 'task--flip']}
-            aria-labelledby={`${application.slug}-title`}
-          >
+        tasks.map(({ application, models }, index) => (
+          <article id={application.slug} class="task" aria-labelledby={`${application.slug}-title`}>
             <div class="task__lead">
               <p class="t-data task__num" aria-hidden="true">
                 {String(index + 1).padStart(2, '0')}
               </p>
               <h3 id={`${application.slug}-title`} class="task__name">{application.name}</h3>
               <p class="task__task">{application.task}</p>
-              <p class="t-small task__detail">{application.detail}</p>
             </div>
-
-            <div class="task__body">
-              <div class="task__block">
-                <p class="t-label task__block-title">Equipo que la resuelve</p>
-                <ul class="task__equipment">
-                  {families.map(({ scope, brandNames, documented }) => (
-                    <li>
-                      <a href={scope.href} class="task__equipment-link">
-                        <span class="task__equipment-name">{scope.name}</span>
-                        <Icon name="arrow-right" size={16} class="arrow" />
-                      </a>
-                      <span class="t-data task__equipment-meta">
-                        {brandNames}
-                        {documented > 0 && (
-                          <span class="task__equipment-count">
-                            {documented === 1
-                              ? '1 modelo documentado'
-                              : `${documented} modelos documentados`}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div class="task__block">
-                <p class="t-label task__block-title">Qué traer a la conversación</p>
-                <ul class="task__bring">
+            <ul class="task__models" aria-label={`Equipos para ${application.name.toLowerCase()}`}>
+              {models.map((entry) => (
+                <li>
+                  <LitCard entry={entry} kicker="brand" heading="h4" />
+                </li>
+              ))}
+            </ul>
+            <div class="task__foot">
+              <details class="task__bring">
+                <summary>Qué traer a la conversación</summary>
+                <ul>
                   {application.bring.map((item) => <li>{item}</li>)}
                 </ul>
-                <a href={site.quoteHref} class="link-arrow task__cta">
-                  {ctaLabels.contarAplicacion}
-                  <Icon name="arrow-right" size={18} class="arrow" />
-                </a>
-              </div>
+              </details>
+              <a href={site.quoteHref} class="link-arrow task__cta">
+                {ctaLabels.contarAplicacion}
+                <Icon name="arrow-right" size={18} class="arrow" />
+              </a>
             </div>
           </article>
         ))
@@ -134,31 +102,13 @@ const tasks = applications.map((application) => ({
     </div>
   </section>
 
-  <section class="shell section rule-top" aria-labelledby="tipos-title">
-    <SectionIndex index={2} label="Por tipo de laboratorio" />
-    <div class="sectors">
-      <div>
-        <h2 id="tipos-title" class="t-h2">Por tipo de laboratorio</h2>
-        <p class="t-body sectors__intro">{company.homeIntro}</p>
-        <p class="t-small sectors__note">
-          Es la otra forma de entrar: si prefiere partir del entorno de su laboratorio y no de la
-          tarea, estas tres líneas reúnen lo que conviene traer en cada caso.
-        </p>
-      </div>
-      <ul class="sectors__list">
-        {company.audience.map((item) => <li>{item}</li>)}
-      </ul>
-    </div>
-    <ApplicationList size="lg" class="mt-12" />
-    <Notice class="mt-10">
-      Las seis tareas de arriba y estas tres líneas describen lo mismo desde dos lados. Ninguna
-      lista es un catálogo cerrado de lo que podemos cotizar: si su ensayo no encaja en ninguna,
-      descríbalo y le decimos qué podemos gestionar.
-    </Notice>
+  <section class="shell section rule-top" aria-labelledby="industrias-title">
+    <SectionIndex index={2} label="Por industria" />
+    <h2 id="industrias-title" class="t-h2 industries-title">Por industria</h2>
+    <IndustryTiles />
   </section>
 
   <ClosingQuoteBand
-    index={3}
     title="Describa la tarea, no el modelo."
     body="Con el tipo de muestra, el volumen de trabajo y la resolución o la fuerza que pide su método podemos acotar alternativas antes de emitir una cotización."
   />
@@ -172,98 +122,70 @@ const tasks = applications.map((application) => ({
   .tasks-head__body {
     color: var(--color-ink-600);
   }
-
   .tasks {
     margin-top: 3rem;
-    border-top: 1px solid var(--color-ink-950);
   }
   .task {
     display: grid;
     gap: 2rem;
-    padding-block: 2.5rem;
-    border-bottom: 1px solid var(--color-hairline);
+    padding-block: clamp(3rem, 6vw, 4.5rem);
+    border-top: 1px solid var(--color-hairline);
+    scroll-margin-top: 5rem;
   }
   .task__num {
     font-size: 0.8125rem;
-    color: var(--color-ink-500);
+    color: var(--color-teal-700);
   }
   .task__name {
     margin-top: 0.5rem;
-    font-size: clamp(1.375rem, 1.2rem + 0.8vw, 1.75rem);
-    line-height: 1.1;
-    letter-spacing: -0.018em;
+    font-size: clamp(1.75rem, 1.3rem + 1.8vw, 2.75rem);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
     color: var(--color-ink-950);
   }
   .task__task {
-    margin-top: 1rem;
+    margin-top: 0.75rem;
     font-size: 1.0625rem;
     line-height: 1.55;
-    color: var(--color-ink-800);
-    max-width: 48ch;
-  }
-  .task__detail {
-    margin-top: 1rem;
     color: var(--color-ink-600);
-    max-width: 56ch;
+    max-width: 62ch;
   }
-
-  .task__body {
+  .task__models {
     display: grid;
-    gap: 2rem;
-  }
-  .task__block-title {
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-
-  .task__equipment {
-    list-style: none;
-    margin: 1rem 0 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem 0.875rem;
+    margin: 0;
     padding: 0;
+    list-style: none;
   }
-  .task__equipment li + li {
-    margin-top: 1rem;
+  /* Tarjetas de una fila, de igual alto. */
+  .task__models > li {
+    display: flex;
   }
-  .task__equipment-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    min-height: 1.75rem;
-    color: var(--color-teal-800);
-    transition: color 150ms;
+  .task__models > li > :global(*) {
+    flex: 1;
   }
-  .task__equipment-link:hover {
-    color: var(--color-ink-950);
-  }
-  .task__equipment-name {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .task__equipment-link:hover > .arrow {
-      transform: translateX(2px);
-    }
-    .task__equipment-link > .arrow {
-      transition: transform 150ms;
-    }
-  }
-  .task__equipment-meta {
+  .task__foot {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.125rem 1rem;
-    /* 13 px es el suelo del sitio. */
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
+    align-items: start;
+    justify-content: space-between;
+    gap: 1rem 2rem;
   }
-  .task__equipment-count {
-    color: var(--color-ink-500);
+  .task__bring summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    color: var(--color-ink-800);
+    font-weight: 600;
+    cursor: pointer;
   }
-
-  .task__bring {
+  .task__bring ul {
     list-style: none;
-    margin: 1rem 0 0;
+    margin: 0.25rem 0 0;
     padding: 0;
-    max-width: 52ch;
+    max-width: 60ch;
   }
   .task__bring li {
     position: relative;
@@ -287,65 +209,22 @@ const tasks = applications.map((application) => ({
     background-color: var(--color-teal-700);
   }
   .task__cta {
-    margin-top: 1.5rem;
+    min-height: 2.75rem;
   }
 
-  .sectors {
-    display: grid;
-    gap: 2.5rem;
-  }
-  .sectors__intro {
-    margin-top: 1.25rem;
-  }
-  .sectors__note {
-    margin-top: 1rem;
-    color: var(--color-ink-500);
-    max-width: 56ch;
-  }
-  .sectors__list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .sectors__list li {
-    padding-block: 0.875rem;
-    font-size: 1rem;
-    color: var(--color-ink-800);
-    border-bottom: 1px solid var(--color-hairline);
+  .industries-title {
+    margin-bottom: 2rem;
   }
 
   @media (min-width: 768px) {
+    .task__models {
+      grid-template-columns: repeat(auto-fill, minmax(13.5rem, 1fr));
+      gap: 2.5rem 1.375rem;
+    }
     .tasks-head {
       grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
       gap: 3rem;
       align-items: baseline;
-    }
-    .task__body {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 3rem;
-    }
-    .sectors {
-      grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
-      gap: 4rem;
-      align-items: start;
-    }
-  }
-
-  @media (min-width: 1024px) {
-    .task {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-      gap: 4rem;
-      padding-block: 3.5rem;
-      align-items: start;
-    }
-    /* Las tareas pares invierten el orden de las columnas. El orden del
-       documento no cambia: sólo la colocación en la rejilla. */
-    .task--flip .task__lead {
-      order: 2;
-    }
-    .task--flip .task__body {
-      order: 1;
     }
   }
 </style>

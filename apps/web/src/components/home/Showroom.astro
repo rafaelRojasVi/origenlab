@@ -1,0 +1,720 @@
+---
+import ModelPhoto from '../ui/ModelPhoto.astro';
+import { imageForModel, imageForProduct } from '../../data/productImages';
+import { showroomEntry } from '../../lib/showroom/catalog';
+import { turntableFor } from '../../lib/turntable';
+import type { ShowroomEntry } from '../../lib/showroom/content/types';
+
+/**
+ * Sala de equipo: equipos modelados en 3D sobre su fotografía oficial.
+ *
+ * Cada modelo está construido en código con las medidas de la documentación
+ * del fabricante (`src/lib/showroom/models/`). Se puede girar, poner en marcha
+ * y recorrer por vistas, y unos marcadores numerados explican sus partes.
+ *
+ * Con `id` muestra un equipo. Con `items` muestra varios en un solo escenario:
+ * una fila de tareas («Sonicar», «Pesar»…) elige cuál, y el equipo cambia en
+ * el mismo lienzo. Un solo WebGL dibuja a la vez, y cada modelo se descarga
+ * sólo cuando se elige.
+ *
+ * Mejora progresiva estricta. Lo que llega en el HTML es el póster del estudio
+ * blanco (`npm run posters`) o, si el equipo no lo tiene, la fotografía oficial
+ * con su fila VERIFIED, y el pie; sin 3D, la fila de tareas cambia la imagen. La escena 3D sólo se carga si hay WebGL, si el visitante no
+ * pidió movimiento reducido ni ahorro de datos, si el dispositivo no declara
+ * poca memoria y cuando la figura está cerca de la pantalla; hasta que dibuja
+ * su primer cuadro, la foto sigue ahí.
+ *
+ * Los textos y las cifras de los marcadores no se escriben aquí: vienen de
+ * `src/lib/showroom/content/<id>.ts`, que los lee de los datos con fuente.
+ */
+interface Props {
+  id?: string;
+  items?: { id: string; task: string }[];
+  /** Compatibilidad: ya no cambia nada (un solo aspecto claro). */
+  tone?: 'paper' | 'ink';
+  /**
+   * `wide`: escenario 16/9 (4/3 en teléfono) sin fondo propio, de hasta
+   * 1120 px, con las tareas debajo. `portrait`: el 4/5 de las fichas de modelo.
+   */
+  frame?: 'portrait' | 'wide';
+}
+const { frame = 'portrait' } = Astro.props;
+const wide = frame === 'wide';
+const picks = Astro.props.items ?? (Astro.props.id ? [{ id: Astro.props.id, task: '' }] : []);
+const entries = picks
+  .map((pick) => ({ pick, entry: showroomEntry(pick.id) }))
+  .filter((item): item is { pick: { id: string; task: string }; entry: ShowroomEntry } => Boolean(item.entry))
+  .map(({ pick, entry }) => ({
+    entry,
+    task: pick.task,
+    image: 'modelId' in entry.photo ? imageForModel(entry.photo.modelId) : imageForProduct(entry.photo.productId),
+    poster: turntableFor(entry.id)?.poster ?? null,
+    hotspots: entry.hotspots.filter((spot) => spot.body.length > 0).map((spot, index) => ({ ...spot, numeral: index + 1 })),
+  }))
+  .filter((item) => item.image);
+const selector = entries.length > 1;
+const first = entries[0];
+const domId = (entryId: string, part: string) => `sala-${entryId}-${part}`;
+---
+
+{
+  first && (
+    <figure
+      class:list={['showroom', { 'showroom--selector': selector, 'showroom--wide': wide }]}
+      data-showroom={selector ? 'selector' : first.entry.id}
+      data-active={first.entry.id}
+      aria-labelledby={domId(first.entry.id, 'pie')}
+    >
+      {selector && !wide && (
+        <div class="showroom__tasks" role="group" aria-label="Elija una tarea de laboratorio">
+          {entries.map((item, index) => (
+            <button type="button" class="showroom__task" data-pick={item.entry.id} aria-pressed={index === 0 ? 'true' : 'false'}>
+              {item.task}
+            </button>
+          ))}
+        </div>
+      )}
+      <div class="showroom__stage">
+        {entries.map((item, index) => (
+          <div class="showroom__photo" data-showroom-photo data-entry={item.entry.id} hidden={index > 0}>
+            {item.poster ? (
+              <img
+                class="showroom__poster"
+                src={item.poster}
+                srcset={`${item.poster.replace('-poster.jpg', '-poster-640.webp')} 640w, ${item.poster} 1200w`}
+                sizes="(min-width: 1024px) 60vw, 92vw"
+                alt={`${item.entry.brand} ${item.entry.name}, modelo 3D`}
+                width="1200"
+                height="900"
+                loading={index === 0 ? 'eager' : 'lazy'}
+                fetchpriority={index === 0 ? 'high' : undefined}
+                decoding="async"
+              />
+            ) : (
+              <ModelPhoto image={item.image} size="hero" priority={index === 0} ratio="4 / 5" />
+            )}
+          </div>
+        ))}
+        <canvas class="showroom__canvas" data-showroom-canvas aria-hidden="true" hidden />
+        {entries.map((item) => (
+          <div class="showroom__hotspots" data-showroom-hotspots data-entry={item.entry.id} hidden>
+            {item.hotspots.map((spot) => (
+              <div class="hotspot" data-anchor={spot.anchor}>
+                <button
+                  type="button"
+                  class="hotspot__dot"
+                  aria-expanded="false"
+                  aria-controls={domId(item.entry.id, spot.anchor)}
+                  data-view={spot.view}
+                >
+                  <span aria-hidden="true">{spot.numeral}</span>
+                  <span class="sr-only">{spot.title}</span>
+                </button>
+                <div class="hotspot__note" id={domId(item.entry.id, spot.anchor)} role="note">
+                  <p class="hotspot__title">{spot.title}</p>
+                  {spot.body.map((line) => <p>{line}</p>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {entries.map((item) => (
+        <div class="showroom__bar" data-showroom-bar data-entry={item.entry.id} hidden>
+          {item.entry.power ? (
+            <button type="button" class="showroom__power" data-showroom-power aria-pressed="false" data-on={item.entry.power.on} data-off={item.entry.power.off}>
+              <span class="showroom__led" aria-hidden="true" />
+              <span data-power-label>{item.entry.power.on}</span>
+            </button>
+          ) : <span />}
+          <div class="showroom__views" role="group" aria-label="Vistas del equipo">
+            {item.entry.views.map((view, index) => (
+              <button type="button" class="showroom__view" data-showroom-view={view.id} aria-pressed={index === 0 ? 'true' : 'false'}>
+                {view.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {selector && wide && (
+        <div class="showroom__tasks" role="group" aria-label="Elija una tarea de laboratorio">
+          {entries.map((item, index) => (
+            <button type="button" class="showroom__task" data-pick={item.entry.id} aria-pressed={index === 0 ? 'true' : 'false'}>
+              {item.task}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {entries.map((item, index) => (
+        <figcaption class="showroom__caption t-data" id={domId(item.entry.id, 'pie')} data-entry={item.entry.id} hidden={index > 0}>
+          <span class="showroom__model">{item.entry.brand} {item.entry.name}</span>
+          <span>{item.entry.kind}</span>
+          <span class="showroom__mode" data-showroom-mode>{item.poster ? 'Modelo 3D con las medidas del fabricante' : 'Fotografía oficial del fabricante'}</span>
+        </figcaption>
+      ))}
+    </figure>
+  )
+}
+
+<style>
+  /*
+   * Sitio claro: el escenario no tiene fondo propio. El lienzo 3D es
+   * transparente y el póster (horneado sobre blanco) se funde por multiply con
+   * lo que haya detrás (en la portada, el resplandor de `HomeHero`): sin caja.
+   * Los controles son píldoras de vidrio blanco (texto tinta, borde
+   * `--color-edge`, teal para lo elegido/encendido).
+   */
+  .showroom {
+    --glass: rgb(255 255 255 / 0.78);
+    --glass-edge: var(--color-edge);
+    margin: 0;
+  }
+  .showroom__stage {
+    position: relative;
+    aspect-ratio: 4 / 5;
+    max-height: 44rem;
+    width: 100%;
+  }
+  .showroom__photo,
+  .showroom__canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .showroom__photo {
+    transition: opacity 0.6s ease;
+  }
+  /* Póster del estudio blanco (4:3): se contiene en el escenario y se funde
+     con el fondo (`.pz`: brillo + multiply), así sus bordes no se ven. */
+  .showroom__poster,
+  .showroom__photo :global(img) {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: brightness(1.037);
+    mix-blend-mode: multiply;
+  }
+  .showroom__photo :global(.model-photo__frame) {
+    background: transparent !important;
+  }
+  /* Sin póster: la fotografía del fabricante llena el escenario. */
+  .showroom__photo :global(.model-photo),
+  .showroom__photo :global(.model-photo__frame) {
+    height: 100%;
+    aspect-ratio: auto !important;
+  }
+  .showroom[data-ready] .showroom__photo {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .showroom__canvas {
+    display: block;
+    cursor: grab;
+    touch-action: pan-y;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+  }
+  .showroom[data-ready] .showroom__canvas {
+    opacity: 1;
+  }
+  .showroom[data-swapping] .showroom__canvas {
+    opacity: 0 !important;
+  }
+  .showroom__canvas:active {
+    cursor: grabbing;
+  }
+
+  /* --- marcadores ---------------------------------------------------------- */
+  .showroom__hotspots {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .hotspot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: auto;
+    transition: opacity 0.2s ease;
+  }
+  .hotspot[data-hidden] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .hotspot__dot {
+    display: grid;
+    place-items: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    margin: -0.875rem 0 0 -0.875rem;
+    border-radius: 999px;
+    border: 1px solid var(--glass-edge);
+    background: var(--glass);
+    backdrop-filter: blur(8px);
+    color: var(--color-ink-950);
+    font: 600 0.8125rem/1 var(--font-mono);
+    cursor: pointer;
+    box-shadow: 0 0 0 0.375rem var(--color-glow);
+    transition: background-color var(--ease-ui), color var(--ease-ui), border-color var(--ease-ui);
+  }
+  .hotspot__dot:hover {
+    border-color: var(--color-teal-700);
+  }
+  .hotspot__dot[aria-expanded='true'] {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+  .hotspot__dot:focus-visible {
+    outline: 2px solid var(--color-teal-700);
+    outline-offset: 3px;
+  }
+  .hotspot__note {
+    position: absolute;
+    left: 1.5rem;
+    top: -0.75rem;
+    width: 15rem;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: 0.625rem;
+    background: var(--color-raised);
+    box-shadow: var(--shadow-card);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--color-ink-600);
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateX(-0.25rem);
+    transition: opacity 0.25s ease, transform 0.25s ease, visibility 0.25s;
+  }
+  .hotspot__title {
+    color: var(--color-ink-950);
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+  .hotspot__dot[aria-expanded='true'] + .hotspot__note,
+  .hotspot__dot:hover + .hotspot__note {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+
+  /* --- controles: píldoras de vidrio blanco -------------------------------- */
+  .showroom__bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+  .showroom__bar[hidden] {
+    display: none;
+  }
+  .showroom__power,
+  .showroom__view {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.5rem;
+    padding: 0 1rem;
+    border: 1px solid var(--glass-edge);
+    border-radius: 999px;
+    background: var(--glass);
+    backdrop-filter: blur(10px) saturate(140%);
+    color: var(--color-ink-800);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color var(--ease-ui), color var(--ease-ui), border-color var(--ease-ui);
+  }
+  .showroom__power:hover,
+  .showroom__view:hover {
+    border-color: var(--color-ink-950);
+    color: var(--color-ink-950);
+  }
+  .showroom__power[aria-pressed='true'] {
+    border-color: var(--color-teal-700);
+    color: var(--color-teal-800);
+  }
+  .showroom__led {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--color-ink-disabled);
+    transition: background-color var(--ease-ui), box-shadow var(--ease-ui);
+  }
+  .showroom__power[aria-pressed='true'] .showroom__led {
+    background: var(--color-teal-700);
+    box-shadow: 0 0 0 3px var(--color-glow), 0 0 10px var(--color-teal-700);
+  }
+  .showroom__views {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .showroom__view[aria-pressed='true'] {
+    border-color: var(--color-accent);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+  .showroom__caption {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--color-ink-500);
+  }
+  .showroom__model {
+    color: var(--color-ink-800);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .showroom__photo,
+    .showroom__canvas,
+    .hotspot,
+    .hotspot__note,
+    .hotspot__dot,
+    .showroom__power,
+    .showroom__view,
+    .showroom__task {
+      transition: none;
+    }
+  }
+
+  /* --- selector de tareas: control segmentado de vidrio --------------------- */
+  .showroom__tasks {
+    display: flex;
+    gap: 2px;
+    width: fit-content;
+    max-width: 100%;
+    margin: 0 auto 1rem;
+    padding: 4px;
+    border: 1px solid var(--color-hairline);
+    border-radius: 999px;
+    background: rgb(255 255 255 / 0.78);
+    box-shadow: var(--shadow-card);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .showroom__tasks::-webkit-scrollbar {
+    display: none;
+  }
+  .showroom__task {
+    flex: none;
+    height: 2.75rem;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--color-ink-600);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color var(--ease-ui), color var(--ease-ui);
+  }
+  @media (min-width: 1024px) {
+    .showroom__task {
+      height: 2.5rem;
+    }
+  }
+  .showroom__task:hover {
+    color: var(--color-ink-950);
+    background: var(--color-pressed);
+  }
+  .showroom__task[aria-pressed='true'] {
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+
+  /* --- marco ancho (portada): escenario 16/9, controles dentro, tareas debajo */
+  .showroom--wide {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 70rem;
+    margin-inline: auto;
+  }
+  .showroom--wide .showroom__stage {
+    grid-area: 1 / 1;
+    aspect-ratio: 4 / 3;
+    max-height: none;
+    overflow: hidden;
+    border-radius: var(--radius-scene);
+  }
+  @media (min-width: 640px) {
+    .showroom--wide .showroom__stage {
+      aspect-ratio: 16 / 9;
+    }
+  }
+  /* La barra de vistas flota sobre el escenario: al aparecer no mueve la página. */
+  .showroom--wide .showroom__bar {
+    grid-area: 1 / 1;
+    align-self: end;
+    z-index: 1;
+    margin: 0.75rem;
+  }
+  /* En teléfono la barra es una sola fila: encendido fijo y vistas que se
+     desplazan en horizontal, para no tapar el equipo. */
+  @media (max-width: 639.98px) {
+    .showroom--wide .showroom__bar {
+      flex-wrap: nowrap;
+      gap: 0.375rem;
+      margin: 0.5rem;
+    }
+    .showroom--wide .showroom__power {
+      flex: none;
+    }
+    .showroom--wide .showroom__views {
+      flex-wrap: nowrap;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-radius: 999px;
+    }
+    .showroom--wide .showroom__views::-webkit-scrollbar {
+      display: none;
+    }
+    .showroom--wide .showroom__view {
+      flex: none;
+      padding: 0 0.875rem;
+    }
+  }
+  .showroom--wide .showroom__tasks {
+    margin: 1.75rem auto 0;
+  }
+  .showroom--wide .showroom__caption {
+    justify-content: center;
+    margin-top: 1rem;
+    text-align: center;
+  }
+</style>
+
+<script>
+  /**
+   * Carga la escena 3D sólo cuando sirve: con WebGL, sin movimiento reducido ni
+   * ahorro de datos y con la figura cerca de la pantalla. Poca memoria declarada
+   * (< 4 GB) no apaga el 3D: baja al nivel medio, como en `ProductStory`. Hasta su primer cuadro la fotografía oficial sigue visible, de
+   * modo que un fallo de carga deja la página como estaba y no en blanco.
+   *
+   * Con selector, el equipo elegido cambia en el mismo lienzo: un solo WebGL.
+   * Sin 3D, el selector cambia la fotografía.
+   *
+   * En pantalla estrecha (< 760 px) o en un equipo de ≤ 4 núcleos (donde la
+   * historia de producto usaría el nivel medio) la escena no se monta durante
+   * la carga: espera al primer gesto o a unos 4 s después de `load`
+   * (`whenSettled`). No se crea un lienzo de prueba (sería otro contexto
+   * WebGL): si el navegador no puede, el renderizador falla y queda la foto.
+   */
+  import { modelLoaders } from '../../lib/showroom/loaders';
+  import type { Showroom } from '../../lib/showroom/scene';
+  import { whenSettled } from '../../lib/showroom/whenSettled';
+
+  type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+  const nav = navigator as Nav;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const saveData = nav.connection?.saveData === true;
+
+  const use3d = !reduced && !saveData && 'WebGLRenderingContext' in window;
+  // Mismo criterio de nivel que `ProductStory`: teléfono o equipo modesto, nivel medio.
+  const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
+  const tier: 'high' | 'medium' = innerWidth < 760 || modest ? 'medium' : 'high';
+  const lazy = innerWidth < 760 || (nav.hardwareConcurrency ?? 8) <= 4;
+  const settled = use3d && lazy ? new Promise<void>((resolve) => whenSettled(resolve)) : Promise.resolve();
+
+  function setup(figure: HTMLElement) {
+    let canvas = figure.querySelector<HTMLCanvasElement>('[data-showroom-canvas]')!;
+    const tasks = Array.from(figure.querySelectorAll<HTMLButtonElement>('[data-pick]'));
+    const part = (selector: string, id: string) => figure.querySelector<HTMLElement>(`${selector}[data-entry="${id}"]`);
+    let active = figure.dataset.active ?? '';
+    let room: Showroom | null = null;
+    let gone = false;
+    let wasLive = false;
+    let ready = false;
+    let loading = 0;
+    // El equipo que la sala tiene montado (puede ir detrás de `active` mientras carga otro).
+    let shownModel = active;
+
+    const show = (id: string) => {
+      for (const el of figure.querySelectorAll<HTMLElement>('[data-entry]')) {
+        const mine = el.dataset.entry === id;
+        // Con 3D, la foto ya no se muestra; los marcadores y la barra sólo con 3D.
+        if (el.matches('[data-showroom-photo]')) el.hidden = !mine || ready;
+        else if (el.matches('[data-showroom-hotspots], [data-showroom-bar]')) el.hidden = !mine || !ready;
+        else el.hidden = !mine;
+      }
+      for (const button of tasks) button.setAttribute('aria-pressed', String(button.dataset.pick === id));
+      figure.dataset.active = id;
+      figure.setAttribute('aria-labelledby', `sala-${id}-pie`);
+    };
+
+    const resetControls = (id: string) => {
+      const bar = part('[data-showroom-bar]', id);
+      const power = bar?.querySelector<HTMLButtonElement>('[data-showroom-power]');
+      const label = power?.querySelector<HTMLElement>('[data-power-label]');
+      if (power && label) {
+        power.setAttribute('aria-pressed', 'false');
+        label.textContent = power.dataset.on ?? '';
+      }
+      for (const button of bar?.querySelectorAll<HTMLButtonElement>('[data-showroom-view]') ?? []) {
+        button.setAttribute('aria-pressed', String(button.dataset.showroomView === 'general'));
+      }
+      for (const dot of part('[data-showroom-hotspots]', id)?.querySelectorAll('.hotspot__dot') ?? []) dot.setAttribute('aria-expanded', 'false');
+    };
+
+    // Controles: cada barra y cada capa de marcadores actúa sobre la escena
+    // sólo mientras su equipo es el elegido.
+    for (const bar of figure.querySelectorAll<HTMLElement>('[data-showroom-bar]')) {
+      const id = bar.dataset.entry ?? '';
+      const views = Array.from(bar.querySelectorAll<HTMLButtonElement>('[data-showroom-view]'));
+      const setView = (view: string) => {
+        if (active !== id || !room) return;
+        room.goTo(view);
+        for (const button of views) button.setAttribute('aria-pressed', String(button.dataset.showroomView === view));
+      };
+      for (const button of views) button.addEventListener('click', () => setView(button.dataset.showroomView ?? 'general'));
+      const power = bar.querySelector<HTMLButtonElement>('[data-showroom-power]');
+      const label = power?.querySelector<HTMLElement>('[data-power-label]');
+      power?.addEventListener('click', () => {
+        if (active !== id || !room) return;
+        const on = power.getAttribute('aria-pressed') !== 'true';
+        power.setAttribute('aria-pressed', String(on));
+        if (label) label.textContent = (on ? power.dataset.off : power.dataset.on) ?? '';
+        room.setPower(on);
+      });
+      const spots = Array.from(part('[data-showroom-hotspots]', id)?.querySelectorAll<HTMLElement>('.hotspot') ?? []);
+      for (const spot of spots) {
+        const dot = spot.querySelector<HTMLButtonElement>('.hotspot__dot')!;
+        dot.addEventListener('click', () => {
+          const open = dot.getAttribute('aria-expanded') === 'true';
+          for (const other of spots) other.querySelector('.hotspot__dot')!.setAttribute('aria-expanded', 'false');
+          if (!open) {
+            dot.setAttribute('aria-expanded', 'true');
+            setView(dot.dataset.view ?? 'general');
+          }
+        });
+      }
+    }
+
+    const onFrame = (anchors: Record<string, { x: number; y: number } | null>) => {
+      const layer = part('[data-showroom-hotspots]', active);
+      for (const spot of layer?.querySelectorAll<HTMLElement>('.hotspot') ?? []) {
+        const at = anchors[spot.dataset.anchor ?? ''];
+        spot.toggleAttribute('data-hidden', !at);
+        if (at) spot.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px)`;
+      }
+      if (!ready) {
+        ready = true;
+        figure.setAttribute('data-ready', '');
+        for (const mode of figure.querySelectorAll<HTMLElement>('[data-showroom-mode]')) {
+          mode.textContent = 'Modelo 3D con las medidas del fabricante · arrastre para girar';
+        }
+        show(active);
+      }
+    };
+
+    // El navegador retiró el contexto WebGL: se libera la sala, vuelve la
+    // fotografía y el lienzo se cambia por uno nuevo (el perdido no sirve para
+    // un próximo arranque). No se rehace la escena en el mismo contexto.
+    const lose = () => {
+      room?.dispose(true);
+      room = null;
+      ready = false;
+      ++loading;
+      const fresh = canvas.cloneNode(false) as HTMLCanvasElement;
+      fresh.hidden = true;
+      canvas.replaceWith(fresh);
+      canvas = fresh;
+      figure.removeAttribute('data-ready');
+      figure.removeAttribute('data-swapping');
+      for (const mode of figure.querySelectorAll<HTMLElement>('[data-showroom-mode]')) mode.textContent = photoLabel;
+      show(active);
+    };
+    const photoLabel = figure.querySelector<HTMLElement>('[data-showroom-mode]')?.textContent ?? '';
+
+    const boot = async () => {
+      const id = active;
+      const load = modelLoaders[id];
+      if (!load) return;
+      shownModel = id;
+      try {
+        await document.fonts.ready;
+        const [{ createShowroom }, module] = await Promise.all([import('../../lib/showroom/scene'), load()]);
+        if (gone) return;
+        canvas.hidden = false;
+        room = createShowroom(canvas, module.build({ lite: tier === 'medium' }), { tier });
+        wasLive = true;
+        room.onFrame(onFrame);
+        room.onContextLost(() => queueMicrotask(lose));
+      } catch (error) {
+        canvas.hidden = true;
+        console.warn('Sala 3D no disponible; queda la fotografía.', error);
+        return;
+      }
+      // El visitante eligió otro equipo mientras se cargaba éste: se cambia ya montada la sala.
+      if (active !== id) void swap(active);
+    };
+
+    const pick = async (id: string) => {
+      if (id === active) return;
+      active = id;
+      show(id);
+      resetControls(id);
+      await swap(id);
+    };
+    const swap = async (id: string) => {
+      if (!room || !modelLoaders[id]) return;
+      const ticket = ++loading;
+      figure.setAttribute('data-swapping', '');
+      try {
+        const [module] = await Promise.all([modelLoaders[id](), new Promise((done) => setTimeout(done, 350))]);
+        if (ticket !== loading || !room) return;
+        room.setModel(module.build({ lite: tier === 'medium' }));
+        shownModel = id;
+      } catch (error) {
+        console.warn(`Sala 3D «${id}» no disponible.`, error);
+        if (active === id) {
+          active = shownModel;
+          show(shownModel);
+        }
+      } finally {
+        if (ticket === loading) figure.removeAttribute('data-swapping');
+      }
+    };
+    for (const button of tasks) button.addEventListener('click', () => void pick(button.dataset.pick ?? ''));
+
+    if (use3d) {
+      const near = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            near.disconnect();
+            void settled.then(boot);
+          }
+        },
+        { rootMargin: '200px' },
+      );
+      near.observe(figure);
+    }
+    // Al salir de la página se libera el WebGL (como en `ProductStory`).
+    addEventListener('pagehide', () => {
+      gone = true;
+      room?.dispose();
+      room = null;
+    });
+    // Desde la caché de ida y vuelta el lienzo queda en blanco: se rehace la sala por el mismo camino del primer arranque.
+    addEventListener('pageshow', (event) => {
+      if (!event.persisted || !wasLive) return;
+      gone = false;
+      void boot();
+    });
+  }
+
+  for (const figure of document.querySelectorAll<HTMLElement>('[data-showroom]')) setup(figure);
+</script>

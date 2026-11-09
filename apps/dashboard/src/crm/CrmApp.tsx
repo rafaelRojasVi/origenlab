@@ -5,7 +5,8 @@ import { Skeleton, Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
-import { CRM_GROUP_LABEL, CRM_NAV, crmHash, sectionTitle, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
+import { AREA_HOME, areaOf, crmHash, sectionTitle, type AreaKey, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
+import { AREAS, visibleTabs, type AreaTab, type NavAccess } from "./nav";
 import type { ShellRoute } from "./shellRoute";
 import { OverviewPage } from "./pages/OverviewPage";
 import { useMayOpenCotizador } from "./quotes/openOrCreateQuote";
@@ -20,6 +21,7 @@ const PipelinePage = lazyPage(() => import("./pages/PipelinePage").then((m) => m
 const OrganizationsPage = lazyPage(() => import("./pages/OrganizationsPage").then((m) => m.OrganizationsPage));
 const PeoplePage = lazyPage(() => import("./pages/PeoplePage").then((m) => m.PeoplePage));
 const CatalogPage = lazyPage(() => import("./pages/CatalogPage").then((m) => m.CatalogPage));
+const ModelSheetPage = lazyPage(() => import("./pages/ModelSheetPage").then((m) => m.ModelSheetPage));
 const CotizadorModulePage = lazyPage(() => import("./pages/CotizadorModulePage").then((m) => m.CotizadorModulePage));
 const LicitacionesPage = lazyPage(() => import("./tenders/LicitacionesPage").then((m) => m.LicitacionesPage));
 const ProspectosPage = lazyPage(() => import("./prospects/ProspectosPage").then((m) => m.ProspectosPage));
@@ -29,8 +31,9 @@ const HistoryPage = lazyPage(() => import("./pages/HistoryPage").then((m) => m.H
 const OperacionesPage = lazyPage(() => import("./pages/OperacionesPage").then((m) => m.OperacionesPage));
 
 /**
- * The dashboard: one shell, one navigation, one sign-in. The CRM sections over the V2 durable
- * core are the whole navigation (Cotizador only for sales and admin; Operaciones' admin tabs inside).
+ * The dashboard: one shell, one navigation, one sign-in. Five areas (Hoy · Ventas · Finanzas ·
+ * Catálogo · Ajustes) hold every page as a tab (Cotizaciones only for sales and admin, Catálogo web
+ * only for admin; Operaciones' admin tabs inside).
  */
 const NAV_COLLAPSED_KEY = "crm.nav.collapsed";
 
@@ -88,6 +91,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
       <div className={`mx-auto flex w-full ${wide ? "max-w-none" : "max-w-[1600px]"}`}>
         <SideNav route={route} navigate={navigate} open={menuOpen} collapsed={collapsed} onToggle={toggleCollapsed} />
         <main id="crm-main" tabIndex={-1} className="min-w-0 flex-1 px-4 pb-10 pt-4 focus:outline-none sm:px-6">
+          <SubNav section={route.section} navigate={navigate} collapsed={collapsed} menuOpen={menuOpen} />
           <div key={routeKey} className="animate-fade-in-up">
             <Suspense fallback={<Skeleton rows={6} />}>
               <Section section={route.section} id={route.id} tab={route.tab} pane={route.pane} navigate={navigate} />
@@ -122,6 +126,8 @@ function Section({
       return <PeoplePage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "catalogo":
       return <CatalogPage id={id} navigate={navigate} />;
+    case "catalogo-web":
+      return <ModelSheetPage id={id} navigate={navigate} />;
     case "cotizador":
       // Not keyed by the quote: the module stays mounted while its tabs change.
       return <CotizadorModulePage quoteId={id} pane={pane} navigate={navigate} />;
@@ -186,11 +192,11 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
           aria-expanded={menuOpen}
           aria-controls="crm-sidenav"
           aria-label="Menú"
-          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken lg:hidden"
+          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
         >
           ☰
         </button>
-        <a href="#/crm/resumen" className="flex shrink-0 items-center gap-2" aria-label="OrigenLab">
+        <a href={crmHash("resumen")} className="flex shrink-0 items-center gap-2" aria-label="OrigenLab">
           <span aria-hidden="true" className="flex h-6 w-6 items-center justify-center rounded-md bg-brand-600 text-[11px] font-bold text-white">
             O
           </span>
@@ -327,6 +333,12 @@ function ThemeToggle() {
   );
 }
 
+/** Who may see which tab: Cotizaciones for those who quote, Catálogo web for an admin. */
+function useNavAccess(): NavAccess {
+  const { session } = useAuthSession();
+  return { admin: session.kind === "signed_in" && session.operator.role === "admin", mayQuote: useMayOpenCotizador() };
+}
+
 function SideNav({
   route,
   navigate,
@@ -341,11 +353,8 @@ function SideNav({
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const groups = ["comercial", "control"] as const;
-  const activeCrm = route.section;
-  const { session } = useAuthSession();
-  const admin = session.kind === "signed_in" && session.operator.role === "admin";
-  const mayQuote = useMayOpenCotizador();
+  const activeArea = areaOf(route.section);
+  const access = useNavAccess();
   return (
     <nav
       id="crm-sidenav"
@@ -354,44 +363,74 @@ function SideNav({
         collapsed ? "lg:w-14 lg:px-2" : "lg:w-52 lg:px-3"
       }`}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-pressed={collapsed}
-        title={collapsed ? "Mostrar los nombres" : "Ocultar los nombres"}
-        className={`mb-2 hidden h-7 items-center gap-1.5 rounded-md text-[11px] text-ink-faint hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:flex ${
-          collapsed ? "w-10 justify-center" : "w-full px-2"
-        }`}
-      >
-        <svg viewBox="0 0 16 16" className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-          <path d="M10 3.5 5.5 8l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        <span className={collapsed ? "sr-only" : ""}>{collapsed ? "Expandir menú" : "Contraer menú"}</span>
-      </button>
-      {groups.map((g) => (
-        <div key={g} className={collapsed ? "mb-4 lg:mb-2 lg:border-t lg:border-line lg:pt-2 lg:first-of-type:border-t-0" : "mb-4"}>
-          <p className={`px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-faint ${collapsed ? "lg:sr-only" : ""}`}>{CRM_GROUP_LABEL[g]}</p>
-          <ul className="space-y-px">
-            {CRM_NAV.filter((n) => n.group === g && (!n.adminOnly || admin) && (!n.quoting || mayQuote)).map((n) => (
-              <li key={n.id}>
-                <NavLink
-                  href={`#/crm/${n.id}`}
-                  current={n.id === activeCrm}
-                  collapsed={collapsed}
-                  icon={NAV_ICON[n.id]}
-                  title={collapsed ? n.label : undefined}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    navigate(n.id);
-                  }}
-                >
-                  {n.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+      {/* The nav header: the fold toggle now; the goal chip of the «Franja de metas» joins it later. */}
+      <div className="mb-2 hidden lg:flex">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-pressed={collapsed}
+          title={collapsed ? "Mostrar los nombres" : "Ocultar los nombres"}
+          className={`flex h-7 items-center gap-1.5 rounded-md text-[11px] text-ink-faint hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+            collapsed ? "w-10 justify-center" : "w-full px-2"
+          }`}
+        >
+          <svg viewBox="0 0 16 16" className={`h-3.5 w-3.5 transition-transform ${collapsed ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+            <path d="M10 3.5 5.5 8l4.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className={collapsed ? "sr-only" : ""}>{collapsed ? "Expandir menú" : "Contraer menú"}</span>
+        </button>
+      </div>
+      <ul className="space-y-px">
+        {AREAS.map((area) => {
+          const current = area.key === activeArea;
+          const areaTabs = visibleTabs(area, access);
+          const tabs = current ? areaTabs : [];
+          return (
+            <li key={area.key}>
+              <NavLink
+                href={crmHash(AREA_HOME[area.key])}
+                current={current}
+                // An area with no tabs (Hoy) is itself the page; one with tabs marks the tab as the page.
+                page={areaTabs.length === 0}
+                collapsed={collapsed}
+                icon={NAV_ICON[area.key]}
+                title={collapsed ? area.label : undefined}
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate(AREA_HOME[area.key]);
+                }}
+              >
+                {area.label}
+              </NavLink>
+              {tabs.length > 0 ? (
+                // The open area lists its tabs under it (canvas); the folded rail has no room, so the tab row above the page takes over.
+                <ul className={`mb-2 ml-5 mt-0.5 border-l border-line ${collapsed ? "lg:hidden" : ""}`}>
+                  {tabs.map((tab) => {
+                    const on = tab.sections.includes(route.section);
+                    return (
+                      <li key={tab.label}>
+                        <a
+                          href={crmHash(tab.sections[0])}
+                          aria-current={on ? "page" : undefined}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            navigate(tab.sections[0]);
+                          }}
+                          className={`-ml-px flex h-11 items-center rounded-r-md border-l-2 px-3 text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:h-8 ${
+                            on ? "border-accent font-semibold text-ink" : "border-transparent text-ink-muted hover:bg-canvas-sunken hover:text-ink"
+                          }`}
+                        >
+                          <span className="truncate">{tab.label}</span>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
       <p className={`mt-6 px-2 text-[10px] leading-4 text-ink-faint ${collapsed ? "lg:hidden" : ""}`}>
         Cada cambio queda registrado con quién lo hizo y cuándo.
       </p>
@@ -399,34 +438,100 @@ function SideNav({
   );
 }
 
-/** 16 px line icons for the sections, drawn here: the dashboard ships no icon library. */
-const ICON_PATHS: Record<CrmSection, string> = {
-  resumen: "M3 6.5h10M5.5 2.5v2M10.5 2.5v2M3.5 4.5h9a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1ZM6 10l1.5 1.5L10.5 8.5",
-  oportunidades: "M2.5 3.5h3v9h-3zM6.5 3.5h3v6h-3zM10.5 3.5h3v4h-3z",
-  organizaciones: "M3 13.5V4l5-2 5 2v9.5M2 13.5h12M6 6.5h1M9 6.5h1M6 9h1M9 9h1M7 13.5v-2h2v2",
-  personas: "M6 7.5a2.25 2.25 0 1 0 0-4.5 2.25 2.25 0 0 0 0 4.5ZM2 13c.5-2.3 2-3.5 4-3.5s3.5 1.2 4 3.5M11 3.5a2 2 0 0 1 0 4M12 9.7c1.1.5 1.8 1.6 2 3.3",
+/**
+ * The tabs of the open area, above the page. On a wide screen the side nav already lists them, so
+ * the row shows only on a phone or beside the folded rail; a two-page tab (Clientes, Listas y
+ * llamadas) always adds its second row of links.
+ */
+function SubNav({
+  section,
+  navigate,
+  collapsed,
+  menuOpen,
+}: {
+  section: CrmSection;
+  navigate: (s: CrmSection) => void;
+  collapsed: boolean;
+  /** The phone menu already lists these tabs under the open area: the row hides behind it. */
+  menuOpen: boolean;
+}) {
+  const area = AREAS.find((a) => a.key === areaOf(section))!;
+  const tabs = visibleTabs(area, useNavAccess());
+  if (tabs.length === 0) return null;
+  const open: AreaTab | undefined = tabs.find((t) => t.sections.includes(section));
+  const go = (s: CrmSection) => (e: MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    navigate(s);
+  };
+  return (
+    <div className={`mb-4 space-y-3 ${menuOpen ? "max-lg:hidden" : ""}`} data-testid="crm-subnav">
+      <nav aria-label={`Pestañas de ${area.label}`} className={collapsed ? "" : "lg:hidden"}>
+        <ul className="flex flex-wrap gap-x-5 border-b border-line">
+          {tabs.map((tab) => {
+            const on = tab === open;
+            return (
+              <li key={tab.label}>
+                <a
+                  href={crmHash(tab.sections[0])}
+                  aria-current={on ? "page" : undefined}
+                  onClick={go(tab.sections[0])}
+                  className={`-mb-px inline-flex min-h-11 items-center border-b-2 text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                    on ? "border-accent font-semibold text-ink" : "border-transparent font-medium text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {tab.label}
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+      {open && open.sections.length > 1 ? (
+        <div role="group" aria-label={open.label} className="inline-flex flex-wrap rounded-md bg-canvas-sunken p-0.5">
+          {open.sections.map((s) => {
+            const on = s === section;
+            return (
+              <a
+                key={s}
+                href={crmHash(s)}
+                aria-current={on ? "page" : undefined}
+                onClick={go(s)}
+                className={`inline-flex min-h-11 items-center rounded-[5px] px-3 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                  on ? "bg-canvas-raised text-ink shadow-[0_1px_2px_rgb(24_24_27/0.08)]" : "text-ink-muted hover:text-ink"
+                }`}
+              >
+                {sectionTitle(s)}
+              </a>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 16 px line icons for the five areas, drawn here: the dashboard ships no icon library. */
+const ICON_PATHS: Record<AreaKey, string> = {
+  hoy: "M3 6.5h10M5.5 2.5v2M10.5 2.5v2M3.5 4.5h9a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1ZM6 10l1.5 1.5L10.5 8.5",
+  ventas: "M2.5 3.5h3v9h-3zM6.5 3.5h3v6h-3zM10.5 3.5h3v4h-3z",
+  finanzas: "M2.5 4.5h11v7h-11zM2.5 6.5h11M4.5 9.5h2.5",
   catalogo: "M3 2.5h7.5l2.5 2.5v8.5H3zM10.5 2.5V5H13M5.5 7.5h5M5.5 10h5",
-  marketing: "M2.5 6.5v3h2l5 3v-9l-5 3zM11.5 6a2.5 2.5 0 0 1 0 4",
-  historial: "M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10ZM10.5 10.5 14 14M5 7l1.5 1.5L9.5 5.5",
-  datos: "M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z",
-  licitaciones: "M3.5 2.5h6l3 3v8h-9zM9.5 2.5v3h3M5.5 8h5M5.5 10.5h3",
-  prospectos: "M6.5 7.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM2 13.5c.4-2.5 2.2-4 4.5-4 1.1 0 2.1.3 2.9 1M12 9v4.5M9.75 11.25h4.5",
-  pagos: "M2.5 4.5h11v7h-11zM2.5 6.5h11M4.5 9.5h2.5",
-  cotizador: "M4 2.5h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1ZM5.5 5h5M5.5 8h1M9.5 8h1M5.5 10.5h1M9.5 10.5h1",
+  ajustes: "M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6M10 3v3M6 10v3",
 };
 
-const NAV_ICON: Record<CrmSection, ReactNode> = Object.fromEntries(
+const NAV_ICON: Record<AreaKey, ReactNode> = Object.fromEntries(
   Object.entries(ICON_PATHS).map(([id, d]) => [
     id,
     <svg key={id} viewBox="0 0 16 16" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d={d} />
     </svg>,
   ]),
-) as Record<CrmSection, ReactNode>;
+) as Record<AreaKey, ReactNode>;
 
 function NavLink({
   href,
   current,
+  page = false,
   onClick,
   title,
   icon = null,
@@ -435,6 +540,8 @@ function NavLink({
 }: {
   href: string;
   current: boolean;
+  /** `aria-current="page"` rather than `"true"`: the link is the page itself, not its area. */
+  page?: boolean;
   onClick?: (e: MouseEvent<HTMLAnchorElement>) => void;
   title?: string;
   icon?: ReactNode;
@@ -445,9 +552,9 @@ function NavLink({
     <a
       href={href}
       title={title}
-      aria-current={current ? "page" : undefined}
+      aria-current={current ? (page ? "page" : "true") : undefined}
       onClick={onClick}
-      className={`flex h-8 items-center gap-2 rounded-md px-2 text-[13px] transition-colors ${collapsed ? "lg:w-10 lg:justify-center lg:px-0" : ""} ${
+      className={`flex h-11 items-center lg:h-9 gap-2 rounded-md px-2 text-[13px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${collapsed ? "lg:w-10 lg:justify-center lg:px-0" : ""} ${
         current
           ? "bg-canvas-raised font-semibold text-ink shadow-[0_1px_2px_rgb(24_24_27/0.08)] ring-1 ring-line lg:bg-canvas-raised"
           : "text-ink-muted hover:bg-canvas-sunken hover:text-ink"

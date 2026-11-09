@@ -67,6 +67,9 @@ const jsonLd = {
     display: inline-flex;
     align-items: center;
     min-height: 1.5rem;
+    @media (width < 1024px) {
+      min-height: 2.75rem;
+    }
     color: var(--color-ink-500);
     transition: color 150ms;
   }

@@ -11,7 +11,13 @@ import { productPageHref } from './catalog';
  * Identidad legal (razón social, RUT) pendiente: docs/design/CONTENT_NEEDED.md.
  */
 
+/** Perfiles propios que ya existen: sólo los que tienen URL (nunca una cadena vacía). */
+export function organizationSameAs(): string[] {
+  return [site.linkedinUrl, site.googleProfileUrl].filter((url): url is string => typeof url === 'string' && url.trim() !== '');
+}
+
 export function organizationJsonLd() {
+  const sameAs = organizationSameAs();
   return {
     '@context': 'https://schema.org',
     '@type': 'Organization',
@@ -28,16 +34,8 @@ export function organizationJsonLd() {
       addressLocality: contact.city,
       addressCountry: 'CL',
     },
-    contactPoint: [
-      {
-        '@type': 'ContactPoint',
-        contactType: 'sales',
-        email: contact.email,
-        telephone: `+${contact.phoneE164}`,
-        availableLanguage: ['es'],
-        areaServed: 'CL',
-      },
-    ],
+    ...(sameAs.length > 0 ? { sameAs } : {}),
+    contactPoint: [{ '@type': 'ContactPoint', contactType: 'sales', email: contact.email }],
   };
 }
 

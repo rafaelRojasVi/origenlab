@@ -1,0 +1,90 @@
+{
+  "slug": "ortoalresa-biocen-22",
+  "family": "centrifugacion",
+  "brand": "ortoalresa",
+  "name": "Biocen 22",
+  "headline": "Ortoalresa Biocen 22: microcentrífuga ventilada",
+  "lead": "Microcentrífuga ventilada para microtubos y aplicaciones de microhematocrito según configuración.",
+  "applications": [
+    "Microtubos",
+    "Microhematocrito",
+    "Investigación",
+    "Laboratorio clínico",
+    "Control de calidad",
+    "Preparación de muestras"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad máxima",
+      "value": "24 × 2 ml",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Pantalla",
+      "value": "LED",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Velocidad máxima",
+      "value": "15.000 RPM / 21.885 ×g",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Versión",
+      "value": "Ventilada",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Cámara",
+      "value": "Acero inoxidable",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Motor",
+      "value": "Inducción sin escobillas",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Nivel de ruido",
+      "value": "Inferior a 60 dB",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Control",
+      "value": "Microprocesador",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Seguridad",
+      "value": "Tapa con sistemas de seguridad",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Dimensiones (CE 146 / CE 147)",
+      "value": "270 × 380 × 270 mm",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Peso neto",
+      "value": "16 kg",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Alimentación CE 146",
+      "value": "220-230 V, 50-60 Hz, 220 W",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    },
+    {
+      "label": "Alimentación CE 147",
+      "value": "110-120 V, 50-60 Hz, 220 W",
+      "source": "https://ortoalresa.com/centrifugas/biocen-22/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://ortoalresa.com/centrifugas/biocen-22/",
+  "official_pdf_url": "https://ortoalresa.com/catalogo_producto/Catalogo_Biocen_22_ESP.pdf",
+  "image_id": "ortoalresa-biocen-22",
+  "verified_on": "2026-09-07"
+}

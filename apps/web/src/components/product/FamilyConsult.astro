@@ -1,0 +1,22 @@
+---
+import ClosingQuoteBand from '../ui/ClosingQuoteBand.astro';
+import { publicClaim } from '../../data/claims';
+
+/**
+ * «¿No sabe cuál?» (tablero Familia): la banda de cierre de las páginas de
+ * familia, justo antes del pie. Es la misma `ClosingQuoteBand` del sitio (una
+ * sola banda de cotizar por página, no dos seguidas). La promesa del mismo día
+ * hábil sólo se escribe con la afirmación aprobada; sin ella la frase termina
+ * en la recomendación.
+ */
+interface Props {
+  /** Marca para el mensaje de WhatsApp; sin ella el mensaje es el genérico. */
+  brandName?: string;
+}
+
+const { brandName } = Astro.props;
+const sameDay = publicClaim('cotizacion-mismo-dia-habil');
+const body = `Cuéntenos qué muestra procesa y en qué volumen. Le recomendamos el modelo${sameDay ? ' y le enviamos la cotización el mismo día hábil.' : '.'}`;
+---
+
+<ClosingQuoteBand title="¿No sabe cuál?" body={body} brandName={brandName} />

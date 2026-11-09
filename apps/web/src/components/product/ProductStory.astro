@@ -1,0 +1,768 @@
+---
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import ModelPhoto from '../ui/ModelPhoto.astro';
+import { imageForModel } from '../../data/productImages';
+import { getBrandById } from '../../lib/catalog';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { modelSections } from '../../lib/modelos';
+import { showroomEntry } from '../../lib/showroom/catalog';
+import type { BeatSpec, ProductStoryConfig } from '../../lib/showroom/productStory';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Historia de producto por scroll: el equipo en 3D sobre un lienzo fijo y los
+ * tramos de texto de la historia en una columna fija a su izquierda. Es la
+ * primera pantalla de la página de modelo: con el slot `intro` lleno, su
+ * contenido (el texto de `ModelHeroCopy`) reemplaza el titular y el cuerpo del
+ * primer tramo, que conserva su cámara y su animación y mide una pantalla
+ * (`data-first-screen`).
+ *
+ * En escritorio (`data-mode="scroll"`) los textos de todos los tramos ocupan la
+ * misma celda de una columna fija (sticky) y se funden según el tramo activo
+ * (`data-on`): siempre se lee uno, entero y a la vista, y el primero es la
+ * entrada, así que no hay franja vacía entre ella y el tramo siguiente. El
+ * recorrido lo pone `.story__run`, un espaciador vacío de `--run × 500vh`; el
+ * progreso 0 es el borde superior del espaciador. El tramo inactivo queda en
+ * `display: none`, y por eso la barra fija de cotización, que espera a que
+ * `[data-first-screen]` salga de cuadro, entra cuando termina la entrada.
+ * La ficha técnica, los accesorios y las preguntas ya no van aquí: son
+ * secciones de la página.
+ *
+ * Mejora progresiva estricta. El HTML trae todo lo que se lee: el texto de
+ * cada tramo y sus cifras, más la imagen fija del equipo (el póster `public/products/<slug>-poster.jpg` si
+ * existe; si no, la fotografía VERIFIED). El script de abajo decide el nivel
+ * de calidad (`canvas[data-tier]`: high, medium o low) y sólo con high o
+ * medium, y con la historia cerca de la pantalla, pide los fragmentos
+ * `scene-*` (three, escenario, modelo, historia). Con movimiento reducido no
+ * hay scroll animado: la página queda estática y «Ver en 3D» ofrece el equipo
+ * quieto, a pedido.
+ *
+ * Las cifras no se escriben aquí ni en la historia: `{Etiqueta}` en un texto
+ * de la historia es el valor de la ficha con fuente (`entry.specs`). Una
+ * etiqueta que la ficha no tenga detiene el build.
+ *
+ * Props: `config` (la historia, `src/lib/showroom/stories/<id>.ts`) y `entry`
+ * (los datos de la ficha de la colección `modelos`: `entry.data` de
+ * `getEntry`). Aplicaciones, ficha, accesorios, relacionados y preguntas los
+ * pone la página, después de la historia.
+ */
+interface Props {
+  config: ProductStoryConfig;
+  entry: Modelo;
+}
+const { config, entry } = Astro.props;
+const intro = Astro.slots.has('intro');
+
+const brand = getBrandById(entry.brand);
+const name = `${brand?.name ?? entry.brand} ${entry.name}`;
+const spec = (label: string) => {
+  const found = entry.specs.find((item) => item.label === label);
+  if (!found) throw new Error(`ProductStory (${entry.slug}): la ficha no tiene «${label}»`);
+  return found;
+};
+// A mitad de frase el valor va en minúscula («Amplitud regulable…»), salvo siglas.
+const fill = (text = '') =>
+  text.replace(/\{([^}]+)\}/g, (_match, label: string, at: number) => {
+    const value = spec(label).value;
+    return at > 0 && /^\p{Lu}\p{Ll}/u.test(value) ? value[0].toLowerCase() + value.slice(1) : value;
+  });
+
+const hotspots = showroomEntry(config.modelId)?.hotspots ?? [];
+const meterBeat = config.beats.find((beat) => beat.overlayComponent === 'meter');
+const range = meterBeat ? spec(meterBeat.overlayData?.[0] ?? '').value.match(/(\d+)\D+?(\d+)\s*%/) : null;
+if (meterBeat && !range) throw new Error(`ProductStory (${entry.slug}): el medidor necesita un rango «del N al M %»`);
+
+// Overlays sobre el lienzo (decorativos: lo mismo se lee en el tramo).
+const spots = config.beats.flatMap((beat: BeatSpec) => {
+  const [anchor, label] = beat.overlayData ?? [];
+  if (beat.overlayComponent === 'hotspot') {
+    // Una nota por ancla: un beat puede señalar varias a la vez.
+    return (beat.overlayData ?? []).flatMap((name) => {
+      const spot = hotspots.find((item) => item.anchor === name);
+      return spot && spot.body.length ? [{ beat: beat.id, anchor: name, title: spot.title, body: spot.body, place: beat.overlayPlacement?.[name] }] : [];
+    });
+  }
+  if (beat.overlayComponent === 'callout') return [{ beat: beat.id, anchor, title: label, body: [spec(label).value], place: undefined }];
+  return [];
+});
+
+const RUN = 500; // vh de scroll por unidad de progreso; la última pantalla suma 100 vh (0,2)
+const beats = config.beats.map((beat) => ({
+  ...beat,
+  headline: fill(beat.textHeadline),
+  body: fill(beat.textBody),
+}));
+// Largo del espaciador en unidades de progreso: la historia entera más la última pantalla.
+const run = (config.beats.at(-1)?.progressEnd ?? 1) + 100 / RUN;
+const { applications } = modelSections(entry, config);
+
+const poster = existsSync(join(process.cwd(), 'public', 'products', `${entry.slug}-poster.jpg`)) ? `/products/${entry.slug}-poster.jpg` : null;
+const photo = imageForModel(entry.image_id ?? entry.slug);
+const dom = (part: string) => `historia-${entry.slug}-${part}`;
+---
+
+<div
+  class="story shell"
+  data-story={config.modelId}
+  data-modelo={entry.slug}
+  data-readout-from={range?.[1]}
+  data-readout-to={range?.[2]}
+  data-sonotrode="S24d14"
+>
+  <div class="story__spacer" data-story-spacer>
+    <div class="story__stage">
+      <div class="story__photo" data-story-photo>
+        {
+          poster ? (
+            <img src={poster} width="1200" height="900" alt={`${name}, modelo 3D`} class="story__poster pz" fetchpriority={intro ? 'high' : 'auto'} loading={intro ? 'eager' : 'lazy'} decoding={intro ? 'sync' : 'async'} />
+          ) : (
+            <ModelPhoto image={photo} size="hero" priority ratio="4 / 5" />
+          )
+        }
+      </div>
+      <canvas data-story-canvas aria-hidden="true" hidden></canvas>
+      <div class="story__spots" aria-hidden="true">
+        {
+          spots.map((spot) => (
+            <div class="story-spot" data-anchor={spot.anchor} data-beats={spot.beat} data-place={spot.place}>
+              <b class="block">{spot.title}</b>
+              {spot.body.map((line) => <span class="block">{line}</span>)}
+            </div>
+          ))
+        }
+      </div>
+      <button type="button" class="btn btn-secondary" data-story-3d hidden>Ver en 3D</button>
+      <div class="story__nav" data-story-nav hidden>
+        <button type="button" class="btn btn-secondary" data-story-prev>Anterior</button>
+        <span class="t-data" data-story-count aria-live="polite"></span>
+        <button type="button" class="btn btn-primary" data-story-next>Siguiente</button>
+      </div>
+    </div>
+
+    <div class="story__beats">
+      {
+        beats.map((beat, index) => (
+          <section
+            class:list={['story__beat', !(intro && index === 0) && 'rule-top']}
+            data-beat={beat.id}
+            data-beats={beat.id}
+            data-first-screen={intro && index === 0 ? '' : undefined}
+            aria-labelledby={intro && index === 0 ? 'modelo-titulo' : dom(beat.id)}
+          >
+            <div class="story__text">
+              {intro && index === 0 ? (
+                <slot name="intro" />
+              ) : (
+                <>
+                  <h2 class="t-h2" id={dom(beat.id)}>{beat.headline}</h2>
+                  {beat.body && <p class="t-lead">{beat.body}</p>}
+                </>
+              )}
+              {beat.overlayComponent === 'facts' && (
+                <dl class="story__row">
+                  {(beat.overlayData ?? []).map(spec).map((item) => (
+                    <div>
+                      <dt class="t-label">{item.label}</dt>
+                      <dd class="t-data">{item.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {beat.overlayComponent === 'cta' && (
+                <p class="story__row story__cta">
+                  <a href={`/contacto/?producto=${entry.slug}`} class="btn btn-primary" data-track="cotizacion_click" data-modelo={entry.slug}>
+                    {ctaLabels.solicitarCotizacion}
+                  </a>
+                </p>
+              )}
+              {beat.overlayComponent === 'meter' && range && (
+                <div class="story__row">
+                  <p class="t-data">
+                    {beat.overlayData?.[0]}: <output data-readout>{range[1]} %</output>
+                  </p>
+                  <span class="story__meter block" aria-hidden="true" />
+                </div>
+              )}
+              {beat.overlayComponent === 'sonotrodes' && (
+                <ul class="story__row story__chips" aria-label="Sonotrodos">
+                  {(beat.overlayData ?? []).map((tip) => <li data-tip={tip}>{tip}</li>)}
+                </ul>
+              )}
+              {beat.overlayComponent === 'pills' && (
+                <ul class="story__row story__chips">
+                  {applications.map((item, index) => <li style={`--i:${index}`}>{item}</li>)}
+                </ul>
+              )}
+            </div>
+            {intro && index === 0 && (
+              <p class="story__cue" aria-hidden="true">
+                <span class="t-label">Deslice para ver el equipo</span>
+                <i></i>
+              </p>
+            )}
+          </section>
+        ))
+      }
+    </div>
+    <div class="story__run" aria-hidden="true" style={`--run:${run.toFixed(3)}`}></div>
+  </div>
+</div>
+
+<style is:global>
+  /*
+   * Global con prefijo `story` en lugar de estilo con ámbito: el atributo de
+   * ámbito de Astro duplicaba el peso de cada selector y el CSS del sitio
+   * tiene un presupuesto de 80 kB (validate:dist).
+   */
+  .story__spacer {
+    display: grid;
+    column-gap: 3rem;
+  }
+  .story__stage {
+    position: relative;
+    aspect-ratio: 4 / 3;
+  }
+  .story__poster {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .story__photo,
+  .story canvas,
+  .story__spots {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .story__photo .model-photo,
+  .story__photo .model-photo__frame {
+    height: 100%;
+    aspect-ratio: auto !important;
+  }
+  .story__photo,
+  .story canvas {
+    transition: opacity 0.6s;
+  }
+  .story canvas {
+    opacity: 0;
+    touch-action: pan-y;
+  }
+  .story canvas[data-ready],
+  .story-spot[data-on]:not([data-occluded='true']) {
+    opacity: 1;
+  }
+  .story__stage:has([data-ready]) .story__photo {
+    opacity: 0;
+  }
+  /*
+   * `?poster=1` (scripts/generate-posters.mjs): sólo el equipo sobre el fondo
+   * de la página, a pantalla completa. Todo lo demás se oculta; el lienzo, no.
+   */
+  html[data-poster] body * {
+    visibility: hidden;
+  }
+  html[data-poster] .story canvas {
+    visibility: visible;
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 2147483647;
+  }
+  .story__stage > .btn,
+  .story__nav {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    translate: -50%;
+  }
+  .story__nav {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    width: max-content;
+  }
+  .story__beat {
+    padding-block: 2rem;
+  }
+  /* Aire entre el titular del tramo y su texto: sin él la línea baja del titular tocaba el párrafo. */
+  .story__text > .t-h2 + .t-lead {
+    margin-top: 1rem;
+  }
+  .story__row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+    margin-top: 1.5rem;
+  }
+  .story__chips {
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+  .story__chips li {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--color-hairline-strong);
+    border-radius: var(--radius-btn);
+    background: var(--color-paper);
+    transition: opacity 0.4s calc(var(--i, 0) * 90ms);
+  }
+  [data-sonotrode='S24d7'] [data-tip='S24d7'],
+  [data-sonotrode='S24d14'] [data-tip='S24d14'],
+  [data-sonotrode='S24d22'] [data-tip='S24d22'] {
+    border-color: var(--color-teal-700);
+    color: var(--color-teal-800);
+  }
+  .story[data-live] .story__beat:not([data-on]) [style*='--i'],
+  .story-spot {
+    opacity: 0;
+  }
+  /* Medidor: la parte llena es la fracción de la cifra de pantalla. */
+  .story__meter {
+    width: 16rem;
+    height: 2px;
+    background: linear-gradient(var(--color-teal-700), var(--color-teal-700)) 0 / calc(var(--story-readout, 0) * 100%) 100% no-repeat var(--color-hairline);
+  }
+  .story-spot {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: min(13rem, 45vw);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-hairline);
+    border-left: 2px solid var(--fam, var(--color-teal-700));
+    border-radius: var(--radius-edge);
+    background: var(--color-paper);
+    box-shadow: var(--shadow-card);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    transition: opacity 0.3s;
+  }
+  /* Hilo y punto: de la nota al ancla (`productStory.ts` fija `data-side`, `--gap`, `--lead-x` y `--lead-y`). */
+  .story-spot::before,
+  .story-spot::after {
+    content: '';
+    position: absolute;
+    background: var(--fam, var(--color-teal-700));
+  }
+  .story-spot::after {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .story-spot[data-side='right']::before,
+  .story-spot[data-side='left']::before {
+    top: var(--lead-y, 50%);
+    width: var(--gap, 64px);
+    height: 1px;
+  }
+  .story-spot[data-side='right']::after,
+  .story-spot[data-side='left']::after {
+    top: calc(var(--lead-y, 50%) - 3px);
+  }
+  .story-spot[data-side='right']::before {
+    right: 100%;
+  }
+  .story-spot[data-side='right']::after {
+    right: calc(100% + var(--gap, 64px) - 4px);
+  }
+  .story-spot[data-side='left'] {
+    border-left-width: 1px;
+    border-right: 2px solid var(--fam, var(--color-teal-700));
+  }
+  .story-spot[data-side='left']::before {
+    left: 100%;
+  }
+  .story-spot[data-side='left']::after {
+    left: calc(100% + var(--gap, 64px) - 4px);
+  }
+  .story-spot[data-side='top']::before,
+  .story-spot[data-side='bottom']::before {
+    left: var(--lead-x, 50%);
+    width: 1px;
+    height: var(--gap, 64px);
+  }
+  .story-spot[data-side='top']::after,
+  .story-spot[data-side='bottom']::after {
+    left: calc(var(--lead-x, 50%) - 3px);
+  }
+  .story-spot[data-side='top']::before {
+    top: 100%;
+  }
+  .story-spot[data-side='top']::after {
+    top: calc(100% + var(--gap, 64px) - 4px);
+  }
+  .story-spot[data-side='bottom']::before {
+    bottom: 100%;
+  }
+  .story-spot[data-side='bottom']::after {
+    bottom: calc(100% + var(--gap, 64px) - 4px);
+  }
+  /* Una sola «Solicitar cotización» a la vista: mientras corre el último beat, la barra fija se oculta. */
+  :root:has(.story[data-live][data-mode='scroll'][data-beat='close']:not([data-end])) .cta-bar {
+    visibility: hidden;
+    opacity: 0;
+  }
+  /* Primera pantalla: el texto de entrada (slot `intro`) mide una pantalla; en escritorio queda en la columna fija mientras dura su tramo. */
+  .story__beat[data-first-screen] {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
+  .story__beat[data-first-screen] .story__text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .story__cue {
+    display: none;
+  }
+  .story[data-live][data-mode='scroll'] .story__cue {
+    display: flex;
+  }
+  @media (width < 760px) {
+    /* Notas más angostas en el lienzo de 55 svh; el botón de cotizar ya está en la barra fija. */
+    .story[data-mode='tap'] .story-spot {
+      width: min(11rem, 45vw);
+      padding: 0.375rem 0.625rem;
+      font-size: 0.75rem;
+    }
+    /* Sólo el rótulo: el detalle se lee en el texto del tramo. */
+    .story[data-mode='tap'] .story-spot span {
+      display: none;
+    }
+    .story[data-mode='tap'] .story__cta {
+      display: none;
+    }
+    .story[data-mode='tap'] .story__stage {
+      position: sticky;
+      top: var(--hd-h, 4rem);
+      z-index: 1;
+      height: 55svh;
+      aspect-ratio: auto;
+      background: var(--color-paper);
+    }
+    .story[data-live][data-mode='tap'] .story__beat:not([data-on]) {
+      display: none;
+    }
+  }
+  @media (width < 760px) {
+    /* Teléfono: el texto de entrada va primero y el escenario después. */
+    .story__beats {
+      display: contents;
+    }
+    .story__beat[data-first-screen] {
+      order: -1;
+    }
+  }
+  @media (width >= 760px) {
+    .story__spacer {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    }
+    .story__stage {
+      grid-area: 1 / 2;
+      position: sticky;
+      top: var(--hd-h, 4rem);
+      /* Abajo queda libre el alto de la barra fija (3,5 rem): las notas del 3D no pasan bajo ella. */
+      height: calc(100svh - var(--hd-h, 4rem) - 3.5rem);
+      aspect-ratio: auto;
+    }
+    .story__poster {
+      object-position: right center;
+    }
+    .story__beats {
+      grid-area: 1 / 1;
+    }
+    .story__beat[data-first-screen] {
+      min-height: calc(100svh - var(--hd-h, 4rem));
+    }
+    /* Pista de desplazamiento: una raya de 40 px con un segmento de 14 px que baja tres veces. */
+    .story__cue {
+      position: absolute;
+      /* Al pie de la columna del texto: centrada en la página pisaba la base del equipo. */
+      left: 0;
+      bottom: 30px;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.5rem;
+      white-space: nowrap;
+    }
+    .story__cue i {
+      position: relative;
+      display: block;
+      width: 1px;
+      height: 40px;
+      overflow: hidden;
+      background: var(--color-hairline);
+    }
+    .story__cue i::after {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 1px;
+      height: 14px;
+      background: var(--color-teal-700);
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .story__cue i::after {
+        animation: story-cue 1.6s ease-in-out 1s 3 both;
+      }
+    }
+    /*
+     * Una sola columna de texto, fija como el escenario: los tramos se apilan en
+     * la misma celda y se lee el activo. El recorrido lo pone `.story__run`, en
+     * la misma celda de la rejilla, que mide la historia entera.
+     */
+    .story__run {
+      display: none;
+    }
+    .story[data-mode='scroll'] .story__run {
+      display: block;
+      grid-area: 1 / 1;
+      height: calc(var(--run) * 500vh);
+    }
+    .story[data-mode='scroll'] .story__beats {
+      position: sticky;
+      top: var(--hd-h, 4rem);
+      align-self: start;
+      display: grid;
+      height: calc(100svh - var(--hd-h, 4rem));
+    }
+    .story[data-mode='scroll'] .story__beat {
+      grid-area: 1 / 1;
+      align-self: center;
+      /* Abajo, el alto de la barra fija de cotización (`scroll-padding-bottom` de `ModelHero`). */
+      margin-block: 1rem 5rem;
+      padding: 0;
+      border: 0;
+      transition:
+        opacity 0.4s,
+        display 0.4s allow-discrete;
+    }
+    .story[data-mode='scroll'] .story__beat[data-first-screen] {
+      align-self: stretch;
+      min-height: 0;
+      margin: 0;
+    }
+    @starting-style {
+      .story[data-mode='scroll'] .story__beat {
+        opacity: 0;
+      }
+    }
+    /*
+     * Se lee un tramo a la vez: el activo o, antes de que la historia arranque,
+     * la entrada. `display: none` y no sólo opacidad: el texto oculto no recibe
+     * foco ni clics, y la entrada sale de cuadro para la barra fija.
+     * El que sale se va en el acto (sin transición): sólo el que entra funde.
+     * Con los dos fundiendo en la misma celda, el titular del que salía (el
+     * nombre del modelo, en la entrada) quedaba montado sobre el texto nuevo.
+     */
+    .story[data-live][data-mode='scroll'] .story__beat:not([data-on]),
+    .story[data-mode='scroll']:not([data-live]) .story__beat:not(:first-child) {
+      display: none;
+      opacity: 0;
+      transition: none;
+    }
+    .story[data-live][data-mode='scroll'] .story__stage {
+      opacity: clamp(0, (1 - var(--story-progress, 0)) * 10, 1);
+    }
+  }
+  @keyframes story-cue {
+    from {
+      top: -14px;
+    }
+    to {
+      top: 40px;
+    }
+  }
+</style>
+
+<script>
+  /**
+   * Decide el nivel de calidad y carga la escena sólo si hace falta.
+   *
+   * high   materiales físicos, luz de entorno, sombra suave, resolución ≤ 2×
+   * medium lo mismo sin mapa de sombras, resolución ≤ 1,5×, menos burbujas
+   * low    sin WebGL: la imagen fija y «Ver en 3D», que carga medium a pedido
+   *
+   * Ahorro de datos o movimiento reducido: low. Pantalla estrecha (< 760 px,
+   * teléfonos: lienzo fijo de 55 vh y avance por toque), poca memoria (< 4 GB) o
+   * ≤ 4 núcleos: medium. Si no, high. Fuera de eso sólo el sondeo baja a low. `mountStory` mide después los
+   * primeros ~2 s y baja un nivel si hace falta. `?tier=` lo fija (QA y
+   * pósteres) y apaga esa medición. El nivel bajo nunca crea un contexto WebGL:
+   * ni siquiera prueba si existe hasta que se pide «Ver en 3D».
+   *
+   * En pantalla estrecha o en el nivel medio la escena tampoco se monta durante
+   * la carga: queda la imagen fija hasta el primer gesto o unos 4 s después de
+   * `load` (`whenSettled`). Sólo el nivel alto en pantalla ancha la monta al
+   * acercarse, como antes; «Ver en 3D» la monta en el acto.
+   *
+   * El modelo y la historia se piden aquí (`loaders.ts`) y no dentro de
+   * `mountStory`: si ese módulo los importara, el empaquetador metería el mapa
+   * de cargadores en `scene-story` y la portada lo cargaría de entrada.
+   */
+  import { modelLoaders, storyLoaders } from '../../lib/showroom/loaders';
+  import type { MountedStory } from '../../lib/showroom/mountStory';
+  import { whenSettled } from '../../lib/showroom/whenSettled';
+  import { trackEvent } from '../../lib/stats';
+
+  type Tier = 'high' | 'medium' | 'low';
+  // Medición propia: `3d_interact` una sola vez por página, cuando el visitante
+  // ve el primer cuadro WebGL o, en el nivel bajo, cuando pide «Ver en 3D».
+  let interactSent = false;
+  const interacted = (root: HTMLElement) => {
+    if (interactSent) return;
+    interactSent = true;
+    trackEvent('3d_interact', { modelo: root.dataset.modelo });
+  };
+  type Nav = Navigator & { deviceMemory?: number; connection?: { saveData?: boolean } };
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-story]')) {
+    let canvas = root.querySelector<HTMLCanvasElement>('[data-story-canvas]')!;
+    const button = root.querySelector<HTMLButtonElement>('[data-story-3d]')!;
+    const nav = navigator as Nav;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const params = new URLSearchParams(location.search);
+    // `?poster=1`: el cuadro de entrada, quieto y a nivel alto, para el póster
+    // (scripts/generate-posters.mjs). Monta de inmediato, sin historia ni medición.
+    const posterMode = params.get('poster') === '1';
+    if (posterMode) {
+      document.documentElement.dataset.poster = '';
+      interactSent = true;
+    }
+    const asked = (posterMode ? 'high' : params.get('tier')) as Tier | null;
+    const forced = asked === 'high' || asked === 'medium' || asked === 'low';
+    // Mismo umbral que `innerWidth < 760` en sintaxis que Safari < 16.4 también entiende.
+    const narrowQuery = matchMedia('(max-width: 759.98px)');
+    const narrow = narrowQuery.matches;
+    const saveData = nav.connection?.saveData === true;
+    const modest = (nav.deviceMemory ?? 8) < 4 || (nav.hardwareConcurrency ?? 8) <= 4;
+    let tier: Tier = forced ? asked! : reduced || saveData ? 'low' : narrow || modest ? 'medium' : 'high';
+    let onDemand = false;
+    let near = posterMode;
+    let settled = posterMode || (!narrow && tier === 'high');
+    let story: MountedStory | null = null;
+    let loading = false;
+
+    const layout = () => {
+      canvas.dataset.tier = tier;
+      root.dataset.mode = tier === 'low' || reduced || posterMode ? 'static' : narrowQuery.matches ? 'tap' : 'scroll';
+    };
+    let mountedMode = '';
+    const fallBack = (offer: boolean) => {
+      story = null;
+      tier = 'low';
+      layout();
+      button.hidden = !offer;
+    };
+    // Sin lienzo de prueba (sería un segundo contexto WebGL): se mira si el
+    // navegador conoce WebGL 2 y, si el contexto real no se crea, `mountStory`
+    // falla y queda la imagen.
+    const webgl = () => 'WebGL2RenderingContext' in window;
+    const id = root.dataset.story ?? '';
+    let gone = false;
+    const boot = () => {
+      if (tier === 'low' || !near || !settled || story || loading) return;
+      loading = true;
+      Promise.resolve()
+        .then(() => {
+          if (!modelLoaders[id] || !storyLoaders[id] || !webgl()) throw new Error(`sin WebGL o sin historia para «${id}»`);
+          return Promise.all([import('../../lib/showroom/mountStory'), modelLoaders[id](), storyLoaders[id](), document.fonts.ready]);
+        })
+        .then(([{ mountStory }, model, { story: config }]) =>
+          mountStory(root, model, config, {
+            tier: tier as 'high' | 'medium',
+            still: reduced || posterMode,
+            probe: !forced && !onDemand,
+            onLow: () => fallBack(true),
+            onLost: () => {
+              // El contexto perdido queda en su lienzo: «Ver en 3D» montará sobre uno nuevo.
+              const fresh = canvas.cloneNode(false) as HTMLCanvasElement;
+              canvas.replaceWith(fresh);
+              canvas = fresh;
+              watchReady();
+              fallBack(true);
+            },
+          }),
+        )
+        .then((mounted) => {
+          mountedMode = root.dataset.mode ?? '';
+          // Si la página se fue mientras cargaba, se libera en vez de guardarla.
+          if (gone) mounted.dispose();
+          else story = mounted;
+          // Si la pantalla giró mientras cargaba, se rehace en el modo que toca.
+          if (story && mountedMode !== root.dataset.mode) remount();
+        })
+        .catch((error) => {
+          console.warn('Historia 3D no disponible; queda la imagen.', error);
+          fallBack(false);
+        })
+        .finally(() => (loading = false));
+    };
+
+    // Girar el teléfono (o estrechar la ventana) cruza el umbral de 760 px: la
+    // historia se libera y vuelve a montarse en el otro modo (scroll ↔ toque).
+    // Mientras tanto queda la imagen fija; el lienzo se reutiliza.
+    const remount = () => {
+      if (!story) return;
+      story.dispose();
+      story = null;
+      boot();
+    };
+    let rotateTimer = 0;
+    narrowQuery.addEventListener?.('change', () => {
+      clearTimeout(rotateTimer);
+      rotateTimer = window.setTimeout(() => {
+        layout();
+        if (story && mountedMode !== root.dataset.mode) remount();
+      }, 250);
+    });
+
+    layout();
+    button.hidden = tier !== 'low';
+    // El lienzo marca `data-ready="1"` en su primer cuadro dibujado (`mountStory`).
+    const watchReady = () => {
+      if (interactSent) return;
+      new MutationObserver((_records, observer) => {
+        if (canvas.dataset.ready !== '1') return;
+        observer.disconnect();
+        interacted(root);
+      }).observe(canvas, { attributes: true, attributeFilter: ['data-ready'] });
+    };
+    watchReady();
+    button.addEventListener('click', () => {
+      interacted(root);
+      tier = 'medium';
+      onDemand = true;
+      settled = true;
+      button.hidden = true;
+      layout();
+      boot();
+    });
+    if (!settled && tier !== 'low') {
+      whenSettled(() => {
+        settled = true;
+        boot();
+      });
+    }
+    new IntersectionObserver(
+      (entries) => {
+        near = entries.some((entry) => entry.isIntersecting);
+        boot();
+      },
+      { rootMargin: '300px' },
+    ).observe(root);
+    // Al salir de la página se libera el WebGL; si vuelve desde la caché, se rehace.
+    addEventListener('pagehide', () => {
+      gone = true;
+      story?.dispose();
+      story = null;
+    });
+    addEventListener('pageshow', (event) => {
+      if (!event.persisted) return;
+      gone = false;
+      boot();
+    });
+  }
+</script>

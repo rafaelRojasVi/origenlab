@@ -1,16 +1,15 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import PageIntro from '../../components/ui/PageIntro.astro';
-import SectionIndex from '../../components/ui/SectionIndex.astro';
-import ModelList from '../../components/ui/ModelList.astro';
-import ModelRow from '../../components/ui/ModelRow.astro';
+import FamilyModels from '../../components/product/FamilyModels.astro';
 import ClosingQuoteBand from '../../components/ui/ClosingQuoteBand.astro';
-import Notice from '../../components/ui/Notice.astro';
 import Icon from '../../components/ui/Icon.astro';
 import { categories } from '../../data/categories';
 import { company } from '../../data/company';
 import { documentsForCategory } from '../../data/documents';
 import { getCategoryRelatedProducts } from '../../lib/catalog';
+import { getCollection } from 'astro:content';
+import type { Modelo } from '../../content.config';
 
 export function getStaticPaths() {
   return categories.map((category) => ({ params: { slug: category.slug } }));
@@ -20,7 +19,10 @@ const { slug } = Astro.params;
 const category = categories.find((item) => item.slug === slug);
 if (!category) return Astro.redirect('/aplicaciones');
 
-const related = getCategoryRelatedProducts(category.slug);
+// Los equipos relacionados son fichas heredadas (`products.ts`); la tarjeta sale
+// de la colección `modelos`, que usa el mismo id como slug.
+const relatedIds = new Set(getCategoryRelatedProducts(category.slug).map((product) => product.id));
+const related = (await getCollection('modelos')).map((item) => item.data as Modelo).filter((entry) => relatedIds.has(entry.slug));
 const documents = documentsForCategory(category.slug);
 const isClinical = category.slug === 'laboratorio-clinico';
 const shortName = category.shortName;
@@ -42,10 +44,9 @@ const metaDescription =
   </div>
 
   <section class="shell section rule-top" aria-labelledby="antes-title">
-    <SectionIndex index={1} label="Antes de cotizar" />
     <div class="guide">
       <div>
-        <h2 id="antes-title" class="t-h2">Qué conviene traer a la conversación</h2>
+        <h2 id="antes-title" class="t-h2">Qué conviene traer a la conversación<span class="dot">.</span></h2>
         <p class="t-body guide__text">{category.buyerGuide}</p>
       </div>
       <ol class="checklist">
@@ -55,18 +56,15 @@ const metaDescription =
   </section>
 
   <section class="shell section rule-top" aria-labelledby="equipos-title">
-    <SectionIndex index={2} label="Equipos relacionados" />
     {
       related.length > 0 ? (
         <>
-          <h2 id="equipos-title" class="t-h2">Centrífugas Ortoalresa</h2>
-          <p class="t-lead mt-5">
+          <h2 id="equipos-title" class="t-h2">Centrífugas Ortoalresa<span class="dot">.</span></h2>
+          <p class="lede mt-4">
             Preparación de muestras y separación, según configuración de rotor y requerimientos del
             laboratorio.
           </p>
-          <ModelList class="mt-10">
-            {related.map((product) => <ModelRow product={product} size="compact" />)}
-          </ModelList>
+          <FamilyModels models={related} class="mt-10" label="Centrífugas para esta aplicación" />
           <a href="/productos/centrifugas/" class="link-arrow mt-8">
             Ver la familia y la comparativa
             <Icon name="arrow-right" size={18} class="arrow" />
@@ -74,11 +72,10 @@ const metaDescription =
         </>
       ) : (
         <>
-          <h2 id="equipos-title" class="t-h2">Aún sin familia publicada</h2>
-          <p class="t-lead mt-5">
-            No hay una familia de equipos publicada para esta línea todavía. Cotizamos igualmente:
-            indique el ensayo, el volumen de trabajo y la norma asociada si aplica, y le
-            respondemos con alternativas concretas.
+          <h2 id="equipos-title" class="t-h2">Por aplicación, no por listado<span class="dot">.</span></h2>
+          <p class="lede mt-4">
+            Para esta línea no publicamos un listado cerrado. Indique el ensayo, el volumen de trabajo
+            y la norma asociada si aplica, y le respondemos con alternativas concretas del catálogo.
           </p>
           {isClinical && (
             <p class="t-body clinical">
@@ -89,7 +86,7 @@ const metaDescription =
             </p>
           )}
           <a href="/productos/" class="link-arrow mt-8">
-            Ver el catálogo publicado
+            Ver todos los equipos
             <Icon name="arrow-right" size={18} class="arrow" />
           </a>
         </>
@@ -98,8 +95,7 @@ const metaDescription =
   </section>
 
   <section class="shell section rule-top" aria-labelledby="documentacion-title">
-    <SectionIndex index={3} label="Documentación" />
-    <h2 id="documentacion-title" class="t-h2">Catálogos y fichas técnicas</h2>
+    <h2 id="documentacion-title" class="t-h2">Catálogos y fichas técnicas<span class="dot">.</span></h2>
     {
       documents.length > 0 ? (
         <ul class="doc-list">
@@ -116,14 +112,9 @@ const metaDescription =
         <p class="t-lead mt-5">{company.catalogNote}</p>
       )
     }
-    <Notice class="mt-10">
-      Cotización y disponibilidad sujetas a confirmación comercial. La configuración, los
-      accesorios y las condiciones se confirman en la cotización.
-    </Notice>
   </section>
 
   <ClosingQuoteBand
-    index={4}
     title={`Cotizar equipamiento para ${shortName.toLowerCase()}`}
     body="Indique el ensayo o la función que necesita cubrir, el volumen de trabajo y su institución. Con eso acotamos alternativas y preparamos la cotización."
   />
@@ -142,7 +133,7 @@ const metaDescription =
     margin: 0;
     padding: 0;
     counter-reset: item;
-    border-top: 1px solid var(--color-ink-950);
+    border-top: 1px solid var(--color-hairline-strong);
   }
   .checklist li {
     counter-increment: item;

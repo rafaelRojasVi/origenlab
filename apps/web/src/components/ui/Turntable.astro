@@ -1,0 +1,210 @@
+---
+import { TURNTABLE_FRAMES, turntableFor } from '../../lib/turntable';
+
+/**
+ * Equipo en 3D para una tarjeta, sin WebGL: el póster horneado sobre el estudio
+ * blanco y su tira de giro (24 cuadros, una vuelta) que `npm run posters` genera
+ * junto al póster.
+ *
+ * - Se funde con el fondo claro que tenga detrás (blanco, el tinte de su
+ *   familia, un resplandor): la caja lleva `.pz` (brillo + multiply), así el piso
+ *   blanco del estudio toma ese color y no se ve un rectángulo. El fondo debe
+ *   estar en el mismo contexto de apilamiento que la caja: no la meta dentro de
+ *   un envoltorio transformado o aislado (la propia caja sí puede transformarse).
+ * - No es un control: no tiene tabulación propia ni rol. Gira cuando se enfoca
+ *   algo dentro de su anfitrión (el `<a>` que la contiene o un ancestro con
+ *   `data-tt-host`, que es lo que mira primero). La imagen lleva el `alt`; la
+ *   tira es decorativa.
+ * - Mouse: al entrar gira sola (~2 s por vuelta); al mover el puntero, el giro
+ *   sigue al desplazamiento horizontal y retoma solo al quedarse quieto.
+ *   Dedo: arrastre horizontal (el vertical desplaza la página), y en pantallas
+ *   sin hover da una vuelta cada vez que la tarjeta entra en pantalla. Al salir
+ *   vuelve al póster.
+ * - La tira (≤ 120 kB) se descarga en la primera intención, nunca al cargar.
+ * - Con movimiento reducido queda el póster quieto.
+ * - Caja 4:3 (sin salto de diseño). `style` la posiciona en un escenario
+ *   (`stageFrame()` de `lib/turntable.ts`, como hace `LitCard`).
+ *
+ * Sin póster no dibuja nada: la plantilla elige antes con `turntableFor(slug)`
+ * y usa la fotografía para los modelos sin 3D.
+ */
+interface Props {
+  /** Slug del modelo (`src/content/modelos/<slug>.json`). */
+  slug: string;
+  /** Texto alternativo del póster, p. ej. «MB32 de OHAUS, modelo 3D». */
+  alt: string;
+  /** `eager` sólo si la tarjeta está en la primera pantalla. */
+  loading?: 'lazy' | 'eager';
+  class?: string;
+  style?: string;
+  /** Ancho mostrado, para elegir entre el póster de 640 px y el de 1200 px. */
+  sizes?: string;
+}
+
+const {
+  slug,
+  alt,
+  loading = 'lazy',
+  class: className = '',
+  style,
+  sizes = '(min-width: 1024px) 25vw, (min-width: 640px) 45vw, 90vw',
+} = Astro.props;
+const files = turntableFor(slug);
+---
+
+{
+  files && (
+    <div class:list={['tt', className]} style={style} data-tt={files.strip ?? undefined} data-frames={TURNTABLE_FRAMES}>
+      <img
+        class="tt__poster"
+        src={files.poster}
+        srcset={files.posterSmall ? `${files.posterSmall} 640w, ${files.poster} 1200w` : undefined}
+        sizes={files.posterSmall ? sizes : undefined}
+        width="1200"
+        height="900"
+        alt={alt}
+        loading={loading}
+        decoding="async"
+      />
+      {files.strip && <span class="tt__strip" aria-hidden="true" />}
+    </div>
+  )
+}
+
+<script>
+  const still = matchMedia('(prefers-reduced-motion: reduce)');
+  const touch = matchMedia('(hover: none)');
+  const io =
+    'IntersectionObserver' in window
+      ? new IntersectionObserver(
+          (entries) => {
+            for (const e of entries) (e.target as HTMLElement & { tt?: (v: boolean) => void }).tt?.(e.isIntersecting);
+          },
+          { threshold: 0.6 },
+        )
+      : null;
+  for (const el of document.querySelectorAll<HTMLElement & { tt?: (v: boolean) => void }>('[data-tt]')) {
+    const n = Number(el.dataset.frames) || 24;
+    const strip = el.querySelector<HTMLElement>('.tt__strip')!;
+    const host = el.closest<HTMLElement>('[data-tt-host], a') ?? el;
+    let ready: Promise<unknown> | null = null;
+    let f = 0;
+    let base = 0;
+    let x0 = -1;
+    let spin = 0;
+    let rest = 0;
+    const show = (i: number) => {
+      f = ((Math.round(i) % n) + n) % n;
+      strip.style.backgroundPositionX = `${(f * 100) / (n - 1)}%`;
+    };
+    const load = () =>
+      (ready ??= new Promise((done) => {
+        const img = new Image();
+        img.onload = () => {
+          strip.style.backgroundImage = `url(${el.dataset.tt})`;
+          done(0);
+        };
+        img.src = el.dataset.tt!;
+      }));
+    const play = (once = false) => {
+      clearInterval(spin);
+      let left = n;
+      spin = window.setInterval(() => {
+        show(f + 1);
+        if (once && --left === 0) off();
+      }, 85);
+    };
+    const off = () => {
+      clearInterval(spin);
+      clearTimeout(rest);
+      x0 = -1;
+      delete el.dataset.on;
+      show(0);
+    };
+    const on = (auto: boolean) => {
+      if (still.matches) return;
+      load().then(() => {
+        if (!host.matches(':hover, :focus-within') && x0 < 0) return;
+        el.dataset.on = '';
+        if (auto) play();
+      });
+    };
+    // Teléfono: una vuelta al entrar en pantalla.
+    el.tt = (visible) => {
+      if (!touch.matches || still.matches) return;
+      if (!visible) return off();
+      load().then(() => {
+        el.dataset.on = '';
+        play(true);
+      });
+    };
+    io?.observe(el);
+    host.addEventListener('pointerenter', (e) => e.pointerType === 'mouse' && on(true));
+    host.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && off());
+    host.addEventListener('focusin', () => on(true));
+    host.addEventListener('focusout', (e) => !host.contains(e.relatedTarget as Node) && off());
+    host.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse') {
+        x0 = e.clientX;
+        base = f;
+        load().then(() => (el.dataset.on = ''));
+      }
+    });
+    host.addEventListener('pointermove', (e) => {
+      if (!el.hasAttribute('data-on')) return;
+      if (e.pointerType === 'mouse') {
+        if (x0 < 0) {
+          x0 = e.clientX;
+          base = f;
+        }
+        clearInterval(spin);
+        clearTimeout(rest);
+        rest = window.setTimeout(() => {
+          x0 = -1;
+          play();
+        }, 700);
+      } else if (x0 < 0) return;
+      else clearInterval(spin);
+      show(base + ((e.clientX - x0) / el.clientWidth) * n);
+    });
+    for (const type of ['pointerup', 'pointercancel'])
+      host.addEventListener(type, (e) => {
+        if ((e as PointerEvent).pointerType !== 'mouse') rest = window.setTimeout(off, 1200);
+      });
+  }
+</script>
+
+<style>
+  .tt {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border-radius: inherit;
+    touch-action: pan-y;
+    /* `.pz`: el blanco del estudio toma el color del fondo. */
+    filter: brightness(1.037);
+    mix-blend-mode: multiply;
+  }
+  .tt__poster {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .tt__strip {
+    position: absolute;
+    inset: 0;
+    background: #fff no-repeat 0 0 / 2400% 100%;
+    opacity: 0;
+    transition: opacity 0.2s ease-out;
+    pointer-events: none;
+  }
+  .tt[data-on] .tt__strip {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tt__strip {
+      display: none;
+    }
+  }
+</style>

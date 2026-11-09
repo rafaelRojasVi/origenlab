@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+from datetime import datetime
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
@@ -68,12 +70,14 @@ from origenlab_api.v2.mail_rules import (
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
     RECORD_AUTHORED_QUOTE_SENT,
+    RECORD_WEB_FORM_INTEREST,
     REPLY_WINDOW_DAYS,
     SETTLE_DAYS,
     SYSTEM_LABEL,
     UNCONFIRM_ORGANIZATION_RECORD,
     UPDATE_ORGANIZATION,
     WEB_QUOTE_ORIGIN,
+    web_form_enquirer,
     CaseQuote,
     CaseState,
     ForwardRequest,
@@ -99,6 +103,8 @@ from origenlab_api.v2.quote_import_commands import (
 from origenlab_api.v2.quote_import_repository import V2QuoteImportRepository
 from origenlab_api.v2.quote_sent import record_authored_quote_sent
 
+logger = logging.getLogger(__name__)
+
 APPLY_COMMAND = "apply_mail_rule"
 UNDO_COMMAND = "undo_mail_rule_action"
 DISCARDED_BY_CORRECTION = "discarded_by_correction"
@@ -122,6 +128,14 @@ def _json(value: Any) -> Any:
     return json.loads(value) if isinstance(value, str) else value
 
 
+def _web_form_fact(row: dict[str, Any], key: str) -> str | None:
+    """One fact of the worker's `web_form:v1` reading, only for a message the rules take as a web form."""
+    if not row.get("is_web_form"):
+        return None
+    value = (_json(row.get("web_form_facts")) or {}).get(key)
+    return str(value).strip() or None if value is not None else None
+
+
 # ─────────────────────────────────────────────────────────────── the snapshot ──
 
 #: Live Phase 4a captures only — the records the worker writes: a `comms.message` in the same
@@ -135,7 +149,7 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
        requester.value as requester_match, quote_refs.value as quote_refs, po_refs.value as po_refs, ai.intent as model_intent,
        ai.stage as model_stage, ai.needs_reply as model_needs_reply, ai.summary as model_summary,
        ai.triage_class,
-       case_match.value as case_match, web_form.is_web_form, web_form.reply_to
+       case_match.value as case_match, web_form.is_web_form, web_form.reply_to, web_form_facts.value as web_form_facts
   from evidence.source_record sr
   join lateral (select cm.id, cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
@@ -191,6 +205,12 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
                 where p.message_id = m.id and p.role = 'reply_to'
                 order by p.address_norm limit 1) as reply_to
   ) web_form on true
+  left join lateral (
+       -- What the web form carries — product, consent version and time — read by the worker's triage.
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'web_form:v1'
+        limit 1
+  ) web_form_facts on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -295,6 +315,36 @@ select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
   from platform.command_receipt
  where command_name = %s and status = 'completed'
 """
+#: Web-form messages whose consent is not recorded yet: the sender and reply-to the rules read, the
+#: worker's `web_form:v1` facts, the message's own time. Bounded: a recorded one drops out, and a
+#: row that can never yield a consent (no Reply-To address, or a sender outside OrigenLab's own
+#: domains — `%(own_sender)s`, the SQL side of `web_form_enquirer`, which still decides) is never
+#: selected, so such rows cannot fill the batch and stall the sweep. Newest first: a backlog never
+#: delays today's submissions.
+_WEB_FORM_CONSENT_SQL = """
+select sr.id::text, sr.payload ->> 'sender',
+       (select p.address_norm from comms.message_participant p
+         where p.message_id = cm.id and p.role = 'reply_to' and p.address_norm like '%%_@_%%'
+         order by p.address_norm limit 1),
+       wf.value, sr.payload ->> 'sent_at'
+  from evidence.source_record sr
+  join comms.message cm on cm.provider_message_id = sr.payload ->> 'gmail_message_id'
+  join evidence.assertion wf on wf.source_record_id = sr.id and wf.kind = 'message_triage'
+                            and wf.value_norm = 'web_form:v1' and wf.value ->> 'consent_version' is not null
+ where sr.kind = 'gmail_message' and not sr.is_quarantined and sr.review_status <> 'rejected'
+   and lower(sr.payload ->> 'sender') ~ %(own_sender)s
+   and exists (select 1 from comms.message_participant p
+                where p.message_id = cm.id and p.role = 'reply_to' and p.address_norm like '%%_@_%%')
+   and exists (select 1 from evidence.assertion a
+                where a.source_record_id = sr.id and a.kind = 'message_triage'
+                  and a.value_norm ~ '^triage:v[0-9]+$' and a.value -> 'reasons' ? 'header:x-origenlab-origin')
+   and not exists (select 1 from crm.consent c where c.source_record_id = sr.id and c.purpose = 'quote_request')
+ order by sr.created_at desc, sr.id desc
+ limit %(limit)s
+"""
+#: An address on one of OrigenLab's own domains somewhere in the From (a superset of what
+#: `web_form_enquirer` accepts; it only has to exclude rows that could never pass).
+_OWN_SENDER_RE = "@(" + "|".join(d.replace(".", "\\.") for d in sorted(OWN_DOMAINS)) + ")([>,;[:space:]]|$)"
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
 AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18", "R19"})
@@ -393,6 +443,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             case_match=_json(r.get("case_match")) or None,
             extra_headers=({"x-origenlab-origin": WEB_QUOTE_ORIGIN} if r.get("is_web_form") else {}),
             reply_to=(r.get("reply_to") if r.get("is_web_form") else None),
+            web_form_product=_web_form_fact(r, "product"),
+            web_form_consent_version=_web_form_fact(r, "consent_version"),
+            web_form_accepted_at=_web_form_fact(r, "accepted_at"),
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -630,6 +683,36 @@ class MailRulesRepository(V2CaseCommandRepository):
 
     # ------------------------------------------------------------------ apply
 
+    def record_web_form_consents(self, *, limit: int = 200) -> int:
+        """Write the `crm.consent` row of every web-form message that carries a consent and has none
+        yet, whatever the rules plan for it (a case, a proposal or nothing): the consent is evidence
+        of the visitor's submission, not of a case. Idempotent (`consent_idempotent_idx`), no
+        receipt, no case side effect. Returns how many rows were written."""
+        with self._write() as cur:
+            cur.execute(_WEB_FORM_CONSENT_SQL, {"own_sender": _OWN_SENDER_RE, "limit": limit})
+            pending = cur.fetchall()
+            written = 0
+            for record_id, sender, reply_to, facts, sent_at in pending:
+                if web_form_enquirer(sender, reply_to) is None:
+                    continue  # the sender is not OrigenLab's own: the marker alone proves nothing
+                facts = _json(facts) or {}
+                stamp = facts.get("accepted_at") or sent_at
+                try:
+                    accepted_at = datetime.fromisoformat(str(stamp)) if stamp else None
+                except ValueError:
+                    accepted_at = None
+                # One savepoint per row: a row the table refuses is skipped (and logged), it does
+                # not roll back the consents already written in this batch.
+                try:
+                    with cur.connection.transaction():
+                        written += self.write_web_form_consent(
+                            cur, email=reply_to, text_version=str(facts.get("consent_version", "")),
+                            accepted_at=accepted_at, source_record_id=record_id)
+                except Exception as exc:  # noqa: BLE001 - any refusal of one row is that row's alone
+                    logger.warning("web-form consent not recorded: source_record=%s error=%s",
+                                   record_id, type(exc).__name__)
+            return written
+
     def apply(self, operator: OperatorIdentity, pairs: list[dict[str, str]]) -> dict[str, Any]:
         """Apply the previewed `(evidence_id, rule_id)` pairs — at most `APPLY_BATCH` per call — and
         only those whose fresh re-plan still says the same rule in `auto` mode. Anything else is
@@ -654,6 +737,10 @@ class MailRulesRepository(V2CaseCommandRepository):
                 continue
             outcome = self.apply_planned(operator, action)
             (refused if "code" in outcome else applied).append(outcome)
+        try:
+            self.record_web_form_consents()
+        except Exception:  # the consents are retried by the next pass; this apply already happened
+            logger.exception("mail rules: recording web-form consents failed")
         return {"applied": applied, "refused": refused}
 
     def apply_planned(self, operator: OperatorIdentity, action: PlannedAction, *,
@@ -985,6 +1072,7 @@ class MailRulesRepository(V2CaseCommandRepository):
             CREATE_REQUEST_FROM_FORWARD_STEP: forwarded_requests.create_request_from_forward,
             RECORD_AUTHORED_QUOTE_SENT: record_authored_quote_sent,
             ADD_CASE_SENDER_PARTICIPANT: MailRulesRepository._add_case_sender_participant_step,
+            RECORD_WEB_FORM_INTEREST: MailRulesRepository._record_web_form_interest_step,
         }
         if command not in local:
             raise CommandRefused(500, "unknown_step", f"no handler for step '{command}'")
@@ -1002,6 +1090,14 @@ class MailRulesRepository(V2CaseCommandRepository):
             case_id=str(fields["opportunity_id"]),
             note=str(fields.get("note") or ""),
         )
+
+    def _record_web_form_interest_step(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
+                                       receipt_id: str) -> dict[str, Any]:
+        """R7/R12 step: the product the visitor named becomes the case's interest, unless it is there."""
+        result = self.maybe_record_case_interest(
+            cur, opportunity_id=str(fields["opportunity_id"]), model_text=str(fields["model_text"]),
+            operator=operator, receipt_id=receipt_id, note=str(fields["note"]))
+        return result or {"command": RECORD_WEB_FORM_INTEREST, "interest_recorded": False}
 
     def _register_mail_organization(self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any],
                                     receipt_id: str) -> dict[str, Any]:

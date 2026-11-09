@@ -1,484 +1,197 @@
 ---
+import { getCollection } from 'astro:content';
 import Layout from '../layouts/Layout.astro';
 import PageIntro from '../components/ui/PageIntro.astro';
-import SectionIndex from '../components/ui/SectionIndex.astro';
-import ModelList from '../components/ui/ModelList.astro';
-import ModelRow from '../components/ui/ModelRow.astro';
 import ClosingQuoteBand from '../components/ui/ClosingQuoteBand.astro';
-import BrandLogo from '../components/ui/BrandLogo.astro';
-import SkuList from '../components/ui/SkuList.astro';
-import ExternalLink from '../components/ui/ExternalLink.astro';
-import Notice from '../components/ui/Notice.astro';
 import Icon from '../components/ui/Icon.astro';
-import FamilyMotif from '../components/home/FamilyMotif.astro';
 import ApplicationList from '../components/ui/ApplicationList.astro';
+import FamilyModels from '../components/product/FamilyModels.astro';
 import { familiesInProductOrder } from '../data/equipmentScope';
 import { company } from '../data/company';
-import { modelsForFamily } from '../data/brandModels';
-import { applicationsForFamily } from '../data/applications';
-import { imageForModel } from '../data/productImages';
-import ModelPhoto from '../components/ui/ModelPhoto.astro';
-import { site } from '../config/site';
-import {
-  getBrandById,
-  getBrandsByFamilyId,
-  getProductsByBrandId,
-  productPageHref,
-} from '../lib/catalog';
+import { getBrandsByFamilyId } from '../lib/catalog';
+import { rankFamilies } from '../lib/ranking';
+import { familyForScope, familyHref, familyInfo } from '../lib/modelos';
+import type { Modelo } from '../content.config';
 
 /**
- * Productos, por familia de equipo.
+ * Productos: todas las familias con TODOS sus modelos a la vista (regla del
+ * dueño, 2026-11-08): cada equipo es una tarjeta iluminada que lleva directo a
+ * su ficha, sin pasar por la familia ni por la marca. Las familias van en el
+ * orden comercial (`rankFamilies`) y los modelos también (`rankModels`, dentro
+ * de `FamilyModels`): 3D primero, IKA al final.
  *
- * La versión anterior publicaba dos cosas: una familia de centrífugas con
- * fotografía a gran escala y una lista de referencias SERVA. Con eso, cuatro de
- * las seis familias que la portada anuncia no aparecían en la página de
- * productos, y el visitante que llegaba buscando un sonicador o una balanza
- * concluía, razonablemente, que aquí se venden centrífugas.
- *
- * Ahora la página son las seis familias, en el orden de `productsFamilyOrder`,
- * que no es el alfabético ni el del archivo de datos: abre con preparación de
- * muestra, deja centrifugación en el centro (es la única con ficha propia y
- * puesta primero se come la página) y cierra con electroforesis.
- *
- * Cada familia publica lo que de verdad tiene, y se ve la diferencia sin que
- * haya que explicarla:
- *
- *   con ficha propia   fila con fotografía, cifras y enlace a la ficha interna
- *   documentada        fila con nombre, qué hace y enlace al fabricante
- *
- * Ninguna familia lleva imagen de relleno: cada una abre con el diagrama de
- * `familyMotif.ts`, que dibuja qué le hace el equipo a la muestra, y ese
- * diagrama se queda aunque haya fotografía: es la capa conceptual de la
- * familia, y la fotografía es la de cada modelo.
- *
- * Cada modelo documentado se compone con lo que el visitante necesita para
- * reconocer el equipo sin abrir otra página: la fotografía oficial del modelo
- * (o de la familia, rotulada como representativa) que `productImages.ts` tiene
- * `VERIFIED`, a su lado el nombre tal como lo escribe el fabricante, qué hace
- * y su uso principal, y tres salidas: la página de marca, la fuente oficial y
- * la consulta de cotización. Si una fila perdiera la fotografía no reservaría
- * hueco: se compondría a texto, y el diagrama de la familia seguiría arriba.
+ * Arriba, un índice de saltos a cada familia en esta misma página (con su
+ * tinte); cada familia enlaza además su propia página (SEO, comparativa).
+ * Los modelos salen de la colección `modelos`, la misma de las fichas.
  */
-const families = familiesInProductOrder().map((scope) => {
-  // Una familia puede tener más de un fabricante: pesaje y humedad tiene dos
-  // (Adam Equipment y OHAUS). Cada modelo se atribuye a su propia marca.
-  const familyBrands = getBrandsByFamilyId(scope.id);
-  const products = familyBrands.flatMap((brand) => getProductsByBrandId(brand.id));
-  return {
-    scope,
-    familyBrands,
-    withPages: products.filter((product) => productPageHref(product) !== undefined),
-    skuOnly: products.filter((product) => productPageHref(product) === undefined),
-    documented: modelsForFamily(scope.id).map((model) => ({
-      model,
-      brand: getBrandById(model.brandId),
-      image: imageForModel(model.id),
-    })),
-    tasks: applicationsForFamily(scope.id),
-  };
-});
+const all = (await getCollection('modelos')).map((item) => item.data as Modelo);
+const families = rankFamilies(
+  familiesInProductOrder().flatMap((scope) => {
+    const slug = familyForScope(scope.id);
+    if (!slug) return [];
+    const models = all.filter((entry) => entry.family === slug);
+    if (models.length === 0) return [];
+    return [{ scope, slug, info: familyInfo(slug), href: familyHref(slug), models, brands: getBrandsByFamilyId(scope.id) }];
+  }),
+  (family) => family.href.split('/')[2] ?? '',
+);
 ---
 
 <Layout
   title="Productos"
-  description="Seis familias de equipo de laboratorio: sonicación, dispersión, centrifugación, pesaje y humedad, osmometría y electroforesis. Cotización por aplicación."
+  description="Equipos de laboratorio por familia: sonicación, pesaje y humedad, centrifugación, osmometría, electroforesis y dispersión. Cada modelo con su ficha y cotización."
 >
   <div class="shell">
     <PageIntro
       title="Productos"
-      lead="Seis familias de equipo de siete fabricantes, con la fotografía oficial de cada modelo cuando el fabricante la autorizó. Una tiene ficha completa en este sitio, con especificaciones; las otras cinco se publican con la documentación del propio fabricante y se cotizan a partir de su aplicación."
+      lead="Todos los equipos que cotizamos, por familia. Toque uno y llega directo a su ficha, con las cifras del fabricante y el botón para cotizar."
       crumbs={[{ label: 'Productos' }]}
     />
+    <nav class="pf-jump" aria-label="Ir a una familia">
+      <ul>
+        {
+          families.map(({ scope, info, models }) => (
+            <li>
+              <a href={`#${scope.id}`}>
+                {info.short}
+              </a>
+            </li>
+          ))
+        }
+      </ul>
+    </nav>
   </div>
 
-  <section class="shell section rule-top" aria-labelledby="familias-title">
-    <SectionIndex index={1} label="Familias de equipo" />
-    <div class="scope-head">
-      <h2 id="familias-title" class="t-h2">Las seis familias, y qué publica cada una</h2>
-      <p class="t-body scope-head__body">
-        No es una secuencia de trabajo: son capacidades independientes. El índice dice de una vez
-        qué fabricante está detrás de cada familia y cuántas referencias puede consultar aquí, para
-        que no haya que recorrer la página entera para averiguarlo.
-      </p>
-    </div>
-
-    <ul class="scope-index" aria-label="Índice de las seis familias de equipo">
-      {
-        families.map(({ scope, familyBrands, withPages, documented }) => (
-          <li class="scope-index__row">
-            <a href={`#${scope.id}`} class="scope-index__link">
-              <span class="scope-index__name">{scope.name}</span>
-              <span class="scope-index__brand t-data">
-                {familyBrands.map((brand) => brand.name).join(' · ')}
-              </span>
-              <span class="scope-index__count t-data">
-                {withPages.length > 0
-                  ? `${withPages.length} con ficha`
-                  : `${documented.length} documentados`}
-              </span>
-              <Icon name="arrow-right" size={16} class="scope-index__go" />
-            </a>
-          </li>
-        ))
-      }
-    </ul>
-  </section>
-
   {
-    families.map(({ scope, familyBrands, withPages, skuOnly, documented, tasks }, index) => (
-      <section
-        id={scope.id}
-        class:list={['shell', 'section', 'rule-top', 'family']}
-        aria-labelledby={`${scope.id}-title`}
-      >
-        <SectionIndex index={index + 2} label={scope.workType} />
-
-        <div class="family__head">
-          <div class="family__lead">
-            {familyBrands.length > 0 && (
-              <div
-                class="family__logo"
-                style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:1.75rem"
-              >
-                {familyBrands.map((brand) => (
-                  <BrandLogo brand={brand} scale={1.1} />
-                ))}
-              </div>
-            )}
-            <h2 id={`${scope.id}-title`} class="t-h2 family__name">{scope.name}</h2>
-            <p class="t-body family__purpose">{scope.purpose}</p>
-            <p class="family__question">{scope.question}</p>
-            <div class="family__actions">
-              {scope.tier === 'catalogo' ? (
-                <a href={scope.href} class="link-arrow">
-                  Ver la familia
-                  <Icon name="arrow-right" size={18} class="arrow" />
-                </a>
-              ) : (
-                familyBrands.map((brand) => (
-                  <a href={`/marcas/${brand.slug}/`} class="link-arrow">
-                    Ver {brand.name}
-                    <Icon name="arrow-right" size={18} class="arrow" />
-                  </a>
-                ))
-              )}
-              {tasks.length > 0 && (
-                <a href={`/aplicaciones/#${tasks[0].slug}`} class="link-arrow">
-                  {tasks[0].name}
-                  <Icon name="arrow-right" size={18} class="arrow" />
-                </a>
-              )}
-            </div>
+    families.map(({ scope, info, href, models, brands }, i) => (
+      <section id={scope.id} class="shell pf" aria-labelledby={`${scope.id}-title`}>
+        <div class="pf__head">
+          <div>
+            <h2 id={`${scope.id}-title`} class="pf__name">
+              {info.short}
+              <span class="dot">.</span>
+            </h2>
+            <p class="pf__purpose">{scope.purpose}</p>
           </div>
-
-          {/* El diagrama de la familia es la capa conceptual y se conserva con
-              o sin fotografía de modelo. La familia con ficha propia abre con
-              sus fotografías y no lo necesita en la cabecera. */}
-          {withPages.length === 0 && (
-            <div class="family__motif">
-              <FamilyMotif familyId={scope.id} />
-            </div>
-          )}
+          <p class="pf__links">
+            <a href={href} class="link-arrow pf__fam">
+              Ver la familia y compararlos
+              <Icon name="arrow-right" size={18} class="arrow" />
+            </a>
+            <span class="pf__brands" translate="no">
+              {brands.map((brand, j) => (
+                <>
+                  {j > 0 && ', '}
+                  <a href={`/marcas/${brand.slug}/`}>{brand.name}</a>
+                </>
+              ))}
+            </span>
+          </p>
         </div>
-
-        {withPages.length > 0 && (
-          <ModelList class="family__models">
-            {withPages.map((product) => (
-              <ModelRow product={product} size="compact" />
-            ))}
-          </ModelList>
-        )}
-
-        {documented.length > 0 && (
-          <ul class="refs">
-            {documented.map(({ model, brand, image }) => (
-              <li class:list={['ref', image && 'ref--photo']}>
-                {image && brand && (
-                  <div class="ref__media">
-                    <ModelPhoto image={image} brandName={brand.name} size="row" />
-                  </div>
-                )}
-                <div class="ref__body">
-                  <h3 class="ref__name" translate="no">{model.name}</h3>
-                  <p class="ref__kind t-data">
-                    {model.scope === 'familia' ? 'Familia de modelos' : 'Modelo'}
-                    {model.code && <span class="ref__code">Cat. {model.code}</span>}
-                  </p>
-                  <p class="t-small ref__does">{model.does}</p>
-                  {model.uses.length > 0 && (
-                    <p class="t-small ref__use">
-                      <span class="ref__use-label">Uso principal</span>
-                      {model.uses[0]}
-                    </p>
-                  )}
-                </div>
-                <div class="ref__links">
-                  {brand && (
-                    <a href={`/marcas/${brand.slug}/`} class="link-arrow">
-                      Ver {brand.name}
-                      <Icon name="arrow-right" size={16} class="arrow" />
-                    </a>
-                  )}
-                  <ExternalLink
-                    href={model.officialUrl}
-                    context={`documentación de ${model.name}`}
-                  >
-                    {model.officialUrlScope === 'modelo' ? 'Página oficial' : 'Página del fabricante'}
-                  </ExternalLink>
-                  {model.officialPdfUrl && (
-                    <ExternalLink href={model.officialPdfUrl} context={`PDF de ${model.name}`}>
-                      PDF
-                    </ExternalLink>
-                  )}
-                  <a href={site.quoteHref} class="link-arrow">
-                    Consultar cotización
-                    <span class="sr-only"> de {model.name}</span>
-                    <Icon name="arrow-right" size={16} class="arrow" />
-                  </a>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {skuOnly.length > 0 && (
-          <div class="family__skus">
-            <h3 class="t-h3">Consumibles</h3>
-            <SkuList products={skuOnly} class="mt-5" />
-          </div>
-        )}
+        <FamilyModels models={models} eager={i === 0 ? 4 : 0} label={`Modelos de ${info.short.toLowerCase()}`} />
       </section>
     ))
   }
 
-  <section class="shell section rule-top" aria-labelledby="tipos-title">
-    <SectionIndex index={families.length + 2} label="Por tipo de laboratorio" />
-    <h2 id="tipos-title" class="t-h2">Si prefiere partir del tipo de laboratorio</h2>
-    <p class="t-lead mt-5">
-      Las seis familias describen el equipo. Estas tres líneas describen el entorno, y reúnen lo que
-      conviene traer a la conversación en cada caso.
-    </p>
+  <section class="shell pf pf--tipos" aria-labelledby="tipos-title">
+    <h2 id="tipos-title" class="t-h2">Si prefiere partir del tipo de laboratorio<span class="dot">.</span></h2>
     <ApplicationList class="mt-10" />
-    <Notice class="mt-10">
-      {company.catalogNote} Cotización y disponibilidad sujetas a confirmación comercial. Los datos
-      de producto de esta página se redactaron desde la documentación pública de cada fabricante y
-      la fuente se enlaza en cada modelo.
-    </Notice>
   </section>
 
   <ClosingQuoteBand
-    index={families.length + 3}
-    title="¿Busca un equipo que no está en el catálogo?"
+    title="¿Busca un equipo que no está aquí?"
     body="Cotizamos según aplicación, capacidad y requisitos técnicos. Indique qué necesita hacer en el laboratorio y desde dónde escribe."
   />
 </Layout>
 
 <style>
-  .scope-head {
-    display: grid;
-    gap: 1.25rem;
-  }
-  .scope-head__body {
-    color: var(--color-ink-600);
-  }
-
-  .scope-index {
-    list-style: none;
-    margin: 2.5rem 0 0;
-    padding: 0;
-    border-top: 1px solid var(--color-ink-950);
-  }
-  .scope-index__row {
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .scope-index__link {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 1.25rem;
-    align-items: baseline;
-    gap: 0.25rem 1.25rem;
-    padding-block: 0.9375rem;
-    transition: background-color 150ms;
-  }
-  .scope-index__link:hover {
-    background-color: var(--color-surface);
-  }
-  .scope-index__name {
-    font-size: 1.0625rem;
-    font-weight: 500;
-    color: var(--color-ink-950);
-  }
-  .scope-index__brand {
-    font-size: 0.8125rem;
-    color: var(--color-teal-800);
-  }
-  .scope-index__count {
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
-  }
-  .scope-index__go {
-    grid-column: 2;
-    grid-row: 1 / span 3;
-    align-self: center;
-    justify-self: end;
-    color: var(--color-ink-500);
-  }
-  .scope-index__link:hover .scope-index__go {
-    color: var(--color-teal-800);
-  }
-
-  /* --- Bloque de familia -------------------------------------------------- */
-  .family__head {
-    display: grid;
-    gap: 2rem;
-    align-items: start;
-  }
-  /* Contenedor de logotipos: una familia puede tener dos marcas (pesaje).
-     La disposición en fila va en el atributo `style` del contenedor: esta hoja
-     está al borde del umbral de 4 kB por debajo del cual Astro la incrusta, y
-     al pasarlo sale a un archivo propio que rompe el presupuesto de CSS. */
-  .family__logo {
-    margin-bottom: 1.25rem;
-  }
-  .family__name {
-    max-width: 24ch;
-  }
-  .family__purpose {
-    margin-top: 1rem;
-    color: var(--color-ink-600);
-  }
-  /* La pregunta del cliente ocupa el lugar de la especificación que estas
-     familias no siempre pueden publicar. Va en tinta plena: es contenido. */
-  .family__question {
-    margin-top: 1.25rem;
-    padding-left: 1rem;
-    border-left: 1px solid var(--color-teal-700);
-    font-size: 1rem;
-    color: var(--color-ink-950);
-    max-width: 40ch;
-  }
-  .family__actions {
+  .pf-jump ul {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 0.875rem 2rem;
-    margin-top: 1.75rem;
-  }
-  .family__motif {
-    max-width: 15rem;
-    color: var(--color-ink-800);
-  }
-  .family__models {
-    margin-top: 2.5rem;
-  }
-  .family__skus {
-    margin-top: 3rem;
-  }
-
-  /* Referencias documentadas: fila de índice, no ficha. La fotografía abre la
-     fila y sólo ocupa columna cuando existe con permiso; sin ella no se
-     reserva hueco. */
-  .refs {
-    list-style: none;
-    margin: 2.5rem 0 0;
+    gap: 0.5rem;
+    margin: 1.75rem 0 0;
     padding: 0;
-    border-top: 1px solid var(--color-ink-950);
+    list-style: none;
   }
-  .ref {
-    display: grid;
-    gap: 0.875rem;
-    padding-block: 1.375rem;
-    border-bottom: 1px solid var(--color-hairline);
-  }
-  .ref__name {
-    font-size: 1.0625rem;
+  .pf-jump a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0 1.125rem;
+    border-radius: var(--radius-btn);
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
+    font-size: 0.9375rem;
     font-weight: 600;
     color: var(--color-ink-950);
+    transition: box-shadow var(--ease-ui), transform var(--ease-ui);
   }
-  .ref__kind {
-    margin-top: 0.125rem;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem 1rem;
-    font-size: 0.8125rem;
-    color: var(--color-ink-500);
+  .pf-jump a:hover {
+    box-shadow: var(--shadow-card);
+    transform: translateY(-1px);
   }
-  .ref__code {
+  .pf {
+    padding-block: 3.5rem;
+    scroll-margin-top: 4.5rem;
+  }
+  .pf + .pf {
+    border-top: 1px solid var(--color-hairline);
+  }
+  .pf__head {
+    display: grid;
+    gap: 1rem 3rem;
+    margin-bottom: 2rem;
+  }
+  .pf__name {
+    font-size: clamp(2rem, 1.4rem + 2.4vw, 3.5rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.045em;
+    color: var(--color-ink-950);
+  }
+  .pf__purpose {
+    margin-top: 0.875rem;
+    max-width: 60ch;
+    font-size: 1.0625rem;
+    line-height: 1.55;
+    color: var(--color-ink-600);
+  }
+  .pf__links {
+    display: grid;
+    gap: 0.25rem;
+    align-content: end;
+    justify-items: start;
+  }
+  .pf__fam {
+    min-height: 2.75rem;
+    font-weight: 600;
     color: var(--color-teal-800);
   }
-  .ref__does {
-    margin-top: 0.5rem;
-    color: var(--color-ink-600);
-    max-width: 66ch;
-  }
-  .ref__use {
-    margin-top: 0.5rem;
-    color: var(--color-ink-800);
-    max-width: 66ch;
-  }
-  .ref__use-label {
-    display: inline-block;
-    margin-right: 0.625rem;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
+  .pf__brands {
+    font-size: 0.9375rem;
     color: var(--color-ink-500);
   }
-  .ref--photo {
-    grid-template-columns: 6.5rem minmax(0, 1fr);
-  }
-  .ref--photo .ref__links {
-    grid-column: 1 / -1;
-  }
-  .ref__links {
-    display: flex;
-    flex-wrap: wrap;
+  .pf__brands a {
+    display: inline-flex;
     align-items: center;
-    gap: 0.5rem 1.75rem;
+    min-height: 2.75rem;
+    color: var(--color-ink-600);
   }
-
-  @media (min-width: 768px) {
-    .scope-head {
-      grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-      gap: 3rem;
-      align-items: baseline;
-    }
-    .scope-index__link {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 13rem) 9rem 1.5rem;
-      gap: 1.5rem;
-      padding-block: 1.0625rem;
-    }
-    .scope-index__go {
-      grid-column: 4;
-      grid-row: auto;
-    }
-    .scope-index__count {
-      text-align: right;
-    }
-    .ref {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
-      align-items: start;
-      gap: 2.5rem;
-      padding-block: 1.625rem;
-    }
-    .ref--photo {
-      grid-template-columns: 11rem minmax(0, 1fr) minmax(0, 13rem);
-    }
-    .ref--photo .ref__links {
-      grid-column: 3;
-    }
-    .ref__links {
-      display: grid;
-      justify-items: end;
-      gap: 0.5rem;
-    }
+  .pf__brands a:hover {
+    color: var(--color-teal-800);
+    text-decoration: underline;
   }
-
   @media (min-width: 1024px) {
-    .family__head {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 15rem);
-      gap: 4rem;
-      align-items: center;
+    .pf {
+      padding-block: 5rem;
+    }
+    .pf__head {
+      grid-template-columns: minmax(0, 1fr) auto;
+      margin-bottom: 2.75rem;
+    }
+    .pf__links {
+      justify-items: end;
+      text-align: right;
     }
   }
 </style>

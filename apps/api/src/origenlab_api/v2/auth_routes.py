@@ -389,6 +389,20 @@ def current_session(request: Request) -> JSONResponse:
                      "detail": SESSION_REFUSED_DETAIL, **options},
         )
     profile_session = operator.auth_method in ("google_profile", "dev_profile")
+    # The «Hoy» view this profile opens on (roster-set; DOMAIN.md §7 #39). Profile sessions only.
+    home_filter: str | None = None
+    if profile_session:
+        profile_login = getattr(request.app.state, "v2_profile_login", None)
+        if profile_login is not None:
+            # A preference, not identity: a failed lookup (a database without the column, a
+            # transient error) opens «Hoy» on its default view instead of signing the user out.
+            # Kept as its own call so the identity lookup never depends on this column.
+            try:
+                home_filter = profile_login.profiles.home_filter(operator.operator_id)
+            except Exception as exc:  # noqa: BLE001 - never fail the session check on it
+                logger.warning("dashboard session: home_filter lookup failed: %s",
+                               exc.__class__.__name__)
+                home_filter = None
     return JSONResponse(content={
         "authenticated": True,
         "state": "signed_in",
@@ -400,7 +414,8 @@ def current_session(request: Request) -> JSONResponse:
             "role": operator.role,
         },
         "profile": ({"id": operator.operator_id, "display_name": operator.display_name,
-                     "role_label": ROLE_LABELS.get(operator.role, "Perfil")}
+                     "role_label": ROLE_LABELS.get(operator.role, "Perfil"),
+                     "home_filter": home_filter}
                     if profile_session else None),
         "can_switch_profile": profile_session,
         # Whether the 29 CRM authoring commands are mounted. Off, every one of them is a 404,

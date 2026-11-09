@@ -1,0 +1,54 @@
+{
+  "slug": "serva-bluevertical-prime",
+  "family": "electroforesis",
+  "brand": "serva",
+  "name": "BlueVertical PRiME",
+  "headline": "SERVA Electrophoresis BlueVertical PRiME: electroforesis",
+  "lead": "Cubeta vertical para minigeles de 10 × 10 × 0,7 cm, propios o precolados, con un cierre que fija el gel a la cámara interior sin tornillos ni pinzas.",
+  "applications": [
+    "SDS-PAGE y electroforesis nativa de proteínas",
+    "Separación de fragmentos de ácidos nucleicos en minigel",
+    "Transferencia en tanque con el módulo de blot opcional",
+    "Docencia y laboratorio de rutina en formato minigel"
+  ],
+  "specs": [
+    {
+      "label": "Formato de gel",
+      "value": "10 × 10 × 0,7 cm, propio o precolado",
+      "source": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html"
+    },
+    {
+      "label": "Tampón",
+      "value": "200 ml en cámara interior, 450 ml en exterior",
+      "source": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html"
+    },
+    {
+      "label": "Máximos",
+      "value": "500 V y 250 mA",
+      "source": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html"
+    },
+    {
+      "label": "Electrodo",
+      "value": "Varilla recubierta de platino",
+      "source": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html"
+    },
+    {
+      "label": "Dimensiones",
+      "value": "16 × 15,6 × 9,5 cm",
+      "source": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html"
+    },
+    {
+      "label": "Ampliaciones",
+      "value": "Módulo de blot BV-104-B y soporte de colado BV-104-CS",
+      "source": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.serva.de/enDE/ProductDetails/4741_BV-104_BlueVertical_TM_PRiME_TM_Mini_Slab_Gel_Unit_0_0.html",
+  "official_pdf_url": "https://www.serva.de/www_root/documents/Electrophoresis%20by%20SERVA_web.pdf",
+  "image_id": "serva-bluevertical-prime",
+  "showroom_id": "serva-bluevertical-prime",
+  "verified_on": "2026-09-07"
+}

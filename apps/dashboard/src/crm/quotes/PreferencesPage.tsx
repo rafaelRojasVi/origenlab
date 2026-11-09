@@ -1,6 +1,6 @@
 /**
  * «Preferencias del Cotizador» (canvas «Nueva cotización sin caso · Preferencias», right half):
- * the company's defaults every new quote starts from, at `#/crm/cotizador/preferencias` — a fixed
+ * the company's defaults every new quote starts from, at `#/ventas/cotizaciones/preferencias` — a fixed
  * pane of the Cotizador module, not a quote tab.
  *
  * Five groups (`PREFERENCE_GROUPS`): default markups, the margin target band and the

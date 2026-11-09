@@ -1,0 +1,91 @@
+---
+import { publicClaim } from '../../data/claims';
+
+/**
+ * «Cómo trabajamos» en la página de modelo: las afirmaciones aprobadas del
+ * registro (`claims.ts`), con el soporte primero y a la vista (plan comercial
+ * 11-07: puesta en marcha y capacitación). A la izquierda, sobre el teal pálido
+ * de la superficie, la del soporte en grande; a la
+ * derecha, las demás en filas con numeral. Una afirmación sin aprobar no se
+ * dibuja; sin ninguna, la sección entera se omite. «Pago», «garantía» y el
+ * pilar de distribuidor no están aquí: no son afirmaciones aprobadas.
+ */
+const support = publicClaim('puesta-en-marcha-con-fabrica');
+const items = ['directo-con-el-fabricante', 'cotizacion-mismo-dia-habil', 'despacho-todo-chile', 'proveedor-inscrito']
+  .map(publicClaim)
+  .filter((text): text is string => Boolean(text));
+---
+
+{
+  (support || items.length > 0) && (
+    <section class="msec" aria-labelledby="confianza-title">
+      <div class="shell mtrust rv">
+        <div class="mtrust__lead">
+          <h2 id="confianza-title" class="mh2">Cómo trabajamos</h2>
+          {support && <p class="mtrust__support">{support}.</p>}
+        </div>
+        {items.length > 0 && (
+          <ol class="mtrust__list">
+            {items.map((text, i) => (
+              <li>
+                <span>{String(i + 1).padStart(2, '0')}</span>
+                {text}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </section>
+  )
+}
+
+<style is:global>
+  .mtrust {
+    display: grid;
+    gap: 2rem 4rem;
+    align-items: start;
+  }
+  .mtrust__lead {
+    padding: clamp(1.75rem, 4vw, 3rem);
+    border-radius: var(--radius-band);
+    background: radial-gradient(70% 90% at 85% 100%, #fff 0%, transparent 70%) var(--color-surface);
+  }
+  .mtrust__support {
+    margin-top: 1.5rem;
+    max-width: 18ch;
+    font-size: clamp(1.5rem, 2.6vw, 2.125rem);
+    font-weight: 700;
+    line-height: 1.12;
+    letter-spacing: -0.03em;
+    color: var(--color-ink-950);
+  }
+  .mtrust__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .mtrust__list li {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    padding-block: 1.25rem;
+    border-top: 1px solid var(--color-hairline);
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--color-ink-950);
+  }
+  .mtrust__list span {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.9;
+    color: var(--color-teal-800);
+  }
+  @media (min-width: 960px) {
+    .mtrust {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    }
+    .mtrust__list {
+      margin-top: 1rem;
+    }
+  }
+</style>

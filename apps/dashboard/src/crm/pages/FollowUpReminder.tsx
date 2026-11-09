@@ -36,6 +36,74 @@ export function reminderDue(day: string, now: Date): Date {
   return dayInput(now, 0) === day || at.getTime() < now.getTime() ? now : at;
 }
 
+export interface FollowUpKeys {
+  task: string;
+  cancel: string;
+}
+
+export const newFollowUpKeys = (): FollowUpKeys => ({ task: newCaseCommandKey(), cancel: newCaseCommandKey() });
+
+/**
+ * The reminder itself: a «Seguimiento de <cotización>» task due `day`, replacing the case's earlier
+ * follow-up reminders. Shared by «Recordarme…» and «Registrar llamada». Returns the due instant.
+ */
+export async function scheduleFollowUp({
+  card,
+  day,
+  note,
+  now,
+  keys,
+}: {
+  card: OpportunityCardData;
+  day: string;
+  note: string;
+  now: Date;
+  keys: FollowUpKeys;
+}): Promise<Date> {
+  const due = reminderDue(day, now);
+  const quote = card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? "";
+  await createTask(
+    { opportunity_id: card.opportunity_id, title: `Seguimiento de ${quote}`.trim(), due_at: due.toISOString(), note },
+    keys.task,
+  );
+  for (const t of (card.open_tasks ?? []).filter(isFollowUpTask)) {
+    await cancelTask({ task_id: t.task_id, task_version: t.version, note: `Reemplazado por el recordatorio del ${fmtDate(due.toISOString())}.` }, keys.cancel);
+  }
+  return due;
+}
+
+/** The toast after a reminder is saved. */
+export function followUpSavedText(day: string, due: Date, now: Date): string {
+  return day === dayInput(now, 0) ? "Listo: aparece hoy en Seguimientos." : `Listo: te lo recuerdo el ${fmtDate(due.toISOString())}.`;
+}
+
+/** «¿Cuándo?»: the quick days and any other day. */
+export function FollowUpDay({ day, onChange, now }: { day: string; onChange: (day: string) => void; now: Date }) {
+  return (
+    <div className="space-y-1.5">
+      <span className="text-[12.5px] font-medium text-ink">¿Cuándo?</span>
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="¿Cuándo?">
+        {QUICK.map((q) => {
+          const value = dayInput(now, q.days);
+          return (
+            <Button key={q.label} variant={day === value ? "primary" : undefined} aria-pressed={day === value} onClick={() => onChange(value)}>
+              {q.label}
+            </Button>
+          );
+        })}
+        <input
+          type="date"
+          aria-label="Otro día"
+          min={dayInput(now, 0)}
+          value={day}
+          onChange={(e) => e.target.value && onChange(e.target.value)}
+          className="h-8 rounded-md border border-line bg-canvas px-2 text-[12.5px] tabular-nums text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+        />
+      </div>
+    </div>
+  );
+}
+
 export function FollowUpReminder({
   card,
   onDone,
@@ -50,35 +118,22 @@ export function FollowUpReminder({
   const [text, setText] = useState("");
   const [day, setDay] = useState(dayInput(now, 0));
   const [busy, setBusy] = useState(false);
-  const keys = useRef({ note: newCaseCommandKey(), task: newCaseCommandKey(), cancel: newCaseCommandKey() });
-  const quote = card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? "";
+  const keys = useRef({ note: newCaseCommandKey(), ...newFollowUpKeys() });
   const earlier = (card.open_tasks ?? []).filter(isFollowUpTask);
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    const due = reminderDue(day, now);
     const body = text.trim();
     try {
       if (body) {
         await addNote({ subject_kind: "opportunity", subject_id: card.opportunity_id, body }, keys.current.note);
       }
-      await createTask(
-        {
-          opportunity_id: card.opportunity_id,
-          title: `Seguimiento de ${quote}`.trim(),
-          due_at: due.toISOString(),
-          note: body || "Recordatorio desde «Recordarme…».",
-        },
-        keys.current.task,
-      );
-      for (const t of earlier) {
-        await cancelTask({ task_id: t.task_id, task_version: t.version, note: `Reemplazado por el recordatorio del ${fmtDate(due.toISOString())}.` }, keys.current.cancel);
-      }
-      toast(day === dayInput(now, 0) ? "Listo: aparece hoy en Seguimientos." : `Listo: te lo recuerdo el ${fmtDate(due.toISOString())}.`);
+      const due = await scheduleFollowUp({ card, day, note: body || "Recordatorio desde «Recordarme…».", now, keys: keys.current });
+      toast(followUpSavedText(day, due, now));
       onDone();
     } catch (err) {
-      keys.current = { note: newCaseCommandKey(), task: newCaseCommandKey(), cancel: newCaseCommandKey() };
+      keys.current = { note: newCaseCommandKey(), ...newFollowUpKeys() };
       toast(caseRefusalText(err), "bad");
       onDone();
     } finally {
@@ -94,27 +149,7 @@ export function FollowUpReminder({
         </label>
         <TextareaInput id="followup-text" value={text} onChange={setText} rows={2} maxLength={2000} placeholder="Ej.: llamar a Gustavo, mandar la ficha técnica…" />
       </div>
-      <div className="space-y-1.5">
-        <span className="text-[12.5px] font-medium text-ink">¿Cuándo?</span>
-        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="¿Cuándo?">
-          {QUICK.map((q) => {
-            const value = dayInput(now, q.days);
-            return (
-              <Button key={q.label} variant={day === value ? "primary" : undefined} aria-pressed={day === value} onClick={() => setDay(value)}>
-                {q.label}
-              </Button>
-            );
-          })}
-          <input
-            type="date"
-            aria-label="Otro día"
-            min={dayInput(now, 0)}
-            value={day}
-            onChange={(e) => e.target.value && setDay(e.target.value)}
-            className="h-8 rounded-md border border-line bg-canvas px-2 text-[12.5px] tabular-nums text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-          />
-        </div>
-      </div>
+      <FollowUpDay day={day} onChange={setDay} now={now} />
       <p className="text-[11.5px] text-ink-muted">
         Ese día el caso aparece en <strong>Hoy → Seguimientos</strong> con tu nota; hasta entonces no sale.
         {earlier.length > 0 ? " Reemplaza el recordatorio anterior." : ""}

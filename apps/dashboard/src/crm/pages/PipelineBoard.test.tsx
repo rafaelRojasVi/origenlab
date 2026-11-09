@@ -1,11 +1,16 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AuthSessionState } from "../../api/authClient";
+import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
+import { Toaster } from "../ui";
+import { clearResourceCache } from "../useResource";
+import { PipelinePage } from "./PipelinePage";
 import { stagePath } from "../caseCommands";
 import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
 import { moveRefusal } from "./CaseMove";
-import { Board, columnMoney, sortCards } from "./PipelineBoard";
+import { Board, cardMoney, columnMoney, silentFollowUpStep, sortCards } from "./PipelineBoard";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -141,12 +146,15 @@ describe("Tablero", () => {
   });
 
   it("shows every card of a long column, newest first, with a thin divider per age band", () => {
-    const recent = Array.from({ length: 3 }, () => card({}, "2026-09-25T12:00:00Z"));
-    const old = Array.from({ length: 8 }, () => card({}, "2025-01-10T12:00:00Z"));
-    const none = card({}, null);
+    // «Conversación» bands by the last touch; «Enviada» has its own two bands (below).
+    const talking = { stage: "negotiating" };
+    const recent = Array.from({ length: 3 }, () => card(talking, "2026-09-25T12:00:00Z"));
+    const answered = { ...talking, last_contact: { inbound: { at: "2025-01-10T14:00:00Z", subject: "Re: cotización", url: null }, outbound: null } };
+    const old = Array.from({ length: 8 }, () => card(answered, "2025-01-10T12:00:00Z"));
+    const none = card(talking, null);
     render(<Board cards={[...old, none, ...recent]} onOpen={() => undefined} now={NOW} />);
-    const column = screen.getByTestId("board-column-enviada");
-    expect(screen.getByTestId("board-count-enviada")).toHaveTextContent("12");
+    const column = screen.getByTestId("board-column-conversacion");
+    expect(screen.getByTestId("board-count-conversacion")).toHaveTextContent("12");
     expect(within(column).getAllByRole("article")).toHaveLength(12);
     expect(within(column).queryAllByRole("group")).toHaveLength(0);
     expect(
@@ -362,7 +370,7 @@ describe("Board · long columns", () => {
     });
     try {
       const lost = Array.from({ length: 100 }, () =>
-        card({ stage: "lost", closed_at: "2026-09-01T12:00:00Z", close_reason: "Sin respuesta" }));
+        card({ stage: "lost", closed_at: "2026-10-02T12:00:00Z", close_reason: "Sin respuesta" }));
       render(<Board cards={lost} onOpen={() => undefined} now={NOW} />);
       const column = screen.getByTestId("board-column-perdida");
       expect(screen.getByTestId("board-count-perdida")).toHaveTextContent("100");
@@ -376,5 +384,222 @@ describe("Board · long columns", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("Tablero · board rules (Task 8)", () => {
+  const silentCard = () => {
+    const c = card({}, "2026-09-14T12:00:00Z"); // 22 whole days before NOW, nobody answered
+    c.latest_revision = rev("2026-09-14T12:00:00Z", { origin: "authored" });
+    c.quotes[0].revisions = [c.latest_revision];
+    return c;
+  };
+
+  it("Silenciosas column holds the 22-day card with «Seguimiento N de 3» and «¿Marcar perdida?»", () => {
+    const silent = silentCard();
+    const onLose = vi.fn();
+    render(<Board cards={[silent, card()]} onOpen={() => undefined} onMove={() => undefined} onLose={onLose} now={NOW} />);
+    const column = screen.getByTestId("board-column-silenciosas");
+    expect(screen.getByTestId("board-count-silenciosas")).toHaveTextContent("1");
+    const b = within(column).getByTestId(`board-card-${silent.opportunity_id}`);
+    expect(within(b).getByTestId("board-followup-step")).toHaveTextContent("Seguimiento 2 de 3");
+    const lose = within(b).getByRole("button", { name: `¿Marcar perdida? ${silent.organization?.name}` });
+    expect(lose).toHaveTextContent("¿Marcar perdida?");
+    expect(lose.className).toContain("min-h-11");
+    fireEvent.click(lose);
+    expect(onLose).toHaveBeenCalledWith(silent);
+  });
+
+  it("offers no «¿Marcar perdida?» on a read-only board, and an empty Silenciosas says how it fills", () => {
+    const silent = silentCard();
+    const { unmount } = render(<Board cards={[silent]} onOpen={() => undefined} onLose={() => undefined} now={NOW} />);
+    expect(screen.queryByRole("button", { name: /^¿Marcar perdida\?/ })).toBeNull();
+    unmount();
+    render(<Board cards={[card()]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByTestId("board-column-silenciosas")).toHaveTextContent("Ninguna cotización lleva más de 21 días sin respuesta");
+  });
+
+  it("Enviada shows «0–7 días» and «8–21 días» dividers when sorted by date", () => {
+    const fresh = card({}, "2026-10-03T12:00:00Z"); // 3 days
+    const older = card({}, "2026-09-24T12:00:00Z"); // 12 days
+    // Day 30, but the client answered: not silent, it sits under «8–21 días» (controller ruling).
+    const answered = card({ last_contact: { inbound: { at: "2026-09-10T14:00:00Z", subject: "Re", url: null }, outbound: null } }, "2026-09-06T12:00:00Z");
+    const { unmount } = render(<Board cards={[answered, older, fresh]} onOpen={() => undefined} now={NOW} />);
+    const column = screen.getByTestId("board-column-enviada");
+    expect(within(column).getAllByTestId(/^board-band-/).map((e) => e.textContent)).toEqual(["0–7 días", "8–21 días"]);
+    const order = within(column).getAllByTestId(/^board-(band|card)-/).map((e) => e.getAttribute("data-testid"));
+    expect(order).toEqual([
+      "board-band-d0_7",
+      `board-card-${fresh.opportunity_id}`,
+      "board-band-d8_21",
+      `board-card-${older.opportunity_id}`,
+      `board-card-${answered.opportunity_id}`,
+    ]);
+    unmount();
+    render(<Board cards={[answered, older, fresh]} onOpen={() => undefined} sort="oldest" now={NOW} />);
+    expect(within(screen.getByTestId("board-column-enviada")).getAllByTestId(/^board-band-/).map((e) => e.textContent)).toEqual([
+      "8–21 días",
+      "0–7 días",
+    ]);
+  });
+
+  it("a draft-only Enviada card (nothing delivered yet) sits under «0–7 días», not «8–21 días»", () => {
+    const draft = card({}, "2026-09-01T12:00:00Z");
+    draft.latest_revision = rev("2026-09-01T12:00:00Z", { status: "draft", sent_at: null, origin: "authored" });
+    draft.quotes[0].revisions = [draft.latest_revision];
+    const older = card({}, "2026-09-24T12:00:00Z"); // 12 days
+    render(<Board cards={[older, draft]} onOpen={() => undefined} now={NOW} />);
+    const column = screen.getByTestId("board-column-enviada");
+    const order = within(column).getAllByTestId(/^board-(band|card)-/).map((e) => e.getAttribute("data-testid"));
+    expect(order).toEqual([
+      "board-band-d0_7",
+      `board-card-${draft.opportunity_id}`,
+      "board-band-d8_21",
+      `board-card-${older.opportunity_id}`,
+    ]);
+  });
+
+  it("a silent card's step counts from our last touch, an answered call included (one rhythm with the drawer)", () => {
+    // A historical import `followUpsDue` leaves out: the board falls back to the same rhythm.
+    const quietSince = card({}, "2026-08-01T12:00:00Z");
+    const called = card({ last_call: { at: "2026-09-26T12:00:00Z", outcome: "contesto" } }, "2026-08-01T12:00:00Z");
+    const fortnight = card({ last_call: { at: "2026-09-22T12:00:00Z", outcome: "contesto" } }, "2026-08-01T12:00:00Z");
+    expect(silentFollowUpStep(quietSince, NOW)).toBe(3);
+    expect(silentFollowUpStep(called, NOW)).toBe(1);
+    expect(silentFollowUpStep(fortnight, NOW)).toBe(2);
+  });
+
+  it("no Enviada dividers when sorted by name", () => {
+    render(<Board cards={[card({}, "2026-10-03T12:00:00Z"), card({}, "2026-09-24T12:00:00Z")]} onOpen={() => undefined} sort="name" now={NOW} />);
+    expect(within(screen.getByTestId("board-column-enviada")).queryAllByTestId(/^board-band-/)).toHaveLength(0);
+  });
+
+  it("card shows CN09318, «rev 2» and only the current neto", () => {
+    const c = card({
+      money: [
+        { currency: "CLP", net_total: "1180000", quote_number: "CN09318", revision_no: 2, quote_count: 2 },
+        { currency: "CLP", net_total: "990000", quote_number: "CN09317", revision_no: 1 },
+      ],
+      quote_numbers: ["CN09318", "CN09317"],
+    });
+    expect(cardMoney(c)).toEqual({ text: "$ 1.180.000", cn: "CN09318", rev: 2 });
+    render(<Board cards={[c]} onOpen={() => undefined} now={NOW} />);
+    const b = screen.getByTestId(`board-card-${c.opportunity_id}`);
+    expect(b).toHaveTextContent("CN09318");
+    expect(within(b).getByTestId("board-rev")).toHaveTextContent("rev 2");
+    expect(within(b).getByTestId("board-money")).toHaveTextContent("$ 1.180.000");
+    expect(b).not.toHaveTextContent("990.000");
+  });
+
+  it("an unread quote reads «sin leer»; a case with no money shows no amount", () => {
+    expect(cardMoney(card({ money: [{ currency: "unread", net_total: "1", quote_number: "CN09319", revision_no: 1 }] }))).toEqual({
+      text: "sin leer",
+      cn: "CN09319",
+      rev: 1,
+    });
+    expect(cardMoney(card({ money: [] }))).toEqual({ text: "", cn: "01239-26", rev: null });
+  });
+
+  it("an old loss is not on the board", () => {
+    const old = card({ stage: "lost", closed_at: "2026-09-20T12:00:00Z", close_reason: "Precio" });
+    const recent = card({ stage: "abandoned", closed_at: "2026-10-02T12:00:00Z", close_reason: "Sin respuesta" });
+    render(<Board cards={[old, recent]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByTestId("board-count-perdida")).toHaveTextContent("1");
+    expect(screen.queryByTestId(`board-card-${old.opportunity_id}`)).toBeNull();
+    expect(screen.getByTestId(`board-card-${recent.opportunity_id}`)).toBeInTheDocument();
+  });
+
+  it("Ganada keeps a won case from last year", () => {
+    const won = card({ stage: "won", closed_at: "2025-08-01T12:00:00Z" }, "2025-07-01T12:00:00Z");
+    render(<Board cards={[won]} onOpen={() => undefined} now={NOW} />);
+    expect(within(screen.getByTestId("board-column-ganada")).getByTestId(`board-card-${won.opportunity_id}`)).toBeInTheDocument();
+  });
+});
+
+describe("Pipeline page · Silenciosas (Task 8)", () => {
+  const DAY = 86_400_000;
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+  function silentNow(): OpportunityCardData {
+    const r = rev(ago(22 * DAY), { origin: "authored", revision_id: "rev-silent" });
+    return card({
+      opportunity_id: "44444444-4444-4444-8444-444444444444",
+      organization: { organization_id: "org-s", name: "Laboratorio Callado", confirmation: "confirmed", version: 1 },
+      requesting_institution_confirmation: "confirmed",
+      quotes: [{ quote_id: "q-s", quote_number: "01239-26", number_origin: "printed_historical", revisions: [r] }],
+      latest_revision: r,
+      version: 3,
+    });
+  }
+
+  function renderPage(items: OpportunityCardData[]) {
+    window.location.hash = "#/ventas/pipeline";
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/v2/workspace/pipeline") {
+        return Promise.resolve(new Response(JSON.stringify({ items, total: items.length, drive_configured: true }),
+          { status: 200, headers: { "Content-Type": "application/json" } }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    const session: AuthSessionState = {
+      kind: "signed_in",
+      method: "google_profile",
+      operator: { operatorId: "op-1", email: "ventas@ejemplo.invalid", displayName: "Ventas", role: "sales" },
+      caseCommandsEnabled: true,
+      crmAuthoringEnabled: true,
+    };
+    render(
+      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+        <PipelinePage />
+        <Toaster />
+      </AuthSessionContext.Provider>,
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearResourceCache();
+    window.location.hash = "";
+  });
+
+  it("is headed «Pipeline» with «Tablero · Tarjetas · Cerradas»", async () => {
+    renderPage([silentNow()]);
+    expect(await screen.findByRole("heading", { level: 1, name: "Pipeline" })).toBeInTheDocument();
+    const vista = await screen.findByRole("group", { name: "Vista" });
+    expect(within(vista).getAllByRole("button").map((b) => b.textContent)).toEqual(["Tablero", "Tarjetas", "Cerradas"]);
+  });
+
+  it("¿Marcar perdida? opens the lost reasons for that case", async () => {
+    renderPage([silentNow()]);
+    const b = await screen.findByTestId("board-card-44444444-4444-4444-8444-444444444444");
+    fireEvent.click(within(b).getByRole("button", { name: /^¿Marcar perdida\?/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Mover a «Perdida»" });
+    expect(dialog).toHaveTextContent("Laboratorio Callado");
+    expect(within(dialog).getByRole("button", { name: "Sin respuesta" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Precio" })).toBeInTheDocument();
+  });
+
+  it("drop on Silenciosas shows the refusal toast", async () => {
+    const fresh = card({
+      opportunity_id: "55555555-5555-4555-8555-555555555555",
+      organization: { organization_id: "org-f", name: "Planta Fresca", confirmation: "confirmed", version: 1 },
+    }, ago(2 * DAY));
+    renderPage([fresh]);
+    const b = await screen.findByTestId("board-card-55555555-5555-4555-8555-555555555555");
+    const data: Record<string, string> = {};
+    const dataTransfer = {
+      setData: (k: string, v: string) => { data[k] = v; },
+      getData: (k: string) => data[k] ?? "",
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    fireEvent.dragStart(b, { dataTransfer });
+    const target = screen.getByRole("region", { name: "Silenciosas" });
+    fireEvent.dragOver(target, { dataTransfer });
+    fireEvent.drop(target, { dataTransfer });
+    expect(await screen.findByText("Silenciosas se llena sola: un caso entra a los 21 días sin respuesta.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

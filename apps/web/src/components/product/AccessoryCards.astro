@@ -1,0 +1,70 @@
+---
+import Button from '../ui/Button.astro';
+
+/**
+ * Accesorios e insumos del modelo, en tarjetas: nota mono, nombre y «Cotizar»
+ * hacia el formulario con el modelo. Cuatro columnas; dos bajo 1100 px y una
+ * bajo 640 px.
+ */
+interface Props {
+  items: { name: string; note?: string }[];
+  quoteHref: string;
+}
+
+const { items, quoteHref } = Astro.props;
+---
+
+<ul class="acc">
+  {
+    items.map((item) => (
+      <li class="acc__card">
+        {item.note && <p class="t-label acc__note">{item.note}</p>}
+        <h3 class="t-h3">{item.name}</h3>
+        <Button href={quoteHref} variant="tertiary" size="sm" aria-label={`Cotizar ${item.name}`}>Cotizar</Button>
+      </li>
+    ))
+  }
+</ul>
+
+<style is:global>
+  .acc {
+    list-style: none;
+    margin: 3.5rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: 1fr;
+  }
+  .acc__card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.875rem;
+    padding: 1.25rem;
+    background: var(--color-paper);
+    border-top: 3px solid var(--fam, var(--color-teal-700));
+    border-radius: var(--radius-field);
+    box-shadow: var(--shadow-card);
+    transition: transform var(--ease-ui), box-shadow var(--ease-ui);
+  }
+  .acc__card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-lift);
+  }
+  .acc__note {
+    color: var(--fam, var(--color-teal-800));
+  }
+  .acc__card .btn-tertiary {
+    margin-top: auto;
+  }
+  @media (min-width: 640px) {
+    .acc {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 1100px) {
+    .acc {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+</style>

@@ -16,6 +16,9 @@ dependencies = [
     # RS256 signature check of Google ID tokens against Google's JWKS (v2/google_jwks.py), and
     # Argon2id for operator-profile PINs (v2/profile_pin.py) — in cryptography since 44.
     "cryptography>=44",
+    # Validates a model sheet against apps/web/src/content/modelos.schema.json before «Publicar web»
+    # commits it (v2/web_publish.py).
+    "jsonschema>=4.23,<5",
 ]
 
 [dependency-groups]

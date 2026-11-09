@@ -1,0 +1,54 @@
+{
+  "slug": "ohaus-mb120",
+  "family": "pesaje-humedad",
+  "brand": "ohaus",
+  "name": "MB120",
+  "headline": "OHAUS MB120: pesaje y análisis de humedad",
+  "lead": "Analizador de humedad con lámpara halógena que pesa la muestra, la seca y calcula humedad o sólidos por la pérdida de masa; propone el método solo con SmartGuide.",
+  "applications": [
+    "Porcentaje de humedad y de sólidos",
+    "Recuperación de humedad",
+    "Métodos de rutina compartidos entre equipos",
+    "Mediciones con exportación de resultados guardados"
+  ],
+  "specs": [
+    {
+      "label": "Tipo",
+      "value": "Analizador de humedad",
+      "source": "https://mx.ohaus.com/es-mx/mb120-2"
+    },
+    {
+      "label": "Capacidad",
+      "value": "120 g",
+      "source": "https://mx.ohaus.com/es-mx/mb120-2"
+    },
+    {
+      "label": "Legibilidad",
+      "value": "1 mg / 0,01 %",
+      "source": "https://mx.ohaus.com/es-mx/mb120-2"
+    },
+    {
+      "label": "Calentamiento",
+      "value": "Lámpara halógena, 40 a 230 °C en pasos de 1 °C",
+      "source": "https://mx.ohaus.com/es-mx/mb120-2"
+    },
+    {
+      "label": "Memoria",
+      "value": "100 métodos y 1.000 resultados",
+      "source": "https://mx.ohaus.com/es-mx/mb120-2"
+    },
+    {
+      "label": "Interfaces",
+      "value": "RS232, USB dispositivo y host USB",
+      "source": "https://mx.ohaus.com/es-mx/mb120-2"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://mx.ohaus.com/es-mx/mb120-2",
+  "official_pdf_url": "https://dmx.ohaus.com/assets/0/14/4294975066/4294975067/4294975068/5311db95-5042-4aed-b5d9-e985a9989b18.pdf",
+  "image_id": "ohaus-mb120",
+  "verified_on": "2026-10-19",
+  "showroom_id": "ohaus-mb120"
+}

@@ -21,8 +21,8 @@ const hasAside = Astro.slots.has('aside');
   {crumbs && <Breadcrumbs items={crumbs} />}
   <div class:list={['page-intro__body', hasAside && 'page-intro__body--split']}>
     <div>
-      <h1 class="t-display">{title}</h1>
-      {lead && <p class="t-lead mt-5">{lead}</p>}
+      <h1 class="page-intro__title">{title}</h1>
+      {lead && <p class="lede page-intro__lead">{lead}</p>}
     </div>
     {hasAside && (
       <div class="page-intro__aside">
@@ -34,9 +34,25 @@ const hasAside = Astro.slots.has('aside');
 </header>
 
 <style>
+  /* Migas, titular grande del sitio claro (800, apretado) y la frase, sobre el blanco. */
   .page-intro {
+    position: relative;
+    isolation: isolate;
     padding-top: 2rem;
-    padding-bottom: 3rem;
+    padding-bottom: 3.5rem;
+  }
+  .page-intro__title {
+    max-width: 16ch;
+    font-size: clamp(2.75rem, 6vw, 5rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.05em;
+    color: var(--color-ink-950);
+    overflow-wrap: anywhere;
+  }
+  .page-intro__lead {
+    margin-top: 1.25rem;
+    max-width: 52ch;
   }
   .page-intro__body {
     margin-top: 1.5rem;
@@ -47,7 +63,6 @@ const hasAside = Astro.slots.has('aside');
   @media (min-width: 768px) {
     .page-intro {
       padding-top: 3rem;
-      padding-bottom: 4.5rem;
     }
     .page-intro__body--split {
       display: grid;

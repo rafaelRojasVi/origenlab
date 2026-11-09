@@ -246,6 +246,11 @@ class AutoMailRules:
         people part carries its own `applied`, `refused`, `pending`, `held` (refused
         `MAX_PEOPLE_ATTEMPTS` times, not tried again) and `skipped`."""
         started = datetime.now(UTC)
+        try:
+            # Evidence of what visitors accepted, not a rule: recorded on every pass, switch on or off.
+            self._repo.record_web_form_consents()
+        except Exception:  # the pass must go on; the next one retries
+            logger.exception("auto mail rules: recording web-form consents failed")
         with self._repo._read() as cur:
             switch = read_switch(cur)
         operator: OperatorIdentity | None = switch["operator"]

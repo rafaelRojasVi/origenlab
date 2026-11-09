@@ -23,7 +23,7 @@ describe("Cotizaciones no leídas", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("00999-26 r1");
     expect(rows[0]).toHaveTextContent("El neto no cuadra con las líneas");
-    expect(within(rows[0]).getByRole("link", { name: /Caso ficticio/ })).toHaveAttribute("href", "#/crm/oportunidades/o-1");
+    expect(within(rows[0]).getByRole("link", { name: /Caso ficticio/ })).toHaveAttribute("href", "#/ventas/pipeline/o-1");
     expect(rows[1]).toHaveTextContent("No parece una cotización de OrigenLab");
   });
 });

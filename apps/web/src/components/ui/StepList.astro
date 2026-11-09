@@ -1,0 +1,79 @@
+---
+import { buyingSteps, type ProcessStep } from '../../data/consultation';
+
+/**
+ * Un procedimiento como secuencia vertical con un filete continuo: se lee como
+ * pasos, no como columnas iguales. Por defecto, los cuatro pasos de compra
+ * (`buyingSteps()`): la portada los muestra en `summary` (sólo el título) y
+ * `/como-comprar/` completos, junto con los pasos de la asesoría.
+ */
+interface Props {
+  steps?: readonly ProcessStep[];
+  summary?: boolean;
+  class?: string;
+}
+
+const { steps = buyingSteps(), summary = false, class: className } = Astro.props;
+---
+
+<ol class:list={['steps', summary && 'steps--summary', className]}>
+  {
+    steps.map((step, i) => (
+      <li class="step" data-step>
+        <span class="step__num t-data" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>
+        <div>
+          <h3 class="step__title">{step.title}</h3>
+          {!summary && <p class="t-body step__text">{step.body}</p>}
+        </div>
+      </li>
+    ))
+  }
+</ol>
+
+<style>
+  .steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--color-hairline-strong);
+  }
+  .step {
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 1rem;
+    padding-block: 1.25rem;
+    border-bottom: 1px solid var(--color-hairline);
+  }
+  .step__num {
+    font-size: 0.8125rem;
+    color: var(--color-teal-800);
+    line-height: 1.7;
+  }
+  .step__title {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-ink-950);
+  }
+  .step__text {
+    margin-top: 0.5rem;
+    color: var(--color-ink-600);
+    max-width: 62ch;
+  }
+  /* En el resumen el título es todo el paso: sube de escala para que la
+     secuencia sostenga la columna sin cuerpo de texto. */
+  .steps--summary .step {
+    align-items: baseline;
+  }
+  .steps--summary .step__title {
+    font-size: clamp(1.125rem, 1.05rem + 0.4vw, 1.375rem);
+    letter-spacing: -0.012em;
+  }
+
+  @media (min-width: 768px) {
+    .step {
+      grid-template-columns: 3rem minmax(0, 1fr);
+      gap: 1.5rem;
+      padding-block: 1.5rem;
+    }
+  }
+</style>

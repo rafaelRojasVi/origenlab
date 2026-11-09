@@ -3,6 +3,7 @@ import '../styles/global.css';
 import Seo from '../components/Seo.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import SiteFooter from '../components/SiteFooter.astro';
+import ChatBubble from '../components/ChatBubble.astro';
 
 interface Props {
   title: string;
@@ -13,14 +14,15 @@ interface Props {
   robots?: string;
   jsonLd?: readonly unknown[];
   ogImagePath?: string;
+  ogImageSize?: { width: number; height: number };
 }
 
-const { title, description, isHome, noindex, robots, jsonLd, ogImagePath } = Astro.props;
+const { title, description, isHome, noindex, robots, jsonLd, ogImagePath, ogImageSize } = Astro.props;
 const effectiveNoindex = noindex || robots === 'noindex';
 ---
 
 <!doctype html>
-<html lang="es-CL">
+<html lang="es-CL" data-noindex={effectiveNoindex ? '' : undefined}>
   <head>
     <Seo
       title={title}
@@ -29,15 +31,22 @@ const effectiveNoindex = noindex || robots === 'noindex';
       noindex={effectiveNoindex}
       jsonLd={jsonLd}
       ogImagePath={ogImagePath}
+      ogImageSize={ogImageSize}
     />
   </head>
   <body>
     <a href="#contenido" class="skip-link">Ir al contenido</a>
+    <div data-hd-sentinel aria-hidden="true"></div>
     <SiteHeader />
     <main id="contenido" tabindex="-1">
       <slot />
     </main>
     <SiteFooter />
+    {!effectiveNoindex && !Astro.url.pathname.startsWith('/contacto') && <ChatBubble />}
+    <script>
+      import { trackVisit } from '../lib/visit';
+      trackVisit();
+    </script>
 
     <style is:global>
       .skip-link {
@@ -50,10 +59,18 @@ const effectiveNoindex = noindex || robots === 'noindex';
         left: 1rem;
         top: 1rem;
         padding: 0.75rem 1.25rem;
-        background-color: var(--color-ink-950);
-        color: var(--color-paper);
-        border-radius: var(--radius-edge);
+        background-color: var(--color-accent);
+        color: var(--color-on-accent);
+        border-radius: var(--radius-btn);
         font-weight: 600;
+      }
+      [data-hd-sentinel] {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 1px;
+        height: 1px;
+        pointer-events: none;
       }
       main:focus {
         outline: none;

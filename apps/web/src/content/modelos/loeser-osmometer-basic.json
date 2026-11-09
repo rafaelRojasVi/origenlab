@@ -1,0 +1,51 @@
+{
+  "slug": "loeser-osmometer-basic",
+  "family": "osmometria",
+  "brand": "loeser",
+  "name": "Osmometer basic",
+  "headline": "Löser Messtechnik Osmometer basic: osmometría",
+  "lead": "Osmómetro crioscópico de operación manual: el usuario inicia la congelación con la aguja de cristales y el equipo reconoce y guarda el resultado.",
+  "applications": [
+    "Osmolalidad en suero, plasma y orina",
+    "Control de soluciones de infusión y de diálisis",
+    "Puesto de medición con poca carga diaria"
+  ],
+  "specs": [
+    {
+      "label": "Volumen de muestra",
+      "value": "100 o 50 µl",
+      "source": "http://www.loeser-osmometer.de/typ7-eng.html"
+    },
+    {
+      "label": "Tiempo de medición",
+      "value": "Aprox. 1,5 min con 100 µl",
+      "source": "http://www.loeser-osmometer.de/typ7-eng.html"
+    },
+    {
+      "label": "Rango",
+      "value": "0 a 2.500 mosm/kg H₂O, resolución 1 mosm/kg",
+      "source": "http://www.loeser-osmometer.de/typ7-eng.html"
+    },
+    {
+      "label": "Reproducibilidad",
+      "value": "±0,5 % o ±1,5 mosm con 100 µl; ±1 % o ±3 mosm con 50 µl",
+      "source": "http://www.loeser-osmometer.de/typ7-eng.html"
+    },
+    {
+      "label": "Memoria",
+      "value": "100 mediciones con número de muestra y usuario",
+      "source": "http://www.loeser-osmometer.de/typ7-eng.html"
+    },
+    {
+      "label": "Servicios",
+      "value": "No necesita suministro de agua; 100 a 230 V, aprox. 65 VA",
+      "source": "http://www.loeser-osmometer.de/typ7-eng.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "http://www.loeser-osmometer.de/typ7-eng.html",
+  "image_id": "loeser-osmometer-basic",
+  "verified_on": "2026-09-07"
+}

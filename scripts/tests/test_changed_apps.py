@@ -75,6 +75,10 @@ class TargetsFor(unittest.TestCase):
         self.assertEqual(changed_apps.targets_for(["apps/dashboard/src/a.tsx"]), ["dashboard"])
         self.assertEqual(changed_apps.targets_for(["apps/dashboard-proxy/src/a.ts"]), ["proxy"])
 
+    def test_the_model_sheet_schema_runs_api_and_dashboard(self):
+        self.assertEqual(changed_apps.targets_for(["apps/web/src/content/modelos.schema.json"]),
+                         ["api", "dashboard", "web"])
+
     def test_makefile_runs_everything(self):
         self.assertEqual(changed_apps.targets_for(["Makefile"]), list(changed_apps.ALL))
 

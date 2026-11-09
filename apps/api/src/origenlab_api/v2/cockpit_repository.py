@@ -13,9 +13,13 @@ from contextlib import contextmanager
 from typing import Any
 
 from origenlab_api.v2.case_kind import sale_cases
+from origenlab_api.v2.cockpit_schemas import TIMELINE_PAYLOAD_KEYS, TIMELINE_SKIPPED_EVENT_TYPES
 
 #: Maximum number of search hits returned; truncated flag set when reached.
 MAX_SEARCH_HITS = 50
+
+#: The case timeline reads at most this many events: the newest ones, returned oldest first.
+TIMELINE_MAX_EVENTS = 500
 
 #: All stages in the canonical vocabulary.
 _ALL_STAGES = (
@@ -28,6 +32,15 @@ _ALL_STAGES = (
     "lost",
     "abandoned",
 )
+
+
+def project_timeline_payload(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A timeline payload reduced to :data:`TIMELINE_PAYLOAD_KEYS`; every other key is dropped."""
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        return {}
+    return {key: value for key, value in payload.items() if key in TIMELINE_PAYLOAD_KEYS}
 
 
 class CockpitRepository:
@@ -892,6 +905,7 @@ class CockpitRepository:
             if agg_ids:
                 placeholders = ",".join(["%s::uuid"] * len(agg_ids))
                 agg_list = list(agg_ids)
+                skipped = sorted(TIMELINE_SKIPPED_EVENT_TYPES)
                 cur.execute(f"""
                     select
                       de.aggregate_kind,
@@ -899,12 +913,17 @@ class CockpitRepository:
                       de.event_type,
                       de.actor_operator_id::text,
                       de.payload,
-                      de.recorded_at::text
+                      de.recorded_at::text,
+                      op.display_name
                     from crm.domain_event de
+                    left join platform.operator op on op.id = de.actor_operator_id
                     where de.aggregate_id in ({placeholders})
-                    order by de.recorded_at, de.stream_position
-                """, agg_list)
-                for r in cur.fetchall():
+                      and de.event_type <> all(%s::text[])
+                    order by de.recorded_at desc, de.stream_position desc
+                    limit %s
+                """, [*agg_list, skipped, TIMELINE_MAX_EVENTS])
+                # Newest first to cap; back to oldest first, the order the route documents.
+                for r in reversed(cur.fetchall()):
                     entries.append({
                         "entry_kind": "domain_event",
                         "occurred_at": r[5],
@@ -912,7 +931,8 @@ class CockpitRepository:
                         "aggregate_kind": r[0],
                         "aggregate_id": r[1],
                         "actor_operator_id": r[3],
-                        "payload": r[4],
+                        "actor_display_name": r[6],
+                        "payload": project_timeline_payload(r[4]),
                         "quote_id": None,
                         "quote_number": None,
                         "revision_no": None,
@@ -939,6 +959,7 @@ class CockpitRepository:
                     "aggregate_kind": None,
                     "aggregate_id": None,
                     "actor_operator_id": None,
+                    "actor_display_name": None,
                     "payload": None,
                     "quote_id": r[0],
                     "quote_number": r[1],

@@ -65,7 +65,14 @@ from origenlab_worker.triage_model import (
     parse_reading,
     usage_tokens,
 )
-from origenlab_worker.triage_rules import TRIAGE_VERSION, RuleVerdict, TriageInput, classify
+from origenlab_worker.triage_rules import (
+    TRIAGE_VERSION,
+    WEB_QUOTE_ORIGIN,
+    RuleVerdict,
+    TriageInput,
+    classify,
+)
+from origenlab_worker.web_form_reading import WEB_FORM_VALUE_NORM, read_web_form
 
 logger = logging.getLogger(__name__)
 #: Extracts a PO number from full-phrase PDF body text: «ORDEN DE COMPRA N° 4500012345» or
@@ -541,6 +548,14 @@ class TriageDb:
                                             Jsonb({"version": 1, "tokens": list(tokens),
                                                    "purchase_order_numbers": list(purchase_order_numbers)})))
 
+    def record_web_form(self, source_record_id: str, facts: dict[str, str]) -> None:
+        """The product and consent a web-form submission carries (`web_form_reading.py`)."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", WEB_FORM_VALUE_NORM,
+                                            Jsonb({"version": 1, **facts})))
+
     def pending_forwards(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
             cur.execute(_FORWARD_PENDING, (since_days, limit))
@@ -905,6 +920,9 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     requester = db.requester_match(mail.body) if verdict.triage_class == "quote_request" else None
     matched = match_message(db, message, mail, settings) if verdict.triage_class in HUMAN_CLASSES else None
     match, match_value = matched if matched is not None else (None, None)
+    # Before `db.record`: the rules know a message is a web form from that reading, so the facts it
+    # carries must already be there when they can first see it.
+    record_web_form_reading(db, message.source_record_id, raw, mail)
     written = db.record(message.source_record_id, value, mentions, requester, match_value)
     if verdict.triage_class == "bounce":
         db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
@@ -1033,6 +1051,22 @@ def record_quote_refs(db: Any, source_record_id: str, mail: MailText) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
         logger.warning("quote reference reading skipped: %s", type(exc).__name__)
+        return False
+
+
+def record_web_form_reading(db: Any, source_record_id: str, raw: bytes, mail: MailText) -> bool:
+    """`web_form:v1` (`web_form_reading.py`) for a web-quote-form message, when it carries a product
+    or a consent. Isolated like the quote-number reading: a failure is logged by class and swallowed."""
+    if mail.machine_headers.get("x-origenlab-origin") != WEB_QUOTE_ORIGIN:
+        return False
+    try:
+        facts = read_web_form(raw)
+        if not facts:
+            return False
+        db.record_web_form(source_record_id, facts)
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("web form reading skipped: %s", type(exc).__name__)
         return False
 
 
@@ -1424,7 +1458,7 @@ class SweepCounts:
 
 
 __all__ = ["CASE_CARDS_SQL", "HUMAN_CLASSES", "case_row", "match_message", "DEFAULT_SINCE_DAYS", "OUTCOMES", "VALUE_NORM", "REQUESTER_VALUE_NORM", "PO_REFS_VALUE_NORM", "ModelSettings",
-           "backfill_quote_refs", "record_quote_refs", "record_po_refs",
+           "backfill_quote_refs", "record_quote_refs", "record_web_form_reading", "record_po_refs",
            "backfill_forwards", "record_forward_reading",
            "record_memory_reading",
            "ModelUnavailable", "is_permanent_api_error", "PendingMessage", "SweepCounts", "TriageDb",

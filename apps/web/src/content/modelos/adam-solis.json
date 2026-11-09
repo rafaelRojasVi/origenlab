@@ -1,0 +1,53 @@
+{
+  "slug": "adam-solis",
+  "family": "pesaje-humedad",
+  "brand": "adam-equipment",
+  "name": "Solis",
+  "headline": "Adam Equipment Solis: pesaje y análisis de humedad",
+  "lead": "Balanzas analíticas y semimicro con cámara de pesaje cerrada, calibración interna y externa y registro con fecha y hora para trazabilidad.",
+  "applications": [
+    "Pesaje analítico y preparación de patrones",
+    "Formulación y control de calidad",
+    "Determinación de densidad y pesaje dinámico",
+    "Docencia en química analítica"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad",
+      "value": "120 a 510 g según modelo",
+      "source": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html"
+    },
+    {
+      "label": "Legibilidad",
+      "value": "Desde 0,01 mg / 0,1 mg hasta 0,0001 g",
+      "source": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html"
+    },
+    {
+      "label": "Calibración",
+      "value": "Interna y externa",
+      "source": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html"
+    },
+    {
+      "label": "Trazabilidad",
+      "value": "Registro con fecha y hora",
+      "source": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html"
+    },
+    {
+      "label": "Interfaz",
+      "value": "RS-232 para computador o impresora",
+      "source": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html"
+    },
+    {
+      "label": "Funciones",
+      "value": "Conteo de piezas, pesaje por porcentaje y control de peso",
+      "source": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://adamequipment.com/solis-analytical-and-semi-micro-balances-us.html",
+  "official_pdf_url": "https://adamequipment.com/media/docs/data_sheets/SAB-Solis-DS-LT-EN-Print.pdf",
+  "image_id": "adam-solis",
+  "verified_on": "2026-09-07"
+}

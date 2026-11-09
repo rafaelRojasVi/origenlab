@@ -108,3 +108,20 @@ def test_distinct_numbers_with_first_sighting_and_message_count(disposable_datab
     assert by_number["CN09903"]["first_seen_at"] == "2026-10-05T10:00:00+00:00"
     # Newest first.
     assert [i["quote_number"] for i in items] == ["CN09903", "CN09906", "CN09902", "CN09901"]
+
+
+@needs_db
+def test_a_malformed_sent_at_falls_back_instead_of_failing_the_read(disposable_database) -> None:
+    """A Date header that looks like a timestamp but is not one («2026-13-40T99:99») passes a shape
+    regex; its cast would abort the whole read. It falls back to `acquired_at`, like any odd header."""
+    import psycopg
+
+    repo = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
+    _mail(disposable_database, "gmail:m1", ["CN09981"], "2026-13-40T99:99:00+00:00")
+    _mail(disposable_database, "gmail:m2", ["CN09982"], "2026-10-04T08:00:00+00:00")
+    _mail(disposable_database, "gmail:m3", ["CN09983"], "2026-10-04")  # a bare day is not a Date header
+
+    by_number = {i["quote_number"]: i for i in repo.mail_quote_numbers()["items"]}
+    assert by_number["CN09981"]["first_seen_at"] == "2026-10-05T10:00:00+00:00"
+    assert by_number["CN09982"]["first_seen_at"] == "2026-10-04T08:00:00+00:00"
+    assert by_number["CN09983"]["first_seen_at"] == "2026-10-05T10:00:00+00:00"

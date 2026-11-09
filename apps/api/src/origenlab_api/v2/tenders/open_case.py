@@ -40,6 +40,7 @@ from origenlab_api.v2.case_command_repository import (
     lock_new_organization_name,
     same_name_or_domain_organization,
 )
+from origenlab_api.v2.case_origin import ORIGIN_MERCADO_PUBLICO
 from origenlab_api.v2.command_core import DEFAULT_COMMAND_TIMEOUT_MS, json_payload
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
@@ -323,7 +324,7 @@ def open_tender_case(
     title = f"Licitación {code} — {(detail.title if detail is not None else None) or buyer_name}"[:_TITLE_MAX]
     opened = repo._open_case_for_client(
         cur, operator, receipt_id, title=title, organization_id=organization_id, note=note,
-        kind=TENDER_KIND, tender_status=OPENING_TENDER_STATUS,
+        kind=TENDER_KIND, tender_status=OPENING_TENDER_STATUS, origin=ORIGIN_MERCADO_PUBLICO,
         extra_payload={"kind": TENDER_KIND, "tender_status": OPENING_TENDER_STATUS, "notice_id": notice["id"]},
     )
     case_id = opened["opportunity_id"]

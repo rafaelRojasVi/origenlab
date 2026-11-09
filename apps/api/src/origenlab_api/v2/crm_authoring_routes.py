@@ -26,8 +26,9 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from origenlab_api.v2.call_outcome import CALL_NEXT_STEP_MAX, CallOutcome, NoteKind, check_call_shape
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
 from origenlab_api.v2.commands import (
@@ -308,13 +309,31 @@ class RejectSupplierCandidateBody(_Base):
 
 
 class AddNoteBody(BaseModel):
-    """add-note: uses 'body' (≤ 8000) instead of 'note'."""
+    """add-note: uses 'body' (≤ 8000) instead of 'note'.
+
+    A «Llamada» is a note with `note_kind = 'llamada'` and a typed `call_outcome` (and an optional
+    `call_next_step`): all three are `crm.note` columns written once (`call_outcome.py`). The shape
+    mirrors the table's check, so a bad request is a 422 before it reaches the database.
+    """
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     subject_kind: Annotated[str, Field(pattern="^(person|organization|opportunity|product)$")]
     subject_id: str
     body: Annotated[str, _BODY]
+    note_kind: NoteKind | None = None
+    call_outcome: CallOutcome | None = None
+    call_next_step: Annotated[str | None, Field(max_length=CALL_NEXT_STEP_MAX)] = None
+
+    @field_validator("call_next_step")
+    @classmethod
+    def _blank_next_step_is_none(cls, v: str | None) -> str | None:
+        return v if v and v.strip() else None
+
+    @model_validator(mode="after")
+    def _llamada_shape(self) -> "AddNoteBody":
+        check_call_shape(self.note_kind, self.call_outcome, self.call_next_step)
+        return self
 
     @field_validator("body")
     @classmethod

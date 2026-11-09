@@ -1,0 +1,53 @@
+{
+  "slug": "serva-hpe-bluehorizon",
+  "family": "electroforesis",
+  "brand": "serva",
+  "name": "HPE BlueHorizon",
+  "headline": "SERVA Electrophoresis HPE BlueHorizon: electroforesis",
+  "lead": "Cámara horizontal de lecho plano con placa cerámica de refrigeración y tres posiciones de electrodo, para geles soportados en película de hasta 260 × 205 mm.",
+  "applications": [
+    "Enfoque isoeléctrico en gel soportado",
+    "Segunda dimensión de electroforesis bidimensional",
+    "SDS-PAGE de alta resolución en formato grande",
+    "Separaciones que exigen temperatura controlada"
+  ],
+  "specs": [
+    {
+      "label": "Formato de gel",
+      "value": "Soportado en película, hasta 260 × 205 mm",
+      "source": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html"
+    },
+    {
+      "label": "Refrigeración",
+      "value": "Placa cerámica integrada, conectada a un refrigerador de agua",
+      "source": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html"
+    },
+    {
+      "label": "Electrodos",
+      "value": "Tres posiciones de varilla de platino: 270 mm fija, 195 mm fija y 115 mm variable",
+      "source": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html"
+    },
+    {
+      "label": "Construcción",
+      "value": "Carcasa metálica con cajón integrado",
+      "source": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html"
+    },
+    {
+      "label": "Fuente recomendada",
+      "value": "BluePower 3000 HPE",
+      "source": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html"
+    },
+    {
+      "label": "Sistema completo",
+      "value": "HPE-BHSYS, con unidad de refrigeración",
+      "source": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://www.serva.de/enDE/ProductDetails/5120_HPE-BH_HPE_TM_BlueHorizon_TM_212_457.html",
+  "official_pdf_url": "https://www.serva.de/www_root/documents/Electrophoresis%20by%20SERVA_web.pdf",
+  "image_id": "serva-hpe-bluehorizon",
+  "verified_on": "2026-09-07"
+}

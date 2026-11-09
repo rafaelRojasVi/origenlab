@@ -1,0 +1,297 @@
+---
+import { join } from 'node:path';
+import sharp from 'sharp';
+import Button from '../ui/Button.astro';
+import LightBox from '../ui/LightBox.astro';
+import Showroom from '../home/Showroom.astro';
+import ModelHeroCopy from './ModelHeroCopy.astro';
+import { ctaLabels } from '../../lib/ctaLabels';
+import { buildWhatsAppQuoteUrl } from '../../lib/whatsapp';
+import { imageForEntry, type FamilyInfo } from '../../lib/modelos';
+import type { Brand } from '../../data/brands';
+import type { Modelo } from '../../content.config';
+
+/**
+ * Marco de la página de modelo: primera pantalla, el resto en el slot y la
+ * barra fija de cotización.
+ *
+ * `media` decide qué acompaña al texto de la primera pantalla (`ModelHeroCopy`):
+ *   `story`    nada aquí: la página monta `ProductStory` en el slot y le pasa el
+ *              texto en su slot `intro`; el escenario 3D es la primera pantalla
+ *   `showroom` la sala 3D del equipo (`home/Showroom`), sin historia
+ *   `photo`    la fotografía VERIFIED del registro, grande, «parada» sobre un
+ *              escenario redondeado con el tinte de la familia y un charco de
+ *              luz blanca (`LightBox`, multiply). Una foto con fondo gris (sus
+ *              esquinas no son blancas: el multiply dejaría un rectángulo gris
+ *              sobre el tinte) va sobre un panel blanco liso.
+ * En los tres casos el bloque de entrada lleva `data-first-screen`.
+ *
+ * `--fam` (tinta de la familia) queda en `.model-page`
+ * para las secciones de la ficha: filetes, numerales, notas del 3D.
+ *
+ * La barra fija (`[data-sticky-cta]`) está al final del slot, `position: sticky`
+ * al pie. Con JavaScript queda escondida (`inert`, fuera de la pantalla) hasta
+ * que `[data-first-screen]` sale de cuadro, y vuelve a esconderse si regresa;
+ * sin JavaScript se ve como siempre.
+ */
+interface Props {
+  entry: Modelo;
+  brand: Brand | undefined;
+  family: FamilyInfo;
+  media: 'story' | 'showroom' | 'photo';
+  quoteHref: string;
+}
+
+const { entry, brand, family, media, quoteHref } = Astro.props;
+const brandName = brand?.name ?? entry.brand;
+const whatsappHref = buildWhatsAppQuoteUrl({ productName: entry.name, brandName });
+const photo = imageForEntry(entry);
+const fam = `var(--color-family-${entry.family === 'pesaje-humedad' ? 'pesaje' : entry.family})`;
+
+/* ¿Fondo de foto blanco? Las cuatro esquinas de la maestra, reducida a 16 px. */
+async function whiteBackground(path: string | null | undefined): Promise<boolean> {
+  if (!path) return true;
+  try {
+    const { data } = await sharp(join(process.cwd(), 'public', path)).removeAlpha().resize(16, 16, { fit: 'fill' }).raw().toBuffer({ resolveWithObject: true });
+    return [0, 15, 240, 255].every((px) => (data[px * 3] + data[px * 3 + 1] + data[px * 3 + 2]) / 3 >= 235);
+  } catch {
+    return true;
+  }
+}
+const plain = media === 'photo' && !(await whiteBackground(photo?.masterPath));
+---
+
+<div class="model-page" style={`--fam: ${fam}`}>
+  {
+    media !== 'story' && (
+      <section class="shell mh-sec" data-first-screen aria-labelledby="modelo-titulo">
+        <ModelHeroCopy entry={entry} brand={brand} family={family} quoteHref={quoteHref} />
+        <div class:list={['mh-sec__media', media === 'photo' && 'mh-stage', plain && 'mh-stage--plain']}>
+          {media === 'showroom' && entry.showroom_id && <Showroom id={entry.showroom_id} />}
+          {media === 'photo' && <LightBox image={photo} brandName={brandName} size="hero" priority ratio="1 / 1" />}
+        </div>
+      </section>
+    )
+  }
+
+  <slot />
+
+  <aside class="cta-bar" data-sticky-cta aria-label={`Cotizar ${entry.name}`}>
+    <div class="shell cta-bar__inner">
+      <p class="cta-bar__name" translate="no">
+        <b>{entry.name}</b>
+        <span class="t-label">{brandName} · {family.short}</span>
+      </p>
+      <div class="cta-bar__act">
+        <Button href={quoteHref} size="sm" track="cotizacion_click" modelo={entry.slug}>{ctaLabels.solicitarCotizacion}</Button>
+        <Button href={whatsappHref} size="sm" variant="whatsapp" external class="cta-bar__wa" track="whatsapp_click" modelo={entry.slug}>
+          <span class="cta-bar__wa-t">{ctaLabels.whatsappCorto}</span>
+        </Button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script>
+  /**
+   * Medición propia (`lib/stats.ts`): un solo escucha de clics para toda la
+   * página de modelo: los botones de la primera pantalla, los de la barra fija,
+   * los de la banda de cierre (`ClosingQuoteBand`) y los enlaces a la ficha del
+   * fabricante. Después, la barra fija: aparece cuando la primera pantalla sale
+   * de cuadro.
+   */
+  import { installTrackClicks } from '../../lib/stats';
+
+  installTrackClicks();
+
+  const bar = document.querySelector<HTMLElement>('[data-sticky-cta]');
+  const first = document.querySelector('[data-first-screen]');
+  if (bar && first && 'IntersectionObserver' in window) {
+    const hide = (hidden: boolean) => {
+      bar.inert = hidden;
+      bar.toggleAttribute('data-hidden', hidden);
+    };
+    hide(true);
+    document.documentElement.dataset.barReady = '';
+    new IntersectionObserver(([entry]) => hide(entry.isIntersecting)).observe(first);
+  }
+</script>
+
+<style is:global>
+  /* Alto de la cabecera: 72 px arriba en escritorio y 56 px con scroll, igual que ella (`SiteHeader`). */
+  @property --hd-h {
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 56px;
+  }
+  .model-page {
+    --hd-h: 56px;
+  }
+  @media (min-width: 1024px) {
+    .model-page {
+      --hd-h: 72px;
+    }
+    html:has([data-scrolled]) .model-page {
+      --hd-h: 56px;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      @supports (animation-timeline: scroll()) {
+        .model-page {
+          animation-name: model-hd;
+          animation-timing-function: linear;
+          animation-fill-mode: both;
+          animation-timeline: scroll(root);
+          animation-range: 0 120px;
+        }
+      }
+    }
+  }
+  @keyframes model-hd {
+    to {
+      --hd-h: 56px;
+    }
+  }
+  /* Secciones de la página de modelo (las dos páginas que usan este marco): aire, franja alterna y titular. */
+  .model-page .msec {
+    padding-block: clamp(3rem, 6vw, 4.5rem);
+  }
+  .model-page .msec--alt {
+    background: var(--color-surface);
+  }
+  .model-page .mh2 {
+    margin-top: 0.75rem;
+    font-size: clamp(2.125rem, 4.4vw, 3.5rem);
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+    font-weight: 800;
+  }
+  /* Relacionados (LitCard) y el enlace al ejemplo de cotización en la banda de cierre: las dos páginas de modelo. */
+  .model-rel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem 1rem;
+    margin-top: 3rem;
+  }
+  .model-quote-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    margin-top: 0.75rem;
+    font-weight: 600;
+    color: var(--color-teal-800);
+    text-decoration: underline;
+    text-underline-offset: 0.25em;
+  }
+  @media (min-width: 960px) {
+    .model-rel {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1.5rem;
+    }
+  }
+  .mh-sec {
+    display: grid;
+    gap: 1rem 3rem;
+    min-height: calc(100svh - var(--hd-h));
+    padding-bottom: 2rem;
+  }
+  .mh-sec__media {
+    align-self: center;
+  }
+  /* Sin 3D: la foto grande en una tarjeta blanca con sombra suave (sin tintes por familia, dueño 2026-11-08). */
+  .mh-stage {
+    position: relative;
+    border-radius: var(--radius-scene);
+    background: var(--color-paper);
+    border: 1px solid var(--color-hairline);
+    box-shadow: var(--shadow-card);
+  }
+  .mh-stage--plain {
+    background: var(--color-paper);
+    box-shadow: var(--shadow-card);
+  }
+  @media (min-width: 760px) {
+    .mh-sec {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      padding-bottom: 0;
+    }
+    .mh-sec__media {
+      margin-block: 2rem 5.5rem;
+    }
+  }
+
+  .cta-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    background-color: var(--color-paper);
+    border-top: 1px solid var(--color-hairline);
+    box-shadow: 0 -8px 24px rgb(15 90 80 / 0.08);
+  }
+  .cta-bar__inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    height: 3.5rem;
+  }
+  .cta-bar__name {
+    display: none;
+    align-items: baseline;
+    gap: 0.875rem;
+    min-width: 0;
+  }
+  .cta-bar__name b {
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--color-ink-950);
+  }
+  .cta-bar__act {
+    display: flex;
+    gap: 0.625rem;
+    flex: 1;
+    justify-content: flex-end;
+  }
+  .cta-bar__act > .btn-primary {
+    flex: 1 1 auto;
+  }
+  /* Con JavaScript la barra espera fuera de pantalla hasta salir de la primera. */
+  html[data-bar-ready] .cta-bar[data-hidden] {
+    transform: translateY(100%);
+    box-shadow: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    html[data-bar-ready] .cta-bar {
+      transition: transform 200ms ease-out;
+    }
+  }
+  /* Lo enfocado con el teclado no queda escondido detrás de la barra. */
+  :root:has([data-sticky-cta]) {
+    scroll-padding-bottom: 5rem;
+  }
+  @media (max-width: 639.98px) {
+    .cta-bar__act > .cta-bar__wa {
+      width: var(--btn-h-sm);
+      padding: 0;
+    }
+    .cta-bar__wa-t {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+  @media (min-width: 640px) {
+    .cta-bar__name {
+      display: flex;
+    }
+    .cta-bar__act {
+      flex: none;
+    }
+    .cta-bar__act > .btn-primary {
+      flex: none;
+    }
+  }
+</style>

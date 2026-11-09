@@ -1,0 +1,81 @@
+{
+  "slug": "ortoalresa-digicen-22",
+  "family": "centrifugacion",
+  "brand": "ortoalresa",
+  "name": "Digicen 22",
+  "headline": "Ortoalresa Digicen 22: centrífuga universal",
+  "lead": "Centrífuga universal ventilada para microplacas, criotubos, microtubos y tubos hasta 100 ml según configuración.",
+  "applications": [
+    "Universal",
+    "Microplacas",
+    "Criotubos",
+    "Microtubos",
+    "Tubos hasta 100 ml",
+    "Control de calidad",
+    "Investigación"
+  ],
+  "specs": [
+    {
+      "label": "Capacidad máxima",
+      "value": "4 × 100 ml",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Pantalla",
+      "value": "TFT táctil a color",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Velocidad máxima",
+      "value": "16.500 RPM / 26.480 ×g",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Versión",
+      "value": "Ventilada",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Rotores",
+      "value": "Microplacas, criotubos, microtubos y tubos hasta 100 ml (según configuración)",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Accesorios",
+      "value": "Sistema REI sin herramientas",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Conectividad",
+      "value": "SmartConnect según ficha del fabricante",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Motor",
+      "value": "Inducción sin escobillas",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Nivel de ruido",
+      "value": "Inferior a 60 dB",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Rotor",
+      "value": "Reconocimiento automático",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    },
+    {
+      "label": "Cámara",
+      "value": "Acero inoxidable",
+      "source": "https://ortoalresa.com/centrifugas/digicen-22/"
+    }
+  ],
+  "accessories": [],
+  "related": [],
+  "faqs": [],
+  "official_url": "https://ortoalresa.com/centrifugas/digicen-22/",
+  "official_pdf_url": "https://ortoalresa.com/catalogo_producto/Catalogo_serie_Digicen_22_ESP.pdf",
+  "image_id": "ortoalresa-digicen-22",
+  "verified_on": "2026-09-07"
+}

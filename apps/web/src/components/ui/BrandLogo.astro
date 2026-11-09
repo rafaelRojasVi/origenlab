@@ -4,6 +4,10 @@ import type { Brand } from '../../data/brands';
 /**
  * Logotipo de marca a tinta única. Las alturas ópticas viven en `brands.ts`
  * porque dependen del lockup de cada fabricante, no del contexto de uso.
+ *
+ * Los siete archivos de `public/brands/` son una sola tinta grafito sobre
+ * transparencia (`npm run build:brand-logos`). El sitio es claro: se dibujan
+ * siempre con su tinta original.
  */
 interface Props {
   brand: Brand;

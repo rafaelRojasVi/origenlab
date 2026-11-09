@@ -32,6 +32,7 @@ const ROUTES = [
   ['categoria-control-calidad', '/categorias/control-de-calidad/'],
   ['categoria-laboratorio-clinico', '/categorias/laboratorio-clinico/'],
   ['servicios', '/servicios/'],
+  ['como-comprar', '/como-comprar/'],
   ['nosotros', '/nosotros/'],
   ['contacto', '/contacto/'],
   ['privacidad', '/privacidad/'],

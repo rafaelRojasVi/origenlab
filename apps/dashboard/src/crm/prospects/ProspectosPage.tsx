@@ -32,7 +32,7 @@ import { santiagoDay } from "./santiagoDate";
  * best first, 25 at a time — by default only genuinely new ones (not in the CRM, not in our mail, never
  * anyone in Bajas). Each card says why now, what fits and how to reach them; «Contactar» puts them in
  * the CRM as a prospect, «Más tarde» brings them back on a day, «Descartar» (with a reason) never
- * shows them again — «Deshacer» undoes it. A card opens the full profile (`#/crm/prospectos/<id>`).
+ * shows them again — «Deshacer» undoes it. A card opens the full profile (`#/ventas/listas/<id>`).
  */
 type Navigate = (section: CrmSection, id?: string | null) => void;
 

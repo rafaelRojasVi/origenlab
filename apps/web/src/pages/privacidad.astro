@@ -51,6 +51,12 @@ const approved = isLegalTextApproved();
         para responder esa consulta comercial y para preparar la cotización que nos pide.
       </p>
       <p class="t-body">
+        Para enviar el formulario usted acepta, con una casilla que no viene marcada de antemano,
+        que OrigenLab use esos datos para responder su solicitud y contactarlo sobre ella. Al enviarlo
+        guardamos esa aceptación junto con la versión del texto que usted vio. Conforme a la Ley 21.719
+        sobre protección de datos personales, puede pedir la eliminación de sus datos escribiendo a <a class="link-plain" href={`mailto:${contact.email}`}>{contact.email}</a>.
+      </p>
+      <p class="t-body">
         No compramos listas, no compartimos sus datos con terceros para su publicidad y no los
         usamos para perfilarlo.
       </p>
@@ -63,10 +69,17 @@ const approved = isLegalTextApproved();
 
     <div class="prose mt-6">
       <p class="t-body">
-        No tiene cuentas de usuario, ni carrito, ni píxeles publicitarios, ni analítica,
-        formularios comerciales activos. El sitio tiene un formulario de solicitud de cotización
-        en <a class="link-plain" href="/contacto/">/contacto/</a>: recoge qué necesita cotizar,
-        su correo y su institución para poder responderle. Estos datos llegan por correo electrónico
+        No tiene cuentas de usuario, ni carrito, ni píxeles publicitarios. Cuenta las
+        visitas por página y por origen (buscador, perfil de Google, LinkedIn, WhatsApp,
+        directo, navegación interna u otro sitio) y cinco acciones del sitio (pedir cotización, WhatsApp, ver el modelo en 3D,
+        enviar el formulario y abrir una ficha técnica), sin cookies ni identificadores; sólo se
+        registra el nombre, la página o el origen y, en las acciones, el modelo, y los datos
+        quedan en origenlab.cl. Tiene un
+        único formulario, el de solicitud de cotización en{' '}
+        <a class="link-plain" href="/contacto/">/contacto/</a>: recoge qué necesita cotizar,
+        el producto de interés si usted lo indica, su correo y su institución, y los datos
+        opcionales que quiera añadir (nombre, teléfono, ciudad y plazo), para poder responderle.
+        Estos datos llegan por correo electrónico
         a contacto@origenlab.cl y se guardan en el CRM de OrigenLab para atender la solicitud.
         No se usan para envíos masivos ni se comparten con terceros fuera de los proveedores técnicos.
       </p>

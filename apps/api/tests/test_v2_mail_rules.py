@@ -1364,3 +1364,22 @@ def test_an_ordinary_request_keeps_its_title_even_when_the_subject_says_so() -> 
     ))
     assert action.rule_id == "R7"
     assert action.case_title == "Solicitud de cotización — Solicitud de cotización balanza"
+
+
+def test_a_web_form_with_a_product_adds_the_case_interest_after_the_case_steps_and_never_a_consent_step() -> None:
+    facts = dict(web_form_product="UP400St", web_form_consent_version="consent-v1-2026-11",
+                 web_form_accepted_at="2026-11-08T10:15:00-03:00")
+    for cases in ((), (case(id="c-3", people=("ana@lab-ficticio.example.test",)),)):
+        action = only(Snapshot(evidence=(web_form(**facts),), cases=cases, organizations=()))
+        steps = [c["command"] for c in action.commands]
+        assert steps[-1] == "record_web_form_interest" and "record_web_form_consent" not in steps, steps
+        interest = action.commands[-1]["inputs"]
+        assert (interest["opportunity_id"], interest["model_text"]) == ("@case", "UP400St")
+
+
+def test_a_web_form_without_a_product_plans_exactly_what_it_did_before_and_a_proposal_gets_no_interest() -> None:
+    action = only(Snapshot(evidence=(web_form(web_form_consent_version="v1"),), cases=(), organizations=()))
+    assert "record_web_form_interest" not in {c["command"] for c in action.commands}
+    several = [org(id="o-1", domains=("lab-ficticio.example.test",)), org(id="o-2", domains=("lab-ficticio.example.test",))]
+    proposal = only(Snapshot(evidence=(web_form(web_form_product="UP400St"),), cases=(), organizations=tuple(several)))
+    assert proposal.mode == "proposal" and not proposal.commands

@@ -1,3 +1,5 @@
+import { publicClaim } from './claims';
+
 /**
  * Asesoría técnica antes de cotizar.
  *
@@ -106,3 +108,50 @@ export const consultationProcess: readonly ProcessStep[] = [
     body: 'Cuando el equipo lo requiere, se confirma con el fabricante antes de comprometer una fecha. No prometemos stock ni plazos sin esa confirmación.',
   },
 ];
+
+/**
+ * Cómo se compra, en cuatro pasos: la portada los resume y `/como-comprar/` los
+ * desarrolla (tablero HomeA, 2026-11-07).
+ *
+ * Cada frase que es una afirmación sale de `publicClaim` y, si el registro no
+ * la aprueba, cae a una redacción que no la contiene. Hoy el abono al pedido
+ * no está aprobado para el sitio público: el tercer paso remite a las
+ * condiciones de la cotización y no nombra proporción alguna. El segundo no
+ * usa «plazos», una palabra de tiempo de entrega que nadie ha aprobado.
+ *
+ * `resolve` es la puerta de las afirmaciones; las pruebas pasan otra.
+ */
+export function buyingSteps(resolve: (id: string) => string | undefined = publicClaim): ProcessStep[] {
+  const sameDay = resolve('cotizacion-mismo-dia-habil');
+  const payment = resolve('pago-50-50');
+  const dispatch = resolve('despacho-todo-chile');
+  const startup = resolve('puesta-en-marcha-con-fabrica');
+  const publicSales = resolve('vende-mercado-publico');
+
+  const delivery =
+    dispatch && startup
+      ? `${dispatch}, con ${startup.charAt(0).toLowerCase()}${startup.slice(1)}.`
+      : dispatch
+        ? `${dispatch}.`
+        : startup
+          ? `${startup}.`
+          : 'Coordinamos la entrega con usted.';
+
+  return [
+    {
+      title: 'Cuéntenos la aplicación',
+      body: 'Qué muestra procesa y qué necesita lograr. Respondemos por formulario o WhatsApp.',
+    },
+    {
+      title: sameDay ?? 'Cotización con asesoría técnica',
+      body: `Con ficha técnica del fabricante y condiciones por escrito.${publicSales ? ' También por Mercado Público.' : ''}`,
+    },
+    payment
+      ? { title: 'Abono al pedido', body: `${payment}.` }
+      : { title: 'Pago y confirmación del pedido', body: 'Condiciones de pago en la cotización.' },
+    {
+      title: 'Entrega y puesta en marcha',
+      body: delivery,
+    },
+  ];
+}

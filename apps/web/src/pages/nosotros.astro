@@ -8,6 +8,8 @@ import { company } from '../data/company';
 import { contact } from '../data/contact';
 import { brands } from '../data/brands';
 import BrandLogo from '../components/ui/BrandLogo.astro';
+// Plan comercial (2026-11-08): compradores de industria antes que la academia.
+const audience = [...company.audience].sort((a, b) => Number(/universidad/i.test(a)) - Number(/universidad/i.test(b)));
 ---
 
 <Layout
@@ -33,8 +35,7 @@ import BrandLogo from '../components/ui/BrandLogo.astro';
           corresponde a la aplicación, al volumen de trabajo y al presupuesto disponible.
         </p>
         <p class="t-body">
-          La garantía se rige por las condiciones del fabricante y se confirma en cada cotización. En
-          equipos complejos, la instalación o la puesta en marcha se coordinan cuando quedan
+          En equipos complejos, la instalación o la puesta en marcha se coordinan cuando quedan
           acordadas por escrito. {company.catalogNote}
         </p>
       </div>
@@ -48,7 +49,7 @@ import BrandLogo from '../components/ui/BrandLogo.astro';
       <div class="split__body">
         <p class="t-body">{company.homeIntro}</p>
         <ul class="audience">
-          {company.audience.map((item) => <li>{item}</li>)}
+          {audience.map((item) => <li>{item}</li>)}
         </ul>
       </div>
     </div>
@@ -66,8 +67,7 @@ import BrandLogo from '../components/ui/BrandLogo.astro';
         </p>
         <p class="t-body">
           Trabajamos con fabricantes de equipamiento e insumos de laboratorio. Publicamos el
-          catálogo de las líneas que podemos documentar y no declaramos representación oficial,
-          distribución exclusiva ni certificación de ninguna marca.
+          catálogo de las líneas que podemos documentar.
         </p>
         <p class="brands-link">
           <a href="/marcas/" class="link-arrow">
@@ -110,7 +110,6 @@ import BrandLogo from '../components/ui/BrandLogo.astro';
   </section>
 
   <ClosingQuoteBand
-    index={5}
     title="Hablemos de lo que necesita su laboratorio."
     body="Escríbanos con la aplicación, la institución y su ciudad. Respondemos por el canal que prefiera dentro del horario publicado."
   />

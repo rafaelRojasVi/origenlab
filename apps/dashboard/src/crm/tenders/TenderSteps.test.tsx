@@ -75,7 +75,7 @@ describe("TenderSteps", () => {
     expect(within(nav).getByText("3 de 6 listos")).toBeInTheDocument();
     expect(within(nav).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "3");
     expect(within(nav).getByText("Siguiente paso")).toBeInTheDocument();
-    expect(within(nav).getByRole("link", { name: "Ir a Preferencias →" })).toHaveAttribute("href", "#/crm/cotizador/preferencias");
+    expect(within(nav).getByRole("link", { name: "Ir a Preferencias →" })).toHaveAttribute("href", "#/ventas/cotizaciones/preferencias");
   });
 });
 
