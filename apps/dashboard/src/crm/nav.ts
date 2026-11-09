@@ -59,6 +59,7 @@ export const AREAS: Area[] = [
     tabs: [
       { label: "Operaciones", sections: ["datos"] },
       { label: "Historial", sections: ["historial"] },
+      { label: "Meta y socios", sections: ["ajustes-meta"], adminOnly: true },
     ],
   },
 ];

@@ -360,7 +360,7 @@ function Evidence({ review }: { review: ReviewResponse }) {
 
 // ── «Metas y socios» finance-settings panel (admin only) ─────────────────────
 
-function FinanceSettingsPanel() {
+export function FinanceSettingsPanel() {
   const [state, reload] = useResource(fetchFinanceSettings);
   return (
     <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={4} />} errorTitle="No se pudo leer ajustes de Finanzas">

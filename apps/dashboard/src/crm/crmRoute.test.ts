@@ -25,6 +25,7 @@ describe("section paths", () => {
       "catalogo-web": "catalogo/web",
       datos: "ajustes/operaciones",
       historial: "ajustes/historial",
+      "ajustes-meta": "ajustes/meta",
     } satisfies Record<CrmSection, string>);
   });
 

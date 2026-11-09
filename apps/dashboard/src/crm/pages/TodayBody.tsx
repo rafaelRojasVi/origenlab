@@ -44,6 +44,7 @@ import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { crmHash, type CrmSection, type DatosTab } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
+import { setCotizadorReturn } from "../quotes/cotizadorReturn";
 import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import {
   buildParaTiQueue,
@@ -451,7 +452,7 @@ function CotizarQueueRow({
     : null;
   // Sales and admin go straight to the Cotizador (the open draft, else a new quote); anyone else
   // opens the case, as before.
-  const toCotizador = useCallback((quoteId: string) => navigate("cotizador", quoteId), [navigate]);
+  const toCotizador = useCallback((quoteId: string) => { setCotizadorReturn(crmHash("resumen")); navigate("cotizador", quoteId); }, [navigate]);
   const quote = useOpenOrCreateQuote(toCotizador);
 
   return (

@@ -17,7 +17,8 @@ export type CrmSection =
   | "fin-por-pagar"
   | "fin-gastos"
   | "fin-financiamiento"
-  | "fin-socios";
+  | "fin-socios"
+  | "ajustes-meta";
 
 /** The tabs of «Datos» (admin only): what was technical in Revisión, plus suppliers and the Drive archive.
  *  «decidir» is the «Por ordenar» section linked from «Hoy». */
@@ -54,6 +55,7 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "catalogo-web", label: "Catálogo web", adminOnly: true },
   { id: "datos", label: "Operaciones" },
   { id: "historial", label: "Historial" },
+  { id: "ajustes-meta", label: "Meta y socios", adminOnly: true },
 ];
 
 /** Old `#/crm/<segment>` names that moved: an old link still lands where its content lives now. */
@@ -86,6 +88,7 @@ export const SECTION_PATH: Record<CrmSection, string> = {
   "catalogo-web": "catalogo/web",
   datos: "ajustes/operaciones",
   historial: "ajustes/historial",
+  "ajustes-meta": "ajustes/meta",
 };
 
 /** The page an area's bare root (`#/ventas`) opens. */
