@@ -496,16 +496,17 @@ def main() -> None:
     ) as cert_dir:
         env = database_env(Path(cert_dir))
 
-    # Reconstruct a libpq connection string from the PG* env vars.
-    dsn = (
-        "host={PGHOST} port={PGPORT} dbname={PGDATABASE} user={PGUSER}"
-        " password={PGPASSWORD} sslmode={PGSSLMODE} sslrootcert={PGSSLROOTCERT}"
-        " connect_timeout={PGCONNECT_TIMEOUT} gssencmode={PGGSSENCMODE}"
-    ).format(**env)
+        # Reconstruct a libpq connection string from the PG* env vars.  The reads run inside
+        # the block: sslrootcert points into cert_dir, which is deleted when the block exits.
+        dsn = (
+            "host={PGHOST} port={PGPORT} dbname={PGDATABASE} user={PGUSER}"
+            " password={PGPASSWORD} sslmode={PGSSLMODE} sslrootcert={PGSSLROOTCERT}"
+            " connect_timeout={PGCONNECT_TIMEOUT} gssencmode={PGGSSENCMODE}"
+        ).format(**env)
 
-    code = run_checks(dsn)
+        code = run_checks(dsn)
     if code != 0:
-        raise Refused(f"{sum(1 for _ in _READS) - code} reads FAILED — see output above")
+        raise Refused("one or more reads FAILED — see output above")
     print(
         f"READ CHECK PASSED: {len(_READS)} routes ok, {len(SKIPPED_PATTERNS)} explicitly skipped",
         flush=True,

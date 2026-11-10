@@ -184,3 +184,35 @@ def test_hosted_env_dir_holds_hosted_env() -> None:
     from release_read_check import HOSTED_ENV_DIR
 
     assert (HOSTED_ENV_DIR / "hosted_env.py").is_file()
+
+
+def test_main_runs_the_reads_while_the_ca_certificate_still_exists(monkeypatch, tmp_path):
+    # The first hosted run failed all 45 reads: the CA file lived in a TemporaryDirectory that
+    # had already been deleted when the reads connected.
+    import types
+
+    import release_read_check
+
+    def database_env(cert_directory: Path) -> dict[str, str]:
+        cert = cert_directory / "ca.pem"
+        cert.write_text("-----BEGIN CERTIFICATE-----\n", encoding="ascii")
+        return dict(PGHOST="h", PGPORT="5432", PGDATABASE="d", PGUSER="u", PGPASSWORD="p",
+                    PGSSLMODE="verify-full", PGSSLROOTCERT=str(cert), PGCONNECT_TIMEOUT="10",
+                    PGGSSENCMODE="disable")
+
+    fake = types.ModuleType("hosted_env")
+    fake.Refused = RuntimeError
+    fake.database_env = database_env
+    monkeypatch.setitem(sys.modules, "hosted_env", fake)
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+
+    seen: list[bool] = []
+
+    def run_checks(dsn: str) -> int:
+        cert = re.search(r"sslrootcert=(\S+)", dsn).group(1)
+        seen.append(Path(cert).is_file())
+        return 0
+
+    monkeypatch.setattr(release_read_check, "run_checks", run_checks)
+    release_read_check.main()
+    assert seen == [True]
