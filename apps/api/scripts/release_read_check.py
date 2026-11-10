@@ -57,6 +57,7 @@ HOSTED_ENV_DIR = Path(__file__).resolve().parents[3] / "supabase" / "scripts"
 CHECKED_PATTERNS: frozenset[str] = frozenset(
     [
         # «Finanzas» — the original site of the Decimal × float bug (#891 / #893)
+        r"^\/v2\/workspace\/finance\/resumen$",
         r"^\/v2\/workspace\/finance\/mes$",
         r"^\/v2\/workspace\/finance\/expenses$",
         r"^\/v2\/workspace\/finance\/supplier-orders$",
@@ -252,6 +253,10 @@ def _stub_fx(currency: str, as_of: Any) -> dict[str, Any]:
 
 _READS: list[tuple[str, Callable[..., Any]]] = [
     # ── Finance ──────────────────────────────────────────────────────────────
+    (
+        "GET /v2/workspace/finance/resumen",
+        lambda c, d: FinanceReadRepository(c, d).resumen(),
+    ),
     (
         "GET /v2/workspace/finance/mes",
         lambda c, d: FinanceReadRepository(c, d).mes(),

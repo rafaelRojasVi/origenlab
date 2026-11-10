@@ -102,6 +102,7 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // settings = active target + partner rule. The four finance commands are in
   // `FINANCE_COMMAND_POST_PATHS` below; `set-partner-rule` is additionally gated to admin-only
   // upstream. Nothing else under `/v2/workspace/finance/` is reachable until listed here.
+  /^\/v2\/workspace\/finance\/resumen$/,
   /^\/v2\/workspace\/finance\/mes$/,
   /^\/v2\/workspace\/finance\/expenses$/,
   /^\/v2\/workspace\/finance\/supplier-orders$/,

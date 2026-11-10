@@ -5,7 +5,7 @@ import { Skeleton, Toaster } from "./ui";
 import { googleLoginUrl } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { REDACTION_NOTICE, contactAddressesRedacted } from "./redaction";
-import { AREA_HOME, areaOf, crmHash, sectionTitle, type AreaKey, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
+import { AREA_HOME, FINANZAS_LEGACY_REDIRECT, areaOf, crmHash, sectionTitle, type AreaKey, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
 import { AREAS, visibleTabs, type AreaTab, type NavAccess } from "./nav";
 import type { ShellRoute } from "./shellRoute";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -31,6 +31,10 @@ const FinanzasPorPagarPage = lazyPage(() => import("./finanzas/FinanzasPorPagarP
 const FinanzasGastosPage = lazyPage(() => import("./finanzas/FinanzasGastosPage").then((m) => m.FinanzasGastosPage));
 const FinanzasFinanciamientoPage = lazyPage(() => import("./finanzas/FinanzasFinanciamientoPage").then((m) => m.FinanzasFinanciamientoPage));
 const FinanzasSociosPage = lazyPage(() => import("./finanzas/FinanzasSociosPage").then((m) => m.FinanzasSociosPage));
+// Finanzas v3
+const FinanzasResumenPage = lazyPage(() => import("./finanzas/FinanzasResumenPage").then((m) => m.FinanzasResumenPage));
+const FinanzasCobrarPage = lazyPage(() => import("./finanzas/FinanzasCobrarPage").then((m) => m.FinanzasCobrarPage));
+const FinanzasPagarPage = lazyPage(() => import("./finanzas/FinanzasPagarPage").then((m) => m.FinanzasPagarPage));
 const MarketingPage = lazyPage(() => import("./pages/MarketingPage").then((m) => m.MarketingPage));
 const HistoryPage = lazyPage(() => import("./pages/HistoryPage").then((m) => m.HistoryPage));
 const OperacionesPage = lazyPage(() => import("./pages/OperacionesPage").then((m) => m.OperacionesPage));
@@ -124,6 +128,23 @@ function Section({
   navigate: (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 }) {
   const { admin } = useNavAccess();
+
+  // Redirect legacy finanzas hashes to v3 equivalents
+  const legacyTarget = FINANZAS_LEGACY_REDIRECT[section];
+  useEffect(() => {
+    if (legacyTarget) {
+      window.location.replace(crmHash(legacyTarget));
+    }
+  }, [legacyTarget]);
+  if (legacyTarget) {
+    // Render the new page immediately (hash update is async) to avoid a blank flash
+    switch (legacyTarget) {
+      case "fin-resumen": return <FinanzasResumenPage navigate={navigate} admin={admin} />;
+      case "fin-cobrar": return <FinanzasCobrarPage navigate={navigate} />;
+      case "fin-pagar": return <FinanzasPagarPage navigate={navigate} />;
+    }
+  }
+
   switch (section) {
     case "oportunidades":
       return <PipelinePage key={id ?? "all"} initialOpportunityId={id} />;
@@ -142,6 +163,14 @@ function Section({
       return <LicitacionesPage key={id ?? "all"} id={id} navigate={navigate} />;
     case "prospectos":
       return <ProspectosPage key={id ?? "all"} id={id} navigate={navigate} />;
+    // Finanzas v3
+    case "fin-resumen":
+      return <FinanzasResumenPage navigate={navigate} admin={admin} />;
+    case "fin-cobrar":
+      return <FinanzasCobrarPage navigate={navigate} />;
+    case "fin-pagar":
+      return <FinanzasPagarPage navigate={navigate} />;
+    // Legacy finanzas (keep for type exhaustiveness; redirect handled above)
     case "fin-mes":
       return <FinanzasMesPage />;
     case "fin-por-pagar":

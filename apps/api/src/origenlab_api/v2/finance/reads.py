@@ -6,6 +6,7 @@
 | `GET /v2/workspace/finance/expenses` | expenses for a month (default: current Santiago month) |
 | `GET /v2/workspace/finance/supplier-orders` | supplier orders, optionally filtered by opportunity |
 | `GET /v2/workspace/finance/settings` | active monthly target + active partner rule |
+| `GET /v2/workspace/finance/resumen` | Resumen v3: caja 30/60/90, meta 3-layer, indicadores, cobrar_hoy, pedidos_estimados |
 
 «Vendido» = net_amount of crm.invoice doc_type 33/34 issued in the Santiago month, plus notas de
 débito (56) minus notas de crédito (61). «Por cobrar» is the total balance of unpaid invoices (not
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -280,6 +282,228 @@ left join current_target ct on true
 """
 
 
+_RESUMEN_MES_SQL = """
+with
+  month_bounds as (
+    select
+      date_trunc('month', now() at time zone 'America/Santiago')::date as month_start,
+      (date_trunc('month', now() at time zone 'America/Santiago') + interval '1 month')::date as month_end,
+      (now() at time zone 'America/Santiago')::date as today
+  ),
+  vendido as (
+    select coalesce(sum(
+      case i.doc_type
+        when 33 then i.net_amount
+        when 34 then i.net_amount
+        when 56 then i.net_amount
+        when 61 then -i.net_amount
+        else 0
+      end
+    ), 0) as neto
+    from crm.invoice i, month_bounds mb
+    where i.issued_on >= mb.month_start and i.issued_on < mb.month_end
+      and i.doc_type in (33, 34, 56, 61)
+  ),
+  target as (
+    select sales_target_net
+      from crm.monthly_target, month_bounds mb
+     where month = mb.month_start
+     limit 1
+  ),
+  -- won cases this month with no invoice linked
+  ganado_sin_facturar as (
+    select coalesce(sum(
+      case when qr.quote_currency = 'CLP' then coalesce(qr.tax_base, 0) else 0 end
+    ), 0) as net_total,
+    count(*) as count
+    from crm.opportunity o
+    join crm.quote_revision qr on qr.quote_id = o.won_quote_id and qr.revision_no = o.won_revision_no
+    cross join month_bounds mb
+    where o.stage = 'won'
+      and not exists (select 1 from crm.invoice inv where inv.opportunity_id = o.id and inv.doc_type in (33, 34))
+  ),
+  -- negotiating cases (quoting+negotiating stage): latest CLP revision
+  en_negociacion as (
+    select coalesce(sum(
+      coalesce(
+        (select case when qr.quote_currency = 'CLP' then coalesce(qr.tax_base, 0) else 0 end
+           from crm.quote q
+           join crm.quote_revision qr on qr.quote_id = q.id
+          where q.opportunity_id = o.id and qr.status <> 'void' and qr.superseded_at is null
+          order by qr.created_at desc limit 1),
+        0
+      )
+    ), 0) as net_total,
+    count(*) as count
+    from crm.opportunity o
+    where o.stage in ('negotiating')
+  )
+select
+  mb.month_start::text as mes,
+  mb.today::text as today,
+  mb.month_end::text as month_end,
+  v.neto as vendido_net,
+  coalesce(t.sales_target_net, %(default_target)s) as meta_net,
+  gsf.net_total as ganado_sf_net,
+  gsf.count as ganado_sf_count,
+  en.net_total as neg_net,
+  en.count as neg_count
+from month_bounds mb, vendido v, ganado_sin_facturar gsf, en_negociacion en
+left join target t on true
+"""
+
+_INDICADORES_SQL = """
+with
+  month_bounds as (
+    select
+      date_trunc('month', now() at time zone 'America/Santiago')::date as month_start,
+      (date_trunc('month', now() at time zone 'America/Santiago') + interval '1 month')::date as month_end
+  ),
+  -- avg payment days per client RUT (from paid facturas)
+  avg_per_client as (
+    select i.client_rut,
+           avg(i.paid_on - i.issued_on)::numeric as avg_days,
+           count(*) as n
+      from crm.invoice i
+     where i.doc_type in (33, 34) and i.paid_on is not null
+     group by i.client_rut
+  ),
+  -- overall avg payment days (all paid facturas)
+  overall_avg as (
+    select coalesce(avg(i.paid_on - i.issued_on), 0)::numeric as avg_days,
+           count(*) as n
+      from crm.invoice i
+     where i.doc_type in (33, 34) and i.paid_on is not null
+  ),
+  -- this month's won cases: cost and subtotal for margin
+  margen_this_month as (
+    select
+      coalesce(sum(l.quantity * l.unit_cost * coalesce(l.fx_rate, 1)), 0) as costo,
+      coalesce(sum(qr.tax_base), 0) as subtotal
+    from crm.opportunity o
+    join crm.quote_revision qr on qr.quote_id = o.won_quote_id and qr.revision_no = o.won_revision_no
+    left join crm.quote_line l on l.quote_revision_id = qr.id and l.line_kind = 'item'
+    cross join month_bounds mb
+    where o.stage = 'won'
+      and date(o.closed_at at time zone 'America/Santiago') >= mb.month_start
+      and date(o.closed_at at time zone 'America/Santiago') < mb.month_end
+      and qr.quote_currency = 'CLP'
+  ),
+  -- top 3 slow payers (by avg days on paid invoices)
+  slow_payers as (
+    select i.client_name,
+           avg(i.paid_on - i.issued_on)::numeric as avg_days,
+           count(*) as n
+      from crm.invoice i
+     where i.doc_type in (33, 34) and i.paid_on is not null
+     group by i.client_name
+     having count(*) >= 1
+     order by avg(i.paid_on - i.issued_on) desc nulls last
+     limit 3
+  )
+select
+  oa.avg_days as dpc_avg,
+  oa.n as dpc_count,
+  mm.costo as margen_costo,
+  mm.subtotal as margen_subtotal,
+  (select json_agg(json_build_object('org', sp.client_name, 'days', round(sp.avg_days)::int, 'n', sp.n)
+                   order by sp.avg_days desc)
+     from slow_payers sp) as clientes_lentos
+from overall_avg oa, margen_this_month mm
+"""
+
+_OPEN_INVOICES_SQL = """
+with avg_days as (
+  select i.client_rut,
+         avg(i.paid_on - i.issued_on)::numeric as avg_d
+    from crm.invoice i
+   where i.doc_type in (33, 34) and i.paid_on is not null
+   group by i.client_rut
+),
+today_cte as (
+  select (now() at time zone 'America/Santiago')::date as today
+)
+select
+  i.id::text as invoice_id, i.folio, i.issued_on::text, i.client_rut, i.client_name,
+  i.total_amount,
+  -- balance = total + nota adjustments - payments
+  (i.total_amount
+   + coalesce((
+       select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
+         from crm.invoice n
+        where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
+   ), 0)
+   - coalesce((
+       select sum(p.amount) from crm.invoice_payment p
+        where p.invoice_id = i.id and p.removed_at is null
+   ), 0)
+  ) as balance_iva,
+  round(coalesce(a.avg_d, 30))::int as avg_days_client,
+  (i.issued_on + (coalesce(a.avg_d, 30))::int)::text as expected_pay_date,
+  o.id::text as opportunity_id,
+  o.title as opportunity_title,
+  t.today::text as today
+from crm.invoice i
+cross join today_cte t
+left join avg_days a on a.client_rut = i.client_rut
+left join crm.opportunity o on o.id = i.opportunity_id
+where i.doc_type in (33, 34) and i.paid_on is null
+  and (
+    i.total_amount
+    + coalesce((
+        select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
+          from crm.invoice n
+         where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
+    ), 0)
+    - coalesce((
+        select sum(p.amount) from crm.invoice_payment p
+         where p.invoice_id = i.id and p.removed_at is null
+    ), 0)
+  ) > 0
+order by i.issued_on asc
+"""
+
+_PEDIDOS_ESTIMADOS_SQL = """
+-- Won cases with no supplier order at all; estimated cost from principal item line
+select
+  o.id::text as opportunity_id,
+  o.title,
+  coalesce(sup.name, 'Proveedor desconocido') as supplier_name,
+  coalesce(sup.id::text, null) as supplier_org_id,
+  coalesce(
+    (select sum(l.quantity * l.unit_cost * coalesce(l.fx_rate, 1))
+       from crm.quote_line l
+      where l.quote_revision_id = qr.id and l.line_kind = 'item'),
+    0
+  )::numeric as estimated_cost_clp
+from crm.opportunity o
+join crm.quote_revision qr on qr.quote_id = o.won_quote_id and qr.revision_no = o.won_revision_no
+-- supplier from the first item line's supplier org
+left join lateral (
+  select l2.supplier_organization_id
+    from crm.quote_line l2
+   where l2.quote_revision_id = qr.id and l2.line_kind = 'item' and l2.supplier_organization_id is not null
+   order by l2.line_no limit 1
+) first_line on true
+left join crm.organization sup on sup.id = first_line.supplier_organization_id
+where o.stage = 'won'
+  and not exists (select 1 from crm.supplier_order so where so.opportunity_id = o.id)
+order by o.closed_at desc
+limit 50
+"""
+
+
+def _business_days_left(today: date, month_end: date) -> int:
+    """Count business days from today (inclusive of today if it's a weekday) to month_end (exclusive)."""
+    count = 0
+    d = today + timedelta(days=1)
+    while d < month_end:
+        if d.weekday() < 5:  # Monday–Friday
+            count += 1
+        d += timedelta(days=1)
+    return count
+
+
 def _iso(v: Any) -> str | None:
     return v.isoformat() if v is not None else None
 
@@ -412,4 +636,147 @@ class FinanceReadRepository:
                 "valid_from": row["valid_from"],
                 "notes": row["rule_notes"],
             } if row["rule_name"] is not None else None,
+        }
+
+    def resumen(self) -> dict[str, Any]:
+        """Resumen v3: caja 30/60/90, meta 3-layer, indicadores, cobrar_hoy, pedidos_estimados."""
+        with self._read() as cur:
+            # 1. Meta section: vendido, ganado_sin_facturar, en_negociacion, meta
+            cur.execute(_RESUMEN_MES_SQL, {"default_target": _DEFAULT_TARGET_NET})
+            names = [d.name for d in cur.description]
+            mes_row = dict(zip(names, cur.fetchone(), strict=True))
+
+            # 2. Indicadores: avg payment days, margin, slow payers
+            cur.execute(_INDICADORES_SQL)
+            names2 = [d.name for d in cur.description]
+            ind_row = dict(zip(names2, cur.fetchone(), strict=True))
+
+            # 3. Open invoices (for caja calculation + cobrar_hoy)
+            cur.execute(_OPEN_INVOICES_SQL)
+            inv_names = [d.name for d in cur.description]
+            open_invs = [dict(zip(inv_names, r, strict=True)) for r in cur.fetchall()]
+
+            # 4. Supplier orders in-flight (for caja sale side)
+            cur.execute(_SUPPLIER_ORDERS_SQL, {"opportunity_id": None})
+            so_names = [d.name for d in cur.description]
+            so_rows = [dict(zip(so_names, r, strict=True)) for r in cur.fetchall()]
+
+            # 5. Pedidos estimados (won cases without supplier order)
+            cur.execute(_PEDIDOS_ESTIMADOS_SQL)
+            ped_names = [d.name for d in cur.description]
+            ped_rows = [dict(zip(ped_names, r, strict=True)) for r in cur.fetchall()]
+
+        today_str = mes_row["today"]
+        today_d = date.fromisoformat(today_str)
+        month_end_d = date.fromisoformat(mes_row["month_end"])
+
+        # ── caja: 30 / 60 / 90 day horizons ─────────────────────────────────
+        IVA_RATE = Decimal("1.19")
+        in_flight_total = sum(int(so["amount_clp"] or 0) for so in so_rows if so["received_on"] is None)
+        # ganado_sin_facturar as a future invoice (IVA-inclusive at ~60d)
+        gsf_iva = int(Decimal(str(mes_row["ganado_sf_net"])) * IVA_RATE)
+
+        caja = []
+        for horizon in (30, 60, 90):
+            cutoff = today_d + timedelta(days=horizon)
+            until = cutoff.isoformat()
+            # entra: open invoices with expected pay date within horizon
+            entra_inv = sum(
+                int(inv["balance_iva"])
+                for inv in open_invs
+                if date.fromisoformat(inv["expected_pay_date"]) <= cutoff
+            )
+            # At 60+ d, add won-not-invoiced expected revenue (IVA-inclusive)
+            entra_gsf = gsf_iva if horizon >= 60 else 0
+            entra = entra_inv + entra_gsf
+            # sale: in-flight supplier orders (all within horizon since no due dates known) + expenses
+            sale = in_flight_total
+            neto = entra - sale
+            caja.append({
+                "horizon": horizon,
+                "until": until,
+                "entra": entra,
+                "sale": sale,
+                "neto": neto,
+            })
+
+        # ── meta section ─────────────────────────────────────────────────────
+        vendido_net = int(mes_row["vendido_net"])
+        meta_net = int(mes_row["meta_net"])
+        gsf_net = int(mes_row["ganado_sf_net"])
+        neg_net = int(mes_row["neg_net"])
+        dias_habiles = _business_days_left(today_d, month_end_d)
+        faltan = meta_net - vendido_net
+        ritmo = int(faltan / dias_habiles) if dias_habiles > 0 else 0
+        meta = {
+            "facturado_net": vendido_net,
+            "ganado_sin_facturar_net": gsf_net,
+            "ganado_sin_facturar_count": int(mes_row["ganado_sf_count"]),
+            "en_negociacion_net": neg_net,
+            "en_negociacion_count": int(mes_row["neg_count"]),
+            "meta_net": meta_net,
+            "dias_habiles_restantes": dias_habiles,
+            "ritmo_necesario": ritmo,
+            "mes": mes_row["mes"],
+        }
+
+        # ── indicadores ───────────────────────────────────────────────────────
+        dpc_avg = float(ind_row["dpc_avg"]) if ind_row["dpc_avg"] else 0.0
+        margen_costo = int(ind_row["margen_costo"])
+        margen_subtotal = int(ind_row["margen_subtotal"])
+        margen_pct = round((1 - margen_costo / margen_subtotal) * 100, 1) if margen_subtotal > 0 else 0.0
+        clientes_lentos_raw = ind_row["clientes_lentos"] or []
+        clientes_lentos = [
+            {
+                "org": r["org"],
+                "days": int(r["days"]),
+                "hint": "pedir 50 % de anticipo" if int(r["days"]) > 30 else None,
+            }
+            for r in clientes_lentos_raw
+        ]
+        indicadores = {
+            "dias_promedio_cobro": round(dpc_avg, 1),
+            "dias_promedio_cobro_count": int(ind_row["dpc_count"]),
+            "margen_mes_pct": margen_pct,
+            "margen_mes_costo": margen_costo,
+            "margen_mes_subtotal": margen_subtotal,
+            "clientes_lentos": clientes_lentos,
+        }
+
+        # ── ¿A quién cobrar hoy? ─────────────────────────────────────────────
+        # Prioritise oldest invoices (issued_on asc already, so oldest first)
+        cobrar_hoy = [
+            {
+                "invoice_id": inv["invoice_id"],
+                "folio": inv["folio"],
+                "issued_on": inv["issued_on"],
+                "client_name": inv["client_name"],
+                "balance_iva": int(inv["balance_iva"]),
+                "avg_days_client": int(inv["avg_days_client"]),
+                "expected_pay_date": inv["expected_pay_date"],
+                "age_days": (today_d - date.fromisoformat(inv["issued_on"])).days,
+                "opportunity_id": inv["opportunity_id"],
+                "opportunity_title": inv["opportunity_title"],
+            }
+            for inv in open_invs[:3]  # top 3 oldest
+        ]
+
+        # ── pedidos_estimados ─────────────────────────────────────────────────
+        pedidos_estimados = [
+            {
+                "opportunity_id": r["opportunity_id"],
+                "title": r["title"],
+                "supplier_name": r["supplier_name"],
+                "supplier_org_id": r["supplier_org_id"],
+                "estimated_cost_clp": int(r["estimated_cost_clp"]),
+            }
+            for r in ped_rows
+        ]
+
+        return {
+            "caja": caja,
+            "meta": meta,
+            "indicadores": indicadores,
+            "cobrar_hoy": cobrar_hoy,
+            "pedidos_estimados": pedidos_estimados,
         }
