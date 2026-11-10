@@ -41,6 +41,9 @@ from origenlab_api.v2.tenders.reads import TenderReadRepository
 from origenlab_api.v2.todos.reads import TodoReadRepository
 from origenlab_api.v2.triage_review import TriageReviewRepository
 
+#: The repository's supabase/scripts (this file is apps/api/scripts/release_read_check.py).
+HOSTED_ENV_DIR = Path(__file__).resolve().parents[3] / "supabase" / "scripts"
+
 # -- hosted_env is imported lazily in main() so the script is importable in tests
 # -- without GITHUB_ACTIONS=true or the supabase/scripts directory on sys.path.
 
@@ -476,7 +479,7 @@ def run_checks(dsn: str) -> int:
 def main() -> None:
     """Read credentials from the environment (GitHub Actions only) and run all checks."""
     # Import lazily: hosted_env.py requires GITHUB_ACTIONS=true and cannot be used locally.
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "supabase/scripts"))
+    sys.path.insert(0, str(HOSTED_ENV_DIR))
     from hosted_env import Refused, database_env  # type: ignore[import-not-found]
 
     with tempfile.TemporaryDirectory(
