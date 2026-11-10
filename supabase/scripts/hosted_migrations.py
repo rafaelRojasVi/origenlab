@@ -105,13 +105,35 @@ def pending_files(rows: list[tuple[str,str,Path]], versions: list[str]) -> list[
         raise Refused("Hosted ledger is not a prefix of reviewed main; manual reconciliation required")
     return rows[len(versions):]
 
+#: With `VERBOSITY=sqlstate` psql reports an error as its code alone, optionally prefixed by the
+#: script and line it came from: `psql:/…/20261113100000_x.sql:44: ERROR:  55P03`.
+_SQLSTATE_LINE = re.compile(r"^(?:psql:(?P<file>[^:\s]+):(?P<line>\d+): )?ERROR:\s+(?P<code>[0-9A-Z]{5})\s*$")
+
+
+def failure_code(stderr: str) -> str:
+    """The SQLSTATE of a failed psql run, and the migration line it came from — nothing else.
+
+    A code (`55P03` lock timeout, `42501` insufficient privilege, `23514` check violation) and a
+    file name with a line number carry no row data, so they are safe in a public log; anything
+    that is not exactly that shape (a message, DETAIL, a value) is dropped, never echoed.
+    """
+    for raw in stderr.splitlines():
+        m = _SQLSTATE_LINE.match(raw.strip())
+        if m:
+            where = f" at {Path(m['file']).name}:{m['line']}" if m["file"] else ""
+            return f"SQLSTATE {m['code']}{where}"
+    return "no SQLSTATE reported"
+
+
 def psql(env: dict[str,str], *args: str) -> str:
-    p = subprocess.run(["psql", "-X", "--no-psqlrc", "-v", "ON_ERROR_STOP=1", *args],
+    p = subprocess.run(["psql", "-X", "--no-psqlrc", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate", *args],
                        env=env, capture_output=True, text=True, timeout=240, check=False)
     if p.returncode:
         # This repository's Actions logs may be public. PostgreSQL DETAIL text can
-        # contain personal data from a failing row; never copy stderr to CI.
-        raise Refused(f"psql operation failed (exit {p.returncode}); no production output logged")
+        # contain personal data from a failing row; never copy stderr to CI. Only the
+        # error's SQLSTATE (and the migration line) is reported: a code carries no data.
+        raise Refused(f"psql operation failed (exit {p.returncode}, {failure_code(p.stderr)}); "
+                      "no production output logged")
     return p.stdout.strip()
 
 READ_ONLY_MARK = "transaction_read_only="

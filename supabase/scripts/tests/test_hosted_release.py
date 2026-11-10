@@ -308,6 +308,26 @@ class ProductionGates(unittest.TestCase):
         with mock.patch.object(postflight.subprocess, "run", return_value=good):
             self.assertTrue(postflight.healthy_worker({}))
 
+    def test_a_failed_migration_reports_its_sqlstate_and_never_the_message(self):
+        import subprocess
+        lock = subprocess.CompletedProcess(args=[], returncode=3, stdout="",
+            stderr="psql:/home/runner/work/x/supabase/migrations/20261113100000_slice8_opportunity_pause.sql:23: ERROR:  55P03\n")
+        with mock.patch.object(migrations.subprocess, "run", return_value=lock) as run:
+            with self.assertRaises(migrations.Refused) as ctx:
+                migrations.psql({}, "-c", "select 1")
+        self.assertIn("VERBOSITY=sqlstate", run.call_args.args[0])
+        self.assertIn("SQLSTATE 55P03 at 20261113100000_slice8_opportunity_pause.sql:23", str(ctx.exception))
+        self.assertNotIn("/home/runner", str(ctx.exception))
+        # A message with a row's data in it is never echoed: no code of that exact shape, no report.
+        leaky = subprocess.CompletedProcess(args=[], returncode=3, stdout="",
+            stderr="ERROR:  duplicate key value violates unique constraint\nDETAIL:  Key (email)=(persona@ejemplo.cl) already exists.\n")
+        with mock.patch.object(migrations.subprocess, "run", return_value=leaky):
+            with self.assertRaises(migrations.Refused) as ctx:
+                migrations.psql({}, "-c", "select 1")
+        self.assertNotIn("persona@ejemplo.cl", str(ctx.exception))
+        self.assertIn("no SQLSTATE reported", str(ctx.exception))
+        self.assertEqual(migrations.failure_code("ERROR:  42501"), "SQLSTATE 42501")
+
     def test_three_pinned_services_and_legacy_cron_guard(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 3)
         self.assertEqual(len(render.ALL_SERVICES), 4)
