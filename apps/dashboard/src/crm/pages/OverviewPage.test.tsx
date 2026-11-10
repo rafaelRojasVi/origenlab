@@ -228,6 +228,16 @@ describe("Resumen", () => {
     // Hoy v3 mini header shows the date only, not the time.
   });
 
+  it("counts «N cosas para hoy» from the same queue as «Para hoy», not every open case", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const header = await screen.findByTestId("hoy-mini-header");
+    await waitFor(() => expect(header).toHaveTextContent(/cosas? para hoy/));
+    const total = Number(/(\d+) cosas? para hoy/.exec(header.textContent ?? "")?.[1]);
+    const todo = screen.queryByRole("button", { name: /^Todo\b/ });
+    expect(total).toBe(todo ? Number(/\d+/.exec(todo.textContent ?? "")?.[0]) : 0);
+  });
+
   it("converts an amount typed the Chilean way into pesos", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);

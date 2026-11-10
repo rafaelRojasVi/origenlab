@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
@@ -9,6 +9,7 @@ import { PendientesPanel } from "../todos/PendientesPanel";
 import { SANTIAGO } from "../marketing/calendar";
 import { TodayBody, type QueueKindFilter } from "./TodayBody";
 import { GoalStrip, type StripFilter } from "./GoalStrip";
+import { buildParaTiQueue, filterQueue, useHomeFilter } from "../today";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { WebStatsCard } from "../web/WebStatsCard";
 
@@ -96,17 +97,17 @@ function HoyMiniHeader({ pipeline, queueFilter }: { pipeline: PipelineState; que
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
   const [dateLabel] = useState(todayLabel);
 
-  const totalHoy = pipeline.kind === "ready"
-    ? pipeline.data.items.filter((c) => !c.closed_at).length
-    : null;
+  const homeFilter = useHomeFilter();
+  // Same queue as «Para hoy» below, so the header never disagrees with the list.
+  const queue = useMemo(
+    () => (pipeline.kind === "ready" ? filterQueue(buildParaTiQueue(pipeline.data.items, new Date(), me), homeFilter) : null),
+    [pipeline, me, homeFilter],
+  );
+  const totalHoy = queue ? queue.length : null;
 
   const hintText = (() => {
-    if (pipeline.kind !== "ready") return null;
-    const items = pipeline.data.items;
-    const replies = items.filter((c) => {
-      const lc = c.last_contact;
-      return lc?.inbound && (!lc.outbound || lc.inbound.at > lc.outbound.at);
-    }).length;
+    if (!queue) return null;
+    const replies = queue.filter((q) => q.kind === "reply").length;
     if (replies >= 3) return `${replies} clientes esperan respuesta · empieza por ahí`;
     if (replies > 0) return replies === 1 ? "1 cliente espera respuesta" : `${replies} clientes esperan respuesta`;
     return null;
