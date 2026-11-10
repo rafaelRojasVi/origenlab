@@ -28,7 +28,7 @@ export interface NextStep {
   dueDays: number;
   amountClp: number | null;
   owner: string | null;
-  /** Valor × urgencia; higher first inside a group. */
+  /** Valor × urgencia; higher first inside a group and kind. */
   score: number;
   /** Today's actionable item (its row keeps every existing action), or null for a projection. */
   item: QueueItem | null;
@@ -47,6 +47,9 @@ export interface StepPlan {
 
 const DAY_MS = 86_400_000;
 const KIND_WEIGHT: Record<StepKind, number> = { responder: 3, cotizar: 3, seguimiento: 2, pausa: 1.5, tarea: 1 };
+/** Inside a group a reply always comes before a follow-up (owner decision 2026-11-10): a client who
+ *  wrote is a live conversation. Then the request to quote, then the rest; the score orders within a kind. */
+const KIND_RANK: Record<StepKind, number> = { responder: 0, cotizar: 1, seguimiento: 2, pausa: 3, tarea: 4 };
 const PAUSE_PREFIX = /^Retomar:\s*/i;
 
 export function startOfDay(d: Date): Date {
@@ -180,7 +183,7 @@ export function planNextSteps(
   const taken = new Set(today.map((s) => s.id));
   const visible = [...today, ...upcoming(items, now, taken, horizonDays)].filter(allow);
   const mine = (s: NextStep) => (me && s.owner === me ? 1 : 0);
-  visible.sort((a, b) => mine(b) - mine(a) || b.score - a.score);
+  visible.sort((a, b) => mine(b) - mine(a) || KIND_RANK[a.kind] - KIND_RANK[b.kind] || b.score - a.score);
   const byGroup: Record<StepGroup, NextStep[]> = { atrasado: [], hoy: [], manana: [], semana: [] };
   for (const s of visible) byGroup[s.group].push(s);
   const days = Array.from({ length: 7 }, (_, i) => {

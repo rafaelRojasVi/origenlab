@@ -74,6 +74,18 @@ describe("planNextSteps", () => {
   });
 });
 
+describe("order inside a group", () => {
+  it("puts a small client's reply before a big quote's follow-up", () => {
+    const bigFollowUp = card({ money: [{ currency: "CLP", net_total: "9000000" }] }, ago(15)); // día 15: due today
+    const smallReply = card({
+      money: [{ currency: "CLP", net_total: "200000" }],
+      last_contact: { outbound: null, inbound: { at: ago(0, 3_600_000), subject: "Consulta", url: "https://mail.example.cl/r" } },
+    }, ago(5));
+    const plan = planNextSteps([bigFollowUp, smallReply], NOW, null);
+    expect(plan.byGroup.hoy.map((s) => s.kind)).toEqual(["responder", "seguimiento"]);
+  });
+});
+
 describe("weekend", () => {
   it("rolls a follow-up that would fall on Saturday to Monday", () => {
     const thursday = new Date(2026, 10, 12, 15, 0, 0); // jueves 12 nov 2026
