@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
+from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 
@@ -73,6 +74,7 @@ CHECKED_PATTERNS: frozenset[str] = frozenset(
         r"^\/v2\/quotes\/clients$",
         r"^\/v2\/quotes$",
         r"^\/v2\/quotes\/economics$",
+        r"^\/v2\/quotes\/product-expenses$",
         # Cockpit and V2 CRM flat reads
         r"^\/v2\/cockpit\/work-queue$",
         r"^\/v2\/contacts$",
@@ -305,6 +307,13 @@ _READS: list[tuple[str, Callable[..., Any]]] = [
         "GET /v2/quotes",
         lambda c, d: V2QuoteReads(c, d, fx_resolver=_stub_fx).quote_list(
             status="all", q=None, limit=1, cursor=None
+        ),
+    ),
+    (
+        # An id no product has: the query still runs end to end and returns None (the route's 404).
+        "GET /v2/quotes/product-expenses",
+        lambda c, d: V2QuoteReads(c, d, fx_resolver=_stub_fx).product_expense_history(
+            UUID("00000000-0000-0000-0000-000000000000")
         ),
     ),
     (
