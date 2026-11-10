@@ -15,7 +15,7 @@ export const STAGE_ORDER = ["lead", "qualifying", "qualified", "quoting", "negot
  * | Ganada | `won` |
  * | Perdida | `lost`, `abandoned` |
  *
- * «En pausa» is not a stage: an open case whose earliest open task is due later (`pausedUntil`).
+ * «En pausa» is not a stage: an open case with `paused_until` still ahead (`pausedUntil`).
  * «Silenciosas» is not a stage either: an Enviada case the client has not answered for more than
  * `SILENT_AFTER_DAYS` (`isSilent`).
  */
@@ -60,20 +60,37 @@ export const BOARD_COLUMNS: { key: BoardColumnKey; label: string; stages: string
   { key: "perdida", label: "Perdida", stages: ["lost", "abandoned"], target: "lost" },
 ];
 
-/** A case's open tasks that keep it paused: open case, task due after `now`. */
-export function pauseTasks(card: OpportunityCardData, now: Date = new Date()): NonNullable<OpportunityCardData["open_tasks"]> {
-  if (card.closed_at || TERMINAL.has(card.stage)) return [];
-  return (card.open_tasks ?? []).filter((t) => Date.parse(t.due_at) > now.getTime());
+/** The Santiago day `iso` (YYYY-MM-DD) as a local Date at 00:00. */
+function localDay(iso: string): Date {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 /**
- * «En pausa hasta…»: the case is open and its earliest open task is due after `now` — nothing to
- * do on it before that day. A task already due (today or overdue) is work, not a pause.
+ * «En pausa hasta…» is a state of the case (`paused_until` + `pause_reason`, set-case-pause,
+ * 2026-11-13): the pause holds while its day is still ahead. The day itself and after, the case
+ * «vuelve de pausa» (`pauseReturned`): due in Hoy, still paused until a person resumes it.
+ * A reminder task is not a pause any more.
  */
 export function pausedUntil(card: OpportunityCardData, now: Date = new Date()): string | null {
-  if (card.closed_at || TERMINAL.has(card.stage)) return null;
-  const first = (card.open_tasks ?? [])[0];
-  return first && Date.parse(first.due_at) > now.getTime() ? first.due_at : null;
+  if (card.closed_at || TERMINAL.has(card.stage) || !card.paused_until) return null;
+  return localDay(card.paused_until).getTime() > startOfLocalDay(now).getTime() ? pauseDayIso(card.paused_until) : null;
+}
+
+/** A pause day (YYYY-MM-DD) as a local-noon ISO string, so `fmtDate` names that day in every zone. */
+export function pauseDayIso(day: string): string {
+  return `${day.slice(0, 10)}T12:00:00`;
+}
+
+/** The pause whose day came: the case is back in Hoy with its reason, waiting to be resumed. */
+export function pauseReturned(card: OpportunityCardData, now: Date = new Date()): { until: string; reason: string } | null {
+  if (card.closed_at || TERMINAL.has(card.stage) || !card.paused_until) return null;
+  if (localDay(card.paused_until).getTime() > startOfLocalDay(now).getTime()) return null;
+  return { until: card.paused_until, reason: card.pause_reason ?? "Sin motivo" };
+}
+
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
 const TERMINAL: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
@@ -181,7 +198,7 @@ export const LOST_REASONS: { label: string; stage: "lost" | "abandoned" }[] = [
   { label: "Cambió la necesidad", stage: "lost" },
 ];
 
-/** «En pausa hasta…»: why the case waits. Becomes the task title «Retomar: <motivo>». */
+/** «En pausa hasta…»: why the case waits (`pause_reason`). */
 export const PAUSE_REASONS: string[] = [
   "Esperando fondos o proyecto",
   "Esperando la orden de compra",

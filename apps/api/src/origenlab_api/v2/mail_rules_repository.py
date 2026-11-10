@@ -228,14 +228,14 @@ select oe.source_record_id::text as source_record_id, oe.opportunity_id::text as
 #: Sales cases only (`case_kind.py`): R1–R15 never link, advance, reopen or close a tender. An email
 #: already linked to a tender keeps that link in `linked_case_ids` (so no rule opens a second case
 #: for it), but the tender is not a case the planner can act on.
-#: `paused_until`: «En pausa hasta…» is an open «Retomar: …» task due later (`CaseMove`). A
-#: «Recordarme…» reminder is a task too, but not a pause.
+#: `paused_until`: «En pausa hasta…» is a state of the case (`crm.opportunity.paused_until`,
+#: 2026-11-13). Only a pause still ahead counts here: a case whose day came back («vuelve de pausa»)
+#: is a case again, so a client's reply moves it.
 _CASES_SQL = """
 select o.id::text as id, o.title, o.stage, o.version, o.organization_id::text as organization_id,
        o.closed_at is not null as closed,
-       (select min(t.due_at) from crm.task t
-         where t.opportunity_id = o.id and t.status = 'open' and t.due_at > now()
-           and t.title like 'Retomar:%') as paused_until
+       case when o.paused_until > (now() at time zone 'America/Santiago')::date
+            then o.paused_until end as paused_until
   from crm.opportunity o
  where o.kind = 'sale'
 """

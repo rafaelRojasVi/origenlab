@@ -104,7 +104,7 @@ function HoyMiniHeader({ pipeline }: { pipeline: PipelineState }) {
       : null),
     [pipeline, me, homeFilter],
   );
-  const totalHoy = plan ? plan.steps.filter((st) => st.item !== null).length : null;
+  const totalHoy = plan ? plan.steps.filter((st) => st.actionable).length : null;
 
   const hintText = (() => {
     if (!plan) return null;

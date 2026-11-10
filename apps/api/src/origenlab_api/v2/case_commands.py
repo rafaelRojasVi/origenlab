@@ -16,6 +16,7 @@ sign.
 | `record_case_won` | the case was won, against this sent, current quote revision |
 | `resolve_current_revision` | of this quote's current revisions, this one is the current one |
 | `record_case_quotation` | this quote, printing this number, was already sent on this case, by this message |
+| `set_case_pause` | «En pausa hasta…» as a state of the case: a day and a reason, or both null to resume (owner decision 2026-11-10) |
 | `set_case_origin` | an operator says which channel this case came from, or corrects it (null clears) |
 
 **Nine, and deliberately only nine.** There is no command that closes an evidence link, no
@@ -53,6 +54,7 @@ missing any of them is refused before a database connection is opened.
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
@@ -82,9 +84,11 @@ CREATE_REQUEST_FROM_FORWARD = "create_request_from_forward"
 DISMISS_FORWARDED_REQUEST = "dismiss_forwarded_request"
 #: An operator sets or corrects the channel a case came from (`case_origin.py`); null clears it.
 SET_CASE_ORIGIN = "set_case_origin"
+SET_CASE_PAUSE = "set_case_pause"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
+    SET_CASE_PAUSE,
     LINK_CASE_EVIDENCE,
     ADD_CASE_ORGANIZATION,
     SET_CASE_ORGANIZATION_ROLE,
@@ -572,6 +576,30 @@ class SetCaseOriginBody(_CaseBody):
     origin: CaseOrigin | None
 
 
+class SetCasePauseBody(_CaseBody):
+    """Pause a case until a day, for a reason, or end its pause — `crm.opportunity.paused_until` and
+    `pause_reason` (owner decision 2026-11-10).
+
+    `paused_until` is a calendar day (Santiago) not before today and `reason` a short text; they come
+    together, or both `null` to resume. Neither has a default: a request that leaves a field out is
+    a 422. Setting exactly what the case already has is refused (`case_pause_unchanged`). A closed
+    case is not paused: it is closed.
+
+    Before this command a pause was an open «Retomar: <motivo>» task (W11). The command also cancels
+    any such task the case still holds, with its own `task.cancelled` event, so the two never
+    disagree. It moves nothing else on the case.
+    """
+
+    paused_until: date | None
+    reason: Annotated[str, Field(min_length=1, max_length=200)] | None
+
+    @model_validator(mode="after")
+    def _a_day_and_a_reason_or_neither(self) -> SetCasePauseBody:
+        if (self.paused_until is None) != (self.reason is None or not self.reason.strip()):
+            raise ValueError("a pause is a day and a reason together; to resume, send both as null")
+        return self
+
+
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
@@ -586,6 +614,7 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     CREATE_REQUEST_FROM_FORWARD: CreateRequestFromForwardBody,
     DISMISS_FORWARDED_REQUEST: DismissForwardedRequestBody,
     SET_CASE_ORIGIN: SetCaseOriginBody,
+    SET_CASE_PAUSE: SetCasePauseBody,
 }
 
 
@@ -704,6 +733,9 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields.update(validated_stage(body))
     elif isinstance(body, SetCaseOriginBody):
         fields["origin"] = body.origin
+    elif isinstance(body, SetCasePauseBody):
+        fields["paused_until"] = body.paused_until
+        fields["pause_reason"] = body.reason.strip() if body.reason else None
     elif isinstance(body, (RecordCaseWonBody, ResolveCurrentRevisionBody)):
         fields["quote_id"] = as_uuid(body.quote_id, "quote_id")
         fields["revision_no"] = int(body.revision_no)

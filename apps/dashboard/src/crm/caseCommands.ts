@@ -40,6 +40,7 @@ export const CASE_COMMAND_PATHS = {
   dismissForwardedRequest: "/v2/commands/dismiss-forwarded-request",
   removeAutomaticAction: "/v2/commands/remove-automatic-action",
   setCaseOrigin: "/v2/commands/set-case-origin",
+  setCasePause: "/v2/commands/set-case-pause",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -486,22 +487,46 @@ export async function moveCase(
   }
 }
 
-/** «Retomar ahora»: cancel each open task that keeps the case paused, one key per task. */
-export async function resumeCase(
-  tasks: { task_id: string; version: number }[],
+/* ── pause as a state (2026-11-13): «En pausa hasta…», «Retomar ahora» ──────── */
+
+export interface SetCasePauseBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  /** A Santiago day, YYYY-MM-DD; null with `reason` null to resume. */
+  paused_until: string | null;
+  reason: string | null;
+  note: string;
+}
+
+export const setCasePause = (body: SetCasePauseBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.setCasePause, body, idempotencyKey);
+
+/** «En pausa hasta <día>» for a reason: one command, one receipt. */
+export async function pauseCase(
+  card: { opportunity_id: string; version: number },
+  day: string,
+  reason: string,
   note: string,
-  keys: Record<string, string> = {},
+  idempotencyKey: string = newCaseCommandKey(),
 ): Promise<WonStep[]> {
-  const done: WonStep[] = [];
-  try {
-    for (const t of tasks) {
-      const receipt = await cancelTask({ task_id: t.task_id, task_version: t.version, note }, keys[t.task_id]);
-      done.push({ label: "Pausa retomada", receipt });
-    }
-    return done;
-  } catch (err) {
-    throw new WonFlowError(done, err);
-  }
+  const receipt = await setCasePause(
+    { opportunity_id: card.opportunity_id, opportunity_version: card.version, paused_until: day, reason, note },
+    idempotencyKey,
+  );
+  return [{ label: `En pausa hasta ${day}`, receipt }];
+}
+
+/** «Retomar ahora»: the pause ends; the case is a case again. */
+export async function resumeCase(
+  card: { opportunity_id: string; version: number },
+  note: string,
+  idempotencyKey: string = newCaseCommandKey(),
+): Promise<WonStep[]> {
+  const receipt = await setCasePause(
+    { opportunity_id: card.opportunity_id, opportunity_version: card.version, paused_until: null, reason: null, note },
+    idempotencyKey,
+  );
+  return [{ label: "Pausa retomada", receipt }];
 }
 
 /**

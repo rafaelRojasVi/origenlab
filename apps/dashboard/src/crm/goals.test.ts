@@ -109,7 +109,7 @@ describe("cotizarBacklog", () => {
     const b = card({ stage: "qualifying", created_at: ago(5 * HOUR) });
     const sent = card({}, [rev(ago(8 * DAY))]);
     const paused = card({ stage: "lead", created_at: ago(9 * DAY),
-      open_tasks: [{ task_id: "t2", title: "Esperar", due_at: new Date(NOW.getTime() + DAY).toISOString(), version: 1, owner: null }] });
+      paused_until: new Date(NOW.getTime() + 3 * DAY).toISOString().slice(0, 10), pause_reason: "Esperar" });
     expect(cotizarBacklog(buildParaTiQueue([a, b, sent, paused], NOW, null))).toEqual({ count: 2, oldestMs: 2 * DAY });
     expect(cotizarBacklog([])).toEqual({ count: 0, oldestMs: null });
   });

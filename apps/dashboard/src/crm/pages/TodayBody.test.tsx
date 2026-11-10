@@ -129,7 +129,7 @@ describe("today lists", () => {
     // A task scheduled before the client's email does not answer it, even if it is due later.
     const before = card({ open_tasks: [scheduled("2026-09-26T12:00:00Z")], last_contact: inbound("2026-09-30T12:00:00Z") }, "2026-09-25T12:00:00Z");
     // An older API without `created_at`: a case «En pausa» counts as answered.
-    const olderApi = card({ open_tasks: [task("q", "2026-10-26T12:00:00Z")], last_contact: inbound("2026-09-30T12:00:00Z") }, "2026-09-25T12:00:00Z");
+    const olderApi = card({ open_tasks: [task("q", "2026-10-26T12:00:00Z")], paused_until: "2026-10-26", pause_reason: "Evaluando", last_contact: inbound("2026-09-30T12:00:00Z") }, "2026-09-25T12:00:00Z");
     expect(repliesToAnswer([answered, again, before, olderApi], NOW).map((r) => r.card.opportunity_id)).toEqual([
       again.opportunity_id,
       before.opportunity_id,

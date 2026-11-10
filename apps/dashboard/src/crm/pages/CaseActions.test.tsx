@@ -29,7 +29,6 @@ const QUOTE = "44444444-4444-4444-8444-444444444444";
 const MESSAGE = "55555555-5555-4555-8555-555555555555";
 const SHA_NEW = "a".repeat(64);
 const SHA_RECORDED = "b".repeat(64);
-const TASK = "66666666-6666-4666-8666-666666666666";
 
 const MAIL_DOCUMENTS = {
   opportunity_id: CASE,
@@ -355,13 +354,8 @@ describe("stage movement requesting-institution prerequisites", () => {
       stage: "qualified",
       organization: null,
       requesting_institution_confirmation: null,
-      open_tasks: [{
-        task_id: TASK,
-        title: "Retomar",
-        due_at: "2099-01-01T09:00:00Z",
-        version: 1,
-        owner: null,
-      }],
+      paused_until: "2099-01-01",
+      pause_reason: "Retomar",
     });
     expect(moveRefusal(request, "solicitada", new Date("2026-10-08T12:00:00Z"))).toBeNull();
   });
@@ -579,17 +573,17 @@ describe("case drawer actions", () => {
     await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));
   });
 
-  it("pauses a case until a date with a reason, as a task, and resumes it", async () => {
-    const paused = card({
-      open_tasks: [{ task_id: TASK, title: "Retomar: Esperando fondos o proyecto", due_at: "2099-11-02T12:00:00Z", version: 1, owner: "Ventas" }],
-      next_action: { text: "Retomar: Esperando fondos o proyecto", source: "task", due_at: "2099-11-02T12:00:00Z" },
-    });
+  it("pauses a case until a date with a reason, as a state of the case, and resumes it", async () => {
+    const paused = card({ version: 2, paused_until: "2099-11-02", pause_reason: "Esperando fondos o proyecto" });
     const calls = stubApi({
       pipelines: [page([card()]), page([paused]), page([card()])],
-      onPost: (call) =>
-        call.path === "/v2/commands/create-task"
-          ? { body: { command: "create_task", task_id: TASK, task_version: 1, opportunity_id: CASE, command_receipt_id: "9999aaaa-1", replayed: false } }
-          : { body: { command: "cancel_task", task_id: TASK, task_version: 2, opportunity_id: CASE, command_receipt_id: "9999bbbb-1", replayed: false } },
+      onPost: (call) => ({
+        body: {
+          command: "set_case_pause", opportunity_id: CASE, opportunity_version: call.body?.paused_until ? 2 : 3,
+          paused_until: call.body?.paused_until ?? null, pause_reason: call.body?.reason ?? null,
+          command_receipt_id: call.body?.paused_until ? "9999aaaa-1" : "9999bbbb-1", replayed: false,
+        },
+      }),
     });
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
@@ -601,33 +595,36 @@ describe("case drawer actions", () => {
 
     const banner = await within(dialog).findByTestId("case-paused");
     expect(banner).toHaveTextContent("En pausa hasta 02 nov 2099");
-    const create = calls.find((c) => c.path === "/v2/commands/create-task")!;
-    expect(create.body).toEqual({
+    expect(banner).toHaveTextContent("Esperando fondos o proyecto");
+    const pause = calls.find((c) => c.path === "/v2/commands/set-case-pause")!;
+    expect(pause.body).toEqual({
       opportunity_id: CASE,
-      title: "Retomar: Esperando fondos o proyecto",
-      due_at: new Date("2099-11-02T09:00:00").toISOString(),
-      note: "Esperando fondos o proyecto",
+      opportunity_version: expect.any(Number),
+      paused_until: "2099-11-02",
+      reason: "Esperando fondos o proyecto",
+      note: "En pausa hasta 02 nov 2099.",
     });
-    // The stage never moved.
+    // The stage never moved, and no task was written: the pause is the case's own state.
     expect(calls.some((c) => c.path === "/v2/commands/advance-case-stage")).toBe(false);
+    expect(calls.some((c) => c.path === "/v2/commands/create-task")).toBe(false);
 
     fireEvent.click(within(banner).getByRole("button", { name: "Retomar ahora" }));
     await waitFor(() => expect(within(dialog).queryByTestId("case-paused")).not.toBeInTheDocument());
-    const cancel = calls.find((c) => c.path === "/v2/commands/cancel-task")!;
-    expect(cancel.body).toEqual({ task_id: TASK, task_version: 1, note: "Retomado antes de la fecha." });
+    const resume = calls.filter((c) => c.path === "/v2/commands/set-case-pause")[1]!;
+    expect(resume.body).toEqual({
+      opportunity_id: CASE, opportunity_version: 2, paused_until: null, reason: null, note: "Retomado antes de la fecha.",
+    });
   });
 
-  it("pausing replaces a follow-up already due, so the case really goes to «En pausa»", async () => {
+  it("pausing leaves the case's reminders alone: one command and nothing else", async () => {
     const DUE = "77777777-0000-4000-8000-0000000000d1";
     const withDue = card({
       open_tasks: [{ task_id: DUE, title: "Seguimiento de 01239-26", due_at: "2020-01-01T12:00:00Z", version: 2, owner: "Ventas" }],
     });
     const calls = stubApi({
       pipelines: [page([withDue]), page([card()])],
-      onPost: (call) =>
-        call.path === "/v2/commands/create-task"
-          ? { body: { command: "create_task", task_id: TASK, task_version: 1, opportunity_id: CASE, command_receipt_id: "9999aaaa-2", replayed: false } }
-          : { body: { command: "cancel_task", task_id: DUE, task_version: 3, opportunity_id: CASE, command_receipt_id: "9999bbbb-2", replayed: false } },
+      onPost: () => ({ body: { command: "set_case_pause", opportunity_id: CASE, opportunity_version: 2, paused_until: "2099-11-02",
+        pause_reason: "Esperando fondos o proyecto", command_receipt_id: "9999aaaa-2", replayed: false } }),
     });
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
@@ -636,14 +633,9 @@ describe("case drawer actions", () => {
     fireEvent.change(within(form).getByLabelText(/Retomar el/), { target: { value: "2099-11-02" } });
     fireEvent.click(within(form).getByRole("button", { name: "Esperando fondos o proyecto" }));
     fireEvent.click(within(form).getByRole("button", { name: "Pausar" }));
-    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/create-task")).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.path === "/v2/commands/set-case-pause")).toBe(true));
     const posts = calls.filter((c) => c.path.startsWith("/v2/commands/")).map((c) => c.path);
-    expect(posts).toEqual(["/v2/commands/cancel-task", "/v2/commands/create-task"]);
-    expect(calls.find((c) => c.path === "/v2/commands/cancel-task")!.body).toEqual({
-      task_id: DUE,
-      task_version: 2,
-      note: "Reemplazada por la pausa hasta 02 nov 2099.",
-    });
+    expect(posts).toEqual(["/v2/commands/set-case-pause"]);
   });
 
   it("marks a quoting case won in two steps, each with its receipt", async () => {
@@ -1473,7 +1465,8 @@ describe("Decidir casos", () => {
     const paused = card({
       ...silent,
       opportunity_id: "aaaaaaaa-0000-4000-8000-000000000006",
-      open_tasks: [{ task_id: TASK, title: "Retomar: Esperando fondos o proyecto", due_at: "2026-11-20T12:00:00Z", version: 1, owner: "Ventas" }],
+      paused_until: "2026-11-20",
+      pause_reason: "Esperando fondos o proyecto",
     });
     expect(proposeOpenDecision(paused, NOW)).toMatchObject({ decision: "pausa", include: false });
     expect(proposeOpenDecision({ ...replied, stage: "negotiating" }, NOW)).toMatchObject({ decision: "conversacion", include: false });
@@ -1560,9 +1553,9 @@ describe("Decidir casos", () => {
 
     expect(await screen.findByTestId("toaster")).toHaveTextContent("2 casos decididos.");
     const posts = calls.filter((c) => c.method === "POST");
-    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/advance-case-stage", "/v2/commands/create-task"]);
+    expect(posts.map((c) => c.path)).toEqual(["/v2/commands/advance-case-stage", "/v2/commands/set-case-pause"]);
     expect(posts[0].body).toMatchObject({ opportunity_id: replied.opportunity_id, stage: "negotiating" });
-    expect(posts[1].body).toMatchObject({ opportunity_id: recent.opportunity_id, title: "Retomar: Pidió volver a contactar" });
+    expect(posts[1].body).toMatchObject({ opportunity_id: recent.opportunity_id, reason: "Pidió volver a contactar", paused_until: expect.any(String) });
   });
 
   it("is opened from the notice on Oportunidades, for a deciding role only", async () => {

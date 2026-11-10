@@ -391,7 +391,7 @@ function MailIcon() {
 /** The one line under the quote: a pause, a blocker, how the case closed, or the conversation. */
 export function cardLine(card: OpportunityCardData, now: Date): { text: string; tone: string } {
   const until = pausedUntil(card, now);
-  if (until) return { text: `Hasta ${fmtDate(until)} · ${card.open_tasks?.[0]?.title ?? "en pausa"}`, tone: "info" };
+  if (until) return { text: `Hasta ${fmtDate(until)} · ${card.pause_reason ?? "en pausa"}`, tone: "info" };
   const blocking = card.attention.find((a) => a.blocking);
   if (blocking) return { text: blocking.label, tone: "bad" };
   if (card.stage === "won") return { text: "Ganada", tone: "good" };

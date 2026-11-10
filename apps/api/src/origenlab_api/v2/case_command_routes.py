@@ -11,6 +11,7 @@
 | `POST /v2/commands/record-case-won` | the case was won, against this sent, current quote revision |
 | `POST /v2/commands/resolve-current-revision` | of this quote's current revisions, this one is the current one |
 | `POST /v2/commands/record-case-quotation` | this quote was already sent on this case, by this Gmail message |
+| `POST /v2/commands/set-case-pause` | «En pausa hasta…» (a day and a reason) or its end (both null); cancels the case's legacy «Retomar» task |
 | `POST /v2/commands/set-case-origin` | the channel this case came from, set or corrected (null clears it) |
 
 **Why a third router.** `routes.py` is the read boundary and a test over its own methods
@@ -60,6 +61,7 @@ from origenlab_api.v2.case_commands import (
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     SET_CASE_ORIGIN,
+    SET_CASE_PAUSE,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     CompleteCaseFromSentQuoteBody,
@@ -73,6 +75,7 @@ from origenlab_api.v2.case_commands import (
     ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
     SetCaseOriginBody,
+    SetCasePauseBody,
     validated_case,
 )
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
@@ -370,6 +373,28 @@ def set_case_origin(
     """
     return _run(
         command_name=SET_CASE_ORIGIN,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/set-case-pause")
+def set_case_pause(
+    body: SetCasePauseBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Pause an open case until a day for a reason (`paused_until` + `pause_reason`), or resume it
+    (both null). The case version shown must be current (409 `case_version_conflict`), the case must
+    exist and be open (404 / 409), and the pause must actually change (409 `case_pause_unchanged`).
+    Writes one `opportunity.pause_set` event and cancels any legacy open «Retomar: …» task of the
+    case (each with its `task.cancelled` event).
+    """
+    return _run(
+        command_name=SET_CASE_PAUSE,
         body=body,
         repo=repo,
         operator=operator,

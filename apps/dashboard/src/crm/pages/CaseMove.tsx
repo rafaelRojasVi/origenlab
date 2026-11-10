@@ -17,12 +17,12 @@ import {
   WonFlowError,
   cancelTask,
   caseRefusalText,
-  createTask,
+  isReopenable,
   isStaleRefusal,
   moveCase,
   newCaseCommandKey,
+  pauseCase,
   resumeCase,
-  isReopenable,
   stagePath,
   type WonStep,
 } from "../caseCommands";
@@ -33,7 +33,7 @@ import {
   PAUSE_REASONS,
   STAGE_LABEL,
   boardColumnOf,
-  pauseTasks,
+  pauseDayIso,
   pausedUntil,
   type BoardColumnKey,
 } from "../stage";
@@ -124,7 +124,7 @@ export function CaseMoveForm({
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const from = boardColumnOf(card, at);
-  const paused = pauseTasks(card, at);
+  const paused = pausedUntil(card, at) !== null;
   const column = BOARD_COLUMNS.find((c) => c.key === target);
   // Staying in the same stage column only resumes the pause.
   const stageTarget =
@@ -175,22 +175,15 @@ export function CaseMoveForm({
     try {
       if (target === "pausa") {
         const text = detail.trim() ? `${reason}: ${detail.trim()}` : (reason as string);
-        // The pause replaces every open task: the board reads the earliest one, so a follow-up
-        // already due (today or overdue) would keep the case out of «En pausa». A later pause is
-        // replaced by the new date the same way.
-        const until = fmtDate(morningOf(day));
-        const due = (card.open_tasks ?? []).filter((t) => !paused.some((p) => p.task_id === t.task_id));
-        const keys = cancelKeys();
-        for (const t of due) {
-          const receipt = await cancelTask({ task_id: t.task_id, task_version: t.version, note: `Reemplazada por la pausa hasta ${until}.` }, keys[t.task_id]);
-          done.push({ label: "Tarea reemplazada por la pausa", receipt });
-        }
-        done.push(...(await resumeCase(paused, `Nueva pausa hasta ${until}.`, keys)));
-        const receipt = await createTask(
-          { opportunity_id: card.opportunity_id, title: `Retomar: ${reason}`, due_at: morningOf(day), note: text },
+        // The pause is a state of the case (set-case-pause, 2026-11-13): one command sets the day and
+        // the reason, replacing an earlier pause. Reminders on the case are not touched any more.
+        done.push(...(await pauseCase(
+          { opportunity_id: card.opportunity_id, version: card.version as number },
+          day,
+          text.slice(0, 200),
+          `En pausa hasta ${fmtDate(morningOf(day))}.`,
           keysRef.current.create,
-        );
-        done.push({ label: `En pausa hasta ${fmtDate(morningOf(day))}`, receipt });
+        )));
       } else if (target === "perdida") {
         const chosen = LOST_REASONS.find((r) => r.label === reason);
         const text = detail.trim() ? `${reason}: ${detail.trim()}` : (reason as string);
@@ -212,10 +205,17 @@ export function CaseMoveForm({
           done.push({ label: "Tarea cancelada", receipt });
         }
       } else {
+        // Leaving «En pausa» ends the pause first (its own event), then the stage move runs against
+        // the version that command returned.
+        let version = card.version as number;
+        if (paused) {
+          done.push(...(await resumeCase({ opportunity_id: card.opportunity_id, version }, note.trim(), keysRef.current.create)));
+          version += 1;
+        }
         if (steps.length > 0) {
           done.push(
             ...(await moveCase(
-              { opportunity_id: card.opportunity_id, stage: card.stage, version: card.version as number },
+              { opportunity_id: card.opportunity_id, stage: card.stage, version },
               stageTarget as string,
               note.trim(),
               null,
@@ -223,7 +223,6 @@ export function CaseMoveForm({
             )),
           );
         }
-        done.push(...(await resumeCase(paused, note.trim(), cancelKeys())));
       }
       onDone({ tone: "good", lines: done.map((s, i) => receiptLine(s, i + 1, done.length)) }, true);
     } catch (err) {
@@ -250,7 +249,7 @@ export function CaseMoveForm({
     <form onSubmit={(e) => void submit(e)} className="space-y-3" aria-label={title} data-testid="case-move-form">
       <p className="text-xs text-ink-muted">
         Ahora: <strong className="text-ink">{COLUMN_LABEL[from]}</strong>
-        {from === "pausa" && paused[0] ? ` hasta ${fmtDate(paused[0].due_at)}` : ""}
+        {from === "pausa" && card.paused_until ? ` hasta ${fmtDate(pauseDayIso(card.paused_until))}` : ""}
         {from !== "pausa" ? ` (${STAGE_LABEL[card.stage] ?? card.stage})` : ""}.
       </p>
       {refusal ? (
@@ -285,8 +284,8 @@ export function CaseMoveForm({
               Se registrarán {steps.length} pasos, cada uno con su recibo: {steps.map((s) => STAGE_LABEL[s] ?? s).join(" → ")}.
             </p>
           ) : null}
-          {paused.length > 0 ? (
-            <p className="text-[11px] text-ink-muted">La pausa se retoma: su tarea queda cancelada.</p>
+          {paused ? (
+            <p className="text-[11px] text-ink-muted">La pausa se retoma.</p>
           ) : null}
           <FormField label="Nota" htmlFor="case-move-note" required hint="Queda en la auditoría del caso.">
             <TextareaInput id="case-move-note" value={note} onChange={setNote} maxLength={2000} rows={2} />

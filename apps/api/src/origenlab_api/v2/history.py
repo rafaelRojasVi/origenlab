@@ -21,6 +21,7 @@ COMMAND_LABELS: dict[str, str] = {
     "correct_case_stage": "Corrigió la etapa",
     "open_commercial_case": "Abrió el caso",
     "set_case_origin": "Cambió el origen del caso",
+    "set_case_pause": "Pausó o retomó el caso",
     "record_case_won": "Marcó ganada",
     "record_case_quotation": "Registró una cotización",
     "record_historical_quotation": "Registró una cotización",
