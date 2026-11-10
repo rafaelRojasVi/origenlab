@@ -103,6 +103,10 @@ export interface CajaHorizon {
   until: string;      // ISO date
   entra: number;
   sale: number;
+  /** Confirmed unreceived supplier orders (amount_clp). */
+  sale_confirmado: number;
+  /** Estimated cost: Σ pedidos_estimados + current-month expenses. */
+  sale_estimado: number;
   neto: number;
 }
 

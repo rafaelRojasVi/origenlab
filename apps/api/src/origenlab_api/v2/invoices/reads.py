@@ -15,9 +15,21 @@ from datetime import date
 from typing import Any
 
 _ITEMS = """
+with avg_days_per_client as (
+  -- per-client average payment days from paid facturas (doc_type 33/34)
+  select i2.client_rut,
+         round(avg(i2.paid_on - i2.issued_on))::int as avg_d
+    from crm.invoice i2
+   where i2.doc_type in (33, 34) and i2.paid_on is not null
+   group by i2.client_rut
+)
 select i.id::text as invoice_id, i.version, i.doc_type, i.folio, i.issued_on, i.client_rut, i.client_name,
        i.net_amount, i.vat_amount, i.exempt_amount, i.total_amount,
        i.reference_doc_type, i.reference_folio, i.case_link, i.paid_on,
+       -- payment-time history: default 30 d (Ley 21.131) when no history exists for the client
+       coalesce(a.avg_d, 30) as avg_days_client,
+       -- expected pay date only meaningful while unpaid; set for all rows, filtered in shape()
+       (i.issued_on + coalesce(a.avg_d, 30))::text as expected_pay_date,
        (select coalesce(json_agg(json_build_object(
                  'payment_id', p.id, 'paid_on', p.paid_on, 'amount', p.amount, 'recorded_by', op.display_name)
                  order by p.paid_on, p.created_at), '[]'::json)
@@ -31,6 +43,7 @@ select i.id::text as invoice_id, i.version, i.doc_type, i.folio, i.issued_on, i.
   from crm.invoice i
   left join crm.organization org on org.id = i.organization_id
   left join crm.opportunity o on o.id = i.opportunity_id
+  left join avg_days_per_client a on a.client_rut = i.client_rut
  where (%(opportunity_id)s::uuid is null or i.opportunity_id = %(opportunity_id)s::uuid
         or (i.doc_type in (56, 61) and exists (
               select 1 from crm.invoice f
@@ -53,7 +66,7 @@ def _bucket(days: int) -> str:
     return BUCKETS[0][0]
 
 
-def shape(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
+def shape(rows: list[dict[str, Any]], today: date, avg_days_overall: int = 0, avg_days_overall_count: int = 0) -> dict[str, Any]:
     """Facturas with their notas and balance, and the por-cobrar totals by age."""
     notes: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for r in rows:
@@ -84,9 +97,13 @@ def shape(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
         case = None
         if r["o_id"] is not None:
             case = {"id": r["o_id"], "title": r["o_title"], "stage": r["o_stage"], "quote_number": r["o_quote"]}
+        avg_d = int(r.get("avg_days_client") or 30)
+        exp_pay = r.get("expected_pay_date")
         items.append({
             "invoice_id": r["invoice_id"], "version": r["version"], "doc_type": r["doc_type"], "folio": r["folio"],
             "issued_on": _iso(r["issued_on"]), "days_open": days, "age_bucket": _bucket(days) if status == "unpaid" else None,
+            "avg_days_client": avg_d,
+            "expected_pay_date": exp_pay if status == "unpaid" else None,
             "client_rut": r["client_rut"], "client_name": r["client_name"],
             "organization": {"id": r["org_id"], "name": r["org_name"]} if r["org_id"] else None,
             "net_amount": r["net_amount"], "vat_amount": r["vat_amount"], "exempt_amount": r["exempt_amount"],
@@ -110,6 +127,8 @@ def shape(rows: list[dict[str, Any]], today: date) -> dict[str, Any]:
             "by_age": by_bucket,
             "without_case": sum(1 for i in items if i["status"] in ("unpaid", "paid") and i["opportunity"] is None),
             "last_issued_on": max((i["issued_on"] for i in items), default=None),
+            "avg_days_overall": avg_days_overall,
+            "avg_days_overall_count": avg_days_overall_count,
         },
         "today": today.isoformat(),
     }
@@ -139,7 +158,16 @@ class InvoiceReadRepository:
             cur.execute(_ITEMS, {"opportunity_id": opportunity_id})
             names = [d.name for d in cur.description]
             rows = [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
-        return shape(rows, today)
+            # Overall average payment days (for the «promedio de cobro» summary line in the UI)
+            cur.execute("""
+                select round(avg(paid_on - issued_on))::int, count(*)::int
+                  from crm.invoice
+                 where doc_type in (33, 34) and paid_on is not null
+            """)
+            avg_row = cur.fetchone()
+            avg_overall = int(avg_row[0] or 0)
+            avg_overall_n = int(avg_row[1] or 0)
+        return shape(rows, today, avg_days_overall=avg_overall, avg_days_overall_count=avg_overall_n)
 
     def today(self) -> date:
         with self._read() as cur:

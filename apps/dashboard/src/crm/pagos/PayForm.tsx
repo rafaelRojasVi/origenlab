@@ -35,11 +35,14 @@ export function PayForm({
   today,
   onDone,
   large = false,
+  triggerLabel = "Registrar pago…",
 }: {
   invoice: Invoice;
   today: string;
   onDone: () => void;
   large?: boolean;
+  /** Override the closed-state trigger button label (default "Registrar pago…"). */
+  triggerLabel?: string;
 }) {
   const left = i.balance ?? i.total_amount;
   const [open, setOpen] = useState(false);
@@ -86,7 +89,7 @@ export function PayForm({
             setOpen(true);
           }}
         >
-          Registrar pago…
+          {triggerLabel}
         </button>
         <Button
           variant="secondary"

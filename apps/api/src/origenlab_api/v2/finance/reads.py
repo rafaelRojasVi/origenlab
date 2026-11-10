@@ -310,7 +310,7 @@ with
      where month = mb.month_start
      limit 1
   ),
-  -- won cases this month with no invoice linked
+  -- all won cases (no month filter — intentional: shows the full uninvoiced backlog) with no factura
   ganado_sin_facturar as (
     select coalesce(sum(
       case when qr.quote_currency = 'CLP' then coalesce(qr.tax_base, 0) else 0 end
@@ -375,15 +375,26 @@ with
       from crm.invoice i
      where i.doc_type in (33, 34) and i.paid_on is not null
   ),
-  -- this month's won cases: cost and subtotal for margin
+  -- this month's won cases: cost and subtotal for margin.
+  -- cost is aggregated once per revision via LATERAL; without it, a direct JOIN to quote_line would
+  -- multiply tax_base by the line count (3 lines → subtotal 3×), inflating the margin percentage.
   margen_this_month as (
     select
-      coalesce(sum(l.quantity * l.unit_cost * coalesce(l.fx_rate, 1)), 0) as costo,
+      coalesce(sum(rev_cost.costo), 0) as costo,
       coalesce(sum(qr.tax_base), 0) as subtotal
     from crm.opportunity o
     join crm.quote_revision qr on qr.quote_id = o.won_quote_id and qr.revision_no = o.won_revision_no
-    left join crm.quote_line l on l.quote_revision_id = qr.id and l.line_kind = 'item'
     cross join month_bounds mb
+    -- LATERAL aggregates item lines once per revision; tax_base then joins exactly once per won case
+    left join lateral (
+      select coalesce(sum(
+        -- CLP lines have fx_rate = null; coalesce(null, 1) = 1, so no currency conversion is applied.
+        -- Foreign-currency lines store the CLP-per-unit rate (same as engine.py _rate()).
+        l.quantity * l.unit_cost * coalesce(l.fx_rate, 1)
+      ), 0) as costo
+        from crm.quote_line l
+       where l.quote_revision_id = qr.id and l.line_kind = 'item'
+    ) rev_cost on true
     where o.stage = 'won'
       and date(o.closed_at at time zone 'America/Santiago') >= mb.month_start
       and date(o.closed_at at time zone 'America/Santiago') < mb.month_end
@@ -488,6 +499,9 @@ left join lateral (
 left join crm.organization sup on sup.id = first_line.supplier_organization_id
 where o.stage = 'won'
   and not exists (select 1 from crm.supplier_order so where so.opportunity_id = o.id)
+  -- exclude cases that already have a factura (doc_type 33/34): those have been invoiced
+  -- and the supplier should have been paid already; they don't need an estimate here
+  and not exists (select 1 from crm.invoice inv where inv.opportunity_id = o.id and inv.doc_type in (33, 34))
 order by o.closed_at desc
 limit 50
 """
@@ -666,13 +680,25 @@ class FinanceReadRepository:
             ped_names = [d.name for d in cur.description]
             ped_rows = [dict(zip(ped_names, r, strict=True)) for r in cur.fetchall()]
 
+            # 6. Current-month expenses (for the caja sale-side: committed operational spend)
+            cur.execute(_EXPENSES_SQL, {"month": mes_row["mes"]})
+            exp_names = [d.name for d in cur.description]
+            exp_rows = [dict(zip(exp_names, r, strict=True)) for r in cur.fetchall()]
+
         today_str = mes_row["today"]
         today_d = date.fromisoformat(today_str)
         month_end_d = date.fromisoformat(mes_row["month_end"])
 
         # ── caja: 30 / 60 / 90 day horizons ─────────────────────────────────
         IVA_RATE = Decimal("1.19")
+        # sale_confirmado: confirmed supplier orders still in transit (no arrival date → all horizons)
         in_flight_total = sum(int(so["amount_clp"] or 0) for so in so_rows if so["received_on"] is None)
+        sale_confirmado = in_flight_total
+        # sale_estimado: won cases whose supplier purchase hasn't been registered yet
+        #   + current-month operational expenses already committed
+        pedidos_est_total = sum(int(r["estimated_cost_clp"]) for r in ped_rows)
+        gastos_mes_total = sum(int(r["amount_clp"]) for r in exp_rows)
+        sale_estimado = pedidos_est_total + gastos_mes_total
         # ganado_sin_facturar as a future invoice (IVA-inclusive at ~60d)
         gsf_iva = int(Decimal(str(mes_row["ganado_sf_net"])) * IVA_RATE)
 
@@ -689,14 +715,16 @@ class FinanceReadRepository:
             # At 60+ d, add won-not-invoiced expected revenue (IVA-inclusive)
             entra_gsf = gsf_iva if horizon >= 60 else 0
             entra = entra_inv + entra_gsf
-            # sale: in-flight supplier orders (all within horizon since no due dates known) + expenses
-            sale = in_flight_total
+            # sale = all known outflows: confirmed orders + estimated cost + monthly expenses
+            sale = sale_confirmado + sale_estimado
             neto = entra - sale
             caja.append({
                 "horizon": horizon,
                 "until": until,
                 "entra": entra,
                 "sale": sale,
+                "sale_confirmado": sale_confirmado,
+                "sale_estimado": sale_estimado,
                 "neto": neto,
             })
 
