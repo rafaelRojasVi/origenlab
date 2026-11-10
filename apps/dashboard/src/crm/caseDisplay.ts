@@ -104,7 +104,11 @@ export function displayName(card: OpportunityCardData): { name: string; sub: str
 export function contactLine(card: OpportunityCardData): string | null {
   const c = card.contact;
   if (!c) return null;
-  const who = c.name?.trim() || c.address || null;
+  // Strip RFC 2822 "Display Name <email@domain>" format — show the name only; the address belongs
+  // in the case drawer, not in the queue row.
+  const rawName = c.name?.trim() ?? null;
+  const cleanName = rawName ? (rawName.replace(/\s*<[^>]+>$/, "").trim() || rawName) : null;
+  const who = cleanName || c.address || null;
   if (!who) return null;
   return c.others > 0 ? `${who} +${c.others}` : who;
 }

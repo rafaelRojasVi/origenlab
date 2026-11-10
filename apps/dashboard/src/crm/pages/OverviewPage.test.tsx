@@ -141,12 +141,14 @@ describe("Resumen · número de cotización", () => {
   it("says a typed number is already used, and by whom", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    const input = await screen.findByLabelText("¿Ya existe este número?");
+    // The check panel is behind a toggle button — open it first.
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    fireEvent.click(screen.getByRole("button", { name: /ya existe/i }));
+    const input = await screen.findByLabelText("¿Ya existe este número?");
     fireEvent.change(input, { target: { value: "1020" } });
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/Ya usado: 01020-26 · Laboratorio Andino · CRM/);
     fireEvent.change(input, { target: { value: "01500-26" } });
-    expect(screen.getByTestId("quote-check")).toHaveTextContent(/No está en el CRM ni en el archivo de Drive/);
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/No está en el CRM ni en Drive/);
     fireEvent.change(input, { target: { value: "hola" } });
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/Escribe un número/);
   });
@@ -155,8 +157,10 @@ describe("Resumen · número de cotización", () => {
     const mail = { items: [{ quote_number: "CN01030", first_seen_at: "2026-03-30T14:00:00Z", messages: 2 }] };
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE, "/v2/workspace/mail-quote-numbers": mail });
     render(<OverviewPage navigate={() => undefined} />);
-    const input = await screen.findByLabelText("¿Ya existe este número?");
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("CN01030"));
+    // Open the check panel.
+    fireEvent.click(screen.getByRole("button", { name: /ya existe/i }));
+    const input = await screen.findByLabelText("¿Ya existe este número?");
     expect(screen.getByTestId("quote-last")).toHaveTextContent("Gmail");
     expect(screen.getByTestId("quote-next")).toHaveTextContent("01031-26");
     fireEvent.change(input, { target: { value: "1030" } });
@@ -171,10 +175,13 @@ describe("Resumen · número de cotización", () => {
       "/v2/workspace/mail-quote-numbers": new Response("{}", { status: 500 }),
     });
     render(<OverviewPage navigate={() => undefined} />);
-    const input = await screen.findByLabelText("¿Ya existe este número?");
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    // The error note appears without opening the check panel.
     await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/números de Gmail no se pudieron leer/));
     expect(screen.getByTestId("quote-next")).toHaveTextContent("01023-26");
+    // Open the check panel to test the result text.
+    fireEvent.click(screen.getByRole("button", { name: /ya existe/i }));
+    const input = await screen.findByLabelText("¿Ya existe este número?");
     fireEvent.change(input, { target: { value: "01500-26" } });
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/no se pudieron leer/);
     expect(screen.getByTestId("quote-check")).not.toHaveTextContent(/libre/i);
@@ -184,20 +191,20 @@ describe("Resumen · número de cotización", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01020-26"));
-    // The Drive read starts with the box, once the pipeline is in: its refusal lands a tick later.
-    await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/));
+    // The error note is always visible (no need to open the check panel).
+    await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/i));
   });
 });
 
 describe("Resumen", () => {
-  it("shows the day's dólar, euro and UF in pesos with their source (Hoy v3: compact rate view)", async () => {
+  it("shows the day's dólar, euro and UF in pesos with their source (Hoy v3: tools bar, inline rates)", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    // Hoy v3: LazyFxSection delays with requestAnimationFrame; use findByTestId.
+    // FX loads lazily (after requestAnimationFrame); each currency has its own testid span.
     const usd = await screen.findByTestId("fx-USD");
     expect(usd).toHaveTextContent("$950,50");
     expect(screen.getByTestId("fx-EUR")).toHaveTextContent("$1.050,25");
-    // Source attribution is in the outer FxSection footer.
+    // Source attribution is in the moneda card footer.
     expect(screen.getByText(/Banco Central de Chile/)).toBeInTheDocument();
   });
 
@@ -241,6 +248,9 @@ describe("Resumen", () => {
   it("converts an amount typed the Chilean way into pesos", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
+    // The converter is behind the [Convertir ▾] button — open it first.
+    await screen.findByTestId("fx-USD");
+    fireEvent.click(screen.getByRole("button", { name: /Convertir moneda/ }));
     const amount = await screen.findByLabelText("Monto");
     fireEvent.change(amount, { target: { value: "1.250" } });
     expect(screen.getByTestId("fx-result")).toHaveTextContent("$1.188.125");
@@ -357,26 +367,32 @@ describe("Hoy · lecturas en paralelo", () => {
 });
 
 describe("Hoy · orden", () => {
-  it("keeps the quote number and the rates at hand on the side, not at the bottom", async () => {
+  it("shows the quote number and the rates in the tools bar above the queue (not buried at the bottom)", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    const side = await screen.findByRole("complementary");
-    expect(within(side).getByTestId("quote-number-box")).toBeInTheDocument();
-    // FX loads lazily (after requestAnimationFrame) — use findByTestId to wait for it.
-    expect(await screen.findByTestId("fx-USD")).toBeInTheDocument();
-    expect(side).toContainElement(screen.getByTestId("fx-USD"));
+    // Hoy v3: quote-number-box and FX are in the tools bar above the queue, not in the aside.
+    const box = await screen.findByTestId("quote-number-box");
+    expect(box).toBeInTheDocument();
+    // FX loads lazily — wait for it.
+    const usd = await screen.findByTestId("fx-USD");
+    expect(usd).toBeInTheDocument();
+    // Both are NOT inside the complementary aside (which only holds Pendientes + WebStats).
+    const side = screen.getByRole("complementary");
+    expect(side).not.toContainElement(box);
+    expect(side).not.toContainElement(usd);
   });
 
 
-  it("puts today's work above the exchange rate and the quote number", async () => {
+  it("puts the tools bar above the queue — rates and quote number precede «Para hoy»", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // Hoy v3: unified queue uses «Para hoy» heading (no section-per-kind QueueSection headings).
+    // Hoy v3: tools bar (rates, quote number) is above the unified queue.
     const heading = await screen.findByRole("heading", { level: 2, name: "Para hoy" });
     const usd = await screen.findByTestId("fx-USD");
     const quotes = await screen.findByTestId("quote-number-box");
-    expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(heading.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Tools bar comes before the queue in the document.
+    expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(heading.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   });
 });
 

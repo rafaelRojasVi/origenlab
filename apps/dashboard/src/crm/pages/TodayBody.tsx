@@ -218,7 +218,7 @@ export function TodayBody({
   return (
     <OpenCaseContext.Provider value={openCase}>
     <div className="space-y-4" aria-busy={refreshing || undefined}>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_21rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] 2xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="min-w-0 space-y-4">
 
           {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue; a page
@@ -331,20 +331,24 @@ function TenderClosingSection({ lines, navigate }: { lines: { id: string; text: 
 
 /* ────────────────────────────────────────────────── «Para ti» section ── */
 
-const CHIP: Record<string, { label: string; cls: string }> = {
-  reply:   { label: "Responder",   cls: "bg-warn-bg text-warn" },
-  cotizar: { label: "Cotizar",     cls: "bg-brand-50 text-accent" },
-  task:    { label: "Tarea",       cls: "bg-bad-bg text-bad" },
-  followup:{ label: "Seguimiento", cls: "bg-good-bg text-good" },
-  forward: { label: "Decidir",     cls: "bg-info-bg text-info" },
+const CHIP: Record<string, { label: string; cls: string; color: string }> = {
+  reply:   { label: "Responder",   cls: "bg-warn-bg text-warn",   color: "text-warn" },
+  cotizar: { label: "Cotizar",     cls: "bg-brand-50 text-accent", color: "text-accent" },
+  task:    { label: "Tarea",       cls: "bg-bad-bg text-bad",     color: "text-bad" },
+  followup:{ label: "Seguimiento", cls: "bg-good-bg text-good",   color: "text-good" },
+  forward: { label: "Decidir",     cls: "bg-info-bg text-info",   color: "text-info" },
 };
 
-function ChipBadge({ kind }: { kind: keyof typeof CHIP }) {
-  const { label, cls } = CHIP[kind] ?? CHIP.reply;
+/**
+ * Tiny kind label above the row name — replaces the full-width ChipBadge so the name and
+ * secondary text get more horizontal room.
+ */
+function KindLabel({ kind }: { kind: keyof typeof CHIP }) {
+  const { label, color } = CHIP[kind] ?? CHIP.reply;
   return (
-    <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
+    <p className={`text-[10px] font-semibold uppercase tracking-widest ${color} leading-none`}>
       {label}
-    </span>
+    </p>
   );
 }
 
@@ -432,13 +436,13 @@ function CotizarQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-cotizar-${card.opportunity_id}`}
     >
-      <ChipBadge kind="cotizar" />
       <DayPill ms={item.waitMs} />
       <button
         type="button"
         onClick={() => navigate("oportunidades", card.opportunity_id)}
         className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
       >
+        <KindLabel kind="cotizar" />
         <p className="truncate text-[14px] font-semibold text-ink group-hover:text-accent">{name}</p>
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
           <span className="truncate">{what}</span>
@@ -783,9 +787,9 @@ function ReplyQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-reply-${card.opportunity_id}`}
     >
-      <ChipBadge kind="reply" />
       <DayPill ms={waitMs} />
       <div className="min-w-0 flex-1">
+        <KindLabel kind="reply" />
         <button
           type="button"
           onClick={() => navigate("oportunidades", card.opportunity_id)}
@@ -975,8 +979,8 @@ function TaskQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-task-${task.task_id}`}
     >
-      <ChipBadge kind="task" />
       <div className="min-w-[12rem] flex-1">
+        <KindLabel kind="task" />
         <p className="text-[13px] text-ink">{task.title}</p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
           <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>{dueText(overdueDays)}</span>
@@ -1209,9 +1213,9 @@ function FollowUpQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
     >
-      <ChipBadge kind="followup" />
       <DayPill ms={waitMs} />
       <div className="min-w-0 flex-1">
+        <KindLabel kind="followup" />
         <button
           type="button"
           onClick={() => navigate("oportunidades", f.card.opportunity_id)}
@@ -1352,8 +1356,8 @@ function ForwardQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-forward-${item.id}`}
     >
-      <ChipBadge kind="forward" />
       <div className="min-w-[12rem] flex-1 space-y-1.5">
+        <KindLabel kind="forward" />
         <div>
           <p className="text-[13px] font-medium text-ink">
             {who}{c.company ? <span className="font-normal text-ink-muted"> · {c.company}</span> : null}

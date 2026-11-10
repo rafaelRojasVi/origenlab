@@ -70,8 +70,8 @@ export function CrmApp({ route }: { route: ShellRoute }) {
     window.scrollTo?.({ top: 0 });
   }, []);
   const title = sectionTitle(route.section);
-  // The Tablero and the Cotizador use the whole screen; reading pages keep a comfortable line length.
-  const wide = route.section === "oportunidades" || route.section === "cotizador";
+  // The Tablero, Cotizador, and Hoy use the whole screen; reading pages keep a comfortable line length.
+  const wide = route.section === "oportunidades" || route.section === "cotizador" || route.section === "resumen";
   // A «Datos» tab is part of the address: a link to another tab remounts the page on it.
   const routeKey = route.tab ? `${route.section}/${route.tab}` : route.section;
 
