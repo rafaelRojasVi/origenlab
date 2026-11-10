@@ -571,6 +571,37 @@ _LINE_FIELDS = (
 )
 
 
+# Most recent sent/approved revision for a product: the one with its quote number and sent date,
+# and all its manual expense lines ordered by line_no.
+_PRODUCT_EXPENSE_REV_SQL = """
+select r.id::text as revision_id, r.revision_no, q.quote_number, r.sent_at
+  from crm.quote_revision r
+  join crm.quote q on q.id = r.quote_id
+ where r.status in ('sent', 'approved')
+   and exists (
+     select 1 from crm.quote_line il
+      where il.quote_revision_id = r.id
+        and il.line_kind = 'item'
+        and il.product_id = %s::uuid)
+   and exists (
+     select 1 from crm.quote_line el
+      where el.quote_revision_id = r.id
+        and el.line_kind = 'logistics'
+        and el.expense_method = 'manual')
+ order by r.sent_at desc nulls last, r.id desc
+ limit 1
+"""
+
+_PRODUCT_EXPENSE_LINES_SQL = """
+select l.description as label, l.unit_cost as amount, l.cost_currency as currency
+  from crm.quote_line l
+ where l.quote_revision_id = %s::uuid
+   and l.line_kind = 'logistics'
+   and l.expense_method = 'manual'
+ order by l.line_no
+"""
+
+
 class _FxPrefetch:
     """The resolver a read transaction prices with: it never asks a provider.
 
@@ -1238,3 +1269,26 @@ class V2QuoteReads:
             if len(out) == MENTION_LIMIT:
                 break
         return out
+
+    def product_expense_history(self, product_id: uuid.UUID) -> dict[str, Any] | None:
+        """The most recent sent or approved revision that has this product as an item and manual
+        expense lines — with those lines — or None when no such revision exists.
+
+        Used by the Cotizador's «Usar gastos de la última cotización de <modelo>» button.
+        """
+        with self._read() as cur:
+            cur.execute(_PRODUCT_EXPENSE_REV_SQL, (str(product_id),))
+            rows = self._rows(cur)
+            if not rows:
+                return None
+            rev = rows[0]
+            cur.execute(_PRODUCT_EXPENSE_LINES_SQL, (rev["revision_id"],))
+            lines = self._rows(cur)
+        return _plain({
+            "revision_id": rev["revision_id"],
+            "revision_no": rev["revision_no"],
+            "quote_number": rev["quote_number"],
+            "sent_at": rev["sent_at"],
+            "expenses": [{"label": l["label"], "amount": l["amount"], "currency": l["currency"]}
+                         for l in lines],
+        })

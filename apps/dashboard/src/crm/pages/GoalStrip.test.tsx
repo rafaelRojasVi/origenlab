@@ -56,9 +56,15 @@ function card(over: Partial<OpportunityCardData> = {}, revisions: RevisionCard[]
   };
 }
 
-/** A case asked `tookMs` before its first quote went out `sentAgo` ago (in «Conversación», so not a follow-up). */
+/** A case asked `tookMs` before its first quote went out `sentAgo` ago (in «Conversación» — the
+ *  client replied, so it is not a follow-up). */
 const quoted = (sentAgo: number, tookMs: number) =>
-  card({ stage: "negotiating", requested_at: ago(sentAgo + tookMs) }, [rev(ago(sentAgo))]);
+  card({
+    stage: "negotiating",
+    requested_at: ago(sentAgo + tookMs),
+    // A client reply after the quote puts the case in «Conversación»; `followUpsDue` skips it.
+    last_contact: { inbound: { at: ago(sentAgo - 3_600_000), subject: "Re:", url: null }, outbound: null },
+  }, [rev(ago(sentAgo))]);
 
 const ITEMS: OpportunityCardData[] = [
   // Seguimiento: a quote that went out 8 days ago, nothing since.
@@ -158,7 +164,7 @@ describe("GoalStrip", () => {
     renderStrip(session("sales"));
     const tile = screen.getByRole("link", { name: /Seguimiento/ });
     expect(tile).toHaveAttribute("href", "#/ventas/pipeline?vista=seguimiento");
-    expect(tile).toHaveTextContent("1casos enviados sin toque hace más de 7 días");
+    expect(tile).toHaveTextContent("1casos con seguimiento pendiente hoy");
     expect(tile).toHaveTextContent("Meta: 0");
     expect(tile).toHaveAttribute("data-tone", "warn");
   });
@@ -208,6 +214,6 @@ describe("GoalStrip", () => {
     stub();
     renderStrip(session("sales", "llamadas"));
     expect(screen.getByRole("link", { name: /^Cotizar/ })).toHaveTextContent("1solicitudes sin cotizar");
-    expect(screen.getByRole("link", { name: /Seguimiento/ })).toHaveTextContent("1casos enviados");
+    expect(screen.getByRole("link", { name: /Seguimiento/ })).toHaveTextContent("1casos con seguimiento");
   });
 });

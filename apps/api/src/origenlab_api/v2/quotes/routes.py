@@ -99,6 +99,20 @@ def economics_report(request: Request, operator: Operator,
         _refused(exc)
 
 
+# «Usar gastos de la última cotización de <modelo>»: the most recent sent/approved revision that
+# has this product as an item and manual expense lines, with those lines. 404 when none exists.
+# Declared before `/{quote_id}` so the path segment is not read as a quote id.
+@quote_read_router.get("/product-expenses")
+def product_expenses(request: Request, operator: Operator,
+                     product_id: UUID = Query(...)) -> dict:
+    _may_view_costs(operator)
+    result = _reads(request).product_expense_history(product_id)
+    if result is None:
+        raise HTTPException(404, detail={"code": "no_prior_expenses",
+                                         "message": "no sent revision with manual expenses for this product"})
+    return result
+
+
 @quote_read_router.post("/preview")
 def preview(body: PreviewQuoteBody, request: Request, operator: Operator) -> dict:
     _may_view_costs(operator)

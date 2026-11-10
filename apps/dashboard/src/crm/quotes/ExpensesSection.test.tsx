@@ -12,8 +12,15 @@ import { describe, expect, it, vi } from "vitest";
 import type { CatalogIndex } from "../catalog/catalogIndex";
 import { draftProblems } from "./draftEditor";
 import { ExpensesSection } from "./ExpensesSection";
-import type { Computed, QuoteDraft } from "./quoteApi";
+import type { Computed, PriorExpenses, QuoteDraft } from "./quoteApi";
+import { fetchProductExpenses } from "./quoteApi";
 import { computedFixture, draftFixture } from "./quoteFixtures";
+
+// «fetchProductExpenses» makes a network call; default to null so existing tests are unaffected.
+vi.mock("./quoteApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./quoteApi")>();
+  return { ...actual, fetchProductExpenses: vi.fn().mockResolvedValue(null) };
+});
 
 const INDEX: CatalogIndex = {
   version: "v1",
@@ -327,5 +334,55 @@ describe("ExpensesSection — manual expenses", () => {
     expect(method("Perfil")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "+ Agregar gasto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Quitar el gasto 1" })).not.toBeInTheDocument();
+  });
+});
+
+describe("«Usar gastos de la última cotización»", () => {
+  const PRIOR: PriorExpenses = {
+    revision_id: "rev-ficticio-1",
+    revision_no: 1,
+    quote_number: "CN09876",
+    sent_at: "2026-10-01T12:00:00Z",
+    expenses: [
+      { label: "Flete", amount: "500000", currency: "CLP" },
+      { label: "Agente de aduana — Instituto Ficticio", amount: "150000", currency: "CLP" },
+    ],
+  };
+
+  it("button is hidden when no prior manual expenses exist for the product", async () => {
+    vi.mocked(fetchProductExpenses).mockResolvedValue(null);
+    await setup();
+    expect(screen.queryByRole("button", { name: /Usar gastos/ })).not.toBeInTheDocument();
+  });
+
+  it("button appears with the model name and quote number once the fetch resolves", async () => {
+    vi.mocked(fetchProductExpenses).mockResolvedValue(PRIOR);
+    await setup();
+    expect(screen.getByRole("button", { name: /Usar gastos de AG-100 \(CN09876/ })).toBeInTheDocument();
+  });
+
+  it("clicking it switches to Manual with the prior expense lines (uid added per line)", async () => {
+    vi.mocked(fetchProductExpenses).mockResolvedValue(PRIOR);
+    const { latest } = await setup();
+    fireEvent.click(screen.getByRole("button", { name: /Usar gastos/ }));
+    expect(latest.draft.expense_method).toBe("manual");
+    expect(latest.draft.manual_expenses).toHaveLength(2);
+    expect(latest.draft.manual_expenses[0]).toMatchObject({ label: "Flete", amount: "500000", currency: "CLP" });
+    expect(latest.draft.manual_expenses[1]).toMatchObject({ label: "Agente de aduana — Instituto Ficticio", amount: "150000", currency: "CLP" });
+    // Each copied line gets a fresh uid for the editor.
+    expect(typeof latest.draft.manual_expenses[0].uid).toBe("string");
+    expect(latest.draft.manual_expenses[0].uid).not.toBe(latest.draft.manual_expenses[1].uid);
+  });
+
+  it("button is hidden when the draft is disabled (read-only)", async () => {
+    vi.mocked(fetchProductExpenses).mockResolvedValue(PRIOR);
+    await setup({ disabled: true });
+    expect(screen.queryByRole("button", { name: /Usar gastos/ })).not.toBeInTheDocument();
+  });
+
+  it("button is hidden when already in Manual mode", async () => {
+    vi.mocked(fetchProductExpenses).mockResolvedValue(PRIOR);
+    await setup({ initial: draft({ expense_method: "manual", manual_expenses: [] }), computed: priced({ expenses: [] }) });
+    expect(screen.queryByRole("button", { name: /Usar gastos/ })).not.toBeInTheDocument();
   });
 });

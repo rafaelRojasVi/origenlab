@@ -13,7 +13,6 @@ import {
   formatMillions,
   formatWait,
   lastIssuedOn,
-  needsFollowUp,
   quoteSpeed,
   reach,
   requiredPace,
@@ -22,7 +21,7 @@ import {
 import { formatMoney } from "../money";
 import { fetchFinanceSettings } from "../finanzas/financeApi";
 import { fetchInvoices } from "../pagos/invoiceApi";
-import { buildParaTiQueue } from "../today";
+import { buildParaTiQueue, followUpsDue } from "../today";
 import { useResource } from "../useResource";
 
 type Navigate = (section: CrmSection, id?: string | null) => void;
@@ -39,7 +38,7 @@ export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardDa
   const seesMoney = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
   const now = new Date();
   const today = dateSantiago(now);
-  const followUps = items.filter((c) => needsFollowUp(c, now)).length;
+  const followUps = followUpsDue(items, now).length;
   // Hoy's whole queue (no profile filter), so the tile agrees with the Cotizar section.
   const backlog = cotizarBacklog(buildParaTiQueue(items, now, null));
   const speed = quoteSpeed(items, now);
@@ -54,7 +53,7 @@ export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardDa
         label="Seguimiento"
         met={followUps === 0}
         value={String(followUps)}
-        mean="casos enviados sin toque hace más de 7 días"
+        mean="casos con seguimiento pendiente hoy"
         foot="Meta: 0"
         action="Ver en el pipeline"
       />

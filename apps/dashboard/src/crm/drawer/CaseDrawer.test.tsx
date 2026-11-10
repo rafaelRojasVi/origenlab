@@ -261,7 +261,7 @@ describe("CaseDrawer", () => {
       const task = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-11T12:00:00Z", version: 1, owner: null };
       const dialog = renderDrawer("sales", card({ open_tasks: [task] }));
       // Rev 2 went out 28 Oct: on 11 Nov (14 days) the rhythm is on its third follow-up (3·7·10·15 → step 3).
-      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 3 de 4 · miércoles 11");
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 3 de 3 · miércoles 11");
     } finally {
       vi.useRealTimers();
     }
@@ -281,7 +281,7 @@ describe("CaseDrawer", () => {
       stub();
       const task = { task_id: "t1", title: "Seguimiento 01318-26", due_at: "2026-11-08T12:00:00Z", version: 1, owner: null };
       const dialog = renderDrawer("sales", card({ open_tasks: [task] }));
-      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 3 de 4 · hoy"); // 11 days since Oct 28 → step 3
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 3 de 3 · hoy"); // 11 days since Oct 28 → step 3
     });
 
     it("an overdue reminder reads «hoy»", () => {
@@ -301,7 +301,7 @@ describe("CaseDrawer", () => {
         "sales",
         card({ open_tasks: [met, next], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
       );
-      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 4 · jueves 12"); // 5 days since Nov 7 → step 1
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 3 · jueves 12"); // 5 days since Nov 7 → step 1
     });
   });
 

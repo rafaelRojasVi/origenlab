@@ -253,6 +253,9 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // «Rentabilidad» (`?from=YYYY-MM&to=YYYY-MM`): each authored quote's sale, costs and gross margin,
   // with the totals by month. Exact path, GET-only; costs, so sales and admin only upstream.
   /^\/v2\/quotes\/economics$/,
+  // «Usar gastos de la última cotización de <modelo>» (`?product_id=<uuid>`): the most recent
+  // sent/approved revision for a product with manual expense lines. Exact path, GET-only.
+  /^\/v2\/quotes\/product-expenses$/,
   /^\/v2\/quotes\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   // Dashboard sign-in (Google Workspace, `apps/api` v2/auth_routes.py). Three exact GET
   // paths. The cookie and redirect exceptions they need live in `auth.ts`, and apply to

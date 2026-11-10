@@ -1300,6 +1300,23 @@ describe("Cotizador «Rentabilidad»", () => {
   });
 });
 
+describe("«Usar gastos de la última cotización»", () => {
+  const PATH = "/v2/quotes/product-expenses";
+
+  it("allows the read as an exact GET path, with a product_id query string, and never as a POST", () => {
+    const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
+    expect(isAllowedUpstreamPath(PATH)).toBe(true);
+    expect(isAllowedUpstreamPath(`${PATH}?product_id=${uuid}`)).toBe(true);
+    expect(isAllowedPostPath(PATH)).toBe(false);
+  });
+
+  it("refuses its neighbours", () => {
+    for (const path of [`${PATH}/`, `${PATH}/extra`, "/v2/quotes/product-Expenses", "/v2/quotes/product-expense"]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("Cotizador PR A", () => {
   const uuid = "96301691-af05-51ea-82e3-05f5fae40837";
   const GET_PATHS = ["/v2/quotes/numbering", `/v2/quotes/${uuid}`, "/v2/quotes", "/v2/quotes/clients"];
