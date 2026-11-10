@@ -340,19 +340,22 @@ class FinanceReadRepository:
 
         monthly_history = [{"month": r[0], "neto": int(r[1])} for r in history_rows]
 
-        pct = (row["vendido_net"] / row["meta_net"] * 100) if row["meta_net"] > 0 else 0.0
+        # Sums over numeric/bigint come back as Decimal, which the JSON encoder writes as a string;
+        # the dashboard does arithmetic on these (`pct.toFixed`), so every amount leaves as a number.
+        vendido_net, meta_net = int(row["vendido_net"]), int(row["meta_net"])
+        pct = (vendido_net / meta_net * 100) if meta_net > 0 else 0.0
         return {
             "mes": row["mes"],
             "today": row["today"],
-            "vendido": {"net": row["vendido_net"], "meta_net": row["meta_net"], "pct_meta": round(pct, 1)},
+            "vendido": {"net": vendido_net, "meta_net": meta_net, "pct_meta": round(pct, 1)},
             "por_cobrar": {
-                "total": row["por_cobrar_total"],
-                "count": row["por_cobrar_count"],
+                "total": int(row["por_cobrar_total"]),
+                "count": int(row["por_cobrar_count"]),
                 "by_age": by_age,
             },
             "pipeline": {"ponderado_net": pipeline_net, "by_stage": pipeline_by_stage},
-            "capital_atado": {"total": row["capital_atado_total"], "count": row["capital_atado_count"]},
-            "gastos": {"total": row["gastos_total"], "count": row["gastos_count"]},
+            "capital_atado": {"total": int(row["capital_atado_total"]), "count": int(row["capital_atado_count"])},
+            "gastos": {"total": int(row["gastos_total"]), "count": int(row["gastos_count"])},
             "monthly_history": monthly_history,
         }
 
