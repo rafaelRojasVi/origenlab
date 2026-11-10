@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
 import type { CrmSection } from "../crmRoute";
@@ -6,14 +5,11 @@ import { crmHash } from "../crmRoute";
 import type { CallDay, OpportunityCardData } from "../crmTypes";
 import {
   MONTHLY_TARGET_CLP,
-  PILOT_CALLS_PER_DAY,
   PILOT_CONVERSATIONS_30D,
-  cotizarBacklog,
   dateSantiago,
   formatMillions,
   formatWait,
   lastIssuedOn,
-  quoteSpeed,
   reach,
   requiredPace,
   soldThisMonth,
@@ -21,202 +17,207 @@ import {
 import { formatMoney } from "../money";
 import { fetchFinanceSettings } from "../finanzas/financeApi";
 import { fetchInvoices } from "../pagos/invoiceApi";
-import { buildParaTiQueue, followUpsDue } from "../today";
+import { buildParaTiQueue } from "../today";
 import { useResource } from "../useResource";
 
 type Navigate = (section: CrmSection, id?: string | null) => void;
 
+/** Which strip tile is currently filtering the queue (null = no filter / show all). */
+export type StripFilter = "followup" | "cotizar" | null;
+
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
 /**
- * «Franja de metas»: the four goals first on «Hoy» — Vendido vs meta, Seguimiento, Cotizar and
- * Alcance — each a link into the view that acts on it. The figures are the whole team's, whatever
- * the profile's queue. A viewer gets no money tile (and «Vendido» never asks for the invoices).
+ * «Franja de metas» v3 — compact horizontal strip of 4 numbers.
+ * Meta del mes · Seguimientos pendientes · Por cotizar · Alcance de la semana.
+ *
+ * Seguimientos and Por cotizar are buttons that filter the queue; counts are derived
+ * from `buildParaTiQueue` so the strip tile number always equals the rows it filters.
  */
-export function GoalStrip({ items, calls, navigate }: { items: OpportunityCardData[]; calls: CallDay[]; navigate: Navigate }) {
+export function GoalStrip({
+  items,
+  calls,
+  navigate,
+  activeFilter,
+  onFilterChange,
+  layout = "strip",
+}: {
+  items: OpportunityCardData[];
+  calls: CallDay[];
+  navigate: Navigate;
+  activeFilter: StripFilter;
+  onFilterChange: (f: StripFilter) => void;
+  /** `strip`: four tiles in a row (default). `stack`: one column, for Hoy's side column («Tu semana»). */
+  layout?: "strip" | "stack";
+}) {
   const { session } = useAuthSession();
   const seesMoney = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
   const now = new Date();
   const today = dateSantiago(now);
-  const followUps = followUpsDue(items, now).length;
-  // Hoy's whole queue (no profile filter), so the tile agrees with the Cotizar section.
-  const backlog = cotizarBacklog(buildParaTiQueue(items, now, null));
-  const speed = quoteSpeed(items, now);
+
+  // Queue-derived counts (whole team — me=null).
+  const fullQueue = buildParaTiQueue(items, now, null);
+  const seguimientosCount = fullQueue.filter((q) => q.kind === "followup").length;
+  const cotizarItems = fullQueue.filter((q) => q.kind === "cotizar");
+  const cotizarCount = cotizarItems.length;
+  const cotizarOldestMs = cotizarCount > 0 ? Math.max(...cotizarItems.map((q) => q.waitMs)) : null;
+
   const r = reach(calls, today);
 
+  const tileBase =
+    "flex flex-col gap-0.5 bg-canvas-raised px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600";
+  const tileMeta = `${tileBase} transition-colors hover:bg-canvas-sunken`;
+
   return (
-    <section aria-label="Metas" data-testid="goal-strip" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {seesMoney ? <SoldTile today={today} navigate={navigate} /> : null}
-      <Tile
-        href={`${crmHash("oportunidades")}?vista=seguimiento`}
-        testId="goal-seguimiento"
-        label="Seguimiento"
-        met={followUps === 0}
-        value={String(followUps)}
-        mean="casos con seguimiento pendiente hoy"
-        foot="Meta: 0"
-        action="Ver en el pipeline"
-      />
-      <Tile
-        href={`${crmHash("oportunidades")}?vista=cotizar`}
-        testId="goal-cotizar"
-        label="Cotizar"
-        met={backlog.count === 0}
-        value={String(backlog.count)}
-        mean={
-          <>
-            solicitudes sin cotizar
-            {backlog.oldestMs !== null ? <> · la más antigua: {formatWait(backlog.oldestMs)}</> : null}
-          </>
-        }
-        detail={`Solicitud → cotización: ${speed.current.n && speed.current.medianMs !== null ? formatWait(speed.current.medianMs) : "—"} (30 días) · antes ${
-          speed.previous.n && speed.previous.medianMs !== null ? formatWait(speed.previous.medianMs) : "—"}`}
-        detailTone={false}
-        foot="Meta: mismo día hábil"
-        action="Ver en el pipeline"
-      />
-      <Tile
+    <section
+      aria-label="Números del día"
+      data-testid="goal-strip"
+      className={`grid gap-px overflow-hidden rounded-xl border border-line bg-line ${layout === "stack" ? "grid-cols-1" : "grid-cols-2 lg:grid-cols-4"}`}
+    >
+      {/* Meta del mes */}
+      {seesMoney ? (
+        <MetaTile today={today} navigate={navigate} tileBase={tileMeta} />
+      ) : (
+        <div className={tileBase} data-testid="goal-vendido-hidden">
+          <span className={LABEL}>Meta del mes</span>
+          <span className="text-[20px] font-semibold leading-tight text-ink-muted">—</span>
+        </div>
+      )}
+
+      {/* Seguimientos pendientes */}
+      <button
+        type="button"
+        data-testid="goal-seguimiento"
+        aria-pressed={activeFilter === "followup"}
+        onClick={() => onFilterChange(activeFilter === "followup" ? null : "followup")}
+        className={`${tileBase} text-left transition-colors hover:bg-canvas-sunken ${
+          activeFilter === "followup" ? "shadow-[inset_0_-2px_0_theme(colors.brand.600)]" : ""
+        }`}
+      >
+        <span className={LABEL}>Seguimientos pendientes</span>
+        <span className={`text-[20px] font-semibold leading-tight tabular-nums ${seguimientosCount === 0 ? "text-good" : "text-warn"}`}>
+          {seguimientosCount}
+        </span>
+        <span className="text-[11px] text-ink-faint">cotización enviada, sin respuesta</span>
+      </button>
+
+      {/* Por cotizar */}
+      <button
+        type="button"
+        data-testid="goal-cotizar"
+        aria-pressed={activeFilter === "cotizar"}
+        onClick={() => onFilterChange(activeFilter === "cotizar" ? null : "cotizar")}
+        className={`${tileBase} text-left transition-colors hover:bg-canvas-sunken ${
+          activeFilter === "cotizar" ? "shadow-[inset_0_-2px_0_theme(colors.brand.600)]" : ""
+        }`}
+      >
+        <span className={LABEL}>Por cotizar</span>
+        <span className="flex flex-wrap items-baseline gap-x-1.5 text-[20px] font-semibold leading-tight tabular-nums text-ink">
+          {cotizarCount}
+          {cotizarOldestMs !== null && cotizarCount > 0 ? (
+            <small className="text-[12px] font-medium text-ink-muted">
+              · {formatWait(cotizarOldestMs)} la más antigua
+            </small>
+          ) : null}
+        </span>
+        <span className="text-[11px] text-ink-faint">cotizar mismo día gana 29 %</span>
+      </button>
+
+      {/* Alcance de la semana */}
+      <a
         href={crmHash("prospectos")}
-        onClick={() => navigate("prospectos")}
-        testId="goal-alcance"
-        label="Alcance · esta semana"
-        met={r.week >= r.weekTarget}
-        value={<>{r.week} <span className="text-[15px] font-medium text-ink-muted">/ {r.weekTarget} llamadas</span></>}
-        mean={`Hoy ${r.today} / ${PILOT_CALLS_PER_DAY} · Conversaciones 30 días: ${r.conversations30d} / ${PILOT_CONVERSATIONS_30D}`}
-        foot="del equipo, lunes a hoy"
-        action="Listas y llamadas"
-      />
+        data-testid="goal-alcance"
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+          navigate("prospectos");
+        }}
+        className={`${tileMeta} block`}
+      >
+        <span className={LABEL}>Alcance · esta semana</span>
+        <span className={`text-[20px] font-semibold leading-tight tabular-nums ${r.week >= r.weekTarget ? "text-good" : "text-ink"}`}>
+          {r.week}
+          <small className="ml-1.5 text-[13px] font-medium text-ink-muted">/ {r.weekTarget} llamadas</small>
+        </span>
+        <span className="text-[11px] text-ink-faint">
+          equipo · lunes a hoy · conv 30 d: {r.conversations30d}/{PILOT_CONVERSATIONS_30D}
+        </span>
+      </a>
     </section>
   );
 }
 
-/** «Vendido en {mes}»: its own read of the SII register, so only a role that sees money asks for it. */
-function SoldTile({ today, navigate }: { today: string; navigate: Navigate }) {
+const LABEL = "text-[11px] font-semibold uppercase tracking-wide text-ink-faint";
+
+/* ──────────────────────────────────────────── Meta del mes tile ── */
+
+function MetaTile({ today, navigate, tileBase }: { today: string; navigate: Navigate; tileBase: string }) {
   const [state, reload] = useResource(fetchInvoices);
-  // Fetch the monthly target from finance settings; fall back to the hardcoded $6 M default.
   const [settingsState] = useResource(fetchFinanceSettings);
   const monthlyTarget =
     settingsState.kind === "ready" ? settingsState.data.monthly_target.net : MONTHLY_TARGET_CLP;
   const month = MONTHS[Number(today.slice(5, 7)) - 1] ?? "";
-  const label = `Vendido en ${month}`;
+
   if (state.kind === "loading") {
     return (
-      <div className={`${TILE} justify-between`} data-testid="goal-vendido" aria-busy="true">
-        <p className={LABEL}>{label}</p>
-        <div className="crm-skeleton mt-2 h-7 w-24 rounded" aria-hidden="true" />
-        <p className="mt-2 text-[12px] text-ink-faint">Leyendo lo facturado…</p>
+      <div className={tileBase} data-testid="goal-vendido" aria-busy="true">
+        <span className={LABEL}>Meta de {month}</span>
+        <div className="crm-skeleton mt-1 h-5 w-20 rounded" aria-hidden="true" />
       </div>
     );
   }
+
   if (state.kind !== "ready") {
     return (
-      <div className={TILE} data-testid="goal-vendido" role="status">
-        <p className={LABEL}>{label}</p>
-        <p className="mt-2 text-[13px] text-ink-muted">No se pudo leer lo facturado</p>
-        <button
-          type="button"
-          onClick={reload}
-          className="mt-3 inline-flex min-h-11 items-center self-start rounded-md border border-line bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-        >
-          Reintentar
+      <div className={tileBase} data-testid="goal-vendido">
+        <span className={LABEL}>Meta de {month}</span>
+        <button type="button" onClick={reload} className="mt-1 text-left text-[11px] text-warn hover:underline">
+          Sin datos · reintentar
         </button>
       </div>
     );
   }
-  const items = state.data.items ?? [];
-  const sold = soldThisMonth(items, today);
+
+  const sold = soldThisMonth(state.data.items ?? [], today);
   const pace = requiredPace(sold.net, monthlyTarget, today);
-  const pct = Math.max(0, Math.floor((sold.net / monthlyTarget) * 100));
-  const last = lastIssuedOn(items);
+  const pct = Math.min(100, Math.floor((sold.net / monthlyTarget) * 100));
+  const last = lastIssuedOn(state.data.items ?? []);
   const met = pace.remaining === 0;
-  const paceLine = met
-    ? "Meta cumplida"
-    : pace.perDay === null
-      ? "Sin días hábiles este mes"
-      : `Faltan ${formatMillions(pace.remaining)} · ${formatMoney(String(pace.perDay), "CLP")} por día hábil (${pace.days} quedan, sin feriados)`;
-  return (
-    <Tile
-      href={crmHash("fin-cobrar")}
-      onClick={() => navigate("fin-cobrar")}
-      testId="goal-vendido"
-      label={label}
-      met={met}
-      value={formatMillions(sold.net)}
-      mean={`${pct} % de la meta ${formatMillions(monthlyTarget)}`}
-      bar={Math.min(100, pct)}
-      detail={paceLine}
-      foot={`neto, facturado en el SII${last ? ` · último folio del ${fmtDay(last)}` : ""}`}
-      action="Ver facturas"
-    />
-  );
-}
 
-const TILE =
-  "crm-rise flex min-h-11 flex-col rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-(--tile-shadow)";
-const LABEL = "text-[12px] font-medium text-ink-muted";
-
-function Tile({ href, onClick, testId, label, met, value, mean, bar, detail, detailTone = true, foot, action }: {
-  href: string;
-  /** Navigate in-app (a plain click); the `href` still serves a new tab. */
-  onClick?: () => void;
-  testId: string;
-  label: string;
-  met: boolean;
-  value: ReactNode;
-  mean: ReactNode;
-  /** 0–100: how far toward the goal. */
-  bar?: number;
-  detail?: string;
-  /** Colour `detail` good/warn by `met`. Off for a line that is compared with no goal. */
-  detailTone?: boolean;
-  foot: string;
-  action: string;
-}) {
   return (
     <a
-      href={href}
-      data-testid={testId}
-      data-tone={met ? "good" : "warn"}
+      href={crmHash("fin-cobrar")}
+      data-testid="goal-vendido"
       onClick={(e) => {
-        if (!onClick || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
-        onClick();
+        navigate("fin-cobrar");
       }}
-      className={`${TILE} group transition-[border-color,box-shadow] hover:border-line-strong hover:shadow-(--tile-shadow-hover) focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1`}
+      className={`${tileBase} block`}
     >
-      <span className="flex items-center justify-between gap-2">
-        <span className={LABEL}>{label}</span>
+      <span className={LABEL}>Meta de {month}</span>
+      <span className={`text-[20px] font-semibold leading-tight tabular-nums ${met ? "text-good" : "text-ink"}`}>
+        {formatMillions(sold.net)}
+        <small className="ml-1.5 text-[13px] font-medium text-ink-muted">de {formatMillions(monthlyTarget)}</small>
+      </span>
+      <span aria-hidden="true" className="mt-1 block h-1.5 overflow-hidden rounded-full bg-canvas-sunken">
         <span
-          aria-hidden="true"
-          className={`h-2 w-2 shrink-0 rounded-full ${met ? "bg-good" : "bg-warn"}`}
+          className={`block h-full rounded-full transition-[width] duration-700 ${met ? "bg-good" : "bg-brand-600"}`}
+          style={{ width: `${pct}%` }}
         />
       </span>
-      <span className={`mt-2 text-[26px] font-semibold leading-none tracking-tight tabular-nums ${met ? "text-good" : "text-ink"}`}>
-        {value}
-      </span>
-      <span className="mt-1.5 text-[12px] leading-4 text-ink-muted">{mean}</span>
-      {bar !== undefined ? (
-        <span aria-hidden="true" className="mt-2.5 block h-1.5 overflow-hidden rounded-full bg-canvas-sunken">
-          <span className={`block h-full rounded-full ${met ? "bg-good" : "bg-warn"}`} style={{ width: `${bar}%` }} />
-        </span>
-      ) : null}
-      {detail ? (
-        <span
-          data-testid={`${testId}-detail`}
-          className={`mt-2 text-[12px] leading-4 ${!detailTone ? "text-ink-muted" : met ? "text-good" : "text-warn"}`}
-        >
-          {detail}
-        </span>
-      ) : null}
-      <span className="mt-auto flex items-end justify-between gap-2 pt-2.5 text-[11px] leading-4">
-        <span className="text-ink-faint">{foot}</span>
-        <span className="shrink-0 font-medium text-accent group-hover:underline">{action} →</span>
+      <span className="text-[11px] text-ink-faint">
+        {met
+          ? "Meta cumplida"
+          : pace.perDay !== null
+            ? `faltan ${formatMillions(pace.remaining)} · ${formatMoney(String(pace.perDay), "CLP")}/día`
+            : `faltan ${formatMillions(pace.remaining)}`}
+        {last ? ` · último folio ${fmtDay(last)}` : ""}
       </span>
     </a>
   );
 }
 
-/** A `YYYY-MM-DD` day as «6 nov», read as that calendar day. */
 function fmtDay(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
   if (!y || !m || !d) return day;

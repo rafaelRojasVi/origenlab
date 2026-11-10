@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayName, quoteProduct, systemNotes } from "./caseDisplay";
+import { displayName, personLabel, quoteProduct, systemNotes } from "./caseDisplay";
 import type { Attention, OpportunityCardData, RevisionCard } from "./crmTypes";
 
 // Every value below is invented; the repository is public.
@@ -94,5 +94,20 @@ describe("systemNotes", () => {
       { code: "no_gmail_evidence", label: "Sin correo", blocking: false },
     ]));
     expect(notes.map((n) => n.code)).toEqual(["no_gmail_evidence"]);
+  });
+});
+
+describe("personLabel", () => {
+  it("keeps the display name of «Name <email>», with or without quotes", () => {
+    expect(personLabel("Rodrigo Díaz Urrutia <rodrigo.diaz@lonquenchile.cl>")).toBe("Rodrigo Díaz Urrutia");
+    expect(personLabel('"Ana Pérez" <ana@x.cl>')).toBe("Ana Pérez");
+  });
+  it("leaves a bare address and strips lone angle brackets", () => {
+    expect(personLabel("ana@x.cl")).toBe("ana@x.cl");
+    expect(personLabel("<ana@x.cl>")).toBe("ana@x.cl");
+  });
+  it("is null for empty input", () => {
+    expect(personLabel("  ")).toBeNull();
+    expect(personLabel(null)).toBeNull();
   });
 });

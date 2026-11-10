@@ -141,12 +141,14 @@ describe("Resumen · número de cotización", () => {
   it("says a typed number is already used, and by whom", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    const input = await screen.findByLabelText("¿Ya existe este número?");
+    // The check panel is behind a toggle button — open it first.
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    fireEvent.click(screen.getByRole("button", { name: /ya existe/i }));
+    const input = await screen.findByLabelText("¿Ya existe este número?");
     fireEvent.change(input, { target: { value: "1020" } });
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/Ya usado: 01020-26 · Laboratorio Andino · CRM/);
     fireEvent.change(input, { target: { value: "01500-26" } });
-    expect(screen.getByTestId("quote-check")).toHaveTextContent(/No está en el CRM ni en el archivo de Drive/);
+    expect(screen.getByTestId("quote-check")).toHaveTextContent(/No está en el CRM ni en Drive/);
     fireEvent.change(input, { target: { value: "hola" } });
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/Escribe un número/);
   });
@@ -155,8 +157,10 @@ describe("Resumen · número de cotización", () => {
     const mail = { items: [{ quote_number: "CN01030", first_seen_at: "2026-03-30T14:00:00Z", messages: 2 }] };
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE, "/v2/workspace/mail-quote-numbers": mail });
     render(<OverviewPage navigate={() => undefined} />);
-    const input = await screen.findByLabelText("¿Ya existe este número?");
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("CN01030"));
+    // Open the check panel.
+    fireEvent.click(screen.getByRole("button", { name: /ya existe/i }));
+    const input = await screen.findByLabelText("¿Ya existe este número?");
     expect(screen.getByTestId("quote-last")).toHaveTextContent("Gmail");
     expect(screen.getByTestId("quote-next")).toHaveTextContent("01031-26");
     fireEvent.change(input, { target: { value: "1030" } });
@@ -171,10 +175,13 @@ describe("Resumen · número de cotización", () => {
       "/v2/workspace/mail-quote-numbers": new Response("{}", { status: 500 }),
     });
     render(<OverviewPage navigate={() => undefined} />);
-    const input = await screen.findByLabelText("¿Ya existe este número?");
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01022-26"));
+    // The error note appears without opening the check panel.
     await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/números de Gmail no se pudieron leer/));
     expect(screen.getByTestId("quote-next")).toHaveTextContent("01023-26");
+    // Open the check panel to test the result text.
+    fireEvent.click(screen.getByRole("button", { name: /ya existe/i }));
+    const input = await screen.findByLabelText("¿Ya existe este número?");
     fireEvent.change(input, { target: { value: "01500-26" } });
     expect(screen.getByTestId("quote-check")).toHaveTextContent(/no se pudieron leer/);
     expect(screen.getByTestId("quote-check")).not.toHaveTextContent(/libre/i);
@@ -184,51 +191,66 @@ describe("Resumen · número de cotización", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
     await waitFor(() => expect(screen.getByTestId("quote-last")).toHaveTextContent("01020-26"));
-    // The Drive read starts with the box, once the pipeline is in: its refusal lands a tick later.
-    await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/));
+    // The error note is always visible (no need to open the check panel).
+    await waitFor(() => expect(screen.getByTestId("quote-number-box")).toHaveTextContent(/sin el archivo de Drive/i));
   });
 });
 
 describe("Resumen", () => {
-  it("shows the day's dólar, euro and UF in pesos with their date and source", async () => {
+  it("shows the day's dólar, euro and UF in pesos with their source (Hoy v3: tools bar, inline rates)", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
+    // FX loads lazily (after requestAnimationFrame); each currency has its own testid span.
     const usd = await screen.findByTestId("fx-USD");
-    expect(within(usd).getByText("Dólar observado")).toBeInTheDocument();
     expect(usd).toHaveTextContent("$950,50");
     expect(screen.getByTestId("fx-EUR")).toHaveTextContent("$1.050,25");
-    expect(screen.getByText(/Banco Central de Chile, vía mindicador\.cl/)).toBeInTheDocument();
+    // Source attribution is in the moneda card footer.
+    expect(screen.getByText(/Banco Central de Chile/)).toBeInTheDocument();
   });
 
-  it("says an older figure is still the one in force today, and when it was published", async () => {
+  it("shows «no se pudo actualizar» when the figure is stale (Hoy v3: compact, no publication date per tile)", async () => {
     // NOW is Tuesday 31 March; the dollar and euro were last published on Monday 30.
-    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    // Hoy v3 compact rates don't show «vigente hoy» or «publicado el lun» per tile.
+    // The stale flag is shown as a warning in the footer when stale=true.
+    const staleData = { ...FX, stale: true };
+    respond({ "/v2/workspace/fx": staleData, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    const usd = await screen.findByTestId("fx-USD");
-    expect(usd).toHaveTextContent(/vigente hoy/i);
-    expect(usd).toHaveTextContent(/publicado el lun 30 mar/i);
-    expect(screen.getByTestId("fx-weekend-note")).toHaveTextContent(/fines de semana ni feriados/);
+    await screen.findByTestId("fx-USD");
+    expect(screen.getByText(/no se pudo actualizar/i)).toBeInTheDocument();
   });
 
-  it("says «publicado hoy» when the figure is today's", async () => {
+  it("does not show stale warning when the figure is fresh", async () => {
     const today = { ...FX, rates: FX.rates.map((r) => ({ ...r, as_of: "2026-03-31" })) };
     respond({ "/v2/workspace/fx": today, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    expect(await screen.findByTestId("fx-USD")).toHaveTextContent(/publicado hoy/i);
-    expect(screen.queryByTestId("fx-weekend-note")).toBeNull();
+    await screen.findByTestId("fx-USD");
+    expect(screen.queryByText(/no se pudo actualizar/i)).not.toBeInTheDocument();
   });
 
-  it("shows today's date and the time in Santiago", async () => {
+  it("shows today's date in Santiago (Hoy v3: quiet one-line header, no time)", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    const hero = await screen.findByTestId("hero-header");
+    const hero = await screen.findByTestId("hoy-mini-header");
     expect(hero).toHaveTextContent(/Martes 31 de marzo/); // only the first letter capitalised
-    expect(hero).toHaveTextContent("12:00");
+    // Hoy v3 mini header shows the date only, not the time.
+  });
+
+  it("counts «N cosas para hoy» from the same queue as «Para hoy», not every open case", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const header = await screen.findByTestId("hoy-mini-header");
+    await waitFor(() => expect(header).toHaveTextContent(/cosas? para hoy/));
+    const total = Number(/(\d+) cosas? para hoy/.exec(header.textContent ?? "")?.[1]);
+    const todo = screen.queryByRole("button", { name: /^Todo\b/ });
+    expect(total).toBe(todo ? Number(/\d+/.exec(todo.textContent ?? "")?.[0]) : 0);
   });
 
   it("converts an amount typed the Chilean way into pesos", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
+    // The converter is behind the [Convertir ▾] button — open it first.
+    await screen.findByTestId("fx-USD");
+    fireEvent.click(screen.getByRole("button", { name: /Convertir moneda/ }));
     const amount = await screen.findByLabelText("Monto");
     fireEvent.change(amount, { target: { value: "1.250" } });
     expect(screen.getByTestId("fx-result")).toHaveTextContent("$1.188.125");
@@ -247,7 +269,8 @@ describe("Resumen", () => {
     });
     const navigate = vi.fn();
     render(<OverviewPage navigate={navigate} />);
-    expect(await screen.findByTestId("hero-header")).toHaveTextContent("HOY");
+    // Hoy v3: quiet mini-header with date, no «HOY» title.
+    expect(await screen.findByTestId("hoy-mini-header")).toHaveTextContent(/Martes 31 de marzo/);
     // Andino is 3 days old (sentAt "2026-03-28") → exactly the first-follow-up threshold.
     const paraTi = await screen.findByTestId("today-para-ti");
     const row = within(paraTi).getByTestId("today-followup-11111111-1111-4111-8111-111111111111");
@@ -263,11 +286,10 @@ describe("Resumen", () => {
     expect(await screen.findByRole("dialog")).toHaveTextContent("Laboratorio Andino");
     expect(navigate).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: "Escape" });
-    // Valle is historical (undecided) → in housekeeping, not in the queue.
+    // Valle is historical (undecided) → not in the queue.
     expect(within(paraTi).queryByText("Universidad del Valle")).not.toBeInTheDocument();
-    expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
-    // The header counts by section: one follow-up, nothing else due.
-    expect(screen.getByTestId("hero-header")).toHaveTextContent("1 llamada");
+    // Hoy v3: HousekeepingLink removed — «N cosas por ordenar» no longer on Hoy.
+    expect(screen.queryByTestId("today-housekeeping")).not.toBeInTheDocument();
     expect(screen.queryByTestId("today-stats")).not.toBeInTheDocument();
   });
 
@@ -323,7 +345,8 @@ describe("Resumen", () => {
 });
 
 describe("Hoy · lecturas en paralelo", () => {
-  it("asks for person suggestions while the pipeline is still loading", async () => {
+  it("fetches pipeline and FX on load; no person-suggestions (Hoy v3 removed it)", async () => {
+    // Hoy v3: OverviewPage no longer pre-fetches /person-suggestions; TodayBody handles it via its own AuthoringPanel.
     let releasePipeline: (r: Response) => void = () => undefined;
     const held = new Promise<Response>((resolve) => { releasePipeline = resolve; });
     const calls: string[] = [];
@@ -335,44 +358,50 @@ describe("Hoy · lecturas en paralelo", () => {
       return Promise.resolve(new Response("{}", { status: 404 }));
     }));
     render(<OverviewPage navigate={() => undefined} />);
-    await waitFor(() => expect(calls.some((p) => p.endsWith("/person-suggestions"))).toBe(true));
+    // Pipeline is fetched immediately.
+    await waitFor(() => expect(calls.some((p) => p.endsWith("/pipeline"))).toBe(true));
+    // Person-suggestions is no longer fetched by OverviewPage.
+    expect(calls.some((p) => p.endsWith("/person-suggestions"))).toBe(false);
     releasePipeline(new Response(JSON.stringify(PIPELINE), { status: 200, headers: { "Content-Type": "application/json" } }));
   });
 });
 
 describe("Hoy · orden", () => {
-  it("keeps the quote number and the rates at hand on the side, not at the bottom", async () => {
+  it("keeps the tools in the side column: Tu semana, Pendientes, quote number, rates, in that order", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
     const side = await screen.findByRole("complementary");
-    expect(within(side).getByTestId("quote-number-box")).toBeInTheDocument();
-    expect(within(side).getByTestId("fx-USD")).toBeInTheDocument();
+    const strip = await within(side).findByTestId("goal-strip");
+    const box = await within(side).findByTestId("quote-number-box");
+    const usd = await within(side).findByTestId("fx-USD");
+    const before = (x: Element, y: Element) => Boolean(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(before(strip, box)).toBe(true);
+    expect(before(box, usd)).toBe(true);
   });
 
-
-  it("puts today's work above the exchange rate and the quote number", async () => {
+  it("shows the week strip next to the date, with «atrasado» and «hoy» first", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // The first section heading (Andino is at the 3-day threshold, so «Llamar» shows).
-    const heading = await screen.findByRole("heading", { level: 2, name: "Llamar" });
-    const usd = await screen.findByTestId("fx-USD");
-    const quotes = await screen.findByTestId("quote-number-box");
-    expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(heading.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const week = await screen.findByTestId("hoy-week");
+    const cells = within(week).getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(cells[0]).toMatch(/atrasado$/);
+    expect(cells[1]).toMatch(/hoy$/);
+    expect(cells.length).toBeGreaterThanOrEqual(5);
   });
 });
 
 describe("Hoy · housekeeping", () => {
-  it("the triage panel no longer lives on Hoy — a housekeeping link navigates to Operaciones", async () => {
+  it("Hoy v3: housekeeping link removed — no «N cosas por ordenar» on Hoy", async () => {
     respond({
       "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE,
     });
     render(<OverviewPage navigate={() => undefined} />);
-    await screen.findByTestId("hero-header");
+    await screen.findByTestId("hoy-mini-header");
     // «Correos sin caso» moved to Operaciones → not on «Hoy».
     expect(screen.queryByText("Correos sin caso")).not.toBeInTheDocument();
-    // Valle is historical_import → housekeeping count = 1 (link to Operaciones).
-    expect(await screen.findByTestId("today-housekeeping")).toHaveTextContent(/1.*cosa.*ordenar/);
+    // Hoy v3: HousekeepingLink removed — the «N cosas por ordenar» link no longer exists on Hoy.
+    await screen.findByTestId("today-para-ti"); // wait for queue to render
+    expect(screen.queryByTestId("today-housekeeping")).not.toBeInTheDocument();
   });
 });
 
@@ -398,19 +427,23 @@ describe("Hoy · franja de metas y «Mi cola»", () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
     render(<OverviewPage navigate={() => undefined} />);
     const strip = await screen.findByTestId("goal-strip");
-    const hero = screen.getByTestId("hero-header");
+    // Hoy v3: quiet one-line header replaces HeroHeader.
+    const hero = screen.getByTestId("hoy-mini-header");
     expect(hero.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(strip).getByRole("link", { name: /Seguimiento/ })).toBeInTheDocument();
+    // Hoy v3: Seguimientos is now a button (filter), not a link.
+    expect(within(strip).getByRole("button", { name: /Seguimiento/ })).toBeInTheDocument();
   });
 
-  it("«Mi cola» / «Todo el equipo» is in the header, and another profile starts on its own queue", async () => {
+  it("«Mi cola» / «Todo el equipo» is in TodayBody (not the header), one switch per page", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/invoices": { items: [], summary: {} } });
     const { rerender } = render(page(as("p-ana", "Ana")));
-    const hero = await screen.findByTestId("hero-header");
-    fireEvent.click(within(hero).getByRole("button", { name: "Todo el equipo" }));
-    expect(within(hero).getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
+    // Hoy v3: scope toggle is in TodayBody (today-scope), not in the mini-header.
+    const scope = await screen.findByTestId("today-scope");
+    fireEvent.click(within(scope).getByRole("button", { name: "Todo el equipo" }));
+    expect(within(scope).getByRole("button", { name: "Todo el equipo" })).toHaveAttribute("aria-pressed", "true");
     rerender(page(as("p-beto", "Beto")));
-    expect(within(screen.getByTestId("hero-header")).getByRole("button", { name: "Mi cola · Beto" })).toHaveAttribute("aria-pressed", "true");
+    await screen.findByTestId("today-scope");
+    expect(within(screen.getByTestId("today-scope")).getByRole("button", { name: /Mi cola/ })).toHaveAttribute("aria-pressed", "true");
     // Only one switch on the page.
     expect(screen.getAllByTestId("today-scope")).toHaveLength(1);
   });
