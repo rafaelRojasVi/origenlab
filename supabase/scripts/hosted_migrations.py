@@ -207,7 +207,12 @@ def run(mode: str) -> None:
                      f"if (select coalesce(array_agg(version order by version), ARRAY[]::text[]) from supabase_migrations.schema_migrations) <> ARRAY[{','.join(repr(row[0]) for row in rows[:i])}]::text[] "
                      "then raise exception 'schema ledger changed while waiting for migration lock'; end if; "
                      "end $$;")
-            ledger = ("do $$ begin if session_user <> 'origenlab_migrator' or current_user <> 'origenlab_migrator' "
+            # Deferred constraint triggers (crm.opportunity_requesting_agrees and its pair) run at
+            # COMMIT as the current role. The file ends with `reset role`, so a migration that
+            # writes crm.opportunity would fire them as origenlab_migrator, which may not execute
+            # them: 42501 at commit (2026-11-10, the pause backfill). Fire them now, as the owner.
+            ledger = ("set role origenlab_owner; set constraints all immediate; reset role; "
+                      "do $$ begin if session_user <> 'origenlab_migrator' or current_user <> 'origenlab_migrator' "
                       "then raise exception 'migration failed to reset the role'; end if; end $$; "
                       f"insert into supabase_migrations.schema_migrations(version,name) values ('{v}','{n}');")
             print(f"Applying {v}_{n} atomically")

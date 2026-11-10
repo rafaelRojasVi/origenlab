@@ -336,6 +336,14 @@ class ProductionGates(unittest.TestCase):
         guard = src.split("guard = (", 1)[1]
         self.assertTrue(guard.lstrip().startswith('"set transaction read write; reset role; '), guard[:80])
 
+    def test_deferred_triggers_fire_as_the_owner_before_the_ledger(self):
+        # crm.opportunity has deferred constraint triggers only origenlab_owner may run. A
+        # migration that writes it fired them at COMMIT as origenlab_migrator: 42501 (2026-11-10).
+        src = (SCRIPT_DIR / "hosted_migrations.py").read_text()
+        ledger = src.split("ledger = (", 1)[1]
+        self.assertTrue(ledger.lstrip().startswith(
+            '"set role origenlab_owner; set constraints all immediate; reset role; '), ledger[:90])
+
     def test_three_pinned_services_and_legacy_cron_guard(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 3)
         self.assertEqual(len(render.ALL_SERVICES), 4)
