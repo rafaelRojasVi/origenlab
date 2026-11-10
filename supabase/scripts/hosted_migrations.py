@@ -197,7 +197,11 @@ def run(mode: str) -> None:
             i = rows.index((v,n,f))
             # BEGIN / COMMIT managed by psql --single-transaction across -c, -f, -c.
             # Lock and recheck latest migration under lock: no competing apply may race.
-            guard = ("set lock_timeout = '10s'; set statement_timeout = '180s'; "
+            # A pooled server connection may carry a role or a read-only default another client of
+            # this login left behind (the read self-check did, 2026-11-10: 42501). The transaction is
+            # made read-write and the role reset before anything else runs in it.
+            guard = ("set transaction read write; reset role; "
+                     "set lock_timeout = '10s'; set statement_timeout = '180s'; "
                      "select pg_advisory_xact_lock(72830224092701); "
                      "do $$ begin "
                      f"if (select coalesce(array_agg(version order by version), ARRAY[]::text[]) from supabase_migrations.schema_migrations) <> ARRAY[{','.join(repr(row[0]) for row in rows[:i])}]::text[] "
