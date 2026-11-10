@@ -25,12 +25,6 @@ const ModelSheetPage = lazyPage(() => import("./pages/ModelSheetPage").then((m) 
 const CotizadorModulePage = lazyPage(() => import("./pages/CotizadorModulePage").then((m) => m.CotizadorModulePage));
 const LicitacionesPage = lazyPage(() => import("./tenders/LicitacionesPage").then((m) => m.LicitacionesPage));
 const ProspectosPage = lazyPage(() => import("./prospects/ProspectosPage").then((m) => m.ProspectosPage));
-const PagosPage = lazyPage(() => import("./pagos/PagosPage").then((m) => m.PagosPage));
-const FinanzasMesPage = lazyPage(() => import("./finanzas/FinanzasMesPage").then((m) => m.FinanzasMesPage));
-const FinanzasPorPagarPage = lazyPage(() => import("./finanzas/FinanzasPorPagarPage").then((m) => m.FinanzasPorPagarPage));
-const FinanzasGastosPage = lazyPage(() => import("./finanzas/FinanzasGastosPage").then((m) => m.FinanzasGastosPage));
-const FinanzasFinanciamientoPage = lazyPage(() => import("./finanzas/FinanzasFinanciamientoPage").then((m) => m.FinanzasFinanciamientoPage));
-const FinanzasSociosPage = lazyPage(() => import("./finanzas/FinanzasSociosPage").then((m) => m.FinanzasSociosPage));
 // Finanzas v3
 const FinanzasResumenPage = lazyPage(() => import("./finanzas/FinanzasResumenPage").then((m) => m.FinanzasResumenPage));
 const FinanzasCobrarPage = lazyPage(() => import("./finanzas/FinanzasCobrarPage").then((m) => m.FinanzasCobrarPage));
@@ -170,20 +164,6 @@ function Section({
       return <FinanzasCobrarPage navigate={navigate} />;
     case "fin-pagar":
       return <FinanzasPagarPage navigate={navigate} />;
-    // Legacy finanzas (keep for type exhaustiveness; redirect handled above)
-    case "fin-mes":
-      return <FinanzasMesPage />;
-    case "fin-por-pagar":
-      return <FinanzasPorPagarPage />;
-    case "fin-gastos":
-      return <FinanzasGastosPage />;
-    case "fin-financiamiento":
-      return <FinanzasFinanciamientoPage />;
-    case "fin-socios":
-      if (!admin) return <div className="py-6 text-sm text-ink-muted">Sólo administración.</div>;
-      return <FinanzasSociosPage />;
-    case "pagos":
-      return <PagosPage navigate={navigate} />;
     case "marketing":
       return <MarketingPage />;
     case "historial":

@@ -171,6 +171,7 @@ function OverflowMenu({ items }: { items: OverflowItem[] }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const btn = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   function toggle() {
     if (!open && btn.current) {
@@ -179,6 +180,13 @@ function OverflowMenu({ items }: { items: OverflowItem[] }) {
     }
     setOpen((v) => !v);
   }
+
+  // Focus the first enabled menuitem when the menu opens.
+  useEffect(() => {
+    if (!open) return;
+    const first = menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+    first?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -189,9 +197,12 @@ function OverflowMenu({ items }: { items: OverflowItem[] }) {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("click", close, true);
     document.addEventListener("keydown", esc);
+    // Close when the page scrolls so the menu doesn't drift away from its anchor.
+    document.addEventListener("scroll", close, true);
     return () => {
       document.removeEventListener("click", close, true);
       document.removeEventListener("keydown", esc);
+      document.removeEventListener("scroll", close, true);
     };
   }, [open]);
 
@@ -209,6 +220,7 @@ function OverflowMenu({ items }: { items: OverflowItem[] }) {
       </button>
       {open ? (
         <div
+          ref={menuRef}
           role="menu"
           aria-label="Acciones adicionales"
           style={{ position: "fixed", top: pos.top, left: pos.left, transform: "translateX(-100%)", zIndex: 50 }}

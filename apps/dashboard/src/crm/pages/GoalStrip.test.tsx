@@ -145,9 +145,9 @@ describe("GoalStrip", () => {
     expect(tile).toHaveTextContent("Faltan $4,82 M · $ 301.250 por día hábil (16 quedan, sin feriados)");
     expect(tile).toHaveTextContent("último folio del");
     expect(tile).toHaveTextContent("Ver facturas");
-    expect(tile).toHaveAttribute("href", "#/finanzas/por-cobrar");
+    expect(tile).toHaveAttribute("href", "#/finanzas/cobrar");
     fireEvent.click(tile);
-    expect(navigate).toHaveBeenCalledWith("pagos");
+    expect(navigate).toHaveBeenCalledWith("fin-cobrar");
   });
 
   it("viewer sees three tiles, no «$» and no invoices request", () => {

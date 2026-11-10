@@ -136,8 +136,8 @@ function SoldTile({ today, navigate }: { today: string; navigate: Navigate }) {
       : `Faltan ${formatMillions(pace.remaining)} · ${formatMoney(String(pace.perDay), "CLP")} por día hábil (${pace.days} quedan, sin feriados)`;
   return (
     <Tile
-      href={crmHash("pagos")}
-      onClick={() => navigate("pagos")}
+      href={crmHash("fin-cobrar")}
+      onClick={() => navigate("fin-cobrar")}
       testId="goal-vendido"
       label={label}
       met={met}

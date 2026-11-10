@@ -366,7 +366,7 @@ describe("dashboard shell", () => {
     const links = within(nav).getAllByRole("link");
     const areas = AREA_NAMES.map((name) => within(nav).getByRole("link", { name }));
     expect(areas.map((a) => links.indexOf(a))).toEqual([...areas.map((a) => links.indexOf(a))].sort((x, y) => x - y));
-    expect(areas.map((a) => a.getAttribute("href"))).toEqual(["#/hoy", "#/ventas/pipeline", "#/finanzas/mes", "#/catalogo", "#/ajustes/operaciones"]);
+    expect(areas.map((a) => a.getAttribute("href"))).toEqual(["#/hoy", "#/ventas/pipeline", "#/finanzas/resumen", "#/catalogo", "#/ajustes/operaciones"]);
     expect(within(nav).getByRole("link", { name: "Ventas" })).toHaveAttribute("aria-current", "true");
     expect(within(nav).getByRole("link", { name: "Hoy" })).not.toHaveAttribute("aria-current");
   });
