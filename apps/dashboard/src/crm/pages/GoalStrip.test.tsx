@@ -17,7 +17,7 @@ const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 function invoice(doc_type: number, issued_on: string, net_amount: number, exempt_amount = 0): Invoice {
   return {
     invoice_id: `i-${doc_type}-${issued_on}`, version: 1, doc_type, folio: 100, issued_on, days_open: 0, age_bucket: null,
-    client_rut: "11.111.111-1", client_name: "Instituto Ficticio", organization: null,
+    client_rut: "11.111.111-1", client_name: "Instituto Ficticio", organization: null, avg_days_client: 30, expected_pay_date: null,
     net_amount, vat_amount: 0, exempt_amount, total_amount: net_amount + exempt_amount,
     balance: null, reference: null, notes: [], status: "unpaid", paid_on: null, case_link: null, opportunity: null,
   };
@@ -145,9 +145,9 @@ describe("GoalStrip", () => {
     expect(tile).toHaveTextContent("Faltan $4,82 M · $ 301.250 por día hábil (16 quedan, sin feriados)");
     expect(tile).toHaveTextContent("último folio del");
     expect(tile).toHaveTextContent("Ver facturas");
-    expect(tile).toHaveAttribute("href", "#/finanzas/por-cobrar");
+    expect(tile).toHaveAttribute("href", "#/finanzas/cobrar");
     fireEvent.click(tile);
-    expect(navigate).toHaveBeenCalledWith("pagos");
+    expect(navigate).toHaveBeenCalledWith("fin-cobrar");
   });
 
   it("viewer sees three tiles, no «$» and no invoices request", () => {

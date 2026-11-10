@@ -77,6 +77,12 @@ def _run(*, command_name: str, body: Any, repo: FinanceCommandRepository,
 
 # ── reads ─────────────────────────────────────────────────────────────────────
 
+@finance_read_router.get("/resumen")
+def finance_resumen(_: Operator, repo: FinanceReadRepo) -> dict[str, Any]:
+    """Resumen v3: caja 30/60/90, meta 3-layer, indicadores, cobrar_hoy, pedidos_estimados."""
+    return repo.resumen()
+
+
 @finance_read_router.get("/mes")
 def finance_mes(_: Operator, repo: FinanceReadRepo) -> dict[str, Any]:
     """5 KPI cards for the Mes view: vendido vs meta, por cobrar, pipeline, capital atado, gastos."""
