@@ -192,6 +192,17 @@ SKIPPED_PATTERNS: dict[str, str] = {
 # -- connection helper -----------------------------------------------------------
 
 
+def reset_session(conn: Any) -> None:
+    """End any open transaction, then undo every session-level setting this check made."""
+    try:
+        conn.rollback()
+    except Exception:  # noqa: BLE001 — a broken connection is closed by the caller anyway
+        return
+    conn.autocommit = True
+    conn.execute("reset role")
+    conn.execute("reset all")
+
+
 class _OwnerConnection:
     """A psycopg connection opened as origenlab_migrator, then SET ROLEd to origenlab_owner.
 
@@ -220,7 +231,14 @@ class _OwnerConnection:
 
     def __exit__(self, *exc_info: Any) -> bool:
         if self._conn is not None:
-            self._conn.close()
+            try:
+                # The Supavisor session pooler hands this server connection to the next client of
+                # the same login (the release's migrate step) without resetting it. A role or a
+                # read-only default left here broke the pause migration with 42501 (2026-11-10):
+                # the session is put back as it was found before it goes back to the pool.
+                reset_session(self._conn)
+            finally:
+                self._conn.close()
         return False
 
 

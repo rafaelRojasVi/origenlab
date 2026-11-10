@@ -216,3 +216,33 @@ def test_main_runs_the_reads_while_the_ca_certificate_still_exists(monkeypatch, 
     monkeypatch.setattr(release_read_check, "run_checks", run_checks)
     release_read_check.main()
     assert seen == [True]
+
+
+def test_a_read_connection_goes_back_to_the_pool_as_it_was_found() -> None:
+    """The Supavisor session pooler reuses this server connection for the next client of the same
+    login without resetting it. The check sets a role and a read-only default on the session, so it
+    must undo both before closing: left behind, they broke the migrate step with 42501 (2026-11-10)."""
+    from unittest import mock
+
+    import release_read_check
+
+    conn = mock.MagicMock()
+    with mock.patch("psycopg.connect", return_value=conn):
+        with release_read_check._OwnerConnection("postgresql://x"):
+            pass
+    sql = [c.args[0] for c in conn.execute.call_args_list]
+    assert sql[:2] == ["set role origenlab_owner", "set default_transaction_read_only = on"]
+    assert sql[-2:] == ["reset role", "reset all"]
+    conn.rollback.assert_called_once()
+    conn.close.assert_called_once()
+
+    # A read that raised still resets the session before closing.
+    conn = mock.MagicMock()
+    with mock.patch("psycopg.connect", return_value=conn):
+        try:
+            with release_read_check._OwnerConnection("postgresql://x"):
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+    assert [c.args[0] for c in conn.execute.call_args_list][-2:] == ["reset role", "reset all"]
+    conn.close.assert_called_once()

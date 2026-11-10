@@ -328,6 +328,14 @@ class ProductionGates(unittest.TestCase):
         self.assertIn("no SQLSTATE reported", str(ctx.exception))
         self.assertEqual(migrations.failure_code("ERROR:  42501"), "SQLSTATE 42501")
 
+    def test_the_migrate_guard_never_trusts_the_pooled_session(self):
+        # The pooler hands a server connection to the next client of the login as it was left: a
+        # role or read-only default from another client (the read self-check, 2026-11-10) made the
+        # ledger write fail with 42501. The guard resets both before anything else runs.
+        src = (SCRIPT_DIR / "hosted_migrations.py").read_text()
+        guard = src.split("guard = (", 1)[1]
+        self.assertTrue(guard.lstrip().startswith('"set transaction read write; reset role; '), guard[:80])
+
     def test_three_pinned_services_and_legacy_cron_guard(self):
         self.assertEqual(len({r for _, r in render.SERVICES}), 3)
         self.assertEqual(len(render.ALL_SERVICES), 4)
