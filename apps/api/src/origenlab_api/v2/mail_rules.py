@@ -797,11 +797,14 @@ def _link_step(case: CaseState, evidence_id: str, relation: str, note: str) -> d
         "source_record_id": evidence_id, "note": note}}
 
 
-def _advance_step(stage: str, note: str, close_reason: str | None = None) -> dict[str, Any]:
+def _advance_step(stage: str, note: str, close_reason: str | None = None,
+                  lost_reason: str | None = None) -> dict[str, Any]:
     inputs: dict[str, Any] = {"opportunity_id": "@case", "opportunity_version": "@case_version",
                               "stage": stage, "note": note}
     if close_reason is not None:
         inputs["close_reason"] = close_reason
+    if lost_reason is not None:
+        inputs["lost_reason"] = lost_reason
     return {"command": "advance_case_stage", "inputs": inputs}
 
 
@@ -1196,7 +1199,7 @@ def _signal_rules(e: MailEvidence, cases: list[CaseState], ix: _Index, *,
     link = () if already_linked else (_link_step(c, e.id, "contradicts", note),)
     return PlannedAction(e.id, "R6", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id,
-                         commands=(*link, _advance_step("lost", note, LOST_CLOSE_REASON)),
+                         commands=(*link, _advance_step("lost", note, LOST_CLOSE_REASON, "otro_proveedor")),
                          context=context)
 
 
@@ -1785,7 +1788,7 @@ def _read_lost_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     note = _note("R19", reasons)
     return PlannedAction(e.id, "R19", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
                          organization_id=c.organization_id,
-                         commands=(_advance_step("lost", note, READ_LOST_CLOSE_REASON),),
+                         commands=(_advance_step("lost", note, READ_LOST_CLOSE_REASON, "otro_proveedor"),),
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
 
 

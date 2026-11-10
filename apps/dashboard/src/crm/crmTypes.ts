@@ -243,6 +243,8 @@ export interface OpportunityCardData {
   /** «En pausa hasta…» as a state (2026-11-13): a Santiago day and a reason, both or neither. */
   paused_until?: string | null;
   pause_reason?: string | null;
+  /** Why it was lost or abandoned, coded (2026-11-14); null while open or for an old closing with no known phrase. */
+  lost_reason?: string | null;
   organization: {
     organization_id: string;
     name: string | null;

@@ -188,15 +188,35 @@ export function boardColumnOf(card: OpportunityCardData, now: Date = new Date())
 }
 
 /** «Perdida»: one click on a reason. «Sin respuesta» closes as `abandoned`, the rest as `lost`. */
-export const LOST_REASONS: { label: string; stage: "lost" | "abandoned" }[] = [
-  { label: "No es una solicitud", stage: "abandoned" },
-  { label: "Sin respuesta", stage: "abandoned" },
-  { label: "Sin presupuesto", stage: "lost" },
-  { label: "Compró a otro proveedor", stage: "lost" },
-  { label: "Precio", stage: "lost" },
-  { label: "Plazo de entrega", stage: "lost" },
-  { label: "Cambió la necesidad", stage: "lost" },
+/** Why a case was lost or abandoned: the chip the operator sees, the stage it closes to and the
+ *  code the API records (`crm.opportunity.lost_reason`, DOMAIN.md §7.19). */
+export type LostReasonCode =
+  | "precio" | "otro_proveedor" | "sin_presupuesto" | "sin_respuesta"
+  | "no_era_real" | "plazo_entrega" | "cambio_necesidad" | "duplicado";
+
+export const LOST_REASONS: { label: string; stage: "lost" | "abandoned"; code: LostReasonCode }[] = [
+  { label: "No es una solicitud", stage: "abandoned", code: "no_era_real" },
+  { label: "Sin respuesta", stage: "abandoned", code: "sin_respuesta" },
+  { label: "Sin presupuesto", stage: "lost", code: "sin_presupuesto" },
+  { label: "Compró a otro proveedor", stage: "lost", code: "otro_proveedor" },
+  { label: "Precio", stage: "lost", code: "precio" },
+  { label: "Plazo de entrega", stage: "lost", code: "plazo_entrega" },
+  { label: "Cambió la necesidad", stage: "lost", code: "cambio_necesidad" },
 ];
+
+export const LOST_REASON_LABEL: Record<LostReasonCode, string> = {
+  precio: "Precio", otro_proveedor: "Compró a otro proveedor", sin_presupuesto: "Sin presupuesto",
+  sin_respuesta: "Sin respuesta", no_era_real: "No es una solicitud", plazo_entrega: "Plazo de entrega",
+  cambio_necesidad: "Cambió la necesidad", duplicado: "Duplicado",
+};
+
+/** The code of a chip label, or of a text that starts with one («Sin presupuesto: …»); null otherwise. */
+export function lostReasonCode(text: string | null | undefined): LostReasonCode | null {
+  if (!text) return null;
+  const t = text.trim().toLowerCase();
+  const hit = LOST_REASONS.find((r) => t.startsWith(r.label.toLowerCase()));
+  return hit ? hit.code : t.startsWith("duplicado") ? "duplicado" : null;
+}
 
 /** «En pausa hasta…»: why the case waits (`pause_reason`). */
 export const PAUSE_REASONS: string[] = [

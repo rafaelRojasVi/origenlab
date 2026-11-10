@@ -1504,3 +1504,28 @@ case; the task stays open until the first `set-case-pause` on that case retires 
 `20261113100000_slice8_opportunity_pause.sql` and `20261113110000_slice8_opportunity_pause_event.sql`;
 pgTAP `113_opportunity_pause.sql`.
 
+### 7.19 Why a case was lost — `crm.opportunity.lost_reason`, built 2026-11-14
+
+Owner decision 2026-11-10: every loss records why, as a code that can be counted. `close_reason`
+stays the operator's sentence; next to it, one nullable column with eight codes
+(`opportunity_lost_reason_check`):
+
+| code | chip | stage |
+|---|---|---|
+| `precio` | Precio | lost |
+| `otro_proveedor` | Compró a otro proveedor (also the rules' «otro proveedor», «el cliente no sigue») | lost |
+| `sin_presupuesto` | Sin presupuesto | lost |
+| `plazo_entrega` | Plazo de entrega | lost |
+| `cambio_necesidad` | Cambió la necesidad | lost |
+| `sin_respuesta` | Sin respuesta | abandoned |
+| `no_era_real` | No es una solicitud | abandoned |
+| `duplicado` | (a case opened twice) | abandoned |
+
+`advance-case-stage` requires it for `lost` and `abandoned`: sent explicitly (`lost_reason`), or
+derived from `close_reason` when the text starts with a chip or names «otro proveedor»; a closing
+whose text implies no code is refused (`closing_a_case_needs_a_lost_reason`), and a code on a stage
+that does not close is refused like a close reason. The `opportunity.closed` payload carries it; no
+new event type. Reopening clears it with the close reason. The migration backfills closed cases from
+the same phrases; a closing from before 2026-11-14 whose text matches none keeps null. Migration
+`20261114100000_slice8_opportunity_lost_reason.sql`; pgTAP `114_opportunity_lost_reason.sql`.
+

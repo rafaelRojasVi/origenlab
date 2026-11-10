@@ -194,6 +194,7 @@ export function CaseMoveForm({
             text,
             text,
             keysRef.current.move,
+            chosen?.code ?? null,
           )),
         );
         // Nothing is left to follow up on a closed case.

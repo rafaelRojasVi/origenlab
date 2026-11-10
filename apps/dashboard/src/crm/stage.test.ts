@@ -16,6 +16,7 @@ import {
   stageBasis,
   stageDisplay,
 } from "./stage";
+import { lostReasonCode } from "./stage";
 
 function rev(origin: string | null): RevisionCard {
   return {
@@ -273,5 +274,19 @@ describe("monthKeySantiago", () => {
     expect(monthKeySantiago("2026-11-01T02:30:00Z")).toBe("2026-10");
     expect(monthKeySantiago("2026-11-01T12:00:00Z")).toBe("2026-11");
     expect(monthKeySantiago("2026-01-01T02:00:00Z")).toBe("2025-12");
+  });
+});
+
+
+describe("lostReasonCode", () => {
+  it("reads the code of a chip, with or without a detail after the colon", () => {
+    expect(lostReasonCode("Precio")).toBe("precio");
+    expect(lostReasonCode("Sin presupuesto: gerencia no autorizó")).toBe("sin_presupuesto");
+    expect(lostReasonCode("No es una solicitud")).toBe("no_era_real");
+    expect(lostReasonCode("Duplicado: la cotización 01279-26")).toBe("duplicado");
+  });
+  it("is null for text that names no chip", () => {
+    expect(lostReasonCode("se fueron con la competencia")).toBeNull();
+    expect(lostReasonCode(null)).toBeNull();
   });
 });

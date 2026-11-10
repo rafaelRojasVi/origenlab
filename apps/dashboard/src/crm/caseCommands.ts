@@ -20,7 +20,7 @@ import { OperatorApiError, notifyIfSessionRefused, operatorApiUrl } from "../api
 import { useAuthSession } from "../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import type { CaseOrigin } from "./caseOrigin";
-import { STAGE_LABEL } from "./stage";
+import { STAGE_LABEL, lostReasonCode } from "./stage";
 import { envelopeOfError } from "../api/refusalEnvelope";
 
 export const CASE_COMMAND_PATHS = {
@@ -272,6 +272,8 @@ export interface AdvanceCaseStageBody {
   opportunity_version: number;
   stage: string;
   close_reason?: string | null;
+  /** Why, coded, when `stage` closes the case (`lostReasonCode`); the API derives it from the text when absent. */
+  lost_reason?: string | null;
   note: string;
 }
 
@@ -460,8 +462,10 @@ export async function moveCase(
   note: string,
   closeReason: string | null,
   keys: string[] = [],
+  lostReason: string | null = null,
 ): Promise<WonStep[]> {
   const path = stagePath(card.stage, to);
+  const code = lostReason ?? lostReasonCode(closeReason);
   if (path === null) throw new WonFlowError([], new Error("no stage path"));
   const done: WonStep[] = [];
   let version = card.version;
@@ -474,6 +478,7 @@ export async function moveCase(
           opportunity_version: version,
           stage,
           close_reason: closing ? closeReason : null,
+          lost_reason: closing ? code : null,
           note,
         },
         keys[i],

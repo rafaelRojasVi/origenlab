@@ -1737,10 +1737,14 @@ def test_a_case_may_not_reach_qualified_without_a_confirmed_requester(
 
 
 @_needs_db
-@pytest.mark.parametrize("close_reason", ["nunca respondieron y no sé qué institución era",
-                                           "No es una solicitud: Es una oferta del proveedor"])
+@pytest.mark.parametrize(("close_reason", "lost_reason", "expected_code"), [
+    # Free text that names no code needs the code explicitly (DOMAIN.md §7.19)…
+    ("nunca respondieron y no sé qué institución era", "sin_respuesta", "sin_respuesta"),
+    # …a chip with a detail after the colon carries its own.
+    ("No es una solicitud: Es una oferta del proveedor", None, "no_era_real"),
+])
 def test_a_case_that_never_found_its_requester_can_still_be_abandoned(
-    disposable_database, world, close_reason
+    disposable_database, world, close_reason, lost_reason, expected_code
 ) -> None:
     """The defect this slice found: `lost` and `abandoned` are reachable from `lead`.
 
@@ -1757,7 +1761,7 @@ def test_a_case_that_never_found_its_requester_can_still_be_abandoned(
         ADVANCE_CASE_STAGE,
         AdvanceCaseStageBody(
             opportunity_id=case_id, opportunity_version=version, stage="abandoned",
-            close_reason=close_reason,
+            close_reason=close_reason, lost_reason=lost_reason,
             note="cierre",
         ),
         world,
@@ -1765,15 +1769,58 @@ def test_a_case_that_never_found_its_requester_can_still_be_abandoned(
     assert result["closed"] is True
     with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
         cur.execute(
-            "select stage, organization_id, closed_at is not null, close_reason "
+            "select stage, organization_id, closed_at is not null, close_reason, lost_reason "
             "from crm.opportunity where id = %s",
             (case_id,),
         )
-        stage, organization_id, closed, reason = cur.fetchone()
+        stage, organization_id, closed, reason, code = cur.fetchone()
         assert (stage, organization_id, closed) == ("abandoned", None, True)
         assert reason == close_reason
+        assert code == expected_code
+        cur.execute(
+            "select payload->>'lost_reason' from crm.domain_event "
+            "where aggregate_id = %s and event_type = 'opportunity.closed'", (case_id,))
+        assert cur.fetchone()[0] == expected_code
         cur.execute("select count(*) from crm.opportunity_evidence where opportunity_id = %s and unlinked_at is null", (case_id,))
         assert cur.fetchone()[0] == 1  # Closing a false positive preserves its origin evidence.
+
+
+def test_a_closing_says_why_coded_or_with_a_known_phrase() -> None:
+    """DOMAIN.md §7.19: lost and abandoned record a code. The chips and the rules' phrases imply
+    theirs; free text alone is refused; a code is refused on a stage that does not close."""
+    from origenlab_api.v2.case_commands import lost_reason_from_text, validated_stage
+
+    def body(**kw):
+        return AdvanceCaseStageBody(opportunity_id=CASE_ID, opportunity_version=1, note="n", **kw)
+
+    assert validated_stage(body(stage="lost", close_reason="Sin presupuesto: gerencia no autorizó"))["lost_reason"] == "sin_presupuesto"
+    assert validated_stage(body(stage="lost", close_reason="Compró a otro proveedor"))["lost_reason"] == "otro_proveedor"
+    assert validated_stage(body(stage="lost", close_reason="otro proveedor"))["lost_reason"] == "otro_proveedor"
+    assert validated_stage(body(stage="lost", close_reason="el cliente no sigue (lectura del correo)"))["lost_reason"] == "otro_proveedor"
+    assert validated_stage(body(stage="abandoned", close_reason="Duplicado: la cotización 01279-26"))["lost_reason"] == "duplicado"
+    assert validated_stage(body(stage="lost", close_reason="lo que sea", lost_reason="precio"))["lost_reason"] == "precio"
+    with pytest.raises(CommandRefused) as free:
+        validated_stage(body(stage="lost", close_reason="se fueron con la competencia"))
+    assert (free.value.status_code, free.value.code) == (422, "closing_a_case_needs_a_lost_reason")
+    with pytest.raises(CommandRefused) as open_stage:
+        validated_stage(body(stage="quoting", lost_reason="precio"))
+    assert open_stage.value.code == "close_reason_is_only_for_a_closing_stage"
+    assert validated_stage(body(stage="quoting"))["lost_reason"] is None
+    # An undo of the email rules is not a loss: no code, and none is asked for.
+    assert validated_stage(body(stage="abandoned", close_reason="discarded_by_correction"))["lost_reason"] is None
+    assert lost_reason_from_text("  CAMBIÓ LA NECESIDAD ") == "cambio_necesidad"
+    assert lost_reason_from_text(None) is None
+    assert lost_reason_from_text("compraron a otro proveedor") == "otro_proveedor"
+
+
+def test_a_lost_reason_outside_the_eight_codes_is_a_422() -> None:
+    path, _command, body = next(r for r in ROUTES if r[0].endswith("/advance-case-stage"))
+    repo = _FakeCaseRepo()
+    closing = {**body, "stage": "lost", "close_reason": "lo que sea"}
+    for bad in ("Precio", "caro", "", 3):
+        assert _client(repo).post(path, json={**closing, "lost_reason": bad}, headers=_headers()).status_code == 422, bad
+    assert _client(repo).post(path, json={**closing, "lost_reason": "precio"}, headers=_headers()).status_code == 200
+    assert repo.calls[-1]["fields"]["lost_reason"] == "precio"
 
 
 @_needs_db
@@ -1885,7 +1932,7 @@ def test_two_operators_racing_one_case_do_not_both_win(disposable_database, worl
             ADVANCE_CASE_STAGE,
             AdvanceCaseStageBody(
                 opportunity_id=case_id, opportunity_version=version, stage="abandoned",
-                close_reason="creo que no va", note="yo segundo",
+                close_reason="creo que no va", lost_reason="no_era_real", note="yo segundo",
             ),
             world,
             operator="other_operator_id",
@@ -2341,7 +2388,7 @@ def test_reopening_keeps_every_other_rule(disposable_database, world) -> None:
     with pytest.raises(CommandRefused) as excinfo:
         _run(repo, ADVANCE_CASE_STAGE,
              AdvanceCaseStageBody(opportunity_id=lost_id, opportunity_version=v, stage="abandoned",
-                                  close_reason="x", note="x"), world)
+                                  close_reason="x", lost_reason="duplicado", note="x"), world)
     assert excinfo.value.code == "stage_transition_not_allowed"
 
 

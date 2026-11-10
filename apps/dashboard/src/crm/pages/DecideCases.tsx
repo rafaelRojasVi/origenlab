@@ -188,8 +188,8 @@ export function DecideCases({
       return { ok: true, text: "En conversación" };
     }
     if (r.decision === "perdida") {
-      const stage = LOST_REASONS.find((x) => x.label === r.lostReason)?.stage ?? "lost";
-      await moveCase(base, stage, `${r.lostReason} (decidido en bloque: ${why}).`, r.lostReason, k);
+      const lost = LOST_REASONS.find((x) => x.label === r.lostReason);
+      await moveCase(base, lost?.stage ?? "lost", `${r.lostReason} (decidido en bloque: ${why}).`, r.lostReason, k, lost?.code ?? null);
       return { ok: true, text: `Perdida · ${r.lostReason}` };
     }
     const revision = winnableRevisions(card)[0];

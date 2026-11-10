@@ -54,6 +54,7 @@ missing any of them is refused before a database connection is opened.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -188,6 +189,48 @@ STAGES_REQUIRING_A_REQUESTING_INSTITUTION: tuple[str, ...] = (
 
 #: Stages that end a case and therefore need a motive.
 STAGES_REQUIRING_A_CLOSE_REASON: tuple[str, ...] = ("lost", "abandoned")
+
+#: Why a case was lost or abandoned, as a closed vocabulary (owner decision 2026-11-10, DOMAIN.md
+#: §7.19): the five the owner named, the two chips the team already used, and «duplicado».
+LOST_REASONS: tuple[str, ...] = (
+    "precio", "otro_proveedor", "sin_presupuesto", "sin_respuesta",
+    "no_era_real", "plazo_entrega", "cambio_necesidad", "duplicado",
+)
+LostReason = Literal[
+    "precio", "otro_proveedor", "sin_presupuesto", "sin_respuesta",
+    "no_era_real", "plazo_entrega", "cambio_necesidad", "duplicado",
+]
+
+#: The text a closing already carries, read for its code: the dashboard's chips (with or without
+#: a detail after the colon) and the phrases the mail rules write. Same mapping as the backfill of
+#: 20261114100000_slice8_opportunity_lost_reason.sql.
+_LOST_REASON_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("sin respuesta", "sin_respuesta"),
+    ("sin presupuesto", "sin_presupuesto"),
+    ("no es una solicitud", "no_era_real"),
+    ("compro a otro proveedor", "otro_proveedor"),
+    ("eligieron otro proveedor", "otro_proveedor"),
+    ("otro proveedor", "otro_proveedor"),
+    ("el cliente no sigue", "otro_proveedor"),
+    ("cambio la necesidad", "cambio_necesidad"),
+    ("plazo de entrega", "plazo_entrega"),
+    ("precio", "precio"),
+    ("duplicado", "duplicado"),
+)
+
+
+def lost_reason_from_text(text: str | None) -> str | None:
+    """The code a close_reason text implies, or None when no known phrase starts it."""
+    if not text:
+        return None
+    folded = "".join(
+        ch for ch in unicodedata.normalize("NFKD", text.strip().lower()) if not unicodedata.combining(ch)
+    )
+    for prefix, code in _LOST_REASON_PREFIXES:
+        if folded.startswith(prefix):
+            return code
+    # «compraron a otro proveedor», «se fueron con otro proveedor»: the phrase, anywhere.
+    return "otro_proveedor" if "otro proveedor" in folded else None
 
 
 class _CaseBody(DecisionBody):
@@ -437,6 +480,9 @@ class AdvanceCaseStageBody(_CaseBody):
         "lead", "qualifying", "qualified", "quoting", "negotiating", "won", "lost", "abandoned",
     ]
     close_reason: Annotated[str, Field(min_length=1, max_length=2000)] | None = None
+    #: Why, coded, when `stage` closes the case. Optional on the wire: left out, it is derived from
+    #: `close_reason` (the chips, the rules' phrases); a closing whose text implies no code is refused.
+    lost_reason: LostReason | None = None
 
 
 class RecordCaseWonBody(_CaseBody):
@@ -772,11 +818,23 @@ def validated_stage(body: AdvanceCaseStageBody) -> dict[str, Any]:
             f"stage '{body.stage}' ends this case; close_reason must say why "
             "(DOMAIN.md §3.4)",
         )
-    if not needs_reason and reason is not None:
+    if not needs_reason and (reason is not None or body.lost_reason is not None):
         raise CommandRefused(
             422,
             "close_reason_is_only_for_a_closing_stage",
             f"stage '{body.stage}' does not end the case, so there is nothing for "
             "close_reason to explain",
         )
-    return {"stage": body.stage, "close_reason": reason}
+    lost_reason = None
+    # «Quitar» on a case the email rules opened by mistake closes it as `discarded_by_correction`:
+    # it was never a case, so it is not a loss and carries no code.
+    if needs_reason and reason != DISCARDED_BY_CORRECTION:
+        lost_reason = body.lost_reason or lost_reason_from_text(reason)
+        if lost_reason is None:
+            raise CommandRefused(
+                422,
+                "closing_a_case_needs_a_lost_reason",
+                "say why, coded, with lost_reason: " + ", ".join(LOST_REASONS)
+                + " (DOMAIN.md §7.19); the text alone names none of them",
+            )
+    return {"stage": body.stage, "close_reason": reason, "lost_reason": lost_reason}

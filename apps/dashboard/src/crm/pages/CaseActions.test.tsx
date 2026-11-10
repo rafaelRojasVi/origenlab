@@ -489,6 +489,8 @@ describe("case drawer actions", () => {
       opportunity_version: 5,
       stage: "lost",
       close_reason: "Precio: eligieron otra marca",
+      // The chip's code travels with the text (DOMAIN.md §7.19), so losses can be counted by reason.
+      lost_reason: "precio",
       note: "Precio: eligieron otra marca",
     });
     await waitFor(() => expect(calls.filter((c) => c.path === "/v2/workspace/pipeline")).toHaveLength(2));

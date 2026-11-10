@@ -6,6 +6,7 @@ import {
 import type { OpportunityCardData } from "../crmTypes";
 import { inSharedMailbox } from "../gmailLinks";
 import { useLeave } from "../useLeave";
+import { lostReasonCode } from "../stage";
 import { refusalMessage } from "../mailRules";
 import {
   CLASS_LABEL,
@@ -562,7 +563,10 @@ function ReadingCard({ reading: r, stages, classes, intents, onDone, embedded = 
       const target = verdict === "approved" ? move?.to : verdict === "corrected" ? corrected.stage : undefined;
       if (target && onCase && stagePath(onCase.stage, target)) {
         const reason = note.trim() || "Sugerencia del correo revisada";
-        await moveCase(onCase, target, reason, target === "lost" || target === "abandoned" ? reason : null);
+        // A closing the email reading suggested: lost = the client chose elsewhere; abandoned = it was not a request.
+        const closing = target === "lost" || target === "abandoned";
+        await moveCase(onCase, target, reason, closing ? reason : null, [],
+          closing ? (lostReasonCode(reason) ?? (target === "lost" ? "otro_proveedor" : "no_era_real")) : null);
         toast(`${VERDICT[verdict].label}; el caso quedó en «${stageLabel(target)}».`);
       } else {
         toast(`${VERDICT[verdict].label}.`);

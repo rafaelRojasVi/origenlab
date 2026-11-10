@@ -269,6 +269,7 @@ _OVERVIEW_COUNTS_SQL: str = "select " + ",\n       ".join(
 _SQL_PIPELINE_OPPS = f"""
     select op.id::text as opportunity_id, op.title, op.stage, op.version, op.origin,
            op.paused_until::text as paused_until, op.pause_reason,
+           op.lost_reason,
            op.organization_id::text as organization_id, o.name as organization_name,
            o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
@@ -1053,6 +1054,7 @@ def compose_pipeline(
                     "origin": r.get("origin"),
                     "paused_until": r.get("paused_until"),
                     "pause_reason": r.get("pause_reason"),
+                    "lost_reason": r.get("lost_reason"),
                     "sent_at": r.get("sent_at"),
                     "superseded_by_revision_no": r.get("superseded_by_revision_no"),
                     "is_active": r in active,

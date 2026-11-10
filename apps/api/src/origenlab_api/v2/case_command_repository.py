@@ -1246,12 +1246,13 @@ class V2CaseCommandRepository(CommandTransaction):
             update crm.opportunity
                set stage = %s,
                    close_reason = %s,
+                   lost_reason = %s,
                    closed_at = case when %s then now() else null end,
                    version = version + 1,
                    updated_at = now()
              where id = %s and version = %s
             """,
-            (target, fields["close_reason"], is_terminal, case["id"], int(case["version"])),
+            (target, fields["close_reason"], fields.get("lost_reason"), is_terminal, case["id"], int(case["version"])),
         )
         if cur.rowcount != 1:
             raise CommandRefused(
@@ -1287,6 +1288,7 @@ class V2CaseCommandRepository(CommandTransaction):
                     payload={
                         "stage": target,
                         "close_reason": fields["close_reason"],
+                        "lost_reason": fields.get("lost_reason"),
                         "note": fields["note"],
                     },
                     operator=operator,
