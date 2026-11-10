@@ -12,6 +12,11 @@ export type CrmSection =
   | "cotizador"
   | "licitaciones"
   | "prospectos"
+  // ── Finanzas v3 tabs ─────────────────────────────────────────────────────
+  | "fin-resumen"
+  | "fin-cobrar"
+  | "fin-pagar"
+  // ── Finanzas legacy (kept for hash compat; CrmApp redirects to v3) ───────
   | "pagos"
   | "fin-mes"
   | "fin-por-pagar"
@@ -45,6 +50,11 @@ export const CRM_NAV: CrmNavItem[] = [
   { id: "prospectos", label: "Prospectos" },
   { id: "marketing", label: "Campañas" },
   { id: "licitaciones", label: "Licitaciones" },
+  // Finanzas v3
+  { id: "fin-resumen", label: "Resumen" },
+  { id: "fin-cobrar", label: "Cobrar" },
+  { id: "fin-pagar", label: "Pagar" },
+  // Legacy finanzas (hidden from nav, kept for hash compat)
   { id: "fin-mes", label: "Mes" },
   { id: "pagos", label: "Por cobrar" },
   { id: "fin-por-pagar", label: "Por pagar y pedidos" },
@@ -78,6 +88,11 @@ export const SECTION_PATH: Record<CrmSection, string> = {
   prospectos: "ventas/listas",
   marketing: "ventas/listas/campanas",
   licitaciones: "ventas/licitaciones",
+  // Finanzas v3
+  "fin-resumen": "finanzas/resumen",
+  "fin-cobrar": "finanzas/cobrar",
+  "fin-pagar": "finanzas/pagar",
+  // Finanzas legacy (old hashes still parseable)
   "fin-mes": "finanzas/mes",
   pagos: "finanzas/por-cobrar",
   "fin-por-pagar": "finanzas/por-pagar",
@@ -95,9 +110,19 @@ export const SECTION_PATH: Record<CrmSection, string> = {
 export const AREA_HOME: Record<AreaKey, CrmSection> = {
   hoy: "resumen",
   ventas: "oportunidades",
-  finanzas: "fin-mes",
+  finanzas: "fin-resumen",
   catalogo: "catalogo",
   ajustes: "datos",
+};
+
+/** Legacy finanzas sections that redirect to their v3 equivalents. */
+export const FINANZAS_LEGACY_REDIRECT: Partial<Record<CrmSection, CrmSection>> = {
+  "fin-mes": "fin-resumen",
+  "fin-socios": "fin-resumen",
+  pagos: "fin-cobrar",
+  "fin-financiamiento": "fin-cobrar",
+  "fin-por-pagar": "fin-pagar",
+  "fin-gastos": "fin-pagar",
 };
 
 export function areaOf(section: CrmSection): AreaKey {

@@ -34,9 +34,10 @@
  * Ejes: x = ancho, y = alto (0 = suelo), z = fondo; el FRENTE (teclado) mira a
  * +z y el asa queda atrás (z = −126).
  *
- * Animación: arranca encendida («0.000 g», como la fotografía y el póster);
- * `setPower(false)` apaga la retroiluminación.
- * `root.userData.sample = 1` coloca una muestra: la tapa del protector se
+ * Animación: arranca encendida («0.000 g», como la fotografía y el póster) y
+ * la pantalla queda encendida siempre. `setPower(true)` es «Pesar» en la sala:
+ * pone la muestra (igual que `root.userData.sample = 1`); `setPower(false)` es
+ * «Retirar» y la saca. `root.userData.sample = 1` coloca una muestra: la tapa del protector se
  * levanta, el platillo baja al plato, la tapa cierra y la lectura sube y se
  * asienta con una oscilación amortiguada; `0` la retira y vuelve a cero.
  */
@@ -570,7 +571,7 @@ export function build(): BuiltModel {
   const LW = 60;
   const LD = 30;
   // Encendida desde el principio: el póster y la portada muestran «0.000 g» como la fotografía.
-  let screenOn = true;
+  const screenOn = true;
   let readValue = 0;
   let stable = true;
   const lcd = canvasTexture(600, 300, (g, w, h) => {
@@ -763,10 +764,8 @@ export function build(): BuiltModel {
   const wholeMid = anchor(root, 0, 64, -4);
 
   /* ── animación ──────────────────────────────────────────────────────────── */
-  let powered = true;
   let sampleT = 0; // 0 sin muestra … 1 muestra en el plato y tapa cerrada
   let landedFor = -1; // segundos desde que la muestra tocó el plato
-  let backlight = 1;
   let shown = '';
 
   const SAMPLE_UP = DECK + SHIELD_H + 60;
@@ -802,11 +801,12 @@ export function build(): BuiltModel {
     yaw: 0.92,
 
     setPower(on) {
-      powered = on;
-      if (on) screenOn = true;
+      // En esta balanza «Pesar»/«Retirar» mueven la muestra; la pantalla no se apaga.
+      // La historia por scroll fija `userData.sample` justo después, así que su pose manda.
+      root.userData.sample = on ? 1 : 0;
     },
 
-    update(dt, _t, level) {
+    update(dt) {
       // Muestra: la tapa sube, el platillo baja al plato, la tapa cierra.
       const want = root.userData.sample ? 1 : 0;
       const step = dt / 2.4;
@@ -828,10 +828,8 @@ export function build(): BuiltModel {
         stable = readValue === 0;
       }
 
-      // Retroiluminación.
-      backlight += ((powered ? 1 : 0) - backlight) * Math.min(1, dt * 5);
-      lcdMat.emissiveIntensity = 0.42 * backlight;
-      if (!powered && level < 0.02 && backlight < 0.05) screenOn = false;
+      // Retroiluminación: siempre encendida.
+      lcdMat.emissiveIntensity = 0.42;
       redraw();
     },
 

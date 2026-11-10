@@ -49,6 +49,7 @@ function invoice(invoice_id: string, folio: number, extra: Partial<Invoice> = {}
     invoice_id, version: 1, doc_type: 33, folio, issued_on: "2026-10-09", days_open: 19, age_bucket: "0-30",
     client_rut: "12345678-5", client_name: "INSTITUTO FICTICIO", organization: { id: ORG, name: "Instituto Ficticio" },
     net_amount: 100000, vat_amount: 19000, exempt_amount: 0, total_amount: 119000, balance: 119000, reference: null,
+    avg_days_client: 30, expected_pay_date: "2026-11-08",
     notes: [], status: "unpaid", paid_on: null, case_link: null, opportunity: null, ...extra,
   };
 }
@@ -64,7 +65,7 @@ const LIST: InvoiceList = {
   ],
   summary: {
     por_cobrar: 219000, unpaid_count: 2, by_age: { "0-30": 219000, "31-60": 0, "61-90": 0, "90+": 0 },
-    without_case: 2, last_issued_on: "2026-10-09",
+    without_case: 2, last_issued_on: "2026-10-09", avg_days_overall: 28, avg_days_overall_count: 10,
   },
   today: "2026-10-28",
 };
@@ -124,13 +125,14 @@ afterEach(() => {
 describe("«Pagos»", () => {
   it("shows what is owed, by age, and lists only the unpaid facturas first", async () => {
     renderPage();
-    expect(await screen.findAllByText("$ 219.000")).toHaveLength(2); // the total, and all of it in 0–30 días
+    // v3 header: «Por cobrar $ 219.000» + AgeBar shows the same amount for the 0–30 d bucket.
+    expect(await screen.findAllByText("$ 219.000")).toHaveLength(2); // standalone spans: total header and 0–30 d bucket
     expect(screen.getByText("Factura 9001")).toBeInTheDocument();
     expect(screen.getByText("Factura 9002")).toBeInTheDocument();
     expect(screen.queryByText("Factura 9004")).not.toBeInTheDocument();
     // The nota de crédito sits under its factura and the saldo is the API's.
     expect(screen.getByText(/Nota de crédito 9003/)).toBeInTheDocument();
-    expect(screen.getByText("automático")).toBeInTheDocument();
+    // v3: «automático» badge replaced by a title tooltip on the case link (coordinator: drop the cryptic badge).
     fireEvent.click(screen.getByRole("button", { name: /Pagadas/ }));
     expect(screen.getByText("Factura 9004")).toBeInTheDocument();
   });
@@ -230,7 +232,8 @@ describe("«Pagos»", () => {
     renderPage();
     const rows = await screen.findAllByTestId("invoice-row");
     expect(within(rows[0]).getByText("Factura 9005")).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/hace 95 días/)).toHaveClass("text-bad");
+    // v3 term-based aging: 95 days_open − 30 d term = 65 days past due → text-bad.
+    expect(within(rows[0]).getByText(/vencida hace 65 días/)).toHaveClass("text-bad");
     fireEvent.click(screen.getByRole("button", { name: /facturas sin caso/ }));
     expect(screen.getAllByTestId("invoice-row")).toHaveLength(3); // the two unpaid ones and the paid 9004
     expect(screen.queryByText("Factura 9002")).not.toBeInTheDocument();

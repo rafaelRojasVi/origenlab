@@ -764,6 +764,37 @@ describe("«Pagos» (invoices) allowlist", () => {
   });
 });
 
+describe("«Finanzas» v3 allowlist", () => {
+  it("allows all five finance reads as exact GET paths, never as POST", async () => {
+    const { isAllowedUpstreamPath, isAllowedPostPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/workspace/finance/resumen",
+      "/v2/workspace/finance/mes",
+      "/v2/workspace/finance/expenses",
+      "/v2/workspace/finance/supplier-orders",
+      "/v2/workspace/finance/settings",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(true);
+      expect(isAllowedPostPath(path), path).toBe(false);
+    }
+  });
+
+  it("refuses trailing slash, extra segment and neighbour paths under finance/", async () => {
+    const { isAllowedUpstreamPath } = await import("./allowlist");
+    for (const path of [
+      "/v2/workspace/finance",
+      "/v2/workspace/finance/",
+      "/v2/workspace/finance/resumen/",
+      "/v2/workspace/finance/resumen/extra",
+      "/v2/workspace/finance/por-cobrar",
+      "/v2/workspace/finance/gastos",
+      "/v2/workspace/financex",
+    ]) {
+      expect(isAllowedUpstreamPath(path), path).toBe(false);
+    }
+  });
+});
+
 describe("«Pendientes» (todos) allowlist", () => {
   it("allows GET of the list only and the six commands only as exact POST paths", async () => {
     const { isAllowedPostPath, isAllowedUpstreamPath } = await import("./allowlist");

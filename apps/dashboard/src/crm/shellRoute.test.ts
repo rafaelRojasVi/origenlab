@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AREAS } from "./nav";
-import { COTIZADOR_PREFERENCES, COTIZADOR_RENTABILIDAD, CRM_NAV, crmHash, sectionTitle } from "./crmRoute";
+import { COTIZADOR_PREFERENCES, COTIZADOR_RENTABILIDAD, CRM_NAV, crmHash, FINANZAS_LEGACY_REDIRECT, sectionTitle } from "./crmRoute";
 import { LEGACY_REDIRECTS, parseShellHash, redirectHash, SHELL_HOME_HASH } from "./shellRoute";
 
 describe("shell route", () => {
@@ -148,7 +148,16 @@ describe("five-area redirects", () => {
   ])("redirects %s to %s", (from, to) => expect(redirectHash(from)).toBe(to));
 
   it("never redirects a new hash, so there is no loop", () => {
-    for (const s of CRM_NAV.map((n) => n.id)) expect(redirectHash(crmHash(s)), s).toBeNull();
+    for (const s of CRM_NAV.map((n) => n.id)) {
+      const legacyTarget = FINANZAS_LEGACY_REDIRECT[s];
+      if (legacyTarget) {
+        // Legacy finanzas sections redirect once to their v3 target, which is itself final.
+        expect(redirectHash(crmHash(s)), s).toBe(crmHash(legacyTarget));
+        expect(redirectHash(crmHash(legacyTarget)), `loop for ${s}`).toBeNull();
+      } else {
+        expect(redirectHash(crmHash(s)), s).toBeNull();
+      }
+    }
     expect(redirectHash(crmHash("oportunidades", id))).toBeNull();
     expect(redirectHash(crmHash("datos", null, "drive"))).toBeNull();
     expect(redirectHash("#/catalogo?s=hielscher&q=up")).toBeNull();
@@ -159,13 +168,14 @@ describe("five-area redirects", () => {
   it("sends an area root, and a path no page of the area has, to the area's first page", () => {
     expect(redirectHash("#/ventas")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/ventas/")).toBe("#/ventas/pipeline");
-    expect(redirectHash("#/finanzas")).toBe("#/finanzas/mes");
+    expect(redirectHash("#/finanzas")).toBe("#/finanzas/resumen");  // v3: first tab is Resumen
     expect(redirectHash("#/ajustes")).toBe("#/ajustes/operaciones");
     expect(redirectHash("#/hoy")).toBeNull();
     expect(redirectHash("#/catalogo")).toBeNull();
     expect(redirectHash("#/ventas/nope")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/ventas/foo/bar")).toBe("#/ventas/pipeline");
-    expect(redirectHash("#/finanzas/mes")).toBeNull();  // now a known path
+    expect(redirectHash("#/finanzas/resumen")).toBeNull();  // v3 known path
+    expect(redirectHash("#/finanzas/mes")).toBe("#/finanzas/resumen");  // v2 legacy path → v3 resumen
     expect(redirectHash("#/ajustes/perfiles")).toBe("#/ajustes/operaciones");
     // Every redirect target is itself final.
     for (const h of ["#/ventas", "#/finanzas", "#/ajustes", "#/ventas/nope", "#/Ventas/Nope", "#/crm/catalogo?q=x", "#/today"]) {
@@ -176,7 +186,7 @@ describe("five-area redirects", () => {
   it("reads an area path without regard to case, keeping the query as typed", () => {
     expect(redirectHash("#/Ventas/Pipeline")).toBe("#/ventas/pipeline");
     expect(redirectHash("#/VENTAS")).toBe("#/ventas/pipeline");
-    expect(redirectHash("#/Finanzas/Mes")).toBe("#/finanzas/mes");  // case normalization only
+    expect(redirectHash("#/Finanzas/Resumen")).toBe("#/finanzas/resumen");  // case normalization only
     expect(redirectHash("#/HOY")).toBe("#/hoy");
     expect(redirectHash("#/Catalogo?q=UP400St")).toBe("#/catalogo?q=UP400St");
     expect(redirectHash(`#/Ventas/Clientes/Personas/${id}`)).toBe(`#/ventas/clientes/personas/${id}`);

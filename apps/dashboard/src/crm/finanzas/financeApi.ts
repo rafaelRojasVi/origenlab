@@ -96,6 +96,79 @@ export interface FinanceSettings {
 
 // ── reads ─────────────────────────────────────────────────────────────────────
 
+// ── Resumen v3 types ──────────────────────────────────────────────────────────
+
+export interface CajaHorizon {
+  horizon: 30 | 60 | 90;
+  until: string;      // ISO date
+  entra: number;
+  sale: number;
+  /** Confirmed unreceived supplier orders (amount_clp). */
+  sale_confirmado: number;
+  /** Estimated cost: Σ pedidos_estimados + current-month expenses. */
+  sale_estimado: number;
+  neto: number;
+}
+
+export interface ResumenMeta {
+  facturado_net: number;
+  ganado_sin_facturar_net: number;
+  ganado_sin_facturar_count: number;
+  en_negociacion_net: number;
+  en_negociacion_count: number;
+  meta_net: number;
+  dias_habiles_restantes: number;
+  ritmo_necesario: number;
+  mes: string;        // "2026-11-01"
+}
+
+export interface ClienteLento {
+  org: string;
+  days: number;
+  hint: string | null;
+}
+
+export interface ResumenIndicadores {
+  dias_promedio_cobro: number;
+  dias_promedio_cobro_count: number;
+  margen_mes_pct: number;
+  margen_mes_costo: number;
+  margen_mes_subtotal: number;
+  clientes_lentos: ClienteLento[];
+}
+
+export interface CobrarHoyItem {
+  invoice_id: string;
+  folio: number;
+  issued_on: string;
+  client_name: string;
+  balance_iva: number;
+  avg_days_client: number;
+  expected_pay_date: string;
+  age_days: number;
+  opportunity_id: string | null;
+  opportunity_title: string | null;
+}
+
+export interface PedidoEstimado {
+  opportunity_id: string;
+  title: string;
+  supplier_name: string;
+  supplier_org_id: string | null;
+  estimated_cost_clp: number;
+}
+
+export interface ResumenData {
+  caja: CajaHorizon[];
+  meta: ResumenMeta;
+  indicadores: ResumenIndicadores;
+  cobrar_hoy: CobrarHoyItem[];
+  pedidos_estimados: PedidoEstimado[];
+}
+
+export const fetchFinanceResumen = () =>
+  fetchJsonGet<ResumenData>(operatorApiUrl("/v2/workspace/finance/resumen"));
+
 export const fetchFinanceMes = () =>
   fetchJsonGet<MesData>(operatorApiUrl("/v2/workspace/finance/mes"));
 

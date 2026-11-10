@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AREA_HOME, crmHash, isShellHash, legacyCrmTarget, matchSectionPath, parseCrmHash, type AreaKey, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
+import { AREA_HOME, crmHash, FINANZAS_LEGACY_REDIRECT, isShellHash, legacyCrmTarget, matchSectionPath, parseCrmHash, type AreaKey, type CotizadorPane, type CrmSection, type DatosTab } from "./crmRoute";
 
 /**
  * One dashboard, one navigation, one sign-in: five areas, `#/hoy`, `#/ventas/…`, `#/finanzas/…`,
@@ -83,7 +83,13 @@ export function redirectHash(hash: string): string | null {
       // An earlier-panel `#/ventas?opportunity=<uuid>` keeps its case.
       return crmHash(home, home === "oportunidades" ? legacyCaseId(query) : null);
     }
-    return matchSectionPath(hash) ? null : crmHash(AREA_HOME[parts[0] as AreaKey]);
+    const matched = matchSectionPath(hash);
+    if (matched) {
+      // A legacy finanzas section (fin-mes, pagos, fin-por-pagar, …) redirects to its v3 equivalent.
+      const legacyTarget = FINANZAS_LEGACY_REDIRECT[matched.section];
+      return legacyTarget ? crmHash(legacyTarget) : null;
+    }
+    return crmHash(AREA_HOME[parts[0] as AreaKey]);
   }
   const legacy = legacyCrmTarget(hash);
   if (legacy) return legacy;
