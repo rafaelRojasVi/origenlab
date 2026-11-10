@@ -100,15 +100,21 @@ export function displayName(card: OpportunityCardData): { name: string; sub: str
   return { name: org, sub: null };
 }
 
+/** «Rodrigo Díaz <rodrigo@x.cl>» → «Rodrigo Díaz»; «rodrigo@x.cl» stays; empty → null. */
+export function personLabel(raw: string | null | undefined): string | null {
+  const t = raw?.trim();
+  if (!t) return null;
+  const m = /^"?([^"<]*?)"?\s*<[^>]*>?$/.exec(t);
+  return (m && m[1].trim()) || t.replace(/^<|>$/g, "") || null;
+}
+
 /** The contact to show: a CRM person's name, else the recipient's name or address. */
 export function contactLine(card: OpportunityCardData): string | null {
   const c = card.contact;
   if (!c) return null;
-  // Strip RFC 2822 "Display Name <email@domain>" format — show the name only; the address belongs
-  // in the case drawer, not in the queue row.
-  const rawName = c.name?.trim() ?? null;
-  const cleanName = rawName ? (rawName.replace(/\s*<[^>]+>$/, "").trim() || rawName) : null;
-  const who = cleanName || c.address || null;
+  // A queue row shows who, not their address (that belongs in the case drawer). Name or address can
+  // arrive as RFC 2822 «Display Name <email@domain>»: keep the display name; a bare address stays.
+  const who = personLabel(c.name) || personLabel(c.address);
   if (!who) return null;
   return c.others > 0 ? `${who} +${c.others}` : who;
 }
