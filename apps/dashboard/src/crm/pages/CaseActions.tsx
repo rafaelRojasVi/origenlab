@@ -38,7 +38,7 @@ import {
 import type { OpportunityCardData } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
-import { BOARD_COLUMNS, STAGE_LABEL, boardColumnOf, pauseTasks, pausedUntil } from "../stage";
+import { BOARD_COLUMNS, STAGE_LABEL, boardColumnOf, pausedUntil } from "../stage";
 import { COLUMN_LABEL, CaseMoveForm, NotRequestConfirm, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
 import { FollowUpReminder } from "./FollowUpReminder";
@@ -438,7 +438,7 @@ function receiptLine(step: WonStep, n: number, total: number): string {
   return `${total > 1 ? `${n}/${total} · ` : ""}${step.label}: registrado${replay} · recibo ${step.receipt.command_receipt_id.slice(0, 8)}`;
 }
 
-/** «En pausa hasta …» with «Retomar ahora»: cancels the tasks that keep the case paused. */
+/** «En pausa hasta …» with «Retomar ahora»: ends the pause (set-case-pause with both null). */
 function PauseBanner({
   card,
   until,
@@ -451,18 +451,20 @@ function PauseBanner({
   onDone: (o: Outcome, refetch: boolean) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const keysRef = useRef<Record<string, string>>({});
-  const tasks = pauseTasks(card);
-  const first = tasks[0];
+  const keyRef = useRef<string>(newCaseCommandKey());
+  const reason = card.pause_reason ?? null;
 
   async function resume() {
     setBusy(true);
-    for (const t of tasks) keysRef.current[t.task_id] ??= newCaseCommandKey();
     try {
-      const steps = await resumeCase(tasks, "Retomado antes de la fecha.", keysRef.current);
+      const steps = await resumeCase(
+        { opportunity_id: card.opportunity_id, version: card.version as number },
+        "Retomado antes de la fecha.",
+        keyRef.current,
+      );
       onDone({ tone: "good", lines: steps.map((s, i) => receiptLine(s, i + 1, steps.length)) }, true);
     } catch (err) {
-      keysRef.current = {};
+      keyRef.current = newCaseCommandKey();
       onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
     } finally {
       setBusy(false);
@@ -476,7 +478,7 @@ function PauseBanner({
     >
       <span className="text-ink">
         <strong className="font-semibold">En pausa hasta {fmtDate(until)}</strong>
-        {first ? <span className="text-ink-muted"> · {first.title}</span> : null}
+        {reason ? <span className="text-ink-muted"> · {reason}</span> : null}
       </span>
       {mayDecide ? (
         <Button className="ml-auto" onClick={() => void resume()} busy={busy} busyLabel="Retomando…">

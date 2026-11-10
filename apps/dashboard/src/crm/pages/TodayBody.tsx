@@ -36,6 +36,8 @@ import {
   dismissForwardedRequest,
   moveCase,
   newCaseCommandKey,
+  pauseCase,
+  resumeCase,
   useMayRunCaseCommands,
 } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
@@ -541,13 +543,13 @@ function ParaTiSection({
   if (live.length === 0 && forwards.length === 0) return null;
 
   // The title line, the chips and the week agree: they count what can be done today, not the projections.
-  const actionable = live.filter((s) => s.item !== null);
+  const actionable = live.filter((s) => s.actionable);
   const counts: Record<Exclude<QueueKindFilter, null>, number> = { reply: 0, cotizar: 0, followup: 0, pausa: 0, task: 0 };
   for (const s of actionable) counts[FILTER_OF[s.kind]] += 1;
   const all = actionable.length + forwards.length;
   const visible = queueFilter ? live.filter((s) => FILTER_OF[s.kind] === queueFilter) : live;
   const visibleForwards = queueFilter ? [] : forwards;
-  const totalVisible = visible.filter((s) => s.item !== null).length + visibleForwards.length;
+  const totalVisible = visible.filter((s) => s.actionable).length + visibleForwards.length;
 
   const chipCls = (active: boolean) =>
     `inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
@@ -561,6 +563,9 @@ function ParaTiSection({
   const row = (s: NextStep) => {
     const i = index++;
     const item = s.item;
+    if (!item && s.state) {
+      return <PauseRow key={s.id} step={s} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={() => onClearItem(s.card.opportunity_id)} now={now} />;
+    }
     if (!item) return <UpcomingRow key={s.id} step={s} index={i} navigate={navigate} />;
     const clear = () => onClearItem(s.card.opportunity_id);
     if (item.kind === "reply") {
@@ -646,6 +651,117 @@ function UpcomingRow({ step, index, navigate }: { step: NextStep; index: number;
         </p>
       </div>
       <Button onClick={() => navigate("oportunidades", step.card.opportunity_id)}>Ver caso</Button>
+    </li>
+  );
+}
+
+/* ─────────────────────────────────────────────── Returned pause row ── */
+
+const PAUSE_EXTEND_DAYS = 14;
+
+/**
+ * A case whose pause came back (`paused_until` is today or earlier): write and ask what the pause
+ * was waiting for, open the case, resume it, or keep it paused two more weeks.
+ */
+function PauseRow({
+  step, index, navigate, mayDecide, onChanged, onClearItem, now,
+}: {
+  step: NextStep;
+  index: number;
+  navigate: Navigate;
+  mayDecide: boolean;
+  onChanged: () => void;
+  onClearItem: () => void;
+  now: Date;
+}) {
+  const { card } = step;
+  const reason = step.pause?.reason ?? "Sin motivo";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [busy, setBusy] = useState<null | "resume" | "extend">(null);
+  const keys = useRef({ resume: newCaseCommandKey(), extend: newCaseCommandKey() });
+  const to = card.contact?.address && !isMaskedAddress(card.contact.address) ? card.contact.address : null;
+  const overdueMs = Math.max(0, -step.dueDays) * 86_400_000;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: Event) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [menuOpen]);
+
+  async function resume() {
+    setBusy("resume");
+    try {
+      await resumeCase({ opportunity_id: card.opportunity_id, version: card.version as number }, "Retomado desde «Hoy».", keys.current.resume);
+      toast("Pausa retomada");
+      onClearItem();
+      onChanged();
+    } catch (err) {
+      keys.current.resume = newCaseCommandKey();
+      toast(caseRefusalText(err), "bad");
+    } finally { setBusy(null); }
+  }
+
+  async function extend() {
+    setBusy("extend");
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + PAUSE_EXTEND_DAYS);
+    const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    try {
+      await pauseCase({ opportunity_id: card.opportunity_id, version: card.version as number }, iso, reason, `Sigue en pausa ${PAUSE_EXTEND_DAYS} días más, desde «Hoy».`, keys.current.extend);
+      toast(`En pausa hasta ${fmtDate(`${iso}T12:00:00`)}`);
+      onClearItem();
+      onChanged();
+    } catch (err) {
+      keys.current.extend = newCaseCommandKey();
+      toast(caseRefusalText(err), "bad");
+    } finally { setBusy(null); }
+  }
+
+  const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
+  return (
+    <li
+      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""}`}
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-pause-${card.opportunity_id}`}
+    >
+      <DayPill ms={overdueMs} label={`volvió hace ${Math.max(0, -step.dueDays)} días`} />
+      <div className="min-w-[12rem] flex-1">
+        <KindLabel kind="pausa" />
+        <p className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink">
+          <CaseLink card={card} navigate={navigate} />
+          <span className="text-ink-muted">En pausa · {reason}</span>
+        </p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
+          <span className="font-medium text-bad">{step.dueDays === 0 ? "Vuelve hoy" : `Volvió hace ${-step.dueDays} ${-step.dueDays === 1 ? "día" : "días"}`}</span>
+          {step.pause?.hint ? <><span aria-hidden="true">·</span><span data-testid="today-task-hint">→ {step.pause.hint}</span></> : null}
+        </p>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <a className={buttonClass("secondary")} href={composeInSharedMailbox(to, `Retomamos la cotización ${card.quote_numbers[0] ?? ""}`.trim())}
+           target="_blank" rel="noopener noreferrer" aria-label="Escribir en Gmail para retomar">Escribir</a>
+        <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>Abrir caso</Button>
+        {mayDecide ? (
+          <div ref={menuRef} className="relative shrink-0">
+            <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="Más opciones" onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" /></svg>
+            </button>
+            {menuOpen ? (
+              <div role="menu" className="absolute right-0 top-9 z-20 w-56 rounded-lg border border-line bg-canvas-raised p-1 shadow-lg">
+                <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void resume(); }}>
+                  {busy === "resume" ? "Guardando…" : "Retomar ahora"}
+                </button>
+                <button type="button" role="menuitem" className={menuItem} disabled={busy !== null} onClick={() => { setMenuOpen(false); void extend(); }}>
+                  {busy === "extend" ? "Guardando…" : `Seguir en pausa ${PAUSE_EXTEND_DAYS} días`}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
     </li>
   );
 }

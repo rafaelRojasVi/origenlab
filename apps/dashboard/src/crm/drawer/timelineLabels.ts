@@ -34,6 +34,10 @@ function what(e: TimelineEntry): string {
       return p.close_reason ? `Cerrado: ${p.close_reason}` : "Cerrado";
     case "opportunity.origin_set":
       return `Origen: ${originLabel(p.to_origin ?? p.to ?? null)}`;
+    case "opportunity.pause_set":
+      return p.to_paused_until
+        ? `En pausa hasta ${String(p.to_paused_until).slice(8, 10)}-${String(p.to_paused_until).slice(5, 7)}${p.to_reason ? ` · ${p.to_reason}` : ""}`
+        : "Pausa retomada";
     default:
       return (e.event_type && FIXED[e.event_type]) || GENERIC;
   }

@@ -89,12 +89,18 @@ def _task(dsn: str, case_id: str, owner: str, title: str, due_at: datetime) -> N
            (case_id, owner, title, due_at))
 
 
+def _pause(dsn: str, case_id: str, until: str, reason: str = "Evaluarán el año entrante") -> None:
+    """«En pausa hasta…» is a state of the case (2026-11-13): a day and a reason on crm.opportunity."""
+    _owner(dsn, "update crm.opportunity set paused_until = %s::date, pause_reason = %s where id = %s",
+           (until, reason, case_id))
+
+
 def test_a_case_en_pausa_waits_but_a_reminder_does_not_hold_it(world) -> None:
     dsn = world["dsn"]
     admin = _admin(dsn)
     paused, reminded = _sent_case(world, admin), _sent_case(world, admin)
     later = datetime.now(UTC) + timedelta(days=90)
-    _task(dsn, paused, admin.operator_id, "Retomar: evaluarán el año entrante", later)
+    _pause(dsn, paused, later.date().isoformat())
     _task(dsn, reminded, admin.operator_id, "Llamar para confirmar", later)
     on_paused = _reply(dsn, paused, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
     on_reminded = _reply(dsn, reminded, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
@@ -102,3 +108,19 @@ def test_a_case_en_pausa_waits_but_a_reminder_does_not_hold_it(world) -> None:
     repo = _mail_rules(dsn)
     assert "R17" not in _planned(repo, on_paused)
     assert "R17" in _planned(repo, on_reminded)
+
+
+def test_a_pause_whose_day_came_no_longer_holds_the_case(world) -> None:
+    """«Vuelve de pausa»: the day passed and nobody resumed it yet; the client writing back is a
+    conversation again, so R17 moves it. A legacy «Retomar» task alone is not a pause any more."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    came_back, legacy = _sent_case(world, admin), _sent_case(world, admin)
+    _pause(dsn, came_back, (datetime.now(UTC) - timedelta(days=3)).date().isoformat())
+    _task(dsn, legacy, admin.operator_id, "Retomar: evaluarán el año entrante", datetime.now(UTC) + timedelta(days=90))
+    on_back = _reply(dsn, came_back, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+    on_legacy = _reply(dsn, legacy, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+
+    repo = _mail_rules(dsn)
+    assert "R17" in _planned(repo, on_back)
+    assert "R17" in _planned(repo, on_legacy)

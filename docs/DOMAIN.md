@@ -1483,3 +1483,24 @@ UPDATE list is unchanged, so it cannot alter them afterwards, and no policy, for
 event changes. Counts are unchanged. Migration `20261110100000_slice8_note_kind.sql`; pgTAP
 `112_note_kind.sql`.
 
+### 7.18 «En pausa hasta…» as a state of the case — `crm.opportunity.paused_until`, built 2026-11-13
+
+Owner decision 2026-11-10: a pause is a fact about the case, not a task. Until now it was an open
+task titled «Retomar: <motivo>» due on the day the case should come back, which every read had to
+reconstruct from task titles and which surfaced in Hoy as an anonymous overdue task. Two nullable
+columns on `crm.opportunity`, both or neither (`opportunity_pause_check`):
+
+| column | values | rule |
+|---|---|---|
+| `paused_until` | a Santiago calendar day | ahead of today = «En pausa»; today or earlier = «vuelve de pausa»: due in Hoy, still paused until a person resumes it |
+| `pause_reason` | text, 1–200 characters | why the case waits (the operator's chip, with its detail) |
+
+One writer: the `set-case-pause` command (a day and a reason, or both null to resume), which writes
+one `opportunity.pause_set` event with the old and the new values and cancels any legacy open
+«Retomar: …» task of the case (each with its `task.cancelled` event). The mail rules read the pause
+from the case: only a pause still ahead holds R17/R19; a returned pause does not. A reminder task is
+not a pause. The migration backfills the columns from the earliest open «Retomar» task of each open
+case; the task stays open until the first `set-case-pause` on that case retires it. Migrations
+`20261113100000_slice8_opportunity_pause.sql` and `20261113110000_slice8_opportunity_pause_event.sql`;
+pgTAP `113_opportunity_pause.sql`.
+

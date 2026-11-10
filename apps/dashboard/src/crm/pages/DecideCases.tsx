@@ -14,14 +14,7 @@
  */
 import { useMemo, useRef, useState } from "react";
 import { inSharedMailbox } from "../gmailLinks";
-import {
-  caseRefusalText,
-  createTask,
-  markCaseWon,
-  moveCase,
-  newCaseCommandKey,
-  winnableRevisions,
-} from "../caseCommands";
+import { caseRefusalText, createTask, markCaseWon, moveCase, newCaseCommandKey, setCasePause, winnableRevisions } from "../caseCommands";
 import { ageTone, contactLine, conversation, daysSince, displayName } from "../caseDisplay";
 import type { OpportunityCardData } from "../crmTypes";
 import { LOST_REASONS, PAUSE_REASONS, pausedUntil } from "../stage";
@@ -182,8 +175,9 @@ export function DecideCases({
       return { ok: true, text: "Seguimiento para hoy" };
     }
     if (r.decision === "pausa") {
-      await createTask(
-        { opportunity_id: card.opportunity_id, title: `Retomar: ${r.pauseReason}`, due_at: morningOf(r.pauseDay), note: r.pauseReason },
+      await setCasePause(
+        { opportunity_id: card.opportunity_id, opportunity_version: base.version, paused_until: r.pauseDay,
+          reason: r.pauseReason, note: `Decidido en bloque: ${why}.` },
         k[0],
       );
       return { ok: true, text: `En pausa hasta ${fmtDate(morningOf(r.pauseDay))}` };

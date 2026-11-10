@@ -242,6 +242,7 @@ describe("Tablero", () => {
 
   it("puts a case with a later open task under «En pausa», and a due one back in its column", () => {
     const later = card({
+      paused_until: "2026-11-02", pause_reason: "Esperando la orden de compra",
       open_tasks: [{ task_id: "t1", title: "Retomar: Esperando la orden de compra", due_at: "2026-11-02T12:00:00Z", version: 1, owner: null }],
       next_action: { text: "Retomar: Esperando la orden de compra", source: "task", due_at: "2026-11-02T12:00:00Z" },
     });
@@ -252,7 +253,7 @@ describe("Tablero", () => {
     expect(screen.getByTestId("board-count-pausa")).toHaveTextContent("1");
     expect(screen.getByTestId("board-count-enviada")).toHaveTextContent("1");
     const b = screen.getByTestId(`board-card-${later.opportunity_id}`);
-    expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Hasta 02 nov 2026 · Retomar: Esperando la orden de compra");
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Hasta 02 nov 2026 · Esperando la orden de compra");
     expect(b).toHaveAttribute("title", "Próxima tarea: Retomar: Esperando la orden de compra");
   });
 
@@ -314,14 +315,17 @@ describe("states", () => {
     expect(moveRefusal({ ...lost, stage: "won" }, "conversacion", NOW)).toMatch(/ganado/);
   });
 
-  it("pauses only an open case, and only until its earliest task", () => {
+  it("pauses only an open case, and only while its day is still ahead", () => {
     const task = { task_id: "t", title: "Retomar", due_at: "2026-11-02T12:00:00Z", version: 1, owner: null };
-    expect(pausedUntil(card({ open_tasks: [task] }), NOW)).toBe("2026-11-02T12:00:00Z");
-    expect(pausedUntil(card({ open_tasks: [task], stage: "lost", closed_at: "2026-10-01T00:00:00Z" }), NOW)).toBeNull();
-    expect(pausedUntil(card({ open_tasks: [{ ...task, due_at: "2026-10-06T11:00:00Z" }] }), NOW)).toBeNull();
+    const pause = { paused_until: "2026-11-02", pause_reason: "Retomar" };
+    expect(pausedUntil(card(pause), NOW)).toBe("2026-11-02T12:00:00");
+    expect(pausedUntil(card({ ...pause, stage: "lost", closed_at: "2026-10-01T00:00:00Z" }), NOW)).toBeNull();
+    expect(pausedUntil(card({ paused_until: "2026-10-06", pause_reason: "Retomar" }), NOW)).toBeNull();
+    // A reminder task, even a later one, is not a pause any more (2026-11-13).
+    expect(pausedUntil(card({ open_tasks: [task] }), NOW)).toBeNull();
     expect(boardColumnOf(card({ stage: "qualifying" }), NOW)).toBe("solicitada");
     expect(boardColumnOf(card({ stage: "abandoned", closed_at: "2026-10-01T00:00:00Z" }), NOW)).toBe("perdida");
-    expect(boardColumnOf(card({ open_tasks: [task] }), NOW)).toBe("pausa");
+    expect(boardColumnOf(card(pause), NOW)).toBe("pausa");
   });
 
   it("keeps closed cases compact, and writes the year only when it is not this one", () => {

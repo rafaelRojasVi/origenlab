@@ -44,6 +44,7 @@ from origenlab_api.v2.case_commands import (
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     SET_CASE_ORIGIN,
+    SET_CASE_PAUSE,
     STAGE_TRANSITIONS,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
@@ -55,6 +56,7 @@ from origenlab_api.v2.case_commands import (
     ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
     SetCaseOriginBody,
+    SetCasePauseBody,
     stage_transition_allowed,
     validated_case,
 )
@@ -74,6 +76,9 @@ DOCUMENT_SHA = "ab" * 32
 ROUTES: tuple[tuple[str, str, dict], ...] = (
     ("/v2/commands/set-case-origin", SET_CASE_ORIGIN,
      {"opportunity_id": CASE_ID, "opportunity_version": 1, "origin": "web", "note": "porque sí"}),
+    ("/v2/commands/set-case-pause", SET_CASE_PAUSE,
+     {"opportunity_id": CASE_ID, "opportunity_version": 1, "paused_until": "2099-01-15",
+      "reason": "Esperando fondos o proyecto", "note": "porque sí"}),
     ("/v2/commands/create-request-from-forward", CREATE_REQUEST_FROM_FORWARD,
      {"forwarded_request_id": RECORD_ID, "new_organization_name": "Laboratorio Ficticio", "note": "porque sí"}),
     ("/v2/commands/dismiss-forwarded-request", DISMISS_FORWARDED_REQUEST,
@@ -239,7 +244,7 @@ def _headers(key: str | None = "key-1") -> dict[str, str]:
 def test_every_case_command_has_a_route_and_every_route_a_command() -> None:
     """The vocabulary and the surface are the same list, counted from both ends."""
     assert {command for _, command, _ in ROUTES} == set(CASE_COMMAND_NAMES)
-    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 13
+    assert len(ROUTES) == len(CASE_COMMAND_NAMES) == 14
 
 
 def test_the_case_router_exposes_nothing_but_post() -> None:
@@ -1995,6 +2000,95 @@ def test_set_case_origin_sets_corrects_and_clears_with_an_event_each(disposable_
         (None, "web"), ("web", "correo"), ("correo", None)]
     assert [r[2]["note"] for r in rows] == [
         "el cliente escribió por el formulario", "en realidad fue un correo", "no se sabe de dónde vino"]
+
+
+def test_set_case_pause_is_a_day_and_a_reason_together_or_both_null() -> None:
+    """A pause is a day and a reason; to resume, both null. One without the other is a 422, and so
+    is leaving a field out: nothing is defaulted."""
+    path, _command, body = next(r for r in ROUTES if r[0].endswith("/set-case-pause"))
+    repo = _FakeCaseRepo()
+    for bad in ({"paused_until": "2099-01-15", "reason": None}, {"paused_until": None, "reason": "fondos"},
+                {"paused_until": "2099-01-15", "reason": "   "}, {"paused_until": "ayer", "reason": "x"},
+                {"paused_until": "2099-01-15", "reason": "x" * 201}):
+        response = _client(repo).post(path, json={**body, **bad}, headers=_headers())
+        assert response.status_code == 422, bad
+    for missing in ("paused_until", "reason"):
+        without = {k: v for k, v in body.items() if k != missing}
+        assert _client(repo).post(path, json=without, headers=_headers()).status_code == 422, missing
+    assert repo.calls == []
+    ok = _client(repo).post(path, json={**body, "paused_until": None, "reason": None}, headers=_headers())
+    assert ok.status_code == 200
+    assert repo.calls[-1]["fields"]["paused_until"] is None and repo.calls[-1]["fields"]["pause_reason"] is None
+    ok = _client(repo).post(path, json={**body, "reason": "  Evaluando internamente  "}, headers=_headers())
+    assert ok.status_code == 200
+    assert repo.calls[-1]["fields"]["pause_reason"] == "Evaluando internamente"
+    assert str(repo.calls[-1]["fields"]["paused_until"]) == "2099-01-15"
+
+
+def test_set_case_pause_carries_nothing_but_the_case_the_version_the_day_the_reason_and_a_note() -> None:
+    assert set(SetCasePauseBody.model_fields) == {"opportunity_id", "opportunity_version", "paused_until", "reason", "note"}
+
+
+@_needs_db
+def test_set_case_pause_pauses_repauses_and_resumes_with_an_event_each_and_retires_the_legacy_task(
+    disposable_database, world,
+) -> None:
+    import datetime as dt
+
+    import psycopg
+
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso que espera un fondo")
+    # The legacy pause (W11): an open «Retomar: …» task on the case.
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(
+            "insert into crm.task (opportunity_id, owner_operator_id, title, due_at, status, version) "
+            "values (%s, (select id from platform.operator order by created_at limit 1), "
+            "'Retomar: Esperando fondos', now() + interval '10 days', 'open', 1) returning id::text",
+            (case_id,))
+        legacy_task = cur.fetchone()[0]
+        conn.commit()
+
+    def _set(until, reason, version, note="lo pidió el cliente"):
+        return _run(repo, SET_CASE_PAUSE, SetCasePauseBody(
+            opportunity_id=case_id, opportunity_version=version, paused_until=until, reason=reason, note=note), world)
+
+    first = _set(dt.date(2099, 1, 15), "Esperando fondos o proyecto", version)
+    assert first["command"] == SET_CASE_PAUSE
+    assert (first["paused_until"], first["pause_reason"], first["previous_paused_until"]) == (
+        "2099-01-15", "Esperando fondos o proyecto", None)
+    assert first["opportunity_version"] == version + 1
+    assert len(first["event_ids"]) == 2  # the pause, and the legacy task's cancellation
+    second = _set(dt.date(2099, 3, 1), "Evaluando internamente", first["opportunity_version"], "cambió la fecha")
+    assert second["previous_paused_until"] == "2099-01-15" and second["opportunity_version"] == version + 2
+    with pytest.raises(CommandRefused) as same:
+        _set(dt.date(2099, 3, 1), "Evaluando internamente", second["opportunity_version"])
+    assert (same.value.status_code, same.value.code) == (409, "case_pause_unchanged")
+    third = _set(None, None, second["opportunity_version"], "retomado")
+    assert third["paused_until"] is None and third["previous_paused_until"] == "2099-03-01"
+    with pytest.raises(CommandRefused) as again:
+        _set(None, None, third["opportunity_version"])
+    assert again.value.code == "case_pause_unchanged"
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select paused_until, pause_reason, version from crm.opportunity where id = %s", (case_id,))
+        assert cur.fetchone() == (None, None, version + 3)
+        cur.execute("select status, cancel_reason from crm.task where id = %s", (legacy_task,))
+        status, reason = cur.fetchone()
+        assert status == "cancelled" and "set-case-pause" in reason
+        cur.execute(
+            "select event_type, actor_kind, payload from crm.domain_event "
+            "where aggregate_id = %s and event_type = 'opportunity.pause_set' order by seq", (case_id,))
+        rows = cur.fetchall()
+        cur.execute("select count(*) from crm.domain_event where aggregate_id = %s and event_type = 'task.cancelled'",
+                    (legacy_task,))
+        assert cur.fetchone()[0] == 1
+    assert [(r[0], r[1]) for r in rows] == [("opportunity.pause_set", "operator")] * 3
+    assert [(r[2]["from_paused_until"], r[2]["to_paused_until"], r[2]["to_reason"]) for r in rows] == [
+        (None, "2099-01-15", "Esperando fondos o proyecto"),
+        ("2099-01-15", "2099-03-01", "Evaluando internamente"),
+        ("2099-03-01", None, None)]
 
 
 @_needs_db

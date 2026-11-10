@@ -12,6 +12,7 @@
  * Phase 2 moves this to the API (`/v2/workspace/next-steps`) with pause as a state.
  */
 import type { OpportunityCardData } from "./crmTypes";
+import { pauseReturned } from "./stage";
 import { RHYTHM, buildParaTiQueue, followUpsDue, isFollowUpDueToday, retakeHint, type QueueItem } from "./today";
 
 export type StepGroup = "atrasado" | "hoy" | "manana" | "semana";
@@ -33,6 +34,10 @@ export interface NextStep {
   /** Today's actionable item (its row keeps every existing action), or null for a projection. */
   item: QueueItem | null;
   pause: { reason: string; hint: string | null } | null;
+  /** A pause that is a state of the case (`paused_until`) and whose day came: actionable without a task. */
+  state: { until: string } | null;
+  /** Something can be done on it today (a queue item or a returned pause); projections are not. */
+  actionable: boolean;
   /** What the projected step is («Seguimiento 2 de 3 · día 7»). */
   label: string | null;
 }
@@ -89,8 +94,9 @@ function scoreFor(kind: StepKind, amount: number | null, waitDays: number): numb
   return KIND_WEIGHT[kind] * value * urgency;
 }
 
-function fromQueueItem(item: QueueItem, now: Date): NextStep {
+function fromQueueItem(item: QueueItem, now: Date): NextStep | null {
   const card = item.card;
+  if (item.kind === "task" && isPauseTask(item.due.task.title) && card.paused_until) return null;
   let kind: StepKind = "tarea";
   let due = now;
   let owner: string | null = null;
@@ -112,8 +118,33 @@ function fromQueueItem(item: QueueItem, now: Date): NextStep {
   const waitDays = Math.max(item.waitMs / DAY_MS, -dueDays);
   return {
     id: card.opportunity_id, kind, group: groupFor(Math.min(dueDays, 0)), card, due, dueDays,
-    amountClp, owner, score: scoreFor(kind, amountClp, waitDays), item, pause, label: null,
+    amountClp, owner, score: scoreFor(kind, amountClp, waitDays), item, pause, state: null, actionable: true, label: null,
   };
+}
+
+function localDay(iso: string): Date {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** The pauses whose day came (`pauseReturned`): due since that day, with the reason and what to ask. */
+function returnedPauses(items: OpportunityCardData[], now: Date, taken: Set<string>): NextStep[] {
+  const out: NextStep[] = [];
+  for (const card of items) {
+    const back = pauseReturned(card, now);
+    if (!back || taken.has(card.opportunity_id)) continue;
+    const due = localDay(back.until);
+    const dueDays = dayDiff(now, due);
+    const amountClp = caseAmountClp(card);
+    out.push({
+      id: card.opportunity_id, kind: "pausa", group: groupFor(Math.min(dueDays, 0)), card, due, dueDays, amountClp,
+      owner: null, score: scoreFor("pausa", amountClp, -dueDays), item: null,
+      pause: { reason: back.reason, hint: retakeHint(`Retomar: ${back.reason}`) }, state: { until: back.until },
+      actionable: true, label: null,
+    });
+    taken.add(card.opportunity_id);
+  }
+  return out;
 }
 
 /** Nobody chases a client on the weekend: a step that would fall on Saturday or Sunday waits for Monday. */
@@ -141,13 +172,29 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
     const amountClp = caseAmountClp(f.card);
     out.push({
       id, kind: "seguimiento", group: groupFor(ahead), card: f.card, due, dueDays: ahead, amountClp, owner: null,
-      score: scoreFor("seguimiento", amountClp, f.days), item: null, pause: null,
+      score: scoreFor("seguimiento", amountClp, f.days), item: null, pause: null, state: null, actionable: false,
       label: followUpLabel(nextIndex, RHYTHM[nextIndex].from),
     });
     taken.add(id);
   }
   for (const card of items) {
     if (card.closed_at || taken.has(card.opportunity_id)) continue;
+    if (card.paused_until && !card.closed_at) {
+      const due = localDay(card.paused_until);
+      const ahead = dayDiff(now, due);
+      if (ahead > 0 && ahead <= horizonDays) {
+        const amountClp = caseAmountClp(card);
+        const reason = card.pause_reason ?? "Sin motivo";
+        out.push({
+          id: `${card.opportunity_id}:pausa`, kind: "pausa", group: groupFor(ahead), card, due, dueDays: ahead, amountClp,
+          owner: null, score: scoreFor("pausa", amountClp, 0), item: null,
+          pause: { reason, hint: retakeHint(`Retomar: ${reason}`) }, state: null, actionable: false,
+          label: `Vuelve de pausa · ${reason}`,
+        });
+        taken.add(card.opportunity_id);
+      }
+      continue;
+    }
     for (const t of card.open_tasks ?? []) {
       const due = new Date(t.due_at);
       const ahead = dayDiff(now, due);
@@ -158,6 +205,7 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
         id: `${card.opportunity_id}:${t.task_id}`, kind: paused ? "pausa" : "tarea", group: groupFor(ahead), card, due,
         dueDays: ahead, amountClp, owner: t.owner ?? null, score: scoreFor(paused ? "pausa" : "tarea", amountClp, 0),
         item: null, pause: paused ? { reason: pauseReason(t.title), hint: retakeHint(t.title) } : null,
+        state: null, actionable: false,
         label: paused ? `Vuelve de pausa · ${pauseReason(t.title)}` : t.title,
       });
       taken.add(card.opportunity_id);
@@ -179,9 +227,10 @@ export function queueKindOf(step: NextStep): QueueItem["kind"] {
 export function planNextSteps(
   items: OpportunityCardData[], now: Date, me: string | null, horizonDays = 7, allow: (s: NextStep) => boolean = () => true,
 ): StepPlan {
-  const today = buildParaTiQueue(items, now, me).map((item) => fromQueueItem(item, now));
+  const today = buildParaTiQueue(items, now, me).map((item) => fromQueueItem(item, now)).filter((s): s is NextStep => s !== null);
   const taken = new Set(today.map((s) => s.id));
-  const visible = [...today, ...upcoming(items, now, taken, horizonDays)].filter(allow);
+  const back = returnedPauses(items, now, taken);
+  const visible = [...today, ...back, ...upcoming(items, now, taken, horizonDays)].filter(allow);
   const mine = (s: NextStep) => (me && s.owner === me ? 1 : 0);
   visible.sort((a, b) => mine(b) - mine(a) || KIND_RANK[a.kind] - KIND_RANK[b.kind] || b.score - a.score);
   const byGroup: Record<StepGroup, NextStep[]> = { atrasado: [], hoy: [], manana: [], semana: [] };

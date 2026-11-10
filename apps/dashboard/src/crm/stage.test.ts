@@ -148,9 +148,8 @@ describe("Silenciosas", () => {
     expect(isSilent(sent(30, { last_call: { at: ago(40), outcome: "contesto" } }), NOW)).toBe(true);
   });
 
-  it("future task → pausa, not silenciosas", () => {
-    const task = { task_id: "t", title: "Retomar: fondos", due_at: ago(-5), version: 1, owner: null };
-    const c = sent(40, { open_tasks: [task] });
+  it("a pause still ahead → pausa, not silenciosas", () => {
+    const c = sent(40, { paused_until: ago(-5).slice(0, 10), pause_reason: "fondos" });
     expect(isSilent(c, NOW)).toBe(false);
     expect(boardColumnOf(c, NOW)).toBe("pausa");
   });

@@ -240,6 +240,9 @@ export interface OpportunityCardData {
   close_reason: string | null;
   /** The channel the case came from (`caseOrigin.ts`); null = nobody classified it. Absent from an older API. */
   origin?: string | null;
+  /** «En pausa hasta…» as a state (2026-11-13): a Santiago day and a reason, both or neither. */
+  paused_until?: string | null;
+  pause_reason?: string | null;
   organization: {
     organization_id: string;
     name: string | null;
@@ -551,6 +554,11 @@ export interface TimelineEntry {
     to?: string | null;
     from_origin?: string | null;
     to_origin?: string | null;
+    /** opportunity.pause_set (2026-11-13). */
+    from_paused_until?: string | null;
+    from_reason?: string | null;
+    to_paused_until?: string | null;
+    to_reason?: string | null;
   } | null;
   quote_id: string | null;
   quote_number: string | null;
