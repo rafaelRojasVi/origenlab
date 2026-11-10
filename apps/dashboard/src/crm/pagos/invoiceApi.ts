@@ -62,6 +62,10 @@ export interface Invoice {
   balance: number | null;
   /** The payments recorded against it, oldest first. Absent from an older API. */
   payments?: InvoicePayment[];
+  /** Average days this client takes to pay, based on their paid facturas (default 30 when no history). */
+  avg_days_client: number;
+  /** Expected payment date = issued_on + avg_days_client. Present only on unpaid facturas. */
+  expected_pay_date: string | null;
   reference: { doc_type: number; folio: number } | null;
   notes: InvoiceNote[];
   status: InvoiceStatus;
@@ -79,6 +83,9 @@ export interface InvoiceList {
     by_age: Record<AgeBucket, number>;
     without_case: number;
     last_issued_on: string | null;
+    /** Average payment days across all paid facturas; 0 when no history. */
+    avg_days_overall: number;
+    avg_days_overall_count: number;
   };
   /** The day in Santiago, as the API counted ages. */
   today: string;

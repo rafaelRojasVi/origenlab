@@ -186,12 +186,12 @@ function MetaTile({ today, navigate, tileBase }: { today: string; navigate: Navi
 
   return (
     <a
-      href={crmHash("pagos")}
+      href={crmHash("fin-cobrar")}
       data-testid="goal-vendido"
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
-        navigate("pagos");
+        navigate("fin-cobrar");
       }}
       className={`${tileBase} block`}
     >
