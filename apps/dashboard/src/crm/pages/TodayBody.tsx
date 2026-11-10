@@ -24,7 +24,7 @@
  * gated the same way; a viewer sees the lists without the buttons.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { addNote, fetchPersonAuthoring, fetchPersonSuggestions, refusalOf } from "../authoring/crmAuthoringApi";
+import { addNote, fetchPersonAuthoring, refusalOf } from "../authoring/crmAuthoringApi";
 import { whatsAppUrl } from "../drawer/PersonPhones";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import {
@@ -53,23 +53,21 @@ import {
   followUpStep,
   followUpsDue,
   HOME_FILTER_KINDS,
-  historicalCount,
-  organizationsToConfirm,
+  retakeHint,
   tenderClosingLines,
   wroteAfterWinning,
   type CotizarQueueItem,
   type DueTask,
   type FollowUp,
-  type FollowUpQueueItem,
   type OverdueTask,
   type QueueItem,
-  type ReplyQueueItem,
-  type TaskQueueItem,
   useHomeFilter,
 } from "../today";
+
+/** Local filter over the unified «Para hoy» queue by row kind, or null for all. */
+export type QueueKindFilter = "reply" | "cotizar" | "followup" | "task" | null;
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
-import { Badge, Button, FormField, Modal, Segmented, TextInput, fmtDate, toast } from "../ui";
-import type { ResourceState } from "../useResource";
+import { Button, FormField, Modal, Segmented, TextInput, fmtDate, toast } from "../ui";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseDrawer } from "../drawer/CaseDrawer";
@@ -124,11 +122,12 @@ export function TodayBody({
   onForwardCount,
   refreshing = false,
   now,
-  people,
   tendersClosing,
   aside,
   scope: scopeProp,
   onScopeChange,
+  queueFilter,
+  onQueueFilterChange,
 }: {
   items: OpportunityCardData[];
   navigate: Navigate;
@@ -139,8 +138,6 @@ export function TodayBody({
   onForwardCount?: (n: number) => void;
   refreshing?: boolean;
   now?: Date;
-  /** Person suggestions, read by the page beside the pipeline so neither waits on the other. */
-  people?: ResourceState<Awaited<ReturnType<typeof fetchPersonSuggestions>>>;
   /** `tenders_closing` from the pipeline: the tenders that close tomorrow (a tender is in no other list). */
   tendersClosing?: { id: string; title: string }[];
   /** The main column's last panel: the quote number and the rates. */
@@ -148,6 +145,10 @@ export function TodayBody({
   /** «Mi cola» / «Todo el equipo» when the page holds it (so its header counts follow); else local. */
   scope?: TodayScope;
   onScopeChange?: (scope: TodayScope) => void;
+  /** Active kind filter from the GoalStrip or the queue's own chips. null = show all. */
+  queueFilter?: QueueKindFilter;
+  /** Called when the user picks a filter chip (or clears it). */
+  onQueueFilterChange?: (f: QueueKindFilter) => void;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const { session } = useAuthSession();
@@ -177,14 +178,6 @@ export function TodayBody({
   const forwards = showDecidir ? allForwards : [];
   // The header's «N para ti» counts them too, so it matches the list.
   useEffect(() => { onForwardCount?.(forwards.length); }, [forwards.length, onForwardCount]);
-
-  // Housekeeping counts (local — no extra fetch needed).
-  const orgs = useMemo(() => organizationsToConfirm(items), [items]);
-  const historical = historicalCount(items, at);
-  const blocked = useMemo(() => items.filter((i) => i.status === "blocked" && !fullQueue.some((q) => q.opportunity_id === i.opportunity_id)), [items, fullQueue]);
-  const peopleCount = people?.kind === "ready" ? people.data.total : 0;
-  // Housekeeping is the whole team's: only the «todo» view offers it.
-  const housekeepingCount = view === "todo" ? orgs.length + historical + blocked.length + peopleCount : 0;
 
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
@@ -244,7 +237,7 @@ export function TodayBody({
             </div>
           ) : null}
 
-          {/* ─── «Para ti» queue ─── */}
+          {/* ─── «Para hoy» unified queue ─── */}
           <ParaTiSection
             queue={queue}
             forwards={forwards}
@@ -258,6 +251,8 @@ export function TodayBody({
             onClose={setClosing}
             now={at}
             me={me}
+            queueFilter={queueFilter ?? null}
+            onQueueFilterChange={onQueueFilterChange ?? (() => {})}
           />
 
           {/* ─── «Licitación cierra mañana» — Hoy's one tender signal ─── */}
@@ -268,13 +263,8 @@ export function TodayBody({
             <EmptyState followUps={nextFollowUps} navigate={inPlace} />
           )}
 
-          {/* ─── «Hecho automáticamente» — one collapsible line ─── */}
+          {/* ─── «Mientras no estabas» — dismissible one-liner ─── */}
           <SystemSummaryLine navigate={inPlace} onChanged={onChanged} />
-
-          {/* ─── Housekeeping link → Operaciones ─── */}
-          {housekeepingCount > 0 ? (
-            <HousekeepingLink count={housekeepingCount} navigate={inPlace} />
-          ) : null}
 
         </div>
         {/* Tools at hand: the next quote number and the day's exchange rates. */}
@@ -342,10 +332,11 @@ function TenderClosingSection({ lines, navigate }: { lines: { id: string; text: 
 /* ────────────────────────────────────────────────── «Para ti» section ── */
 
 const CHIP: Record<string, { label: string; cls: string }> = {
-  reply:   { label: "Responder",  cls: "bg-warn-bg text-warn" },
-  task:    { label: "Tarea",      cls: "bg-bad-bg text-bad" },
-  followup:{ label: "Llamar",     cls: "bg-good-bg text-good" },
-  forward: { label: "Decidir",    cls: "bg-info-bg text-info" },
+  reply:   { label: "Responder",   cls: "bg-warn-bg text-warn" },
+  cotizar: { label: "Cotizar",     cls: "bg-brand-50 text-accent" },
+  task:    { label: "Tarea",       cls: "bg-bad-bg text-bad" },
+  followup:{ label: "Seguimiento", cls: "bg-good-bg text-good" },
+  forward: { label: "Decidir",     cls: "bg-info-bg text-info" },
 };
 
 function ChipBadge({ kind }: { kind: keyof typeof CHIP }) {
@@ -407,26 +398,6 @@ function formatWaitFull(ms: number): string {
   return `${days} ${days === 1 ? "día" : "días"}`;
 }
 
-/* ──────────────────────────────────────── section container ── */
-
-function QueueSection({ title, hint, count, children }: {
-  title: string;
-  hint?: string;
-  count: number;
-  children: ReactNode;
-}) {
-  return (
-    <section className="overflow-hidden rounded-xl border border-line bg-canvas-raised">
-      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1 pt-3">
-        <h2 className="text-[14px] font-semibold text-ink">{title}</h2>
-        <span className="text-[12px] tabular-nums text-ink-muted">{count}</span>
-        {hint ? <span className="ml-1 text-[11.5px] text-ink-faint">{hint}</span> : null}
-      </header>
-      <ul className="divide-y divide-line">{children}</ul>
-    </section>
-  );
-}
-
 /* ──────────────────────────────────────── Cotizar row ── */
 
 function CotizarQueueRow({
@@ -461,6 +432,7 @@ function CotizarQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-cotizar-${card.opportunity_id}`}
     >
+      <ChipBadge kind="cotizar" />
       <DayPill ms={item.waitMs} />
       <button
         type="button"
@@ -521,6 +493,7 @@ function CotizarQueueRow({
  */
 function ParaTiSection({
   queue, forwards, goneIds, navigate, mayDecide, mayAuthor, onChanged, onClearItem, onFwdDone, onClose, now,
+  queueFilter, onQueueFilterChange,
 }: {
   queue: QueueItem[];
   forwards: ForwardedRequest[];
@@ -534,90 +507,129 @@ function ParaTiSection({
   onClose: (c: OpportunityCardData) => void;
   now: Date;
   me: string | null;
+  queueFilter: QueueKindFilter;
+  onQueueFilterChange: (f: QueueKindFilter) => void;
 }) {
-  if (queue.length === 0 && forwards.length === 0) return null;
+  // Live items (not yet animated out)
+  const liveQueue = queue.filter((q) => !goneIds.has(q.opportunity_id));
+  const liveForwards = forwards;
 
-  const cotizarItems = queue.filter((q): q is CotizarQueueItem => q.kind === "cotizar" && !goneIds.has(q.opportunity_id));
-  const replyItems   = queue.filter((q): q is ReplyQueueItem   => q.kind === "reply"   && !goneIds.has(q.opportunity_id));
-  const followItems  = queue.filter((q): q is FollowUpQueueItem => q.kind === "followup" && !goneIds.has(q.opportunity_id));
-  const taskItems    = queue.filter((q): q is TaskQueueItem    => q.kind === "task"    && !goneIds.has(q.opportunity_id));
-  const liveForwards = forwards.filter(() => true); // already filtered by goneIds outside
+  if (liveQueue.length === 0 && liveForwards.length === 0) return null;
+
+  // Per-kind counts for filter chips (always show totals regardless of filter)
+  const counts = {
+    all: liveQueue.length + liveForwards.length,
+    reply:   liveQueue.filter((q) => q.kind === "reply").length,
+    cotizar: liveQueue.filter((q) => q.kind === "cotizar").length,
+    followup:liveQueue.filter((q) => q.kind === "followup").length,
+    task:    liveQueue.filter((q) => q.kind === "task").length,
+  };
+
+  // Apply filter: "decidir" (forwards) only shown in "all"
+  const visibleQueue = queueFilter ? liveQueue.filter((q) => q.kind === queueFilter) : liveQueue;
+  const visibleForwards = queueFilter ? [] : liveForwards;
+  const totalVisible = visibleQueue.length + visibleForwards.length;
+
+  const chipCls = (active: boolean) =>
+    `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+      active
+        ? "border-ink bg-ink text-canvas"
+        : "border-line-strong bg-canvas-raised text-ink-muted hover:bg-canvas-sunken hover:text-ink"
+    }`;
+  const chipCount = (n: number, active: boolean) => (
+    <span className={`text-[11px] font-semibold tabular-nums ${active ? "opacity-75" : "text-ink-faint"}`}>{n}</span>
+  );
 
   return (
-    <div data-testid="today-para-ti" className="space-y-4">
-      {/* ─── Cotizar ─── */}
-      {cotizarItems.length > 0 && (
-        <QueueSection
-          title="Cotizar"
-          hint="pidieron precio y aún no tienen cotización · la más antigua arriba"
-          count={cotizarItems.length}
-        >
-          {cotizarItems.map((item, i) => (
-            <CotizarQueueRow
-              key={item.opportunity_id}
-              item={item}
-              index={i}
-              navigate={navigate}
-              mayDecide={mayDecide}
-              onChanged={onChanged}
-              onClearItem={() => onClearItem(item.opportunity_id)}
-            />
-          ))}
-        </QueueSection>
-      )}
+    <section className="overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="today-para-ti">
+      {/* Header */}
+      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1.5 pt-3">
+        <h2 className="text-[14px] font-semibold text-ink">Para hoy</h2>
+        <span className="text-[12px] tabular-nums text-ink-muted">
+          {queueFilter && totalVisible !== counts.all ? `${totalVisible} de ${counts.all}` : counts.all}
+        </span>
+        <span className="ml-1 text-[11.5px] text-ink-faint">
+          Responder primero, luego cotizar, seguimientos y tareas vencidas.
+        </span>
+      </header>
 
-      {/* ─── Responder ─── */}
-      {replyItems.length > 0 && (
-        <QueueSection
-          title="Responder"
-          hint="el cliente escribió y espera"
-          count={replyItems.length}
-        >
-          {replyItems.map((item, i) => (
-            <ReplyQueueRow
-              key={item.opportunity_id}
-              reply={item.reply}
-              waitMs={item.waitMs}
-              index={i}
-              navigate={navigate}
-              mayDecide={mayDecide}
-              mayAuthor={mayAuthor}
-              onChanged={onChanged}
-              onClearItem={() => onClearItem(item.opportunity_id)}
-              now={now}
-            />
-          ))}
-        </QueueSection>
-      )}
+      {/* Filter chips */}
+      <div className="flex flex-wrap gap-1.5 px-4 pb-3" role="group" aria-label="Filtrar la lista">
+        <button type="button" className={chipCls(!queueFilter)} onClick={() => onQueueFilterChange(null)} aria-pressed={!queueFilter}>
+          Todo {chipCount(counts.all, !queueFilter)}
+        </button>
+        {counts.reply > 0 && (
+          <button type="button" className={chipCls(queueFilter === "reply")} onClick={() => onQueueFilterChange(queueFilter === "reply" ? null : "reply")} aria-pressed={queueFilter === "reply"}>
+            Responder {chipCount(counts.reply, queueFilter === "reply")}
+          </button>
+        )}
+        {counts.cotizar > 0 && (
+          <button type="button" className={chipCls(queueFilter === "cotizar")} onClick={() => onQueueFilterChange(queueFilter === "cotizar" ? null : "cotizar")} aria-pressed={queueFilter === "cotizar"}>
+            Cotizar {chipCount(counts.cotizar, queueFilter === "cotizar")}
+          </button>
+        )}
+        {counts.followup > 0 && (
+          <button type="button" className={chipCls(queueFilter === "followup")} onClick={() => onQueueFilterChange(queueFilter === "followup" ? null : "followup")} aria-pressed={queueFilter === "followup"}>
+            Seguimiento {chipCount(counts.followup, queueFilter === "followup")}
+          </button>
+        )}
+        {counts.task > 0 && (
+          <button type="button" className={chipCls(queueFilter === "task")} onClick={() => onQueueFilterChange(queueFilter === "task" ? null : "task")} aria-pressed={queueFilter === "task"}>
+            Tareas {chipCount(counts.task, queueFilter === "task")}
+          </button>
+        )}
+      </div>
 
-      {/* ─── Llamar: the follow-ups due today ─── */}
-      {followItems.length > 0 && (
-        <QueueSection
-          title="Llamar"
-          hint="cotización enviada, sin respuesta · seguimiento N de 4 · ritmo 3 · 7 · 10 · 15 días"
-          count={followItems.length}
-        >
-          {followItems.map((item, i) => (
-            <FollowUpQueueRow
-              key={item.opportunity_id}
-              followUp={item.followUp}
-              waitMs={item.waitMs}
-              index={i}
-              navigate={navigate}
-              mayDecide={mayDecide}
-              onChanged={onChanged}
-              onClearItem={() => onClearItem(item.opportunity_id)}
-              onClose={onClose}
-              now={now}
-            />
-          ))}
-        </QueueSection>
-      )}
-
-      {/* ─── Tareas ─── */}
-      {taskItems.length > 0 && (
-        <QueueSection title="Tareas" count={taskItems.length}>
-          {taskItems.map((item, i) => (
+      {/* Unified queue list */}
+      <ul className="divide-y divide-line border-t border-line">
+        {visibleQueue.map((item, i) => {
+          if (item.kind === "reply") {
+            return (
+              <ReplyQueueRow
+                key={item.opportunity_id}
+                reply={item.reply}
+                waitMs={item.waitMs}
+                index={i}
+                navigate={navigate}
+                mayDecide={mayDecide}
+                mayAuthor={mayAuthor}
+                onChanged={onChanged}
+                onClearItem={() => onClearItem(item.opportunity_id)}
+                now={now}
+              />
+            );
+          }
+          if (item.kind === "cotizar") {
+            return (
+              <CotizarQueueRow
+                key={item.opportunity_id}
+                item={item}
+                index={i}
+                navigate={navigate}
+                mayDecide={mayDecide}
+                onChanged={onChanged}
+                onClearItem={() => onClearItem(item.opportunity_id)}
+              />
+            );
+          }
+          if (item.kind === "followup") {
+            return (
+              <FollowUpQueueRow
+                key={item.opportunity_id}
+                followUp={item.followUp}
+                waitMs={item.waitMs}
+                index={i}
+                navigate={navigate}
+                mayDecide={mayDecide}
+                onChanged={onChanged}
+                onClearItem={() => onClearItem(item.opportunity_id)}
+                onClose={onClose}
+                now={now}
+              />
+            );
+          }
+          // kind === "task"
+          return (
             <TaskQueueRow
               key={item.opportunity_id}
               due={item.due}
@@ -628,26 +640,32 @@ function ParaTiSection({
               onClearItem={() => onClearItem(item.opportunity_id)}
               now={now}
             />
-          ))}
-        </QueueSection>
-      )}
+          );
+        })}
+        {visibleForwards.map((f, i) => (
+          <ForwardQueueRow
+            key={f.id}
+            item={f}
+            index={visibleQueue.length + i}
+            navigate={navigate}
+            mayDecide={mayDecide}
+            onDone={onFwdDone}
+          />
+        ))}
+      </ul>
 
-      {/* ─── Decidir (forwarded requests) ─── */}
-      {liveForwards.length > 0 && (
-        <QueueSection title="Decidir" count={liveForwards.length}>
-          {liveForwards.map((f, i) => (
-            <ForwardQueueRow
-              key={f.id}
-              item={f}
-              index={i}
-              navigate={navigate}
-              mayDecide={mayDecide}
-              onDone={onFwdDone}
-            />
-          ))}
-        </QueueSection>
-      )}
-    </div>
+      {/* Filtered empty: filter is on and nothing shows */}
+      {totalVisible === 0 && queueFilter ? (
+        <p className="px-4 py-6 text-center text-[13px] text-ink-muted">
+          No hay{" "}
+          {{ reply: "respuestas", cotizar: "solicitudes por cotizar", followup: "seguimientos", task: "tareas" }[queueFilter]}{" "}
+          en este momento.{" "}
+          <button type="button" onClick={() => onQueueFilterChange(null)} className="font-medium text-accent hover:underline">
+            Ver todo
+          </button>
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -765,6 +783,7 @@ function ReplyQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-reply-${card.opportunity_id}`}
     >
+      <ChipBadge kind="reply" />
       <DayPill ms={waitMs} />
       <div className="min-w-0 flex-1">
         <button
@@ -967,6 +986,11 @@ function TaskQueueRow({
           <span aria-hidden="true">·</span>
           <CaseLink card={card} navigate={navigate} />
         </p>
+        {retakeHint(task.title) ? (
+          <p className="mt-0.5 text-[11px] text-ink-muted" data-testid="today-task-hint">
+            → {retakeHint(task.title)}
+          </p>
+        ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
         {/* Primary: open the case */}
@@ -1185,6 +1209,7 @@ function FollowUpQueueRow({
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
     >
+      <ChipBadge kind="followup" />
       <DayPill ms={waitMs} />
       <div className="min-w-0 flex-1">
         <button
@@ -1427,30 +1452,6 @@ function SystemSummaryLine({ navigate, onChanged }: { navigate: Navigate; onChan
           <AutomaticActionsPanel navigate={navigate} onChanged={() => { onChanged(); reload(); }} />
         </div>
       ) : null}
-    </div>
-  );
-}
-
-/* ──────────────────────────────────────────────────── Housekeeping link ── */
-
-/**
- * «N cosas por ordenar → Operaciones»: one line linking to the «Por decidir» area of
- * OperacionesPage, which holds TriagePanel, OrgsPanel, FollowUpsPanel, etc.
- */
-function HousekeepingLink({ count, navigate }: { count: number; navigate: Navigate }) {
-  return (
-    <div className="rounded-xl border border-line bg-canvas-raised px-4 py-2.5" data-testid="today-housekeeping">
-      <button
-        type="button"
-        onClick={() => navigate("datos", null, "decidir")}
-        className="flex w-full items-center gap-2 text-left text-[13px] text-ink hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        <Badge tone="neutral" glyph={false}>{count}</Badge>
-        <span>
-          {count === 1 ? "cosa" : "cosas"} por ordenar
-          <span className="ml-1 font-medium text-accent">→ Operaciones</span>
-        </span>
-      </button>
     </div>
   );
 }

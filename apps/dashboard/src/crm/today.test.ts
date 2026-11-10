@@ -11,6 +11,7 @@ import {
   followUpsDue,
   followUpStep,
   HOME_FILTER_KINDS,
+  retakeHint,
   RHYTHM,
   stepForDays,
   todayHeaderCounts,
@@ -81,8 +82,10 @@ describe("home filter", () => {
     expect(filterQueue(mixed(), "llamadas").map((q) => q.kind)).toEqual(["followup", "task"]);
   });
 
-  it("cotizar hides follow-ups", () => {
-    expect(filterQueue(mixed(), "cotizar").map((q) => q.kind)).toEqual(["cotizar", "reply", "task"]);
+  it("cotizar hides follow-ups (Hoy v3: reply ranks before cotizar)", () => {
+    // After Hoy v3, RANK is reply=0, cotizar=1, followup=2, task=3.
+    // The cotizar view includes reply+cotizar+task (not followup), sorted by rank.
+    expect(filterQueue(mixed(), "cotizar").map((q) => q.kind)).toEqual(["reply", "cotizar", "task"]);
   });
 
   it("todo keeps everything", () => {
@@ -127,8 +130,33 @@ describe("home filter", () => {
     expect(todayHeaderCounts([pedido, silent], NOW, null)).toEqual({ cotizar: 1, responder: 0, seguimientos: 1 });
   });
 
-  it("ranks Llamar before Tareas", () => {
-    expect(mixed().map((q) => q.kind)).toEqual(["cotizar", "reply", "followup", "task"]);
+  it("v3 display order: Responder first, then Cotizar, Seguimiento, Tareas", () => {
+    // Hoy v3 (owner 2026-11-10): Responder > Cotizar > Seguimiento > Tareas
+    expect(mixed().map((q) => q.kind)).toEqual(["reply", "cotizar", "followup", "task"]);
+  });
+
+  it("Seguimientos count in the strip equals the followup rows in the queue", () => {
+    // The strip tile must show the same number as the rows it filters.
+    const cotizar = card({ stage: "qualifying", latest_revision: null, quote_numbers: [], created_at: ago(1) }, null);
+    const followup1 = card({}, ago(15));
+    const followup2 = card({}, ago(7));
+    const q = buildParaTiQueue([cotizar, followup1, followup2], NOW, null);
+    const stripCount = q.filter((x) => x.kind === "followup").length;
+    const queueRows = q.filter((x) => x.kind === "followup").length;
+    expect(stripCount).toBe(queueRows);
+    expect(stripCount).toBe(2);
+  });
+
+  it("filter chip counts match queue rows for each kind", () => {
+    const q = mixed();
+    const counts = {
+      all: q.length,
+      reply: q.filter((x) => x.kind === "reply").length,
+      cotizar: q.filter((x) => x.kind === "cotizar").length,
+      followup: q.filter((x) => x.kind === "followup").length,
+      task: q.filter((x) => x.kind === "task").length,
+    };
+    expect(counts).toEqual({ all: 4, reply: 1, cotizar: 1, followup: 1, task: 1 });
   });
 });
 
@@ -182,5 +210,29 @@ describe("stepForDays (final review: one rhythm for the board card and the drawe
       const [f] = followUpsDue([card({}, ago(d))], NOW);
       expect(followUpStep(f)).toBe(stepForDays(d));
     }
+  });
+});
+
+describe("retakeHint (Hoy v3 task hint mapping)", () => {
+  it("maps known states to hints", () => {
+    expect(retakeHint("Retomar: evaluando internamente")).toBe("preguntar si ya decidieron");
+    expect(retakeHint("Retomar: esperando fondos")).toBe("preguntar si llegó el fondo");
+    expect(retakeHint("Retomar: esperando presupuesto")).toBe("preguntar si llegó el fondo");
+    expect(retakeHint("Retomar: esperando aprobación")).toBe("preguntar si lo aprobaron");
+    expect(retakeHint("Retomar: esperando aprobacion")).toBe("preguntar si lo aprobaron");
+    expect(retakeHint("Retomar: pedirán reunión")).toBe("confirmar si aceptan reunirse");
+    expect(retakeHint("Retomar: revisando propuesta")).toBe("preguntar si revisaron la propuesta");
+  });
+
+  it("returns null for non-Retomar tasks or unknown states", () => {
+    expect(retakeHint("Llamar al laboratorio")).toBeNull();
+    expect(retakeHint("Seguimiento de 01239-26")).toBeNull();
+    expect(retakeHint("Retomar: algo desconocido totalmente nuevo")).toBeNull();
+    expect(retakeHint("")).toBeNull();
+  });
+
+  it("is case-insensitive on the Retomar prefix", () => {
+    expect(retakeHint("retomar: evaluando")).toBe("preguntar si ya decidieron");
+    expect(retakeHint("RETOMAR: evaluando")).toBe("preguntar si ya decidieron");
   });
 });

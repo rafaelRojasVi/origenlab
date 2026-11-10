@@ -135,23 +135,29 @@ describe("data rendering", () => {
 // ─── window toggle ─────────────────────────────────────────────────────────────
 
 describe("period toggle", () => {
-  it("shows 30-day data when «30 días» is pressed", async () => {
+  it("shows 30-day data when «30 d» is pressed (Hoy v3: buttons inside expanded panel)", async () => {
     stubFetch(statsOkResponse());
     render(<WebStatsCard />);
-    await waitFor(() => expect(screen.queryByRole("status", { name: /cargando/i })).not.toBeInTheDocument());
+    // Open the disclosure first (buttons are inside the details body, not the summary).
+    fireEvent.click(screen.getByRole("group")); // <details> element
+    // Wait for data to load.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "30 d" })).toBeInTheDocument());
 
     // Switch to 30d.
-    fireEvent.click(screen.getByRole("button", { name: "30 días" }));
+    fireEvent.click(screen.getByRole("button", { name: "30 d" }));
     expect(screen.getByText("480")).toBeInTheDocument(); // visitas_total 30d
   });
 
   it("toggle buttons have aria-pressed state", async () => {
     stubFetch(statsOkResponse());
     render(<WebStatsCard />);
-    await waitFor(() => expect(screen.queryByRole("status", { name: /cargando/i })).not.toBeInTheDocument());
+    // Open the disclosure first.
+    fireEvent.click(screen.getByRole("group")); // <details> element
+    // Wait for ready state — buttons appear only when data is loaded.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "7 d" })).toBeInTheDocument());
 
-    const btn7 = screen.getByRole("button", { name: "7 días" });
-    const btn30 = screen.getByRole("button", { name: "30 días" });
+    const btn7 = screen.getByRole("button", { name: "7 d" });
+    const btn30 = screen.getByRole("button", { name: "30 d" });
     expect(btn7).toHaveAttribute("aria-pressed", "true");
     expect(btn30).toHaveAttribute("aria-pressed", "false");
 

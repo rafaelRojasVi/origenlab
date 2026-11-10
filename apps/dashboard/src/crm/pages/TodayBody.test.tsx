@@ -613,19 +613,19 @@ describe("«Para ti» queue", () => {
     expect(paraTiCount([c], NOW, null, 2)).toBe(3);
   });
 
-  it("puts a pre-quote case with no revision into «Cotizar» (rank 0) before any reply", async () => {
+  it("puts a reply (rank 0) before cotizar (rank 1) in Hoy v3 ordering", async () => {
     const { buildParaTiQueue } = await import("../today");
     // A case at «qualifying» with no sent quote, with an inbound from yesterday.
     const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString();
     const solicitud = card(
       { ...inbound(yesterday), stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [] },
     );
-    // A reply from 10 minutes ago — would normally rank first, but cotizar beats it.
+    // A reply from 10 minutes ago — Hoy v3 RANK: reply=0, cotizar=1, so reply is first.
     const tenMinAgo = new Date(NOW.getTime() - 600_000).toISOString();
     const reply = card(inbound(tenMinAgo));
     const order = buildParaTiQueue([reply, solicitud], NOW, null).map((q) => q.kind);
-    expect(order[0]).toBe("cotizar");
-    expect(order[1]).toBe("reply");
+    expect(order[0]).toBe("reply");
+    expect(order[1]).toBe("cotizar");
   });
 
   it("todayHeaderCounts counts cotizar, responder and seguimientos separately", async () => {
@@ -822,23 +822,23 @@ describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
     expect(screen.queryByRole("button", { name: "Todo el equipo" })).toBeNull();
   });
 
-  it("follow-up row reads «Llamar» and «Seguimiento 2 de 4»", () => {
-    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 «Llamar» threshold
+  it("follow-up row shows «Seguimiento» chip and «Seguimiento 2 de 4» (Hoy v3 flat queue)", () => {
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 threshold
     const navigate = renderAs(profileSession("llamadas"), [silent7]);
-    expect(screen.getByRole("heading", { level: 2, name: "Llamar" })).toBeInTheDocument();
+    // Hoy v3: no QueueSection heading «Llamar»; the unified queue uses chip badges per row.
+    expect(screen.queryByRole("heading", { level: 2, name: "Llamar" })).not.toBeInTheDocument();
     const row = screen.getByTestId(`today-followup-${silent7.opportunity_id}`);
     expect(row).toHaveTextContent("Seguimiento 2 de 4");
-    // «Registrar llamada» opens the case's drawer over Hoy (see «Hoy opens the case drawer in place»).
+    // «Registrar llamada» opens the case's drawer over Hoy.
     expect(within(row).getByRole("button", { name: "Registrar llamada" })).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it("«N cosas por ordenar» only for todo", () => {
+  it("housekeeping link is no longer on Hoy (Hoy v3: moved to Operaciones)", () => {
+    // In Hoy v3, HousekeepingLink was removed — the «N cosas por ordenar → Operaciones»
+    // row no longer appears on any profile view.
     const proposed = () => card({ organization: { organization_id: "o-x", name: "Sociedad Ficticia", confirmation: "machine_proposed", version: 1 } });
     renderAs(profileSession("todo"), [proposed()]);
-    expect(screen.getByTestId("today-housekeeping")).toHaveTextContent("cosa por ordenar");
-    cleanup();
-    renderAs(profileSession("llamadas"), [proposed()]);
     expect(screen.queryByTestId("today-housekeeping")).toBeNull();
   });
 });

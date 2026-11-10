@@ -448,9 +448,9 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f, waitMs: f.days * DAY_MS });
   }
 
-  // Display order (owner, 2026-11-08): Cotizar · Responder · Llamar · Tareas; forwarded requests
-  // («Decidir») come last in `TodayBody`. The dedupe priority above does not change.
-  const RANK: Record<QueueItem["kind"], number> = { cotizar: 0, reply: 1, followup: 2, task: 3 };
+  // Display order (owner, 2026-11-10 Hoy v3): Responder · Cotizar · Seguimiento · Tareas;
+  // forwarded requests («Decidir») come last in `TodayBody`. The dedupe priority above does not change.
+  const RANK: Record<QueueItem["kind"], number> = { reply: 0, cotizar: 1, followup: 2, task: 3 };
   // Within every section: oldest wait first (largest waitMs first).
   return [...queue.values()].sort((a, b) =>
     RANK[a.kind] - RANK[b.kind] || b.waitMs - a.waitMs);
@@ -477,6 +477,22 @@ export const HOME_FILTER_KINDS: Record<HomeFilter, ReadonlySet<QueueItem["kind"]
 export function filterQueue(q: QueueItem[], f: HomeFilter): QueueItem[] {
   const kinds = HOME_FILTER_KINDS[f] ?? HOME_FILTER_KINDS.todo;
   return q.filter((item) => kinds.has(item.kind));
+}
+
+/**
+ * Short hint for an overdue «Retomar: estado» task row — a one-line nudge for what to ask.
+ * Returns null when the title is not a «Retomar:» task or no mapping is known.
+ * Pure and tested; no API calls.
+ */
+export function retakeHint(title: string): string | null {
+  const state = /^[Rr]etomar[:\s]+(.+)$/i.exec(title.trim())?.[1]?.toLowerCase().trim() ?? null;
+  if (!state) return null;
+  if (/evalua/.test(state)) return "preguntar si ya decidieron";
+  if (/fondo|presupuesto/.test(state)) return "preguntar si llegó el fondo";
+  if (/aprobac/.test(state)) return "preguntar si lo aprobaron";
+  if (/reuni/.test(state)) return "confirmar si aceptan reunirse";
+  if (/revisa/.test(state)) return "preguntar si revisaron la propuesta";
+  return null;
 }
 
 /** The view the signed-in profile opens «Hoy» on; no profile, none set or an unknown one is «todo». */

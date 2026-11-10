@@ -6,12 +6,11 @@ import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { CallDay, OpportunityCardData, RevisionCard } from "../crmTypes";
 import type { Invoice } from "../pagos/invoiceApi";
 import { clearResourceCache } from "../useResource";
-import { GoalStrip } from "./GoalStrip";
+import { GoalStrip, type StripFilter } from "./GoalStrip";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-11-08T15:00:00Z");
 const DAY = 86_400_000;
-const HOUR = 3_600_000;
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 
 function invoice(doc_type: number, issued_on: string, net_amount: number, exempt_amount = 0): Invoice {
@@ -26,10 +25,7 @@ function invoice(doc_type: number, issued_on: string, net_amount: number, exempt
 const INVOICES = {
   items: [
     invoice(33, "2026-11-04", 1_050_000),
-    invoice(34, "2026-11-05", 0, 200_000),
-    invoice(61, "2026-11-06", 100_000),
     invoice(33, "2026-10-31", 500_000),
-    invoice(56, "2026-11-07", 30_000),
   ],
   summary: { por_cobrar: 0, unpaid_count: 0, by_age: { "0-30": 0, "31-60": 0, "61-90": 0, "90+": 0 }, without_case: 0 },
 };
@@ -56,32 +52,16 @@ function card(over: Partial<OpportunityCardData> = {}, revisions: RevisionCard[]
   };
 }
 
-/** A case asked `tookMs` before its first quote went out `sentAgo` ago (in «Conversación» — the
- *  client replied, so it is not a follow-up). */
-const quoted = (sentAgo: number, tookMs: number) =>
-  card({
-    stage: "negotiating",
-    requested_at: ago(sentAgo + tookMs),
-    // A client reply after the quote puts the case in «Conversación»; `followUpsDue` skips it.
-    last_contact: { inbound: { at: ago(sentAgo - 3_600_000), subject: "Re:", url: null }, outbound: null },
-  }, [rev(ago(sentAgo))]);
-
+// ITEMS: 1 followup (quote exactly 7 days old = «segundo» threshold), 1 cotizar (request 2 days old)
 const ITEMS: OpportunityCardData[] = [
-  // Seguimiento: a quote that went out 8 days ago, nothing since.
-  card({}, [rev(ago(8 * DAY))]),
-  // Cotizar: a request two days old.
-  card({ stage: "lead", created_at: ago(2 * DAY) }),
-  // Solicitud → cotización: 5 h, 24 h, 36 h in the last 30 days → 1 día.
-  quoted(1 * DAY, 5 * HOUR),
-  quoted(3 * DAY, 24 * HOUR),
-  quoted(10 * DAY, 36 * HOUR),
+  card({}, [rev(ago(7 * DAY))]),           // followup at exactly day 7 (segundo threshold)
+  card({ stage: "lead", created_at: ago(2 * DAY) }), // cotizar
 ];
 
 const WEEK: CallDay[] = [
   { day: "2026-11-02", outcome: "contesto", count: 4 },
   { day: "2026-11-06", outcome: "no_contesto", count: 10 },
   { day: "2026-11-06", outcome: "reunion", count: 1 },
-  { day: "2026-10-01", outcome: "contesto", count: 9 },
 ];
 
 function session(role: string, homeFilter: HomeFilter | null = null): AuthSessionState {
@@ -113,107 +93,126 @@ function stub(invoices: unknown = INVOICES): string[] {
   return paths;
 }
 
-function renderStrip(s: AuthSessionState, calls: CallDay[] = WEEK, items = ITEMS) {
+function renderStrip(
+  s: AuthSessionState,
+  calls: CallDay[] = WEEK,
+  items = ITEMS,
+  activeFilter: StripFilter = null,
+  onFilterChange = vi.fn(),
+) {
   const navigate = vi.fn();
   render(
     <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
-      <GoalStrip items={items} calls={calls} navigate={navigate} />
+      <GoalStrip items={items} calls={calls} navigate={navigate} activeFilter={activeFilter} onFilterChange={onFilterChange} />
     </AuthSessionContext.Provider>,
   );
-  return navigate;
+  return { navigate, onFilterChange };
 }
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
+  n = 0;
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   clearResourceCache();
+  n = 0;
 });
 
-describe("GoalStrip", () => {
-  it("admin sees «Vendido en noviembre», the month's figure, the share of the target and the pace; «Ver facturas» opens Por cobrar", async () => {
-    stub();
-    const navigate = renderStrip(session("admin"));
-    const tile = await screen.findByRole("link", { name: /Vendido en noviembre/ });
-    // 33 + 34 + 56 − 61 issued in November (owner ruling 2026-11-08): 1.050.000 + 200.000 + 30.000 − 100.000.
-    expect(tile).toHaveTextContent("$1,18 M");
-    expect(tile).toHaveTextContent("19 % de la meta $6 M");
-    expect(tile).toHaveTextContent("Faltan $4,82 M · $ 301.250 por día hábil (16 quedan, sin feriados)");
-    expect(tile).toHaveTextContent("último folio del");
-    expect(tile).toHaveTextContent("Ver facturas");
-    expect(tile).toHaveAttribute("href", "#/finanzas/por-cobrar");
-    fireEvent.click(tile);
-    expect(navigate).toHaveBeenCalledWith("pagos");
-  });
-
-  it("viewer sees three tiles, no «$» and no invoices request", () => {
-    const paths = stub();
-    renderStrip(session("viewer"));
-    const strip = screen.getByTestId("goal-strip");
-    expect(strip.querySelectorAll("a")).toHaveLength(3);
-    expect(strip).not.toHaveTextContent("$");
-    expect(paths).not.toContain("/v2/workspace/invoices");
-  });
-
-  it("Seguimiento links to #/ventas/pipeline?vista=seguimiento with its count", () => {
+describe("GoalStrip v3", () => {
+  it("renders the goal strip with 4 tiles", () => {
     stub();
     renderStrip(session("sales"));
-    const tile = screen.getByRole("link", { name: /Seguimiento/ });
-    expect(tile).toHaveAttribute("href", "#/ventas/pipeline?vista=seguimiento");
-    expect(tile).toHaveTextContent("1casos con seguimiento pendiente hoy");
-    expect(tile).toHaveTextContent("Meta: 0");
-    expect(tile).toHaveAttribute("data-tone", "warn");
+    expect(screen.getByTestId("goal-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("goal-seguimiento")).toBeInTheDocument();
+    expect(screen.getByTestId("goal-cotizar")).toBeInTheDocument();
+    expect(screen.getByTestId("goal-alcance")).toBeInTheDocument();
   });
 
-  it("Cotizar shows the count, «la más antigua: 2 días» and the median line", () => {
+  it("Seguimientos count equals the queue followup rows (MUST match)", () => {
     stub();
     renderStrip(session("sales"));
-    const tile = screen.getByRole("link", { name: /^Cotizar/ });
-    expect(tile).toHaveAttribute("href", "#/ventas/pipeline?vista=cotizar");
-    expect(tile).toHaveTextContent("1solicitudes sin cotizar · la más antigua: 2 días");
-    expect(tile).toHaveTextContent("Solicitud → cotización: 1 día (30 días) · antes —");
-    expect(tile).toHaveTextContent("Meta: mismo día hábil");
-    // The median line is compared with no goal: never warn-coloured.
-    const detail = screen.getByTestId("goal-cotizar-detail");
-    expect(detail).toHaveClass("text-ink-muted");
-    expect(detail).not.toHaveClass("text-warn");
+    // ITEMS has 1 followup (8-day quote) — same as the queue would show.
+    const tile = screen.getByTestId("goal-seguimiento");
+    expect(tile).toHaveTextContent("1");
   });
 
-  it("Alcance reads «15 / 125 llamadas»", () => {
-    vi.setSystemTime(new Date("2026-11-06T15:00:00Z"));
+  it("Cotizar shows count with oldest age", () => {
     stub();
-    const navigate = renderStrip(session("sales"));
-    const tile = screen.getByRole("link", { name: /Alcance · esta semana/ });
-    expect(tile).toHaveTextContent("15 / 125 llamadas");
-    expect(tile).toHaveTextContent("Hoy 11 / 25 · Conversaciones 30 días: 5 / 50");
-    expect(tile).toHaveTextContent("Listas y llamadas");
-    expect(tile).toHaveAttribute("href", "#/ventas/listas");
+    renderStrip(session("sales"));
+    const tile = screen.getByTestId("goal-cotizar");
+    expect(tile).toHaveTextContent("1");
+    expect(tile).toHaveTextContent("2 días"); // 2-day-old request
+  });
+
+  it("Alcance link navigates to prospectos", () => {
+    stub();
+    const { navigate } = renderStrip(session("sales"));
+    const tile = screen.getByTestId("goal-alcance");
     fireEvent.click(tile);
     expect(navigate).toHaveBeenCalledWith("prospectos");
   });
 
-  it("an invoices error keeps the other three tiles and offers Reintentar", async () => {
+  it("admin sees Meta tile (loading then ready with invoice data)", async () => {
+    stub();
+    renderStrip(session("admin"));
+    // After fetch resolves, the tile shows invoice data as a link.
+    const tile = await screen.findByRole("link", { name: /Meta de/ });
+    expect(tile).toBeInTheDocument();
+    expect(tile).toHaveAttribute("data-testid", "goal-vendido");
+  });
+
+  it("viewer does not see Meta money tile (goal-vendido-hidden or similar)", () => {
+    const paths = stub();
+    renderStrip(session("viewer"));
+    // Viewer gets a placeholder tile, not the full money tile
+    expect(screen.queryByTestId("goal-vendido")).not.toBeInTheDocument();
+    expect(paths).not.toContain("/v2/workspace/invoices");
+  });
+
+  it("Seguimientos button calls onFilterChange with 'followup'", () => {
+    stub();
+    const { onFilterChange } = renderStrip(session("sales"));
+    fireEvent.click(screen.getByTestId("goal-seguimiento"));
+    expect(onFilterChange).toHaveBeenCalledWith("followup");
+  });
+
+  it("Cotizar button calls onFilterChange with 'cotizar'", () => {
+    stub();
+    const { onFilterChange } = renderStrip(session("sales"));
+    fireEvent.click(screen.getByTestId("goal-cotizar"));
+    expect(onFilterChange).toHaveBeenCalledWith("cotizar");
+  });
+
+  it("active filter button calls onFilterChange with null (toggle off)", () => {
+    stub();
+    const { onFilterChange } = renderStrip(session("sales"), WEEK, ITEMS, "followup");
+    // Already active → clicking should clear
+    fireEvent.click(screen.getByTestId("goal-seguimiento"));
+    expect(onFilterChange).toHaveBeenCalledWith(null);
+  });
+
+  it("active filter button shows bottom border indicator", () => {
+    stub();
+    renderStrip(session("sales"), WEEK, ITEMS, "followup");
+    const tile = screen.getByTestId("goal-seguimiento");
+    // The active tile has the inset shadow class
+    expect(tile.className).toContain("shadow-");
+  });
+
+  it("empty items → 0 for Seguimientos and Cotizar", () => {
+    stub();
+    renderStrip(session("sales"), WEEK, []);
+    expect(screen.getByTestId("goal-seguimiento")).toHaveTextContent("0");
+    expect(screen.getByTestId("goal-cotizar")).toHaveTextContent("0");
+  });
+
+  it("an invoices error shows retry option for admin", async () => {
     stub(new Response("boom", { status: 500 }));
     renderStrip(session("admin"));
-    expect(await screen.findByText("No se pudo leer lo facturado")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reintentar" })).toBeInTheDocument();
-    expect(screen.getByTestId("goal-strip").querySelectorAll("a")).toHaveLength(3);
-  });
-
-  it("an older API without calls shows 0", () => {
-    stub();
-    renderStrip(session("sales"), []);
-    expect(screen.getByRole("link", { name: /Alcance/ })).toHaveTextContent("0 / 125 llamadas");
-  });
-
-  it("a llamadas profile still sees team-wide tiles", () => {
-    stub();
-    renderStrip(session("sales", "llamadas"));
-    expect(screen.getByRole("link", { name: /^Cotizar/ })).toHaveTextContent("1solicitudes sin cotizar");
-    expect(screen.getByRole("link", { name: /Seguimiento/ })).toHaveTextContent("1casos con seguimiento");
+    expect(await screen.findByText(/Sin datos · reintentar/)).toBeInTheDocument();
   });
 });

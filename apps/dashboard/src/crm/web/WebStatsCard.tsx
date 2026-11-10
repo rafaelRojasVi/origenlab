@@ -139,108 +139,84 @@ function PeriodView({ data }: { data: WebStatsPeriod }) {
 // ─── main card ───────────────────────────────────────────────────────────────
 
 /**
- * Tarjeta «Web» en la columna lateral de Hoy.
- *
- * Muestra las métricas del sitio público para 7 o 30 días.
- * Estados: cargando → sin datos (nunca hubo eventos) → sin configurar → error → datos.
+ * Tarjeta «Web» en la columna lateral de Hoy — colapsada por defecto a una línea.
+ * Se abre con un disclosure para ver las métricas completas (7 o 30 días).
  */
 export function WebStatsCard() {
   const [window, setWindow] = useState<WebStatsWindow>("7d");
   const [state, reload] = useResource(fetchWebStats);
 
-  if (state.kind === "loading") {
-    return (
-      <section aria-label="Estadísticas web" data-testid="web-stats-card">
-        <SectionHeader window={window} onWindow={setWindow} disabled />
-        <Skeleton rows={5} />
-      </section>
-    );
-  }
+  const summaryLine = (() => {
+    if (state.kind === "loading") return "cargando…";
+    if (state.kind === "unavailable") return "sin datos en este entorno";
+    if (state.kind === "permission") return null;
+    if (state.kind === "error") return isNotConfiguredError(state.message) ? "sin configurar" : "error al cargar";
+    const d = state.data[window];
+    if (d.visitas_total === 0 && d.visitas_interno === 0) return "7 días · sin visitas";
+    return `${d.visitas_total} visitas · ${d.form_submits} formularios`;
+  })();
 
-  if (state.kind === "unavailable") {
-    return (
-      <section aria-label="Estadísticas web" data-testid="web-stats-card">
-        <SectionHeader window={window} onWindow={setWindow} />
-        <NotEnabled />
-      </section>
-    );
-  }
-
-  if (state.kind === "permission") {
-    return null; // No mostrar la tarjeta a quienes no tengan acceso.
-  }
-
-  if (state.kind === "error") {
-    // Distinguish «not_configured» from a real fetch error.
-    const isNotConfigured = isNotConfiguredError(state.message);
-    return (
-      <section aria-label="Estadísticas web" data-testid="web-stats-card">
-        <SectionHeader window={window} onWindow={setWindow} />
-        {isNotConfigured ? <NotConfigured /> : <FetchError onRetry={reload} />}
-      </section>
-    );
-  }
-
-  const data = state.data[window];
+  if (summaryLine === null) return null; // sin permiso
 
   return (
     <section aria-label="Estadísticas web" data-testid="web-stats-card">
-      <SectionHeader window={window} onWindow={setWindow} />
-      {data.visitas_total === 0 &&
-       data.visitas_interno === 0 &&
-       data.cotizacion_total === 0 &&
-       data.whatsapp_total === 0 ? (
-        <EmptyPeriod />
-      ) : (
-        <div className="rounded-xl border border-line bg-canvas-raised px-4 py-3.5">
-          <PeriodView data={data} />
-          <p className="mt-3 text-[11px] text-ink-faint">
-            Actualizado {new Intl.DateTimeFormat("es-CL", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }).format(new Date(state.data.fetched_at))}.
-          </p>
+      <details className="rounded-xl border border-line bg-canvas-raised">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[13px] font-semibold text-ink hover:bg-canvas-sunken [&::-webkit-details-marker]:hidden">
+          <svg viewBox="0 0 16 16" className="h-4 w-4 shrink-0 text-ink-muted details-open:rotate-90 transition-transform" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M6 4l4 4-4 4"/>
+          </svg>
+          <span>Web</span>
+          <span className="ml-1 text-[12px] font-normal text-ink-muted">{summaryLine}</span>
+        </summary>
+        <div className="border-t border-line px-4 py-3">
+          {state.kind === "loading" ? <Skeleton rows={3} /> : null}
+          {state.kind === "unavailable" ? <NotEnabled /> : null}
+          {state.kind === "error" ? (
+            isNotConfiguredError(state.message) ? <NotConfigured /> : <FetchError onRetry={reload} />
+          ) : null}
+          {state.kind === "ready" ? (() => {
+            const d = state.data[window];
+            return (
+              <>
+                {/* Period toggle — inside the expanded panel so it doesn't nest inside <summary>'s button role */}
+                <div className="mb-3 flex gap-1" role="group" aria-label="Período">
+                  {(["7d", "30d"] as WebStatsWindow[]).map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      aria-pressed={window === w}
+                      onClick={() => setWindow(w)}
+                      className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                        window === w
+                          ? "bg-brand-600 text-on-solid"
+                          : "text-ink-muted hover:bg-canvas-sunken hover:text-ink"
+                      }`}
+                    >
+                      {w === "7d" ? "7 d" : "30 d"}
+                    </button>
+                  ))}
+                </div>
+                {d.visitas_total === 0 && d.visitas_interno === 0 && d.cotizacion_total === 0 && d.whatsapp_total === 0
+                  ? <EmptyPeriod />
+                  : (
+                    <>
+                      <PeriodView data={d} />
+                      <p className="mt-3 text-[11px] text-ink-faint">
+                        Actualizado {new Intl.DateTimeFormat("es-CL", { hour: "2-digit", minute: "2-digit" }).format(new Date(state.data.fetched_at))}.
+                      </p>
+                    </>
+                  )
+                }
+              </>
+            );
+          })() : null}
         </div>
-      )}
+      </details>
     </section>
   );
 }
 
 // ─── inner components ─────────────────────────────────────────────────────────
-
-function SectionHeader({
-  window,
-  onWindow,
-  disabled = false,
-}: {
-  window: WebStatsWindow;
-  onWindow: (w: WebStatsWindow) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="mb-2 flex items-center justify-between gap-2">
-      <h2 className="text-[13px] font-semibold text-ink">Web</h2>
-      <div className="flex gap-1" role="group" aria-label="Período">
-        {(["7d", "30d"] as WebStatsWindow[]).map((w) => (
-          <button
-            key={w}
-            type="button"
-            disabled={disabled}
-            aria-pressed={window === w}
-            onClick={() => onWindow(w)}
-            className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
-              window === w
-                ? "bg-brand-600 text-on-solid"
-                : "text-ink-muted hover:bg-canvas-sunken hover:text-ink disabled:opacity-40"
-            }`}
-          >
-            {w === "7d" ? "7 días" : "30 días"}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function NotConfigured() {
   return (

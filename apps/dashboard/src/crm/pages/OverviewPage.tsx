@@ -1,74 +1,63 @@
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { fetchFx, fetchPipeline } from "../crmApi";
 import type { CrmSection, DatosTab } from "../crmRoute";
 import { fmtClp, fmtRate, parseAmount, toClp, type FxRate, type FxResponse } from "../fx";
-import { ResourceGate, Segmented } from "../ui";
+import { ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { QuoteNumberBox } from "../QuoteNumberBox";
 import { PendientesPanel } from "../todos/PendientesPanel";
-import { WEEKDAYS, todayInSantiago } from "../marketing/calendar";
-import { TodayBody, type TodayScope } from "./TodayBody";
-import { GoalStrip } from "./GoalStrip";
-import { HeroHeader } from "../HeroHeader";
-import { todayHeaderCounts, useHomeFilter } from "../today";
+import { SANTIAGO } from "../marketing/calendar";
+import { TodayBody, type QueueKindFilter } from "./TodayBody";
+import { GoalStrip, type StripFilter } from "./GoalStrip";
 import { useAuthSession } from "../../context/AuthSessionContext";
-import { fetchPersonSuggestions } from "../authoring/crmAuthoringApi";
 import { WebStatsCard } from "../web/WebStatsCard";
 
 type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 
+const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+/** «Martes 10 de noviembre» in Santiago, without the time. */
+function todayLabel(): string {
+  // Use "numeric" for month so formatToParts returns a number string ("3"), not a name ("marzo").
+  const f = new Intl.DateTimeFormat("es-CL", {
+    timeZone: SANTIAGO, weekday: "long", day: "numeric", month: "numeric",
+  });
+  const p = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const weekday = p.weekday.charAt(0).toUpperCase() + p.weekday.slice(1);
+  return `${weekday} ${Number(p.day)} de ${MONTHS[Number(p.month) - 1]}`;
+}
+
 /**
- * «Hoy», the first page: what the open cases ask of an operator today (`TodayBody`: tasks due,
- * clients who answered, the 3 · 7 · 10 · 15 follow-ups, what is left to add or decide), and on the side
- * the shared «Pendientes de la semana», the next quote number and the day's exchange rates. The data-health counts live on Datos.
+ * «Hoy» v3: a quiet one-line header, the goal strip, the unified queue, and the side tools.
+ * FX rates load lazily (after first paint) so they never block the queue.
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
-  const { session } = useAuthSession();
-  const [fx, reloadFx] = useResource(fetchFx);
   const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
-  const [people] = useResource(fetchPersonSuggestions);
-  // «M hechas»: items the operator cleared from «Para ti» in this browser session.
-  const [hechas, setHechas] = useState(0);
-  const onCleared = useCallback(() => setHechas((n) => n + 1), []);
-  const [, setForwardCount] = useState(0);
-  // «Mi cola» / «Todo el equipo»: held here so the header's counts follow the list. Session-only,
-  // and per profile: another profile on the shared login starts on its own queue again.
-  const homeFilter = useHomeFilter();
-  const profileKey = session.kind === "signed_in" ? `${session.operator.operatorId}|${session.profile?.id ?? ""}` : "";
-  const [held, setHeld] = useState<{ profile: string; scope: TodayScope }>({ profile: profileKey, scope: "mine" });
-  const scope: TodayScope = held.profile === profileKey ? held.scope : "mine";
-  const setScope = useCallback((next: TodayScope) => setHeld({ profile: profileKey, scope: next }), [profileKey]);
-  const view = scope === "team" ? "todo" : homeFilter;
 
-  const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
-  const headerCounts = pipeline.kind === "ready" ? todayHeaderCounts(pipeline.data.items, new Date(), me, view) : null;
+  // Queue filter shared between GoalStrip and TodayBody — null = show all.
+  const [queueFilter, setQueueFilter] = useState<QueueKindFilter>(null);
+
+  // The strip can only set "followup" | "cotizar" | null — cast is safe.
+  const handleStripFilter = useCallback((f: StripFilter) => setQueueFilter(f), []);
+
+  // Dismissible «Mientras no estabas» note is handled inside TodayBody (SystemSummaryLine).
 
   return (
     <div className="space-y-5">
-      <HeroHeader
-        name={session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? "") : ""}
-        counts={headerCounts !== null ? { ...headerCounts, hechas } : null}
-        actions={
-          // Only a profile with its own queue has a «Mi cola»; in the header, as on the canvas.
-          homeFilter !== "todo" ? (
-            <div data-testid="today-scope">
-              <Segmented<TodayScope>
-                label="Qué cola ver"
-                value={scope}
-                onChange={setScope}
-                options={[
-                  { value: "mine", label: me ? `Mi cola · ${me}` : "Mi cola" },
-                  { value: "team", label: "Todo el equipo" },
-                ]}
-              />
-            </div>
-          ) : null
-        }
-      />
-      {/* «Franja de metas»: the four goals, first on Hoy, each a link into the view that acts on it. */}
+      {/* Quiet header: date + N cosas para hoy */}
+      <HoyMiniHeader pipeline={pipeline} queueFilter={queueFilter} />
+
+      {/* Goal strip: Meta · Seguimientos · Cotizar · Alcance */}
       {pipeline.kind === "ready" ? (
-        <GoalStrip items={pipeline.data.items} calls={pipeline.data.calls ?? []} navigate={navigate} />
+        <GoalStrip
+          items={pipeline.data.items}
+          calls={pipeline.data.calls ?? []}
+          navigate={navigate}
+          activeFilter={queueFilter === "followup" || queueFilter === "cotizar" ? queueFilter : null}
+          onFilterChange={handleStripFilter}
+        />
       ) : null}
+
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (
           <TodayBody
@@ -76,17 +65,14 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             tendersClosing={p.tenders_closing}
             navigate={navigate}
             onChanged={reloadPipeline}
-            onCleared={onCleared}
-            onForwardCount={setForwardCount}
             refreshing={refreshing}
-            people={people}
-            scope={scope}
-            onScopeChange={setScope}
+            queueFilter={queueFilter}
+            onQueueFilterChange={setQueueFilter}
             aside={
               <>
                 <PendientesPanel cases={p.items} navigate={navigate} />
                 <QuoteNumberBox pipeline={pipeline} compact />
-                <FxSection state={fx} reload={reloadFx} />
+                <LazyFxSection />
                 <WebStatsCard />
               </>
             }
@@ -97,17 +83,97 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   );
 }
 
-/* ───────────────────────────────────────────────────────── exchange rates ── */
+/* ──────────────────────────────────────────────────── quiet header ── */
+
+type PipelineState = ReturnType<typeof useResource<Awaited<ReturnType<typeof fetchPipeline>>>>[0];
+
+/**
+ * One quiet line: date · «N cosas para hoy» + a contextual hint when items are waiting.
+ * Replaces the dark HeroHeader for Hoy (HeroHeader is kept for other pages that use it).
+ */
+function HoyMiniHeader({ pipeline, queueFilter }: { pipeline: PipelineState; queueFilter: QueueKindFilter }) {
+  const { session } = useAuthSession();
+  const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
+  const [dateLabel] = useState(todayLabel);
+
+  const totalHoy = pipeline.kind === "ready"
+    ? pipeline.data.items.filter((c) => !c.closed_at).length
+    : null;
+
+  const hintText = (() => {
+    if (pipeline.kind !== "ready") return null;
+    const items = pipeline.data.items;
+    const replies = items.filter((c) => {
+      const lc = c.last_contact;
+      return lc?.inbound && (!lc.outbound || lc.inbound.at > lc.outbound.at);
+    }).length;
+    if (replies >= 3) return `${replies} clientes esperan respuesta · empieza por ahí`;
+    if (replies > 0) return replies === 1 ? "1 cliente espera respuesta" : `${replies} clientes esperan respuesta`;
+    return null;
+  })();
+
+  return (
+    <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1" data-testid="hoy-mini-header">
+      <div>
+        <h1 className="text-[17px] font-semibold tracking-tight text-ink">
+          {dateLabel}
+          {totalHoy !== null ? (
+            <> · <span className="font-bold">{totalHoy} {totalHoy === 1 ? "cosa" : "cosas"} para hoy</span></>
+          ) : null}
+        </h1>
+        {hintText ? (
+          <p className="mt-0.5 text-[13px] text-ink-muted">{hintText}</p>
+        ) : null}
+      </div>
+      {me ? (
+        <span className="text-[12px] text-ink-faint">
+          {queueFilter ? `Filtrando por ${queueFilter}` : "Actualizado · el mismo Hoy para todo el equipo"}
+        </span>
+      ) : null}
+    </header>
+  );
+}
+
+/* ───────────────────────────────────────────────────── lazy FX ── */
+
+/**
+ * FX rates load after first paint so they never block the queue render.
+ * Shows a skeleton until the fetch starts, then hands off to FxSection.
+ */
+function LazyFxSection() {
+  const [started, setStarted] = useState(false);
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => setStarted(true));
+    return () => window.cancelAnimationFrame(id);
+  }, []);
+
+  if (!started) return <FxSectionSkeleton />;
+  return <FxSectionFetcher />;
+}
+
+function FxSectionFetcher() {
+  const [fx, reloadFx] = useResource(fetchFx);
+  return <FxSection state={fx} reload={reloadFx} />;
+}
+
+function FxSectionSkeleton() {
+  return (
+    <div className="space-y-3 rounded-xl border border-line bg-canvas-raised px-4 py-3.5" aria-hidden="true">
+      <div className="flex items-center justify-between">
+        <div className="crm-skeleton h-4 w-24 rounded" />
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => <div key={i} className="crm-skeleton h-5 rounded" />)}
+      </div>
+    </div>
+  );
+}
+
+/* ───────────────────────────────────────────────── exchange rates ── */
 
 function FxSection({ state, reload }: { state: ResourceState<FxResponse>; reload: () => void }) {
   if (state.kind === "loading") {
-    return (
-      <div className="grid grid-cols-1 gap-3" aria-hidden="true">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="crm-skeleton h-[7.5rem] rounded-xl" />
-        ))}
-      </div>
-    );
+    return <FxSectionSkeleton />;
   }
   if (state.kind !== "ready") {
     return (
@@ -125,47 +191,35 @@ function FxSection({ state, reload }: { state: ResourceState<FxResponse>; reload
   }
   const fx = state.data;
   const byCode = Object.fromEntries(fx.rates.map((r) => [r.code, r])) as Partial<Record<FxRate["code"], FxRate>>;
+
   return (
     <section aria-label="Tipo de cambio" className="space-y-2">
-      <div className="grid grid-cols-1 gap-3">
-        {byCode.USD ? <RateCard rate={byCode.USD} unit="dólar" index={0} /> : null}
-        {byCode.EUR ? <RateCard rate={byCode.EUR} unit="euro" index={1} /> : null}
-        <Converter rates={fx.rates} uf={byCode.UF ?? null} />
+      {/* Compact 3-column rates + UF */}
+      <div className="rounded-xl border border-line bg-canvas-raised px-4 py-3">
+        <div className="grid grid-cols-3 gap-x-3 gap-y-2">
+          {byCode.USD ? <CompactRate rate={byCode.USD} unit="dólar" /> : null}
+          {byCode.EUR ? <CompactRate rate={byCode.EUR} unit="euro" /> : null}
+          {byCode.UF  ? <CompactRate rate={byCode.UF}  unit="UF"   /> : null}
+        </div>
+        <div className="mt-3 border-t border-line pt-2">
+          <Converter rates={fx.rates} uf={byCode.UF ?? null} />
+        </div>
       </div>
-      {[byCode.USD, byCode.EUR].some((r) => r && r.as_of < todayInSantiago()) ? (
-        <p data-testid="fx-weekend-note" className="text-[11px] text-ink-muted">
-          El Banco Central no publica el dólar ni el euro los fines de semana ni feriados: rige el último valor publicado.
-        </p>
-      ) : null}
       <p className="text-[11px] text-ink-faint">
         Fuente: {fx.source_label}. Consultado a las {fmtTime(fx.fetched_at)}.
-        {fx.stale ? <span className="ml-1 font-medium text-warn">No se pudo actualizar; se muestran las últimas cifras.</span> : null}
+        {fx.stale ? <span className="ml-1 font-medium text-warn">No se pudo actualizar.</span> : null}
       </p>
     </section>
   );
 }
 
-function RateCard({ rate, unit, index }: { rate: FxRate; unit: string; index: number }) {
+function CompactRate({ rate, unit }: { rate: FxRate; unit: string }) {
   return (
-    <div
-      data-testid={`fx-${rate.code}`}
-      className="crm-rise group relative flex flex-col overflow-hidden rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)] transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-px hover:border-line-strong hover:shadow-[0_6px_16px_-8px_rgb(13_148_136/0.25)]"
-      style={{ "--i": index } as CSSProperties}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[12px] font-medium text-ink-muted">{rate.label}</p>
-        <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-semibold text-accent">{rate.code}</span>
-      </div>
-      <p className="mt-2 text-[24px] font-semibold leading-none tracking-tight text-ink tabular-nums">
+    <div data-testid={`fx-${rate.code}`}>
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-faint">{unit}</p>
+      <p className="text-[16px] font-semibold tabular-nums text-ink">
         <CountUp value={rate.clp} format={fmtRate} />
       </p>
-      <p className="mt-auto pt-2 text-[11px] text-ink-faint">
-        pesos por {unit} · {publishedLabel(rate.as_of)}
-      </p>
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 origin-left scale-x-0 bg-brand-600 transition-transform duration-300 group-hover:scale-x-100"
-      />
     </div>
   );
 }
@@ -182,14 +236,9 @@ function Converter({ rates, uf }: { rates: FxRate[]; uf: FxRate | null }) {
   const amount = text.trim() ? parseAmount(text) : null;
   const invalid = text.trim() !== "" && amount === null;
   return (
-    <div
-      className="crm-rise rounded-xl border border-line bg-canvas-raised px-4 py-3.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)]"
-      style={{ "--i": 2 } as CSSProperties}
-    >
+    <div>
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor={inputId} className="text-[12px] font-medium text-ink-muted">
-          Monto
-        </label>
+        <label htmlFor={inputId} className="text-[12px] font-medium text-ink-muted">Monto</label>
         <div role="radiogroup" aria-label="Moneda" className="inline-flex rounded-md bg-canvas-sunken p-0.5">
           {available.map((c) => (
             <button
@@ -221,7 +270,7 @@ function Converter({ rates, uf }: { rates: FxRate[]; uf: FxRate | null }) {
       <div className="mt-2 flex min-h-[2.25rem] items-baseline justify-between gap-3" aria-live="polite">
         {amount !== null && rate ? (
           <>
-            <p data-testid="fx-result" className="text-[22px] font-semibold leading-none tracking-tight text-ink tabular-nums">
+            <p data-testid="fx-result" className="text-[18px] font-semibold leading-none tracking-tight text-ink tabular-nums">
               {fmtClp(toClp(amount, rate.clp))}
             </p>
             <p className="text-right text-[11px] text-ink-faint">× {fmtRate(rate.clp)}</p>
@@ -242,9 +291,7 @@ function Converter({ rates, uf }: { rates: FxRate[]; uf: FxRate | null }) {
 }
 
 /**
- * The figure rises to its value once, on arrival: a cue that it is today's. The text is set on
- * the element directly (no re-render per frame) and starts at the final value, so a reader, a
- * test or a reduced-motion setting always sees the real figure.
+ * The figure rises to its value once, on arrival.
  */
 function CountUp({ value, format }: { value: number; format: (n: number) => string }) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -292,18 +339,10 @@ function FollowUpsSkeleton() {
 
 /* ──────────────────────────────────────────────────────────────── format ── */
 
-/** A `YYYY-MM-DD` day as "30 mar", read as that calendar day (no time-zone shift). */
 function fmtDay(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
   if (!y || !m || !d) return day;
   return new Date(y, m - 1, d).toLocaleDateString("es-CL", { day: "numeric", month: "short" });
-}
-
-/** «publicado hoy», or the figure in force today and the day it was published («lun 30 mar»). */
-function publishedLabel(asOf: string): string {
-  if (asOf >= todayInSantiago()) return "publicado hoy";
-  const d = new Date(`${asOf}T12:00:00Z`);
-  return `vigente hoy · publicado el ${WEEKDAYS[(d.getUTCDay() + 6) % 7]} ${fmtDay(asOf)}`;
 }
 
 function fmtTime(iso: string): string {
