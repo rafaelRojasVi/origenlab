@@ -40,12 +40,15 @@ export function GoalStrip({
   navigate,
   activeFilter,
   onFilterChange,
+  layout = "strip",
 }: {
   items: OpportunityCardData[];
   calls: CallDay[];
   navigate: Navigate;
   activeFilter: StripFilter;
   onFilterChange: (f: StripFilter) => void;
+  /** `strip`: four tiles in a row (default). `stack`: one column, for Hoy's side column («Tu semana»). */
+  layout?: "strip" | "stack";
 }) {
   const { session } = useAuthSession();
   const seesMoney = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
@@ -69,7 +72,7 @@ export function GoalStrip({
     <section
       aria-label="Números del día"
       data-testid="goal-strip"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line lg:grid-cols-4"
+      className={`grid gap-px overflow-hidden rounded-xl border border-line bg-line ${layout === "stack" ? "grid-cols-1" : "grid-cols-2 lg:grid-cols-4"}`}
     >
       {/* Meta del mes */}
       {seesMoney ? (

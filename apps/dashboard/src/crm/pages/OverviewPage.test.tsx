@@ -367,32 +367,26 @@ describe("Hoy · lecturas en paralelo", () => {
 });
 
 describe("Hoy · orden", () => {
-  it("shows the quote number and the rates in the tools bar above the queue (not buried at the bottom)", async () => {
+  it("keeps the tools in the side column: Tu semana, Pendientes, quote number, rates, in that order", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // Hoy v3: quote-number-box and FX are in the tools bar above the queue, not in the aside.
-    const box = await screen.findByTestId("quote-number-box");
-    expect(box).toBeInTheDocument();
-    // FX loads lazily — wait for it.
-    const usd = await screen.findByTestId("fx-USD");
-    expect(usd).toBeInTheDocument();
-    // Both are NOT inside the complementary aside (which only holds Pendientes + WebStats).
-    const side = screen.getByRole("complementary");
-    expect(side).not.toContainElement(box);
-    expect(side).not.toContainElement(usd);
+    const side = await screen.findByRole("complementary");
+    const strip = await within(side).findByTestId("goal-strip");
+    const box = await within(side).findByTestId("quote-number-box");
+    const usd = await within(side).findByTestId("fx-USD");
+    const before = (x: Element, y: Element) => Boolean(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(before(strip, box)).toBe(true);
+    expect(before(box, usd)).toBe(true);
   });
 
-
-  it("puts the tools bar above the queue — rates and quote number precede «Para hoy»", async () => {
+  it("shows the week strip next to the date, with «atrasado» and «hoy» first", async () => {
     respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE, "/v2/workspace/drive": DRIVE });
     render(<OverviewPage navigate={() => undefined} />);
-    // Hoy v3: tools bar (rates, quote number) is above the unified queue.
-    const heading = await screen.findByRole("heading", { level: 2, name: "Para hoy" });
-    const usd = await screen.findByTestId("fx-USD");
-    const quotes = await screen.findByTestId("quote-number-box");
-    // Tools bar comes before the queue in the document.
-    expect(heading.compareDocumentPosition(usd) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
-    expect(heading.compareDocumentPosition(quotes) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    const week = await screen.findByTestId("hoy-week");
+    const cells = within(week).getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(cells[0]).toMatch(/atrasado$/);
+    expect(cells[1]).toMatch(/hoy$/);
+    expect(cells.length).toBeGreaterThanOrEqual(5);
   });
 });
 

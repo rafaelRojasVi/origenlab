@@ -278,7 +278,7 @@ afterEach(() => {
 });
 
 describe("«Tareas» on the page", () => {
-  it("is one list: overdue first with the owner on escalated rows, then the rest due today", () => {
+  it("is one list: my own first, then the team's overdue with the owner on escalated rows, then the rest due today", () => {
     // Each task on a SEPARATE case so the dedup-by-opportunity_id keeps all four rows.
     // Order is by waitMs desc: theirs8 (8 d), theirs4 (4 d, plain DueTask), mine4 (3 d, mine), today (0).
     const mine = { ...task("mine4", "2026-10-03T12:00:00Z"), owner: "Ventas" };
@@ -294,7 +294,7 @@ describe("«Tareas» on the page", () => {
     const panel = screen.getByTestId("today-para-ti");
     expect(panel).toHaveTextContent("Tareas");
     expect(within(panel).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
-      "today-task-theirs8", "today-task-theirs4", "today-task-mine4", "today-task-today",
+      "today-task-mine4", "today-task-theirs8", "today-task-theirs4", "today-task-today",
     ]);
     expect(within(within(panel).getByTestId("today-task-theirs8")).getByTestId("today-owner-label")).toHaveTextContent("de Tatiana");
     expect(within(within(panel).getByTestId("today-task-mine4")).queryByTestId("today-owner-label")).toBeNull();

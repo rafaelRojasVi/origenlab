@@ -39,6 +39,7 @@ import {
   useMayRunCaseCommands,
 } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
+import { planNextSteps, queueKindOf, type NextStep, type StepGroup, type StepPlan } from "../nextSteps";
 import { composeInSharedMailbox, gmailMessageId, inSharedMailbox } from "../gmailLinks";
 import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
@@ -60,14 +61,13 @@ import {
   type DueTask,
   type FollowUp,
   type OverdueTask,
-  type QueueItem,
   useHomeFilter,
 } from "../today";
 
 /** Local filter over the unified «Para hoy» queue by row kind, or null for all. */
-export type QueueKindFilter = "reply" | "cotizar" | "followup" | "task" | null;
+export type QueueKindFilter = "reply" | "cotizar" | "followup" | "pausa" | "task" | null;
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
-import { Button, FormField, Modal, Segmented, TextInput, fmtDate, toast } from "../ui";
+import { Button, FormField, Modal, Segmented, TextInput, buttonClass, fmtDate, toast } from "../ui";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
 import { CaseDrawer } from "../drawer/CaseDrawer";
@@ -166,6 +166,7 @@ export function TodayBody({
 
   const fullQueue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
   const queue = useMemo(() => filterQueue(fullQueue, view), [fullQueue, view]);
+  const plan = useMemo(() => planNextSteps(items, at, me, 7, (s) => HOME_FILTER_KINDS[view].has(queueKindOf(s))), [items, at, me, view]);
   const showDecidir = HOME_FILTER_KINDS[view].has("decidir");
 
   // Forwarded requests — fetched separately, appended to the end of the queue.
@@ -239,7 +240,7 @@ export function TodayBody({
 
           {/* ─── «Para hoy» unified queue ─── */}
           <ParaTiSection
-            queue={queue}
+            plan={plan}
             forwards={forwards}
             goneIds={goneIds}
             navigate={inPlace}
@@ -336,6 +337,7 @@ const CHIP: Record<string, { label: string; cls: string; color: string }> = {
   cotizar: { label: "Cotizar",     cls: "bg-brand-50 text-accent", color: "text-accent" },
   task:    { label: "Tarea",       cls: "bg-bad-bg text-bad",     color: "text-bad" },
   followup:{ label: "Seguimiento", cls: "bg-good-bg text-good",   color: "text-good" },
+  pausa:   { label: "Vuelve de pausa", cls: "bg-warn-bg text-warn", color: "text-warn" },
   forward: { label: "Decidir",     cls: "bg-info-bg text-info",   color: "text-info" },
 };
 
@@ -432,7 +434,7 @@ function CotizarQueueRow({
 
   return (
     <li
-      className="crm-rise group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30"
+      className="crm-rise group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-canvas-sunken/30"
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-cotizar-${card.opportunity_id}`}
     >
@@ -495,11 +497,32 @@ function CotizarQueueRow({
  * Each section has a heading, hint and count; rows are oldest-wait-first within every section.
  * A `data-testid="today-para-ti"` wrapper is kept so existing tests can still find the area.
  */
+const GROUPS: { key: StepGroup; title: string; hint: string; mark: string }[] = [
+  { key: "atrasado", title: "Atrasado", hint: "volvieron de pausa o vencieron y nadie los retomó", mark: "bg-bad" },
+  { key: "hoy", title: "Hoy", hint: "primero los clientes que esperan", mark: "bg-ink" },
+  { key: "manana", title: "Mañana", hint: "si hoy no responden", mark: "bg-line-strong" },
+  { key: "semana", title: "Esta semana", hint: "lo que viene", mark: "bg-line-strong" },
+];
+
+const FILTER_OF: Record<NextStep["kind"], Exclude<QueueKindFilter, null>> = {
+  responder: "reply", cotizar: "cotizar", seguimiento: "followup", pausa: "pausa", tarea: "task",
+};
+const FILTER_LABEL: Record<Exclude<QueueKindFilter, null>, string> = {
+  reply: "Responder", cotizar: "Cotizar", followup: "Seguimiento", pausa: "Pausas", task: "Tareas",
+};
+const FILTER_ORDER: Exclude<QueueKindFilter, null>[] = ["reply", "cotizar", "followup", "pausa", "task"];
+
+function dueLabel(step: NextStep): string {
+  if (step.dueDays === 1) return "mañana";
+  return new Intl.DateTimeFormat("es-CL", { weekday: "short", day: "numeric" }).format(step.due).replace(".", "");
+}
+
+/** The agenda: next steps grouped by when they are due; today's rows keep every existing action. */
 function ParaTiSection({
-  queue, forwards, goneIds, navigate, mayDecide, mayAuthor, onChanged, onClearItem, onFwdDone, onClose, now,
+  plan, forwards, goneIds, navigate, mayDecide, mayAuthor, onChanged, onClearItem, onFwdDone, onClose, now,
   queueFilter, onQueueFilterChange,
 }: {
-  queue: QueueItem[];
+  plan: StepPlan;
   forwards: ForwardedRequest[];
   goneIds: Set<string>;
   navigate: Navigate;
@@ -514,162 +537,116 @@ function ParaTiSection({
   queueFilter: QueueKindFilter;
   onQueueFilterChange: (f: QueueKindFilter) => void;
 }) {
-  // Live items (not yet animated out)
-  const liveQueue = queue.filter((q) => !goneIds.has(q.opportunity_id));
-  const liveForwards = forwards;
+  const live = plan.steps.filter((s) => !goneIds.has(s.card.opportunity_id));
+  if (live.length === 0 && forwards.length === 0) return null;
 
-  if (liveQueue.length === 0 && liveForwards.length === 0) return null;
-
-  // Per-kind counts for filter chips (always show totals regardless of filter)
-  const counts = {
-    all: liveQueue.length + liveForwards.length,
-    reply:   liveQueue.filter((q) => q.kind === "reply").length,
-    cotizar: liveQueue.filter((q) => q.kind === "cotizar").length,
-    followup:liveQueue.filter((q) => q.kind === "followup").length,
-    task:    liveQueue.filter((q) => q.kind === "task").length,
-  };
-
-  // Apply filter: "decidir" (forwards) only shown in "all"
-  const visibleQueue = queueFilter ? liveQueue.filter((q) => q.kind === queueFilter) : liveQueue;
-  const visibleForwards = queueFilter ? [] : liveForwards;
-  const totalVisible = visibleQueue.length + visibleForwards.length;
+  // The title line, the chips and the week agree: they count what can be done today, not the projections.
+  const actionable = live.filter((s) => s.item !== null);
+  const counts: Record<Exclude<QueueKindFilter, null>, number> = { reply: 0, cotizar: 0, followup: 0, pausa: 0, task: 0 };
+  for (const s of actionable) counts[FILTER_OF[s.kind]] += 1;
+  const all = actionable.length + forwards.length;
+  const visible = queueFilter ? live.filter((s) => FILTER_OF[s.kind] === queueFilter) : live;
+  const visibleForwards = queueFilter ? [] : forwards;
+  const totalVisible = visible.filter((s) => s.item !== null).length + visibleForwards.length;
 
   const chipCls = (active: boolean) =>
-    `inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
-      active
-        ? "border-ink bg-ink text-canvas"
-        : "border-line-strong bg-canvas-raised text-ink-muted hover:bg-canvas-sunken hover:text-ink"
+    `inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+      active ? "border-ink bg-ink text-canvas" : "border-line-strong bg-canvas-raised text-ink-muted hover:bg-canvas-sunken hover:text-ink"
     }`;
   const chipCount = (n: number, active: boolean) => (
     <span className={`text-[11px] font-semibold tabular-nums ${active ? "opacity-75" : "text-ink-faint"}`}>{n}</span>
   );
 
+  let index = 0;
+  const row = (s: NextStep) => {
+    const i = index++;
+    const item = s.item;
+    if (!item) return <UpcomingRow key={s.id} step={s} index={i} navigate={navigate} />;
+    const clear = () => onClearItem(s.card.opportunity_id);
+    if (item.kind === "reply") {
+      return <ReplyQueueRow key={s.id} reply={item.reply} waitMs={item.waitMs} index={i} navigate={navigate} mayDecide={mayDecide} mayAuthor={mayAuthor} onChanged={onChanged} onClearItem={clear} now={now} />;
+    }
+    if (item.kind === "cotizar") {
+      return <CotizarQueueRow key={s.id} item={item} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} />;
+    }
+    if (item.kind === "followup") {
+      return <FollowUpQueueRow key={s.id} followUp={item.followUp} waitMs={item.waitMs} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} onClose={onClose} now={now} />;
+    }
+    return <TaskQueueRow key={s.id} due={item.due} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} now={now} pause={s.pause} />;
+  };
+
   return (
     <section className="rounded-xl border border-line bg-canvas-raised" data-testid="today-para-ti">
-      {/* Header */}
-      <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1.5 pt-3">
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 pb-2.5 pt-3">
         <h2 className="text-[14px] font-semibold text-ink">Para hoy</h2>
         <span className="text-[12px] tabular-nums text-ink-muted">
-          {queueFilter && totalVisible !== counts.all ? `${totalVisible} de ${counts.all}` : counts.all}
+          {queueFilter && totalVisible !== all ? `${totalVisible} de ${all}` : all}
         </span>
-        <span className="ml-1 text-[11.5px] text-ink-faint">
-          Responder primero, luego cotizar, seguimientos y tareas vencidas.
-        </span>
+        <div className="ml-auto flex flex-wrap gap-1.5" role="group" aria-label="Filtrar la lista">
+          <button type="button" className={chipCls(!queueFilter)} onClick={() => onQueueFilterChange(null)} aria-pressed={!queueFilter}>
+            Todo {chipCount(all, !queueFilter)}
+          </button>
+          {FILTER_ORDER.filter((k) => counts[k] > 0).map((k) => (
+            <button key={k} type="button" className={chipCls(queueFilter === k)} onClick={() => onQueueFilterChange(queueFilter === k ? null : k)} aria-pressed={queueFilter === k}>
+              {FILTER_LABEL[k]} {chipCount(counts[k], queueFilter === k)}
+            </button>
+          ))}
+        </div>
       </header>
 
-      {/* Filter chips */}
-      <div className="flex flex-wrap gap-1.5 px-4 pb-3" role="group" aria-label="Filtrar la lista">
-        <button type="button" className={chipCls(!queueFilter)} onClick={() => onQueueFilterChange(null)} aria-pressed={!queueFilter}>
-          Todo {chipCount(counts.all, !queueFilter)}
-        </button>
-        {counts.reply > 0 && (
-          <button type="button" className={chipCls(queueFilter === "reply")} onClick={() => onQueueFilterChange(queueFilter === "reply" ? null : "reply")} aria-pressed={queueFilter === "reply"}>
-            Responder {chipCount(counts.reply, queueFilter === "reply")}
-          </button>
-        )}
-        {counts.cotizar > 0 && (
-          <button type="button" className={chipCls(queueFilter === "cotizar")} onClick={() => onQueueFilterChange(queueFilter === "cotizar" ? null : "cotizar")} aria-pressed={queueFilter === "cotizar"}>
-            Cotizar {chipCount(counts.cotizar, queueFilter === "cotizar")}
-          </button>
-        )}
-        {counts.followup > 0 && (
-          <button type="button" className={chipCls(queueFilter === "followup")} onClick={() => onQueueFilterChange(queueFilter === "followup" ? null : "followup")} aria-pressed={queueFilter === "followup"}>
-            Seguimiento {chipCount(counts.followup, queueFilter === "followup")}
-          </button>
-        )}
-        {counts.task > 0 && (
-          <button type="button" className={chipCls(queueFilter === "task")} onClick={() => onQueueFilterChange(queueFilter === "task" ? null : "task")} aria-pressed={queueFilter === "task"}>
-            Tareas {chipCount(counts.task, queueFilter === "task")}
-          </button>
-        )}
-      </div>
+      {GROUPS.map((g) => {
+        const steps = visible.filter((s) => s.group === g.key);
+        const fwd = g.key === "hoy" ? visibleForwards : [];
+        if (steps.length === 0 && fwd.length === 0) return null;
+        return (
+          <div key={g.key} data-testid={`today-group-${g.key}`}>
+            <div className="flex items-center gap-2 border-t border-line bg-canvas-sunken/60 px-4 py-1.5">
+              <i className={`h-2 w-2 rounded-full ${g.mark}`} aria-hidden="true" />
+              <h3 className="text-[11.5px] font-bold uppercase tracking-wider text-ink">{g.title}</h3>
+              <span className="text-[11.5px] font-semibold tabular-nums text-ink-muted">{steps.length + fwd.length}</span>
+              <span className="text-[11.5px] text-ink-faint">· {g.hint}</span>
+            </div>
+            <ul className="divide-y divide-line border-t border-line">
+              {steps.map(row)}
+              {fwd.map((f) => (
+                <ForwardQueueRow key={f.id} item={f} index={index++} navigate={navigate} mayDecide={mayDecide} onDone={onFwdDone} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
 
-      {/* Unified queue list */}
-      <ul className="divide-y divide-line border-t border-line">
-        {visibleQueue.map((item, i) => {
-          if (item.kind === "reply") {
-            return (
-              <ReplyQueueRow
-                key={item.opportunity_id}
-                reply={item.reply}
-                waitMs={item.waitMs}
-                index={i}
-                navigate={navigate}
-                mayDecide={mayDecide}
-                mayAuthor={mayAuthor}
-                onChanged={onChanged}
-                onClearItem={() => onClearItem(item.opportunity_id)}
-                now={now}
-              />
-            );
-          }
-          if (item.kind === "cotizar") {
-            return (
-              <CotizarQueueRow
-                key={item.opportunity_id}
-                item={item}
-                index={i}
-                navigate={navigate}
-                mayDecide={mayDecide}
-                onChanged={onChanged}
-                onClearItem={() => onClearItem(item.opportunity_id)}
-              />
-            );
-          }
-          if (item.kind === "followup") {
-            return (
-              <FollowUpQueueRow
-                key={item.opportunity_id}
-                followUp={item.followUp}
-                waitMs={item.waitMs}
-                index={i}
-                navigate={navigate}
-                mayDecide={mayDecide}
-                onChanged={onChanged}
-                onClearItem={() => onClearItem(item.opportunity_id)}
-                onClose={onClose}
-                now={now}
-              />
-            );
-          }
-          // kind === "task"
-          return (
-            <TaskQueueRow
-              key={item.opportunity_id}
-              due={item.due}
-              index={i}
-              navigate={navigate}
-              mayDecide={mayDecide}
-              onChanged={onChanged}
-              onClearItem={() => onClearItem(item.opportunity_id)}
-              now={now}
-            />
-          );
-        })}
-        {visibleForwards.map((f, i) => (
-          <ForwardQueueRow
-            key={f.id}
-            item={f}
-            index={visibleQueue.length + i}
-            navigate={navigate}
-            mayDecide={mayDecide}
-            onDone={onFwdDone}
-          />
-        ))}
-      </ul>
-
-      {/* Filtered empty: filter is on and nothing shows */}
       {totalVisible === 0 && queueFilter ? (
-        <p className="px-4 py-6 text-center text-[13px] text-ink-muted">
-          No hay{" "}
-          {{ reply: "respuestas", cotizar: "solicitudes por cotizar", followup: "seguimientos", task: "tareas" }[queueFilter]}{" "}
-          en este momento.{" "}
-          <button type="button" onClick={() => onQueueFilterChange(null)} className="font-medium text-accent hover:underline">
-            Ver todo
-          </button>
+        <p className="border-t border-line px-4 py-6 text-center text-[13px] text-ink-muted">
+          No hay {FILTER_LABEL[queueFilter].toLowerCase()} en este momento.{" "}
+          <button type="button" onClick={() => onQueueFilterChange(null)} className="font-medium text-accent hover:underline">Ver todo</button>
         </p>
       ) : null}
     </section>
+  );
+}
+
+/** A step that is not due yet: what comes and when, with the case a click away. */
+function UpcomingRow({ step, index, navigate }: { step: NextStep; index: number; navigate: Navigate }) {
+  const kind = step.kind === "seguimiento" ? "followup" : step.kind === "pausa" ? "pausa" : "task";
+  return (
+    <li
+      className="crm-rise flex items-center gap-3 px-4 py-2 text-ink-muted transition-colors hover:bg-canvas-sunken/30"
+      style={{ "--i": Math.min(index, 10) } as CSSProperties}
+      data-testid={`today-upcoming-${step.id}`}
+    >
+      <span className="inline-flex w-14 shrink-0 items-center justify-center rounded-full border border-line py-0.5 text-[11.5px] font-semibold tabular-nums text-ink-faint">
+        {dueLabel(step)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <KindLabel kind={kind} />
+        <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[13px]">
+          <CaseLink card={step.card} navigate={navigate} />
+          <span className="truncate text-[12.5px] text-ink-faint">{step.label}{step.pause?.hint ? ` · ${step.pause.hint}` : ""}</span>
+        </p>
+      </div>
+      <Button onClick={() => navigate("oportunidades", step.card.opportunity_id)}>Ver caso</Button>
+    </li>
   );
 }
 
@@ -783,7 +760,7 @@ function ReplyQueueRow({
   ].join(" · ");
   return (
     <li
-      className={`crm-rise group relative flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      className={`crm-rise group relative flex items-center gap-3 px-4 py-2 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-reply-${card.opportunity_id}`}
     >
@@ -909,9 +886,11 @@ function replyWaitLabel(at: string, now: Date): string {
 /* ─────────────────────────────────────────────────── Task row ── */
 
 function TaskQueueRow({
-  due, index, navigate, mayDecide, onChanged, onClearItem, now,
+  due, index, navigate, mayDecide, onChanged, onClearItem, now, pause = null,
 }: {
   due: DueTask | OverdueTask;
+  /** A «Retomar: …» task: the case came back from a pause; shown as such, with the reason. */
+  pause?: { reason: string; hint: string | null } | null;
   index: number;
   navigate: Navigate;
   mayDecide: boolean;
@@ -927,6 +906,7 @@ function TaskQueueRow({
   const keys = useRef({ done: newCaseCommandKey(), create: newCaseCommandKey(), cancel: newCaseCommandKey() });
   // "escalated" is only on OverdueTask
   const escalated = "escalated" in due ? (due as OverdueTask).escalated : false;
+  const pauseTo = card.contact?.address && !isMaskedAddress(card.contact.address) ? card.contact.address : null;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -975,29 +955,37 @@ function TaskQueueRow({
   const menuItem = "flex w-full items-center rounded px-2.5 py-1.5 text-left text-[12.5px] text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none disabled:opacity-50";
   return (
     <li
-      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      className={`crm-rise group relative flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-task-${task.task_id}`}
     >
       <div className="min-w-[12rem] flex-1">
-        <KindLabel kind="task" />
-        <p className="text-[13px] text-ink">{task.title}</p>
+        <KindLabel kind={pause ? "pausa" : "task"} />
+        <p className="flex flex-wrap items-baseline gap-x-2 text-[13px] text-ink">
+          <CaseLink card={card} navigate={navigate} />
+          <span className="text-ink-muted">{pause ? <>En pausa · {pause.reason}</> : task.title}</span>
+        </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-[11px] text-ink-muted">
           <span className={overdueDays > 0 ? "font-medium text-bad" : "font-medium text-warn"}>{dueText(overdueDays)}</span>
           {escalated && task.owner ? (
             <><span aria-hidden="true">·</span><span data-testid="today-owner-label">de {task.owner}</span></>
           ) : null}
-          <span aria-hidden="true">·</span>
-          <CaseLink card={card} navigate={navigate} />
+          {retakeHint(task.title) ? (
+            <><span aria-hidden="true">·</span><span data-testid="today-task-hint">→ {retakeHint(task.title)}</span></>
+          ) : null}
         </p>
-        {retakeHint(task.title) ? (
-          <p className="mt-0.5 text-[11px] text-ink-muted" data-testid="today-task-hint">
-            → {retakeHint(task.title)}
-          </p>
-        ) : null}
       </div>
       <div className="flex shrink-0 gap-2">
-        {/* Primary: open the case */}
+        {/* A returned pause: the step is to write and ask; the thread's address, when the viewer may see it. */}
+        {pause ? (
+          <a
+            className={buttonClass("secondary")}
+            href={composeInSharedMailbox(pauseTo, `Retomamos la cotización ${card.quote_numbers[0] ?? ""}`.trim())}
+            target="_blank" rel="noopener noreferrer" aria-label="Escribir en Gmail para retomar"
+          >
+            Escribir
+          </a>
+        ) : null}
         <Button variant="primary" onClick={() => navigate("oportunidades", card.opportunity_id)}>
           Abrir caso
         </Button>
@@ -1209,7 +1197,7 @@ function FollowUpQueueRow({
   ].join(" · ");
   return (
     <li
-      className={`crm-rise group relative flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
+      className={`crm-rise group relative flex items-center gap-3 px-4 py-2 transition-colors hover:bg-canvas-sunken/30 ${menuOpen ? "z-20" : ""} ${leaving ? "crm-row-out" : ""}`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={f.task ? `today-task-${f.task.task.task_id}` : `today-followup-${f.card.opportunity_id}`}
     >
@@ -1352,7 +1340,7 @@ function ForwardQueueRow({
 
   return (
     <li
-      className={`crm-rise flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5 transition-colors hover:bg-canvas-sunken/30`}
+      className={`crm-rise flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2 transition-colors hover:bg-canvas-sunken/30`}
       style={{ "--i": Math.min(index, 10) } as CSSProperties}
       data-testid={`today-forward-${item.id}`}
     >

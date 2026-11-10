@@ -8,7 +8,8 @@ import { PendientesPanel } from "../todos/PendientesPanel";
 import { SANTIAGO, todayInSantiago } from "../marketing/calendar";
 import { TodayBody, type QueueKindFilter } from "./TodayBody";
 import { GoalStrip, type StripFilter } from "./GoalStrip";
-import { buildParaTiQueue, filterQueue, useHomeFilter } from "../today";
+import { HOME_FILTER_KINDS, useHomeFilter } from "../today";
+import { planNextSteps, queueKindOf, type StepPlan } from "../nextSteps";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { WebStatsCard } from "../web/WebStatsCard";
 import { fetchQuoteNumbering } from "../quotes/quoteApi";
@@ -49,20 +50,6 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
       {/* Quiet header: date + N cosas para hoy */}
       <HoyMiniHeader pipeline={pipeline} />
 
-      {/* Goal strip: Meta · Seguimientos · Cotizar · Alcance */}
-      {pipeline.kind === "ready" ? (
-        <GoalStrip
-          items={pipeline.data.items}
-          calls={pipeline.data.calls ?? []}
-          navigate={navigate}
-          activeFilter={queueFilter === "followup" || queueFilter === "cotizar" ? queueFilter : null}
-          onFilterChange={handleStripFilter}
-        />
-      ) : null}
-
-      {/* Compact tools bar: next quote number + exchange rates, always above the queue */}
-      <HoyToolsBar pipeline={pipeline} />
-
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (
           <TodayBody
@@ -75,7 +62,17 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             onQueueFilterChange={setQueueFilter}
             aside={
               <>
+                <GoalStrip
+                  items={p.items}
+                  calls={p.calls ?? []}
+                  navigate={navigate}
+                  activeFilter={queueFilter === "followup" || queueFilter === "cotizar" ? queueFilter : null}
+                  onFilterChange={handleStripFilter}
+                  layout="stack"
+                />
                 <PendientesPanel cases={p.items} navigate={navigate} />
+                <HoyQuoteCard pipeline={pipeline} />
+                <LazyHoyFxCard />
                 <WebStatsCard />
               </>
             }
@@ -100,48 +97,57 @@ function HoyMiniHeader({ pipeline }: { pipeline: PipelineState }) {
   const [dateLabel] = useState(todayLabel);
 
   const homeFilter = useHomeFilter();
-  // Same queue as «Para hoy» below, so the header never disagrees with the list.
-  const queue = useMemo(
-    () => (pipeline.kind === "ready" ? filterQueue(buildParaTiQueue(pipeline.data.items, new Date(), me), homeFilter) : null),
+  // The same plan «Para hoy» renders, so the header and the week never disagree with the list.
+  const plan = useMemo<StepPlan | null>(
+    () => (pipeline.kind === "ready"
+      ? planNextSteps(pipeline.data.items, new Date(), me, 7, (st) => HOME_FILTER_KINDS[homeFilter].has(queueKindOf(st)))
+      : null),
     [pipeline, me, homeFilter],
   );
-  const totalHoy = queue ? queue.length : null;
+  const totalHoy = plan ? plan.steps.filter((st) => st.item !== null).length : null;
 
   const hintText = (() => {
-    if (!queue) return null;
-    const replies = queue.filter((q) => q.kind === "reply").length;
+    if (!plan) return null;
+    const replies = plan.steps.filter((st) => st.kind === "responder").length;
     if (replies >= 3) return `${replies} clientes esperan respuesta · empieza por ahí`;
     if (replies > 0) return replies === 1 ? "1 cliente espera respuesta" : `${replies} clientes esperan respuesta`;
-    return null;
+    return plan.overdue > 0 ? `${plan.overdue} ${plan.overdue === 1 ? "atrasada" : "atrasadas"} · retómalas primero` : null;
   })();
 
   return (
-    <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1" data-testid="hoy-mini-header">
-      <h1 className="text-[17px] font-semibold tracking-tight text-ink">
-        {dateLabel}
-        {totalHoy !== null ? (
-          <> · <span className="font-bold">{totalHoy} {totalHoy === 1 ? "cosa" : "cosas"} para hoy</span></>
-        ) : null}
-      </h1>
-      {hintText ? (
-        <p className="text-[13px] text-ink-muted">{hintText}</p>
-      ) : null}
+    <header className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="hoy-mini-header">
+      <div>
+        <h1 className="text-[17px] font-semibold tracking-tight text-ink">
+          {dateLabel}
+          {totalHoy !== null ? (
+            <> · <span className="font-bold">{totalHoy} {totalHoy === 1 ? "cosa" : "cosas"} para hoy</span></>
+          ) : null}
+        </h1>
+        {hintText ? <p className="text-[13px] text-ink-muted">{hintText}</p> : null}
+      </div>
+      {plan ? <WeekStrip plan={plan} /> : null}
     </header>
   );
 }
 
-/* ──────────────────────────────────────────── top tools bar ── */
+const DAY_SHORT = new Intl.DateTimeFormat("es-CL", { weekday: "short" });
 
-/**
- * Two compact cards directly under the date line: the next quote number and the day's exchange
- * rates. FX is lazy (never blocks the queue). On narrow screens the cards stack.
- */
-function HoyToolsBar({ pipeline }: { pipeline: PipelineState }) {
+/** The week at a glance: overdue, today and the next days, each with how many steps fall on it. */
+function WeekStrip({ plan }: { plan: StepPlan }) {
+  const cell = "flex h-12 w-[3.4rem] flex-col items-center justify-center rounded-lg border text-[10.5px] leading-tight";
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <HoyQuoteCard pipeline={pipeline} />
-      <LazyHoyFxCard />
-    </div>
+    <ol className="ml-auto flex gap-1" aria-label="Semana" data-testid="hoy-week">
+      <li className={`${cell} ${plan.overdue > 0 ? "border-bad/40 text-bad" : "border-line text-ink-faint"}`}>
+        <span className="text-[15px] font-bold tabular-nums leading-none">{plan.overdue}</span>
+        <span>atrasado</span>
+      </li>
+      {plan.days.filter((d) => d.day.getDay() !== 0 && d.day.getDay() !== 6).slice(0, 5).map((d, i) => (
+        <li key={d.day.toISOString()} className={`${cell} ${i === 0 ? "border-ink bg-ink text-canvas" : "border-line bg-canvas-raised text-ink-muted"}`}>
+          <span className="text-[15px] font-bold tabular-nums leading-none">{d.count}</span>
+          <span>{i === 0 ? "hoy" : i === 1 ? "mañana" : DAY_SHORT.format(d.day).replace(".", "")}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
