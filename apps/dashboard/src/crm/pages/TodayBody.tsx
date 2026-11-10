@@ -541,7 +541,7 @@ function ParaTiSection({
   );
 
   return (
-    <section className="overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="today-para-ti">
+    <section className="rounded-xl border border-line bg-canvas-raised" data-testid="today-para-ti">
       {/* Header */}
       <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 pb-1.5 pt-3">
         <h2 className="text-[14px] font-semibold text-ink">Para hoy</h2>
