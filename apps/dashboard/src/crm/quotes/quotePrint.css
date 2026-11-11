@@ -246,7 +246,7 @@
 
 .qp-sign { display: flex; flex-direction: column; gap: 3px; font-size: 13px; min-width: 200px; }
 .qp-sign-greet { color: #4b5c57; font-size: 12.5px; }
-.qp-sign-line { display: block; width: 190px; margin: 26px 0 6px; border-top: 1px solid #9fb1ac; }
+.qp-sign-line { display: block; width: 190px; margin: 20px 0 6px; border-top: 1px solid #9fb1ac; }
 .qp-sign-name { font-size: 14px; font-weight: 600; color: #14201d; }
 .qp-sign-title { font-size: 12px; color: #4b5c57; }
 .qp-draft-note { margin-top: 6px; }
@@ -258,7 +258,9 @@
 
 /* Footer: pushed to the bottom of the last page via margin-top: auto. */
 .qp-foot { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; padding-top: 16px; }
-.qp-foot .qp-right { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+/* Contact lines stay whole: wrapped, «Valdivia» and «7816» each took a line and the block outgrew page 1. */
+.qp-foot .qp-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 11.5px; text-align: right; }
+.qp-foot .qp-right > * { white-space: nowrap; }
 
 /* ── BORRADOR watermark ───────────────────────────────────────────────────────*/
 
