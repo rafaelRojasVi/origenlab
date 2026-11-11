@@ -42,6 +42,8 @@ import {
 } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
 import { planNextSteps, queueKindOf, type NextStep, type StepGroup, type StepPlan } from "../nextSteps";
+import { CaseInline } from "../drawer/CaseDrawer";
+import { HOY_TABS, QueueIcon, QueueListRow, stepAction, stepIcon, type HoyTab } from "./HoyQueueParts";
 import { composeInSharedMailbox, gmailMessageId, inSharedMailbox } from "../gmailLinks";
 import { isMaskedAddress } from "../redaction";
 import { useAuthSession } from "../../context/AuthSessionContext";
@@ -221,7 +223,7 @@ export function TodayBody({
   return (
     <OpenCaseContext.Provider value={openCase}>
     <div className="space-y-4" aria-busy={refreshing || undefined}>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-4">
 
           {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue; a page
@@ -271,7 +273,7 @@ export function TodayBody({
 
         </div>
         {/* Tools at hand: the next quote number and the day's exchange rates. */}
-        <aside className="min-w-0 space-y-4 lg:sticky lg:top-4 lg:self-start">{aside}</aside>
+        <aside className="min-w-0 space-y-4 lg:h-[calc(100vh-11rem)] lg:min-h-[32rem] lg:overflow-y-auto lg:pr-1">{aside}</aside>
       </div>
 
       {closing ? (
@@ -450,11 +452,6 @@ function CotizarQueueRow({
         <p className="truncate text-[14px] font-semibold text-ink group-hover:text-accent">{name}</p>
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
           <span className="truncate">{what}</span>
-          {!card.last_note?.body.startsWith("Calificación:") ? (
-            <span className="inline-flex shrink-0 items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent" data-testid="today-unqualified-chip">
-              Sin calificar
-            </span>
-          ) : null}
         </p>
       </button>
       <div className="flex shrink-0 gap-2">
@@ -539,6 +536,8 @@ function ParaTiSection({
   queueFilter: QueueKindFilter;
   onQueueFilterChange: (f: QueueKindFilter) => void;
 }) {
+  const [tab, setTab] = useState<HoyTab>("ahora");
+  const [selected, setSelected] = useState<string | null>(null);
   const live = plan.steps.filter((s) => !goneIds.has(s.card.opportunity_id));
   if (live.length === 0 && forwards.length === 0) return null;
 
@@ -580,12 +579,39 @@ function ParaTiSection({
     return <TaskQueueRow key={s.id} due={item.due} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} now={now} pause={s.pause} />;
   };
 
+  const tabDef = HOY_TABS.find((t) => t.key === tab) ?? HOY_TABS[0];
+  const inTab = (k: HoyTab) => visible.filter((s) => (HOY_TABS.find((t) => t.key === k)?.groups ?? []).includes(s.group));
+  // In the order the list shows them: by group, then the plan's order inside each.
+  const listed = GROUPS.filter((g) => tabDef.groups.includes(g.key)).flatMap((g) => inTab(tab).filter((s) => s.group === g.key));
+  const listedForwards = tab === "ahora" ? visibleForwards : [];
+  const keys = [...listed.map((s) => s.id), ...listedForwards.map((f) => `fwd:${f.id}`)];
+  const current = selected && keys.includes(selected) ? selected : (keys[0] ?? null);
+  const pos = current ? keys.indexOf(current) : -1;
+  const curStep = listed.find((s) => s.id === current) ?? null;
+  const curForward = current?.startsWith("fwd:") ? listedForwards.find((f) => `fwd:${f.id}` === current) ?? null : null;
+  const goNext = () => setSelected(keys[pos + 1] ?? keys[pos - 1] ?? null);
+
   return (
-    <section className="rounded-xl border border-line bg-canvas-raised" data-testid="today-para-ti">
-      <header className="flex flex-wrap items-center gap-x-2 gap-y-2 px-4 pb-2.5 pt-3">
-        <h2 className="text-[14px] font-semibold text-ink">Para hoy</h2>
+    <section
+      className="flex flex-col rounded-xl border border-line bg-canvas-raised lg:h-[calc(100vh-11rem)] lg:min-h-[32rem]"
+      data-testid="today-para-ti"
+    >
+      <header className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-line px-3 py-2.5">
+        <div className="flex rounded-lg bg-canvas-sunken p-0.5" role="tablist" aria-label="Cuándo">
+          {HOY_TABS.map((t) => {
+            const n = t.key === "ahora" ? inTab(t.key).length + visibleForwards.length : inTab(t.key).length;
+            const on = t.key === tabDef.key;
+            return (
+              <button key={t.key} type="button" role="tab" aria-selected={on} onClick={() => { setTab(t.key); setSelected(null); }}
+                className={`h-7 rounded-md px-3 text-[12.5px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${on ? "bg-canvas-raised text-ink shadow-[0_0_0_1px] shadow-line" : "text-ink-muted hover:text-ink"}`}
+                data-testid={`hoy-tab-${t.key}`}>
+                {t.label} <span className={`ml-1 tabular-nums ${on ? "text-accent" : "text-ink-faint"}`}>{n}</span>
+              </button>
+            );
+          })}
+        </div>
         <span className="text-[12px] tabular-nums text-ink-muted">
-          {queueFilter && totalVisible !== all ? `${totalVisible} de ${all}` : all}
+          {queueFilter && totalVisible !== all ? `${totalVisible} de ${all} para hoy` : `${all} para hoy`}
         </span>
         <div className="ml-auto flex flex-wrap gap-1.5" role="group" aria-label="Filtrar la lista">
           <button type="button" className={chipCls(!queueFilter)} onClick={() => onQueueFilterChange(null)} aria-pressed={!queueFilter}>
@@ -599,34 +625,78 @@ function ParaTiSection({
         </div>
       </header>
 
-      {GROUPS.map((g) => {
-        const steps = visible.filter((s) => s.group === g.key);
-        const fwd = g.key === "hoy" ? visibleForwards : [];
-        if (steps.length === 0 && fwd.length === 0) return null;
-        return (
-          <div key={g.key} data-testid={`today-group-${g.key}`}>
-            <div className="flex items-center gap-2 border-t border-line bg-canvas-sunken/60 px-4 py-1.5">
-              <i className={`h-2 w-2 rounded-full ${g.mark}`} aria-hidden="true" />
-              <h3 className="text-[11.5px] font-bold uppercase tracking-wider text-ink">{g.title}</h3>
-              <span className="text-[11.5px] font-semibold tabular-nums text-ink-muted">{steps.length + fwd.length}</span>
-              <span className="text-[11.5px] text-ink-faint">· {g.hint}</span>
-            </div>
-            <ul className="divide-y divide-line border-t border-line">
-              {steps.map(row)}
-              {fwd.map((f) => (
-                <ForwardQueueRow key={f.id} item={f} index={index++} navigate={navigate} mayDecide={mayDecide} onDone={onFwdDone} />
-              ))}
-            </ul>
-          </div>
-        );
-      })}
+      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)]">
+        <ul className="min-h-0 overflow-y-auto border-line lg:border-r" aria-label="Lista de trabajo" data-testid="hoy-queue-list">
+          {GROUPS.filter((g) => tabDef.groups.includes(g.key)).map((g) => {
+            const steps = listed.filter((s) => s.group === g.key);
+            const fwd = g.key === "hoy" ? listedForwards : [];
+            if (steps.length === 0 && fwd.length === 0) return null;
+            return (
+              <li key={g.key} data-testid={`today-group-${g.key}`}>
+                <div className="flex items-center gap-2 border-b border-line bg-canvas-sunken/60 px-3 py-1">
+                  <i className={`h-2 w-2 rounded-full ${g.mark}`} aria-hidden="true" />
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-ink">{g.title}</h3>
+                  <span className="text-[11px] font-semibold tabular-nums text-ink-muted">{steps.length + fwd.length}</span>
+                </div>
+                <ul>
+                  {steps.map((s) => (
+                    <QueueListRow key={s.id} step={s} selected={s.id === current} onSelect={() => setSelected(s.id)} />
+                  ))}
+                  {fwd.map((f) => (
+                    <li key={f.id}>
+                      <button type="button" onClick={() => setSelected(`fwd:${f.id}`)} aria-current={`fwd:${f.id}` === current || undefined}
+                        className={`grid w-full grid-cols-[1.75rem_minmax(0,1fr)] items-center gap-2.5 border-b border-line px-3 py-2 text-left ${`fwd:${f.id}` === current ? "bg-accent/10 shadow-[inset_3px_0_0] shadow-accent" : "hover:bg-canvas-sunken/60"}`}>
+                        <QueueIcon name="inbox" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-semibold text-ink">{f.customer.name || f.customer.company || f.customer.email || "Solicitud reenviada"}</span>
+                          <span className="block truncate text-[12px] text-ink-muted">Solicitud reenviada · decidir</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
+          {keys.length === 0 ? (
+            <li className="px-4 py-8 text-center text-[13px] text-ink-muted">
+              {queueFilter ? <>No hay {FILTER_LABEL[queueFilter].toLowerCase()} aquí. <button type="button" onClick={() => onQueueFilterChange(null)} className="font-medium text-accent hover:underline">Ver todo</button></> : "Nada aquí."}
+            </li>
+          ) : null}
+        </ul>
 
-      {totalVisible === 0 && queueFilter ? (
-        <p className="border-t border-line px-4 py-6 text-center text-[13px] text-ink-muted">
-          No hay {FILTER_LABEL[queueFilter].toLowerCase()} en este momento.{" "}
-          <button type="button" onClick={() => onQueueFilterChange(null)} className="font-medium text-accent hover:underline">Ver todo</button>
-        </p>
-      ) : null}
+        <div className="min-h-0 overflow-y-auto" data-testid="hoy-queue-detail">
+          {curStep || curForward ? (
+            <div className="space-y-4 p-4 lg:p-5">
+              <div className="flex items-center gap-2">
+                {curStep ? <QueueIcon name={stepIcon(curStep)} size="lg" /> : <QueueIcon name="inbox" size="lg" />}
+                <span className="text-[12px] font-semibold uppercase tracking-wider text-ink-muted">{curStep ? stepAction(curStep) : "Solicitud reenviada"}</span>
+                <span className="ml-auto text-[12px] tabular-nums text-ink-faint">{pos + 1} de {keys.length}</span>
+                <button type="button" onClick={goNext} disabled={keys.length < 2}
+                  className="h-7 rounded-md border border-line-strong px-2.5 text-[12px] font-semibold text-ink-muted hover:bg-canvas-sunken disabled:opacity-40">
+                  Siguiente →
+                </button>
+              </div>
+              {curStep ? <CaseInline card={curStep.card} onChanged={onChanged} /> : null}
+              {curStep ? (
+                <details className="rounded-lg border border-line" data-testid="hoy-shortcuts">
+                  <summary className="cursor-pointer px-3 py-2 text-[12px] font-semibold text-ink-muted hover:text-ink">
+                    Atajos de Hoy · no requiere respuesta, retomar, completar
+                  </summary>
+                  <ul className="border-t border-line">{row(curStep)}</ul>
+                </details>
+              ) : null}
+              {curForward ? (
+                <ul className="overflow-hidden rounded-lg border border-line">
+                  <ForwardQueueRow item={curForward} index={0} navigate={navigate} mayDecide={mayDecide} onDone={(id) => { onFwdDone(id); goNext(); }} />
+                </ul>
+              ) : null}
+            </div>
+          ) : (
+            <p className="p-8 text-center text-[13px] text-ink-muted">Elige algo de la lista.</p>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -892,11 +962,6 @@ function ReplyQueueRow({
         </button>
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
           <span className="truncate">{what}</span>
-          {!card.latest_revision && !card.last_note?.body.startsWith("Calificación:") ? (
-            <span className="inline-flex shrink-0 items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent" data-testid="today-unqualified-chip">
-              Sin calificar
-            </span>
-          ) : null}
         </p>
         {reply.others.length ? (
           <p className="mt-0.5 truncate text-[11px] text-ink-muted">

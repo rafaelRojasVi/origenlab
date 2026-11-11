@@ -167,17 +167,11 @@ describe("CaseDrawer", () => {
     ]);
   });
 
-  it("keeps Resumen short: no «Sin origen» badge, Calificar folded until asked", async () => {
+  it("keeps Resumen short: no «Sin origen» badge, no «Calificar» form (removed, owner 2026-11-11)", () => {
     stub();
     const dialog = renderDrawer("sales", card({ origin: null }));
     expect(within(dialog).queryByTestId("case-origin-badge")).toBeNull();
-    const folded = await within(dialog).findByTestId("qualify-collapsed");
-    expect(folded).toHaveTextContent("Sin calificar");
-    expect(within(dialog).queryByTestId("qualify-form")).toBeNull();
-    fireEvent.click(within(folded).getByRole("button", { name: "Calificar" }));
-    expect(within(dialog).getByTestId("qualify-form")).toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
-    expect(within(dialog).getByTestId("qualify-collapsed")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Sin calificar")).toBeNull();
   });
 
   it("moves between tabs with ← and →", () => {
