@@ -47,10 +47,13 @@ import { fmtDate } from "../ui";
 import { GrowingListEnd } from "../GrowingListEnd";
 import { useGrowingList } from "../useGrowingList";
 import { formatMoney } from "../money";
+import { URGENCY_BADGE, URGENCY_EDGE, byUrgency, urgencyText, type CaseUrgency } from "../urgency";
+import { QueueIcon, stepAction, stepIcon } from "./HoyQueueParts";
 
-export type BoardSort = "recent" | "oldest" | "replied" | "name";
+export type BoardSort = "urgent" | "recent" | "oldest" | "replied" | "name";
 
 export const BOARD_SORT_LABEL: Record<BoardSort, string> = {
+  urgent: "Más urgentes",
   recent: "Más recientes",
   oldest: "Más antiguas",
   replied: "Respondieron primero",
@@ -187,6 +190,9 @@ export function Board({
   onLose,
   sort = "recent",
   now,
+  urgency,
+  showClosed = true,
+  onShowClosed,
 }: {
   cards: OpportunityCardData[];
   onOpen: (id: string) => void;
@@ -197,6 +203,11 @@ export function Board({
   sort?: BoardSort;
   /** The moment ages and pauses are measured from; tests pass a fixed one. */
   now?: Date;
+  /** Each case's urgency (`urgencyByCase`): the card's edge and badge, and the «Más urgentes» order. */
+  urgency?: Map<string, CaseUrgency>;
+  /** Ganada and Perdida as full columns; otherwise each is a narrow total that opens them. */
+  showClosed?: boolean;
+  onShowClosed?: () => void;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const cards = useMemo(() => allCards.filter((c) => isOnBoard(c, at)), [allCards, at]);
@@ -217,13 +228,12 @@ export function Board({
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:px-0">
       {/* Five working columns share the width; Ganada and Perdida are narrower, with compact cards. */}
-      <div className="grid min-w-[70rem] grid-cols-[repeat(5,minmax(10rem,1fr))_repeat(2,minmax(8.5rem,0.8fr))] gap-3">
+      <div className={`grid min-w-[70rem] gap-3 ${showClosed ? "grid-cols-[repeat(5,minmax(10rem,1fr))_repeat(2,minmax(8.5rem,0.8fr))]" : "grid-cols-[repeat(5,minmax(11rem,1fr))_repeat(2,6.5rem)]"}`}>
         {BOARD_COLUMNS.map((col) => {
-          const inCol = sortCards(
-            cards.filter((c) => boardColumnOf(c, at) === col.key),
-            sort,
-            at,
-          );
+          const here = cards.filter((c) => boardColumnOf(c, at) === col.key);
+          const inCol = sort === "urgent" && urgency ? here.sort(byUrgency(urgency)) : sortCards(here, sort, at);
+          const overdue = urgency ? inCol.filter((c) => urgency.get(c.opportunity_id)?.level === "atrasado").length : 0;
+          const folded = !showClosed && (col.key === "ganada" || col.key === "perdida");
           const droppable = onMove != null && dragging != null && dragging.from !== col.key;
           const drag = onMove ? { column: col.key, set: setDragging, current: dragging?.id ?? null } : null;
           return (
@@ -255,7 +265,25 @@ export function Board({
                   </span>
                 </div>
                 <ColumnMoney cards={inCol} columnKey={col.key} />
+                {overdue > 0 ? (
+                  <p className="pl-3.5 text-[11.5px] font-semibold tabular-nums text-bad" data-testid={`board-overdue-${col.key}`}>
+                    {overdue} {overdue === 1 ? "atrasado" : "atrasados"}
+                  </p>
+                ) : null}
               </header>
+              {folded ? (
+                <button
+                  type="button"
+                  onClick={onShowClosed}
+                  className={`flex min-h-48 flex-col items-center justify-start gap-1 rounded-xl p-2 pt-4 text-center text-[11.5px] text-ink-muted transition-colors hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                    over === col.key ? "bg-brand-50 ring-2 ring-brand-600" : "bg-canvas-sunken/70"
+                  }`}
+                  data-testid={`board-folded-${col.key}`}
+                >
+                  <span className="text-[20px] font-bold tabular-nums text-ink">{inCol.length}</span>
+                  {droppable ? "Suelta aquí" : "Ver"}
+                </button>
+              ) : (
               <div
                 className={`flex max-h-[72vh] min-h-48 flex-col gap-2 overflow-y-auto rounded-xl p-1.5 transition-[background-color,box-shadow] duration-150 ${
                   over === col.key
@@ -283,9 +311,11 @@ export function Board({
                     onOpen={onOpen}
                     onLose={col.key === "silenciosas" ? lose : undefined}
                     drag={drag}
+                    urgency={urgency}
                   />
                 )}
               </div>
+              )}
             </section>
           );
         })}
@@ -319,6 +349,7 @@ function ColumnCards({
   onOpen,
   onLose,
   drag,
+  urgency,
 }: {
   cards: OpportunityCardData[];
   columnKey: BoardColumnKey;
@@ -327,6 +358,7 @@ function ColumnCards({
   onOpen: (id: string) => void;
   onLose?: (card: OpportunityCardData) => void;
   drag: DragHook | null;
+  urgency?: Map<string, CaseUrgency>;
 }) {
   const { shown, hidden, showMore, endRef } = useGrowingList(cards);
   const enviada = columnKey === "enviada";
@@ -358,6 +390,7 @@ function ColumnCards({
               compact={columnKey === "ganada" || columnKey === "perdida"}
               followUpStep={columnKey === "silenciosas" ? silentFollowUpStep(c, at) : undefined}
               onLose={onLose}
+              urgency={urgency?.get(c.opportunity_id)}
             />
           </Fragment>
         );
@@ -416,6 +449,7 @@ export function BoardCard({
   compact = false,
   followUpStep: step,
   onLose,
+  urgency,
 }: {
   card: OpportunityCardData;
   onOpen: (id: string) => void;
@@ -428,6 +462,8 @@ export function BoardCard({
   followUpStep?: 1 | 2 | 3 | 4;
   /** «¿Marcar perdida?»: asks for the reason. Absent: no button. */
   onLose?: (card: OpportunityCardData) => void;
+  /** How urgent the case is: a coloured left edge and, when it has one, its next step on top. */
+  urgency?: CaseUrgency;
 }) {
   const at = now ?? new Date();
   const latest = card.latest_revision;
@@ -467,8 +503,17 @@ export function BoardCard({
       style={{ ["--i" as string]: Math.min(index, 8) }}
       className={`crm-rise group min-w-0 cursor-pointer rounded-lg border bg-canvas-raised p-2.5 shadow-[0_1px_2px_rgb(28_25_23/0.04)] transition-[transform,box-shadow,border-color,opacity] duration-150 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-md motion-reduce:transform-none ${
         drag ? "active:cursor-grabbing" : ""
-      } ${isDragging ? "rotate-[-1.5deg] scale-[0.98] opacity-40" : "border-line"}`}
+      } ${isDragging ? "rotate-[-1.5deg] scale-[0.98] opacity-40" : "border-line"} ${urgency && !compact ? `border-l-4 ${URGENCY_EDGE[urgency.level]}` : ""}`}
     >
+      {urgency && !compact && urgency.level !== "cerrado" && urgency.level !== "luego" ? (
+        <div className="mb-1.5 flex min-w-0 items-start gap-1.5" data-testid="board-urgency">
+          {urgency.step ? <QueueIcon name={stepIcon(urgency.step)} /> : null}
+          <span className="min-w-0 leading-4">
+            <span className={`mr-1 inline-block rounded px-1.5 py-px text-[10.5px] font-bold tabular-nums ${URGENCY_BADGE[urgency.level]}`}>{urgencyText(urgency)}</span>
+            {urgency.step ? <span className="text-[11px] font-medium text-ink-muted">{stepAction(urgency.step)}</span> : null}
+          </span>
+        </div>
+      ) : null}
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <h3 className="line-clamp-2 break-words text-[13px] font-semibold leading-[1.15rem] text-ink">

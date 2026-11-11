@@ -84,62 +84,8 @@ afterEach(() => {
   window.location.hash = "";
 });
 
-describe("the request card's «Cotizar»", () => {
-  it("sales: creates the quote and opens the Cotizador", async () => {
-    const calls = stub([card()]);
-    renderPipeline("sales");
-    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
-    const c = await screen.findByTestId(`opportunity-card-${CASE_ID}`);
-    fireEvent.click(within(c).getByRole("button", { name: "Cotizar" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${NEW_QUOTE}`));
-    expect(posts(calls)).toEqual(["/v2/commands/create-quote"]);
-  });
-
-  it("is a ≥44 px button that says «Creando…» while it works", async () => {
-    let release: (r: Response) => void = () => undefined;
-    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      const path = new URL(url, "http://localhost").pathname;
-      if (path === "/v2/commands/create-quote") return new Promise<Response>((resolve) => { release = resolve; });
-      if (path === "/v2/workspace/pipeline") {
-        return Promise.resolve(new Response(JSON.stringify({ items: [card()], total: 1, drive_configured: true }), { status: 200, headers: { "Content-Type": "application/json" } }));
-      }
-      return Promise.resolve(new Response("{}", { status: 404 }));
-    }));
-    renderPipeline("sales");
-    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
-    const c = await screen.findByTestId(`opportunity-card-${CASE_ID}`);
-    const button = within(c).getByRole("button", { name: "Cotizar" });
-    expect(button.className).toContain("min-h-[44px]");
-    fireEvent.click(button);
-    expect(await within(c).findByRole("button", { name: "Creando…" })).toBeDisabled();
-    release(new Response(JSON.stringify({ ok: true, quote_id: NEW_QUOTE, quote_number: "00043-26", revision_id: "r", version: 1 }), { status: 200, headers: { "Content-Type": "application/json" } }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${NEW_QUOTE}`));
-  });
-
-  it("a case whose quote is still a draft stays «Por cotizar»: «Continuar cotización» opens it, no POST", async () => {
-    const draftRev = draft.revisions[0];
-    const calls = stub([card({ quotes: [draft], quote_numbers: ["00042-26"], latest_revision: draftRev })]);
-    renderPipeline("sales");
-    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
-    const c = await screen.findByTestId(`opportunity-card-${CASE_ID}`);
-    expect(within(c).getByTestId("por-cotizar-chip")).toBeInTheDocument();
-    fireEvent.click(within(c).getByRole("button", { name: "Continuar cotización" }));
-    await waitFor(() => expect(window.location.hash).toBe(`#/ventas/cotizaciones/${DRAFT_QUOTE}`));
-    expect(posts(calls)).toEqual([]);
-  });
-
-  it("a viewer opens the case, as before", async () => {
-    const calls = stub([card()]);
-    renderPipeline("viewer");
-    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
-    const c = await screen.findByTestId(`opportunity-card-${CASE_ID}`);
-    fireEvent.click(within(c).getByRole("button", { name: "Cotizar" }));
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(posts(calls)).toEqual([]);
-    expect(window.location.hash).toBe("");
-  });
-});
+// describe("the request card's «Cotizar»") removed: the Tarjetas grid no longer exists; the board
+// view does not render opportunity-card-* testids or the «Cotizar» / «Continuar cotización» buttons.
 
 describe("the case drawer", () => {
   it("«Nueva cotización» creates a quote when the case has no open draft", async () => {

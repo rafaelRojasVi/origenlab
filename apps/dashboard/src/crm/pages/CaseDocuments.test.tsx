@@ -158,7 +158,7 @@ describe("«Marcar ganada» with its purchase order", () => {
       return undefined;
     });
     const dialog = await openDrawer(session());
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
     fireEvent.click(within(form).getByRole("radio", { name: "De un correo del caso" }));
     const select = await within(form).findByLabelText("PDF del correo");
@@ -183,7 +183,7 @@ describe("«Marcar ganada» with its purchase order", () => {
         : undefined,
     );
     const dialog = await openDrawer(session());
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
     fireEvent.click(within(form).getByRole("radio", { name: "De un correo del caso" }));
     fireEvent.change(await within(form).findByLabelText("PDF del correo"), { target: { value: `${MESSAGE}:${SHA_OC}` } });
@@ -196,7 +196,7 @@ describe("«Marcar ganada» with its purchase order", () => {
   it("offers no OC field when document storage is off", async () => {
     stubApi([page([card()])]);
     const dialog = await openDrawer(session("sales", false));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     expect(within(dialog).queryByTestId("oc-picker")).not.toBeInTheDocument();
   });
 });

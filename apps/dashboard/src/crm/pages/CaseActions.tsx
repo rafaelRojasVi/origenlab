@@ -45,6 +45,7 @@ import { FollowUpReminder } from "./FollowUpReminder";
 import { LogCallForm } from "./LogCallForm";
 import { CrossThreadQuoteReview } from "./CrossThreadQuoteReview";
 import { PurchaseOrderReview } from "./PurchaseOrderReview";
+import { QueueIcon, type IconName } from "./HoyQueueParts";
 import {
   Button,
   buttonClass,
@@ -119,6 +120,8 @@ export function CaseActions({
   const [crossThreadOpen, setCrossThreadOpen] = useState(false);
   const [purchaseOrderOpen, setPurchaseOrderOpen] = useState(false);
   const [target, setTarget] = useState<MoveTarget | null>(initial?.target ?? null);
+  // Opened from a tile for one target (Pausar, Perdida): the form asks only what that move needs.
+  const [pinned, setPinned] = useState(Boolean(initial?.target));
   const [initialReason, setInitialReason] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [more, setMore] = useState(false);
@@ -130,6 +133,7 @@ export function CaseActions({
       } else {
         setMode(initial.mode);
         setTarget(initial.target ?? null);
+        setPinned(Boolean(initial.target));
       }
     }
   }, [initial]);
@@ -199,6 +203,7 @@ export function CaseActions({
 
   return (
     <div className="space-y-3" data-testid="case-actions">
+      {bare ? <FormHead mode={purchaseOrderOpen ? "po" : mode} target={target} reopen={reopenable} onClose={() => { setMode(null); setTarget(null); setPurchaseOrderOpen(false); }} /> : null}
       {/* The two everyday actions (and «Marcar ganada» when it applies) stay in sight; the rest
           wait under «Más». */}
       {bare ? null : <div className="flex flex-wrap gap-2">
@@ -361,18 +366,19 @@ export function CaseActions({
 
       {mode === "stage" && hasVersion ? (
         <div className="space-y-3 rounded-md border border-line p-3" data-testid="case-state-picker">
-          <ChoiceChips
+          {pinned ? null : <ChoiceChips
             label="Nuevo estado"
             options={targets.map((t) => COLUMN_LABEL[t])}
             value={target ? COLUMN_LABEL[target] : null}
             onChange={(label) => setTarget(targets.find((t) => COLUMN_LABEL[t] === label) ?? null)}
-          />
+          />}
           {target ? (
             <CaseMoveForm
               key={`${target}:${initialReason ?? ""}`}
               card={card}
               target={target}
               initialReason={initialReason}
+              showFrom={!pinned}
               onCancel={() => {
                 setTarget(null);
                 setMode(null);
@@ -940,6 +946,46 @@ function ConfirmInstitution({
           Cambiar
         </a>
       </span>
+    </div>
+  );
+}
+
+const HEAD: Partial<Record<Exclude<Mode, null>, { icon: IconName; title: string; text: string }>> = {
+  call: { icon: "phone", title: "Registrar llamada", text: "Anota si contestó y qué dijo; queda en «Notas y llamadas» y mueve el seguimiento." },
+  followup: { icon: "bell", title: "Recordarme", text: "Elige el día; ese día el caso vuelve a Hoy." },
+  won: { icon: "trophy", title: "Marcar ganada", text: "Elige con qué cotización se ganó; el monto cuenta para la meta." },
+  quotation: { icon: "doc", title: "Registrar cotización enviada", text: "Una cotización que ya salió por correo." },
+  revision: { icon: "doc", title: "Nueva revisión", text: "Una nueva revisión de una cotización del caso." },
+  notrequest: { icon: "x", title: "No es una solicitud", text: "Cierra el caso; se conserva la evidencia." },
+  institution: { icon: "inbox", title: "Asignar institución", text: "Elige qué institución pidió la cotización." },
+  resolve: { icon: "doc", title: "Elegir revisión vigente", text: "Hay más de una revisión vigente: elige cuál vale." },
+  po: { icon: "inbox", title: "Buscar la OC", text: "La orden de compra en otros hilos de Gmail del cliente." },
+};
+
+/** The open form's header in the case panel: what this action is and what it will do, with a way out. */
+function FormHead({
+  mode, target, reopen, onClose,
+}: { mode: Mode; target: MoveTarget | null; reopen: boolean; onClose: () => void }) {
+  if (!mode) return null;
+  const head =
+    mode === "stage"
+      ? target === "perdida"
+        ? { icon: "x" as IconName, title: "Marcar perdida", text: "Elige el motivo; el caso se cierra (se puede reabrir)." }
+        : target === "pausa"
+          ? { icon: "pause" as IconName, title: "Pausar", text: "Hasta qué día y por qué; ese día vuelve a Hoy." }
+          : reopen
+            ? { icon: "reply" as IconName, title: "Reabrir", text: "El caso vuelve a estar abierto; elige a qué estado." }
+            : { icon: "clock" as IconName, title: "Cambiar estado", text: "Elige a qué estado pasa el caso." }
+      : HEAD[mode];
+  if (!head) return null;
+  return (
+    <div className="flex items-start gap-3 border-b border-line pb-2.5" data-testid="case-form-head">
+      <QueueIcon name={head.icon} size="lg" />
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-semibold text-ink">{head.title}</p>
+        <p className="text-[12.5px] text-ink-muted">{head.text}</p>
+      </div>
+      <button type="button" onClick={onClose} aria-label="Cerrar" className="-mr-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink">✕</button>
     </div>
   );
 }
