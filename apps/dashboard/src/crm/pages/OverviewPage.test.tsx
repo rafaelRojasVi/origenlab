@@ -317,8 +317,10 @@ describe("Resumen", () => {
     expect(task).toHaveTextContent("Llamar por la balanza");
     expect(task).toHaveTextContent("Atrasada 1 día");
     const paraTi = screen.getByTestId("today-para-ti");
-    expect(within(paraTi).getByText("Universidad del Valle")).toBeInTheDocument();
-    expect(within(paraTi).getByRole("link", { name: /Responder en Gmail/ })).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
+    // Hoy shows one item at a time: choose the client who answered in the queue.
+    fireEvent.click(screen.getByTestId(`hoy-queue-row-${valle.opportunity_id}`));
+    expect(within(paraTi).getAllByText("Universidad del Valle").length).toBeGreaterThan(0);
+    expect(within(paraTi).getAllByRole("link", { name: /Responder en Gmail/ })[0]).toHaveAttribute("href", "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/in1");
     // A case with an open task is planned: it does not appear separately as a follow-up.
     expect(screen.queryByTestId("today-followups")).not.toBeInTheDocument();
   });
@@ -326,7 +328,7 @@ describe("Resumen", () => {
   it("keeps the follow-ups when the exchange rate cannot be read", async () => {
     respond({ "/v2/workspace/fx": new Response("{}", { status: 503 }), "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    expect(await screen.findByText("Laboratorio Andino")).toBeInTheDocument();
+    expect((await screen.findAllByText("Laboratorio Andino")).length).toBeGreaterThan(0);
     expect(await screen.findByText(/Tipo de cambio no disponible/)).toBeInTheDocument();
   });
 
@@ -339,7 +341,7 @@ describe("Resumen", () => {
   it("does not ask for the data-health counts, the slowest read", async () => {
     const calls = respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
     render(<OverviewPage navigate={() => undefined} />);
-    await screen.findByText("Laboratorio Andino");
+    await screen.findAllByText("Laboratorio Andino");
     expect(calls).not.toContain("/v2/workspace/overview");
   });
 });

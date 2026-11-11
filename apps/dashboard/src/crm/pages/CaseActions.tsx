@@ -59,7 +59,7 @@ import {
   toast,
 } from "../ui";
 
-export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup" | "call" | "notrequest";
+export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision" | "institution" | "followup" | "call" | "notrequest" | "po";
 
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "enviada", "conversacion", "pausa", "perdida"];
@@ -93,6 +93,7 @@ export function CaseActions({
   onChanged,
   initial = null,
   hoisted = false,
+  bare = false,
 }: {
   card: OpportunityCardData;
   /** Refetch the pipeline after any recorded write, or a refusal that says the view is stale. */
@@ -105,6 +106,11 @@ export function CaseActions({
    * and opens their forms when `initial` asks.
    */
   hoisted?: boolean;
+  /**
+   * Hoy's inline case (owner 2026-11-11): its stepper, icons and «⋯» menu ask for every form, so
+   * this block shows only the open form and the banners — none of its own buttons.
+   */
+  bare?: boolean;
 }) {
   const mayDecide = useMayRunCaseCommands();
   const mayAuthor = useMayAuthorCrm();
@@ -118,8 +124,13 @@ export function CaseActions({
   const [more, setMore] = useState(false);
   useEffect(() => {
     if (initial) {
-      setMode(initial.mode);
-      setTarget(initial.target ?? null);
+      if (initial.mode === "po") {
+        setPurchaseOrderOpen(true);
+        setMode(null);
+      } else {
+        setMode(initial.mode);
+        setTarget(initial.target ?? null);
+      }
     }
   }, [initial]);
 
@@ -190,7 +201,7 @@ export function CaseActions({
     <div className="space-y-3" data-testid="case-actions">
       {/* The two everyday actions (and «Marcar ganada» when it applies) stay in sight; the rest
           wait under «Más». */}
-      <div className="flex flex-wrap gap-2">
+      {bare ? null : <div className="flex flex-wrap gap-2">
         {lifted.followUp ? null : followUpReason ? (
           <DisabledAction id="drawer-followup" reason={followUpReason}>
             Recordarme…
@@ -227,8 +238,8 @@ export function CaseActions({
         <Button variant="quiet" aria-expanded={more} onClick={() => setMore(!more)}>
           {more ? "Menos" : "Más…"}
         </Button>
-      </div>
-      {more ? (
+      </div>}
+      {more && !bare ? (
         <div className="flex flex-wrap gap-2 rounded-md bg-canvas-sunken/60 p-2" data-testid="case-more-actions">
           {notRequestFirst ? null : notRequest}
           {wonReason ? (
@@ -281,7 +292,7 @@ export function CaseActions({
         </div>
       ) : null}
 
-      {!card.organization && !closed ? (
+      {!card.organization && !closed && !bare ? (
         mayDecide ? (
           <Button
             aria-expanded={mode === "institution"}
@@ -380,9 +391,9 @@ export function CaseActions({
       ) : null}
       {card.stage === "negotiating" && revisions.length > 0 && !decideReason ? (
         <div className="space-y-2">
-          <Button aria-expanded={purchaseOrderOpen} onClick={() => {
+          {bare ? null : <Button aria-expanded={purchaseOrderOpen} onClick={() => {
             setPurchaseOrderOpen(!purchaseOrderOpen); setOutcome(null);
-          }}>Buscar OC recibida en otro hilo</Button>
+          }}>Buscar OC recibida en otro hilo</Button>}
           {purchaseOrderOpen ? (
             <PurchaseOrderReview card={card} onDone={(outcome, refetch) => {
               finished(outcome, refetch);

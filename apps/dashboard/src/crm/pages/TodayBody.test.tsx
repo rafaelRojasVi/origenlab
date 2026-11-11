@@ -254,6 +254,8 @@ function stub(): Call[] {
       const json = (b: unknown) =>
         Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (path === "/v2/workspace/person-suggestions") return json({ items: [], total: 0 });
+      // The case shown inline in Hoy reads its detail; these tests are about the queue's own actions.
+      if (!init?.body) return Promise.resolve(new Response("{}", { status: 404 }));
       return json({ command: "x", opportunity_id: "o", opportunity_version: 5, command_receipt_id: "rcpt-1", replayed: false });
     }),
   );
@@ -271,6 +273,11 @@ function renderToday(items: OpportunityCardData[], role = "sales") {
   return onChanged;
 }
 
+/** Hoy shows one item at a time: choose a case's item in the queue, then open «Atajos de Hoy». */
+function pick(c: OpportunityCardData) {
+  fireEvent.click(screen.getByTestId(`hoy-queue-row-${c.opportunity_id}`));
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   clearResourceCache();
@@ -285,18 +292,22 @@ describe("«Tareas» on the page", () => {
     const theirs8 = { ...task("theirs8", "2026-09-28T12:00:00Z"), owner: "Tatiana" };
     const theirs4 = { ...task("theirs4", "2026-10-02T12:00:00Z"), owner: "Tatiana" };
     const todayTask = { ...task("today", "2026-10-06T20:00:00Z"), owner: "Ventas" };
-    renderToday([
+    stub();
+    const cards = [
       card({ open_tasks: [theirs8] }, "2026-10-05T12:00:00Z"),
       card({ open_tasks: [mine] }, "2026-10-05T12:00:00Z"),
       card({ open_tasks: [theirs4] }, "2026-10-05T12:00:00Z"),
       card({ open_tasks: [todayTask] }, "2026-10-05T12:00:00Z"),
-    ]);
+    ];
+    renderToday(cards);
     const panel = screen.getByTestId("today-para-ti");
-    expect(panel).toHaveTextContent("Tareas");
-    expect(within(panel).getAllByTestId(/^today-task-/).map((e) => e.getAttribute("data-testid"))).toEqual([
-      "today-task-mine4", "today-task-theirs8", "today-task-theirs4", "today-task-today",
-    ]);
+    const taskOf = (id: string) => cards.find((c) => c.open_tasks?.[0]?.task_id === id)!;
+    expect(within(panel).getAllByTestId(/^hoy-queue-row-/).map((e) => e.getAttribute("data-testid"))).toEqual(
+      ["mine4", "theirs8", "theirs4", "today"].map((id) => `hoy-queue-row-${taskOf(id).opportunity_id}`),
+    );
+    pick(taskOf("theirs8"));
     expect(within(within(panel).getByTestId("today-task-theirs8")).getByTestId("today-owner-label")).toHaveTextContent("de Tatiana");
+    pick(taskOf("mine4"));
     expect(within(within(panel).getByTestId("today-task-mine4")).queryByTestId("today-owner-label")).toBeNull();
     // Actions (Hecho, +1 semana) are in the ⋯ menu, not direct buttons.
     expect(screen.queryByRole("button", { name: "Hecho" })).toBeNull();
@@ -314,7 +325,9 @@ describe("Hoy actions", () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      calls.push(new URL(url, "http://localhost").pathname);
+      const path = new URL(url, "http://localhost").pathname;
+      calls.push(path);
+      if (!path.includes("/messages/")) return Promise.resolve(new Response("{}", { status: 404 }));
       const body = { message_id: "18f0a1b2c3d4", subject: "Consulta plazo", from: "Ana Ficticia", to: ["Ventas"], cc: [],
         sent_at: "2026-10-05T12:00:00Z", text: "¿Cuál es el plazo de entrega?", quoted: null, truncated: false, attachments: [] };
       return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -385,6 +398,7 @@ describe("Hoy actions", () => {
     const c2 = card({ open_tasks: [task("t2", "2026-10-05T12:00:00Z", 1)] });
     stub();
     const onChanged = renderToday([c1, c2]);
+    pick(c1);
     const row = screen.getByTestId("today-task-t1");
     fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(row).getByRole("menuitem", { name: "Hecho" }));
@@ -394,6 +408,7 @@ describe("Hoy actions", () => {
 
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(
       JSON.stringify({ error: { code: "conflict", details: { code: "stale_version" } } }), { status: 409 }))));
+    pick(c2);
     const kept = screen.getByTestId("today-task-t2");
     fireEvent.click(within(kept).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(kept).getByRole("menuitem", { name: "Hecho" }));
@@ -422,12 +437,14 @@ describe("Hoy actions", () => {
     const c1 = card({ open_tasks: [task("t1", "2026-10-06T12:00:00Z", 2)] });
     const c2 = card({ open_tasks: [task("t2", "2026-10-05T12:00:00Z", 1)] });
     const onChanged = renderToday([c1, c2]);
+    pick(c1);
     const t1row = screen.getByTestId("today-task-t1");
     fireEvent.click(within(t1row).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(t1row).getByRole("menuitem", { name: "Hecho" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(calls.find((x) => x.path === "/v2/commands/complete-task")?.body).toEqual({ task_id: "t1", task_version: 2, note: "Hecho desde «Hoy»." });
 
+    pick(c2);
     const t2row = screen.getByTestId("today-task-t2");
     fireEvent.click(within(t2row).getByRole("button", { name: "Más opciones" }));
     fireEvent.click(within(t2row).getByRole("menuitem", { name: "+1 semana" }));
@@ -559,7 +576,9 @@ describe("Hoy actions", () => {
     // Exactly 15 days ago so isFollowUpDueToday passes without a task (days === 15 = 4th threshold).
     const own = card({}, "2026-09-21T15:00:00Z");
     renderToday([reminded, own]);
+    pick(reminded);
     expect(within(screen.getByTestId("today-task-rem")).getByTestId("today-reminder-chip")).toHaveTextContent("Tu recordatorio");
+    pick(own);
     expect(within(screen.getByTestId(`today-followup-${own.opportunity_id}`)).queryByTestId("today-reminder-chip")).toBeNull();
   });
 
@@ -669,6 +688,7 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const path = new URL(url, "http://localhost").pathname;
       calls.push({ path, method: init?.method ?? "GET" });
+      if (/^\/v2\/(workspace|cockpit)\/opportunities\//.test(path)) return Promise.resolve(new Response("{}", { status: 404 }));
       const body = path === "/v2/commands/create-quote"
         ? { ok: true, quote_id: "99999999-9999-4999-8999-999999999999", quote_number: "00042-26", revision_id: "r", version: 1 }
         : { items: [], total: 0 };
@@ -731,6 +751,7 @@ describe("«Cotizar» in Hoy opens the Cotizador", () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       const path = new URL(url, "http://localhost").pathname;
+      if (/^\/v2\/(workspace|cockpit)\/opportunities\//.test(path)) return Promise.resolve(new Response("{}", { status: 404 }));
       return Promise.resolve(path === "/v2/commands/create-quote"
         ? new Response(JSON.stringify({ detail: { code: "quote_numbering_not_configured", message: "Falta configurar la numeración de cotizaciones (parámetro quote_number_seed)." } }), { status: 409, headers: { "Content-Type": "application/json" } })
         : new Response(JSON.stringify({ items: [], total: 0 }), { status: 200, headers: { "Content-Type": "application/json" } }));

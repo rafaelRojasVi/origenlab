@@ -21,7 +21,7 @@ import { CaseActions, hoistedActions, type Mode } from "../pages/CaseActions";
 import { CaseDocumentsBlock } from "../pages/CaseDocuments";
 import { CaseMemory } from "../pages/CaseMemory";
 import type { MoveTarget } from "../pages/CaseMove";
-import { CaseLinks, CaseMoneySummary, QuoteList } from "../pages/CaseQuotes";
+import { CaseLinkIcons, CaseLinks, CaseMoneySummary, QuoteList } from "../pages/CaseQuotes";
 import { CaseThreads } from "../pages/CaseThreads";
 import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
@@ -34,6 +34,7 @@ import { CaseTimeline } from "./CaseTimeline";
 import { PersonPhones } from "./PersonPhones";
 import { QualifyCard } from "./QualifyCard";
 import { RevisionHistory } from "./RevisionHistory";
+import { QueueIcon, type IconName } from "../pages/HoyQueueParts";
 
 export type DrawerTab = "resumen" | "cotizacion" | "contacto" | "notas" | "correos";
 
@@ -122,24 +123,35 @@ export function CaseDrawer({
   return <CaseDrawerBody key={card.opportunity_id} card={card} onClose={onClose} onChanged={onChanged} refreshing={refreshing} initial={initial} />;
 }
 
+/**
+ * The same case, inline (owner 2026-11-11, Hoy's detail pane): the drawer's tabs and forms without
+ * the drawer, and the decisions as a strip of labelled icons instead of the header and footer buttons.
+ */
+export function CaseInline({ card, onChanged }: { card: OpportunityCardData; onChanged: () => void }) {
+  return <CaseDrawerBody key={card.opportunity_id} card={card} onClose={() => {}} onChanged={onChanged} refreshing={false} initial={null} embedded />;
+}
+
 function CaseDrawerBody({
   card,
   onClose,
   onChanged,
   refreshing,
   initial,
+  embedded = false,
 }: {
   card: OpportunityCardData;
   onClose: () => void;
   onChanged: () => void;
   refreshing: boolean;
   initial: FormRequest;
+  embedded?: boolean;
 }) {
   const mayAuthor = useMayAuthorCrm();
   const mayQuote = useMayRunCaseCommands();
   const mayOpenCotizador = useMayOpenCotizador();
   const lifted = hoistedActions(card, mayQuote, mayAuthor);
   const [tab, setTab] = useState<DrawerTab>("resumen");
+  const [moreOpen, setMoreOpen] = useState(false);
   const base = useId();
   // The form the header or footer asked `CaseActions` to open; a new object each time, so asking
   // again reopens it.
@@ -173,8 +185,7 @@ function CaseDrawerBody({
       ? `${card.next_action.text} · ${shortDay(card.next_action.due_at)}`
       : card.next_action.text;
 
-  const header = (
-    <div className="space-y-2.5">
+  const badges = (
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge tone={stage.tone} glyph={false} title={stage.title}>
           {stage.label}
@@ -205,6 +216,8 @@ function CaseDrawerBody({
           </span>
         ) : null}
       </div>
+  );
+  const actionsRow = (
       <div className="flex flex-wrap items-center gap-2" data-testid="case-drawer-actions">
         {lifted.call ? (
           <Button variant="primary" className="min-h-11" onClick={() => ask("call")}>
@@ -222,7 +235,40 @@ function CaseDrawerBody({
           </Button>
         ) : null}
       </div>
+  );
+  const header = (
+    <div className="space-y-2.5">
+      {badges}
+      {actionsRow}
       <Tabs base={base} tab={tab} onChange={setTab} />
+    </div>
+  );
+  const decide: { key: string; label: string; icon: IconName; on: boolean; go: () => void }[] = [
+    { key: "call", label: "Llamada", icon: "phone", on: lifted.call, go: () => ask("call") },
+    { key: "followup", label: "Recordar", icon: "bell", on: lifted.followUp, go: () => ask("followup") },
+    { key: "pausa", label: "Pausar", icon: "pause", on: lifted.lost, go: () => ask("stage", "pausa") },
+    { key: "won", label: "Ganada", icon: "trophy", on: lifted.won, go: () => ask("won") },
+    { key: "lost", label: "Perdida", icon: "x", on: lifted.lost, go: () => ask("stage", "perdida") },
+  ];
+  const tile = "relative flex h-[4.25rem] min-w-0 flex-col items-center justify-center gap-1.5 rounded-lg border border-line bg-canvas-raised px-0.5 text-[11.5px] font-semibold leading-none text-ink-muted transition-colors hover:border-line-strong hover:bg-canvas-sunken/40 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:cursor-not-allowed disabled:opacity-40 aria-expanded:border-ink aria-expanded:text-ink";
+  const iconStrip = (
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(4.25rem,1fr))] gap-1.5" role="group" aria-label="Decidir" data-testid="case-inline-decide">
+      {reply ? (
+        <a href={reply} target="_blank" rel="noopener noreferrer" className={tile} data-testid="case-inline-reply">
+          <QueueIcon name="reply" /><span className="whitespace-nowrap tracking-tight">Responder</span>
+          <span aria-hidden="true" className="absolute right-1.5 top-1 text-[10px] text-ink-faint">↗</span>
+        </a>
+      ) : (
+        <button type="button" className={tile} disabled title="Sin correo para responder"><QueueIcon name="reply" />Responder</button>
+      )}
+      {decide.map((d) => (
+        <button key={d.key} type="button" className={tile} disabled={!d.on} onClick={d.go} title={d.on ? d.label : `${d.label}: no disponible para este caso`} data-testid={`case-inline-${d.key}`}>
+          <QueueIcon name={d.icon} /><span className="whitespace-nowrap tracking-tight">{d.label}</span>
+        </button>
+      ))}
+      <button type="button" className={tile} aria-expanded={moreOpen} onClick={() => setMoreOpen(!moreOpen)} data-testid="case-inline-more-toggle">
+        <span className="inline-grid h-7 w-7 place-items-center rounded-lg bg-canvas-sunken text-[15px] font-bold leading-none text-ink-muted" aria-hidden="true">⋯</span><span>Más</span>
+      </button>
     </div>
   );
 
@@ -247,20 +293,105 @@ function CaseDrawerBody({
       </div>
     ) : null;
 
-  return (
-    <Drawer
-      open
-      onClose={onClose}
-      busy={refreshing}
-      width="wide"
-      title={card.organization?.name ?? "Sin institución"}
-      subtitle={<span className="block truncate">{product ?? card.title}</span>}
-      actions={header}
-      footer={footer}
-    >
+  // Hoy's inline case: where the case is, as a stepper you can click to move it.
+  const STEPS: { key: string; label: string; stages: string[]; go: () => void }[] = [
+    { key: "solicitada", label: "Solicitada", stages: ["lead", "qualifying", "qualified"], go: () => ask("stage", "solicitada") },
+    { key: "enviada", label: "Enviada", stages: ["quoting"], go: () => ask("stage", "enviada") },
+    { key: "conversacion", label: "Conversación", stages: ["negotiating"], go: () => ask("stage", "conversacion") },
+    { key: "ganada", label: "Ganada", stages: ["won"], go: () => ask("won") },
+  ];
+  const at = STEPS.findIndex((st) => st.stages.includes(card.stage));
+  const lostState = card.stage === "lost" ? "Perdida" : card.stage === "abandoned" ? "Cerrada" : null;
+  const pausedDay = card.paused_until && !card.closed_at ? card.paused_until : null;
+  const stepper = (
+    <section className="rounded-lg border border-line bg-canvas-sunken/30 p-2.5" aria-label="Estado del caso" data-testid="case-inline-state">
+      <ol className="grid grid-cols-4 gap-1">
+        {STEPS.map((st, i) => {
+          const done = at >= 0 && i < at;
+          const here = i === at && !lostState;
+          return (
+            <li key={st.key} className="min-w-0">
+              <button type="button" onClick={st.go} disabled={here || !lifted.lost && st.key !== "ganada"}
+                title={here ? "Estado actual" : `Pasar a ${st.label}`}
+                className={`flex h-8 w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                  here ? "bg-ink text-canvas" : done ? "bg-accent/10 text-accent hover:bg-accent/20" : "bg-canvas-sunken text-ink-muted hover:text-ink"
+                } disabled:cursor-default`}>
+                <span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] ${here ? "bg-canvas text-ink" : done ? "bg-accent text-white" : "border border-line-strong"}`}>{done ? "✓" : i + 1}</span>
+                <span className="truncate">{st.label}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 px-1 text-[12.5px]">
+        {lostState ? <span className="font-semibold text-bad">{lostState}{card.close_reason ? ` · ${card.close_reason}` : ""}</span> : null}
+        {pausedDay ? <span className="font-semibold text-warn">En pausa hasta {shortDay(pausedDay)}{card.pause_reason ? ` · ${card.pause_reason}` : ""}</span> : null}
+        {net ? <span className="font-semibold tabular-nums text-ink">{net} <span className="font-normal text-ink-muted">neto</span></span> : null}
+        <span className="min-w-0 text-ink-muted">Siguiente: <strong className="font-semibold text-ink">{nextStep}</strong></span>
+      </div>
+    </section>
+  );
+  const moreItems: { label: string; go: () => void; show: boolean }[] = [
+    { label: "Registrar una cotización ya enviada", go: () => ask("quotation"), show: lifted.lost },
+    { label: "Nueva revisión de una cotización", go: () => ask("revision"), show: lifted.lost && card.quotes.length > 0 },
+    { label: "Buscar la OC en otro hilo", go: () => ask("po"), show: card.stage === "negotiating" && card.quotes.length > 0 },
+    { label: "No es una solicitud", go: () => ask("notrequest"), show: lifted.lost && card.quotes.length === 0 },
+    { label: "Asignar institución", go: () => ask("institution"), show: !card.organization && !card.closed_at },
+  ];
+  const CAPTION: Partial<Record<Exclude<Mode, null>, string>> = {
+    call: "Llamada: anota si contestó y qué dijo; queda en «Notas y llamadas» y mueve el seguimiento.",
+    followup: "Recordarme: elige el día; ese día el caso vuelve a Hoy.",
+    stage: "Cambiar estado: elige a qué estado pasa el caso.",
+    won: "Ganada: elige con qué cotización se ganó; el monto cuenta para la meta.",
+    quotation: "Registra una cotización que ya se envió por correo.",
+    revision: "Crea una nueva revisión de una cotización del caso.",
+    notrequest: "Cierra el caso: no era una solicitud real.",
+    institution: "Elige qué institución pidió la cotización.",
+    po: "Busca la orden de compra en otros hilos de Gmail del cliente.",
+  };
+  const caption = request ? (request.mode === "stage" && request.target === "pausa" ? "Pausar: elige hasta qué día y por qué; ese día vuelve a Hoy."
+    : request.mode === "stage" && request.target === "perdida" ? "Perdida: elige el motivo; el caso se cierra (se puede reabrir)."
+    : CAPTION[request.mode] ?? null) : null;
+
+  // A plain function, not a component: a component made here would remount the tabs on each render.
+  const frame = (children: ReactNode) =>
+    embedded ? (
+      <div className="space-y-3.5" data-testid="case-inline">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[19px] font-bold tracking-tight text-ink">{card.organization?.name ?? "Sin institución"}</h2>
+            <p className="truncate text-[13px] text-ink-muted">{product ?? card.title}</p>
+          </div>
+          <CaseLinkIcons card={card} />
+        </div>
+        {stepper}
+        {iconStrip}
+        {moreOpen ? (
+          <ul className="grid gap-1 rounded-lg border border-line p-1.5" data-testid="case-inline-more">
+            {moreItems.filter((m) => m.show).map((m) => (
+              <li key={m.label}>
+                <button type="button" onClick={() => { m.go(); setMoreOpen(false); }}
+                  className="w-full rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-canvas-sunken">{m.label}</button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {caption ? <p className="rounded-md bg-accent/10 px-3 py-2 text-[12.5px] text-accent" data-testid="case-inline-caption">{caption}</p> : null}
+        <div className="sticky top-0 z-10 bg-canvas-raised pb-1"><Tabs base={base} tab={tab} onChange={setTab} /></div>
+        <div className="space-y-4">{children}</div>
+      </div>
+    ) : (
+      <Drawer open onClose={onClose} busy={refreshing} width="wide" title={card.organization?.name ?? "Sin institución"}
+        subtitle={<span className="block truncate">{product ?? card.title}</span>} actions={header} footer={footer}>
+        {children}
+      </Drawer>
+    );
+
+  return frame(
+    <>
       <TabPanel base={base} tab="resumen" current={tab}>
-        <CaseLinks card={card} />
-        <CaseActions card={card} initial={request} onChanged={onChanged} hoisted />
+        {embedded ? null : <CaseLinks card={card} />}
+        <CaseActions card={card} initial={request} onChanged={onChanged} hoisted bare={embedded} />
         {/* The footer already says the plain next step; this line only adds a reminder or task. */}
         <NextStepLine card={card} inFooter={footer !== null} />
         {/* Qualify before quoting: five short questions saved as a case note. */}
@@ -297,7 +428,7 @@ function CaseDrawerBody({
       <TabPanel base={base} tab="correos" current={tab}>
         <CaseThreads key={card.opportunity_id} opportunityId={card.opportunity_id} />
       </TabPanel>
-    </Drawer>
+    </>,
   );
 }
 

@@ -111,6 +111,28 @@ export function CaseLinks({ card }: { card: OpportunityCardData }) {
   );
 }
 
+/** The same three links as small icons, for Hoy's inline case (owner 2026-11-11). */
+export function CaseLinkIcons({ card }: { card: OpportunityCardData }) {
+  const pdf = quotesNewestFirst(card).map(currentRevision).find((r) => r?.drive) ?? null;
+  const links: { href: string | null; label: string; d: string }[] = [
+    { href: caseGmailUrl(card), label: "Abrir el último correo en Gmail", d: "M2 4h12v9H2zM2 5l6 4 6-4" },
+    { href: card.drive_folder?.url ?? null, label: "Abrir la carpeta en Drive", d: "M2 4.5h4l1.5 1.5H14v7H2z" },
+    { href: pdf?.drive?.file_url ?? null, label: pdf ? `Abrir el PDF ${pdf.quote_number}` : "Sin PDF", d: "M4 2h5l3 3v9H4zM9 2v3h3M6 8h4M6 10.5h4" },
+  ];
+  return (
+    <nav aria-label="Enlaces del caso" className="flex gap-1" data-testid="case-link-icons">
+      {links.map((l) =>
+        l.href ? (
+          <a key={l.label} href={l.href} target="_blank" rel="noopener noreferrer" title={l.label} aria-label={l.label}
+            className="inline-grid h-8 w-8 place-items-center rounded-md border border-line text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600">
+            <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={l.d} /></svg>
+          </a>
+        ) : null,
+      )}
+    </nav>
+  );
+}
+
 /* ── the money summary ───────────────────────────────────────────────────── */
 
 export function CaseMoneySummary({ card }: { card: OpportunityCardData }) {
