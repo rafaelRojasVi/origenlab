@@ -452,11 +452,6 @@ function CotizarQueueRow({
         <p className="truncate text-[14px] font-semibold text-ink group-hover:text-accent">{name}</p>
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
           <span className="truncate">{what}</span>
-          {!card.last_note?.body.startsWith("Calificación:") ? (
-            <span className="inline-flex shrink-0 items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent" data-testid="today-unqualified-chip">
-              Sin calificar
-            </span>
-          ) : null}
         </p>
       </button>
       <div className="flex shrink-0 gap-2">
@@ -967,11 +962,6 @@ function ReplyQueueRow({
         </button>
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
           <span className="truncate">{what}</span>
-          {!card.latest_revision && !card.last_note?.body.startsWith("Calificación:") ? (
-            <span className="inline-flex shrink-0 items-center rounded-full border border-brand-600/25 bg-brand-50 px-1.5 py-px text-[10.5px] font-medium text-accent" data-testid="today-unqualified-chip">
-              Sin calificar
-            </span>
-          ) : null}
         </p>
         {reply.others.length ? (
           <p className="mt-0.5 truncate text-[11px] text-ink-muted">

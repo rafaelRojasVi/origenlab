@@ -32,7 +32,6 @@ import { Badge, Button, Drawer, Section, buttonClass, fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { CaseTimeline } from "./CaseTimeline";
 import { PersonPhones } from "./PersonPhones";
-import { QualifyCard } from "./QualifyCard";
 import { RevisionHistory } from "./RevisionHistory";
 import { QueueIcon, type IconName } from "../pages/HoyQueueParts";
 
@@ -394,8 +393,6 @@ function CaseDrawerBody({
         <CaseActions card={card} initial={request} onChanged={onChanged} hoisted bare={embedded} />
         {/* The footer already says the plain next step; this line only adds a reminder or task. */}
         <NextStepLine card={card} inFooter={footer !== null} />
-        {/* Qualify before quoting: five short questions saved as a case note. */}
-        {!card.closed_at ? <QualifyCard card={card} mayAuthor={mayAuthor} onChanged={onChanged} /> : null}
         {/* What the conversation says so far, first: the case memory (owner, 2026-10-15). */}
         <CaseMemory opportunityId={card.opportunity_id} />
         <OriginSelect card={card} onChanged={onChanged} />
