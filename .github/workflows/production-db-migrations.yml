@@ -102,7 +102,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ca-certificates curl gnupg postgresql-common age
+          sudo apt-get install -y -qq ca-certificates curl gnupg postgresql-common
+          # age from its pinned GitHub release, not Ubuntu's security mirror: on 2026-11-11 the runners
+          # could not resolve security.ubuntu.com for over an hour and every release stopped here.
+          AGE_TGZ=age-v1.2.1-linux-amd64.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$AGE_TGZ" "https://github.com/FiloSottile/age/releases/download/v1.2.1/$AGE_TGZ"
+          echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  $RUNNER_TEMP/$AGE_TGZ" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/$AGE_TGZ" -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          age --version
           sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc |
             sudo gpg --batch --yes --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
@@ -235,7 +242,14 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ca-certificates curl gnupg postgresql-common age
+          sudo apt-get install -y -qq ca-certificates curl gnupg postgresql-common
+          # age from its pinned GitHub release, not Ubuntu's security mirror: on 2026-11-11 the runners
+          # could not resolve security.ubuntu.com for over an hour and every release stopped here.
+          AGE_TGZ=age-v1.2.1-linux-amd64.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$AGE_TGZ" "https://github.com/FiloSottile/age/releases/download/v1.2.1/$AGE_TGZ"
+          echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  $RUNNER_TEMP/$AGE_TGZ" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/$AGE_TGZ" -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          age --version
           sudo install -d -m 0755 /usr/share/postgresql-common/pgdg
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc |
             sudo gpg --batch --yes --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
