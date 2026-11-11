@@ -226,7 +226,7 @@ function Pipeline({
       ) : null}
 
       {deciding ? (
-        <DecideCases cards={historicalCards} mode="historical" onApplied={onChanged} onClose={() => setDeciding(false)} />
+        <DecideCases cards={historicalCards} onApplied={onChanged} onClose={() => setDeciding(false)} />
       ) : focused.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Quita el filtro de urgencia u origen, o cambia la búsqueda.</EmptyState>
       ) : view === "list" ? (

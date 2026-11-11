@@ -8,7 +8,7 @@ import { mayRunCaseCommands, nextStages, undeterminedQuotes, winnableRevisions }
 import type { OpportunityCardData, PipelineResponse, RevisionCard } from "../crmTypes";
 import { clearResourceCache } from "../useResource";
 import { Toaster } from "../ui";
-import { DecideCases, proposeDecision, proposeOpenDecision, reviewableOpenCards } from "./DecideCases";
+import { DecideCases, proposeDecision } from "./DecideCases";
 import { PipelinePage } from "./PipelinePage";
 import { moveRefusal } from "./CaseMove";
 
@@ -1463,36 +1463,6 @@ describe("Decidir casos", () => {
     expect(proposeDecision(silent, NOW).decision).toBe("perdida");
     expect(proposeDecision(silent, NOW).why).toBe("97 días sin respuesta");
     expect(proposeDecision(recent, NOW)).toEqual({ decision: "seguir", why: "Enviada hace 21 días" });
-  });
-
-  it("«Revisar casos abiertos» lists open cases with a sent quote and leaves pauses and live conversations alone", () => {
-    const won = card({ opportunity_id: "aaaaaaaa-0000-4000-8000-000000000004", stage: "won", closed_at: "2026-10-01T00:00:00Z" });
-    const unsent = card({
-      opportunity_id: "aaaaaaaa-0000-4000-8000-000000000005",
-      quotes: [{ quote_id: QUOTE, quote_number: "00002-26", number_origin: "printed_historical", revisions: [rev(1, { sent_at: null })] }],
-    });
-    expect(reviewableOpenCards([replied, silent, won, unsent]).map((c) => c.opportunity_id)).toEqual([
-      replied.opportunity_id,
-      silent.opportunity_id,
-    ]);
-    const paused = card({
-      ...silent,
-      opportunity_id: "aaaaaaaa-0000-4000-8000-000000000006",
-      paused_until: "2026-11-20",
-      pause_reason: "Esperando fondos o proyecto",
-    });
-    expect(proposeOpenDecision(paused, NOW)).toMatchObject({ decision: "pausa", include: false });
-    expect(proposeOpenDecision({ ...replied, stage: "negotiating" }, NOW)).toMatchObject({ decision: "conversacion", include: false });
-    expect(proposeOpenDecision(silent, NOW)).toMatchObject({ decision: "perdida", include: true });
-    // Our own follow-up does not make an unanswered quote fresh.
-    const chased = card({
-      ...silent,
-      opportunity_id: "aaaaaaaa-0000-4000-8000-000000000007",
-      last_contact: { outbound: { at: "2026-10-01T12:00:00Z", subject: "Re", url: null }, inbound: null },
-    });
-    expect(proposeOpenDecision(chased, NOW)).toMatchObject({ decision: "perdida", why: "Cotización hace 97 días y nunca respondió", include: true });
-    // An ordinary follow-up is Hoy's job: unticked.
-    expect(proposeOpenDecision(recent, NOW)).toMatchObject({ decision: "seguir", include: false });
   });
 
   it("goes back to the cards once every chosen decision applied", async () => {
