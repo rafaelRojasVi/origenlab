@@ -1051,8 +1051,6 @@ def compose_pipeline(
                     "revision_no": r["revision_no"],
                     "status": r["status"],
                     "origin": r.get("origin"),
-                    "paused_until": r.get("paused_until"),
-                    "pause_reason": r.get("pause_reason"),
                     "sent_at": r.get("sent_at"),
                     "superseded_by_revision_no": r.get("superseded_by_revision_no"),
                     "is_active": r in active,
@@ -1196,6 +1194,10 @@ def compose_pipeline(
                 "close_reason": opp.get("close_reason"),
                 # The channel the case came from (`case_origin.py`); null = nobody classified it.
                 "origin": opp.get("origin"),
+                # «En pausa hasta…» (2026-11-13): the Santiago day the pause comes back and why, both
+                # or neither. The Tablero's «En pausa», Hoy's «Vuelve de pausa» and «Mover a…» read them.
+                "paused_until": opp.get("paused_until"),
+                "pause_reason": opp.get("pause_reason"),
                 "organization": organization,
                 # Confirmation of this institution's ROLE on this case, not its
                 # general CRM organization-record confirmation.

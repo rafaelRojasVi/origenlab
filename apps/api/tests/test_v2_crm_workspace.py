@@ -264,6 +264,18 @@ def test_card_carries_requested_at_or_falls_back_to_created_at() -> None:
     assert opened["requested_at"] == "2026-01-01T00:00:00+00:00"
 
 
+def test_card_carries_the_pause_of_the_case() -> None:
+    """«En pausa hasta…» is a state of the case: the card carries its day and reason, or null. It
+    shipped read by the query but put on each quote revision instead, so the Tablero's «En pausa»
+    read 0 and a case paused with the new command vanished from Hoy (owner 2026-11-11)."""
+    paused, open_ = compose_pipeline(
+        [_opp("o1", paused_until="2026-10-26", pause_reason="Evaluando internamente"), _opp("o2")],
+        [], [], [], {}, [], {},
+    )
+    assert (paused["paused_until"], paused["pause_reason"]) == ("2026-10-26", "Evaluando internamente")
+    assert (open_["paused_until"], open_["pause_reason"]) == (None, None)
+
+
 def test_card_carries_the_newest_answered_call() -> None:
     """A call the client answered (contestó · reunión) is a follow-up touch on Hoy: the card
     carries the newest one, or null."""
