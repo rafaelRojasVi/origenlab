@@ -241,6 +241,8 @@ describe("case command helpers", () => {
     expect(within(dialog).getByRole("link", { name: /Abrir la cadena «Solicitud de balanza ficticia» en Gmail/ })).toHaveAttribute("href",
       "https://mail.google.com/mail/?authuser=contacto%40origenlab.cl#all/example1");
     fireEvent.click(within(dialog).getByRole("tab", { name: "Resumen" }));
+    // «No es una solicitud» is in the «⋯» more menu.
+    fireEvent.click(within(dialog).getByTestId("case-inline-more-toggle"));
     // «No es una solicitud» is one confirmation, not the whole «Perdida» form (owner 2026-10-19).
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
     const confirm = within(dialog).getByRole("group", { name: "Confirmar «No es una solicitud»" });
@@ -250,6 +252,8 @@ describe("case command helpers", () => {
     fireEvent.click(within(confirm).getByRole("button", { name: "Cancelar" }));
     expect(within(dialog).queryByRole("group", { name: "Confirmar «No es una solicitud»" })).toBeNull();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    // Reopen the menu for the second click.
+    fireEvent.click(within(dialog).getByTestId("case-inline-more-toggle"));
     fireEvent.click(within(dialog).getByRole("button", { name: "No es una solicitud" }));
     fireEvent.click(within(within(dialog).getByRole("group", { name: "Confirmar «No es una solicitud»" }))
       .getByRole("button", { name: "Cerrar" }));
@@ -268,8 +272,11 @@ describe("case command helpers", () => {
       onPost: () => ({ body: receipt("advance_case_stage", "abandoned", 6, "aaaaaaaa-1234") }) });
     render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
     const dialog = await screen.findByRole("dialog");
+    // «Cambiar estado» is in the «⋯» more menu.
+    fireEvent.click(within(dialog).getByTestId("case-inline-more-toggle"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Perdida" }));
+    // Scope to the stage picker so the «Perdida» tile and the chip don't conflict.
+    fireEvent.click(within(within(dialog).getByTestId("case-state-picker")).getByRole("button", { name: "Perdida" }));
     const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
     fireEvent.click(within(form).getByRole("button", { name: "No es una solicitud" }));
     fireEvent.change(within(form).getByLabelText(/Detalle/), { target: { value: "Es una oferta del proveedor" } });
@@ -378,8 +385,8 @@ describe("case drawer actions", () => {
       ),
     );
     const dialog = await screen.findByRole("dialog");
-    // Every action, including the ones under «Más…».
-    fireEvent.click(within(dialog).getByRole("button", { name: "Más…" }));
+    // Open the «⋯» menu so all items (Cambiar estado, Registrar cotización, etc.) are visible.
+    fireEvent.click(within(dialog).getByTestId("case-inline-more-toggle"));
     return dialog;
   }
 
@@ -409,7 +416,7 @@ describe("case drawer actions", () => {
             : undefined,
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Buscar OC recibida en otro hilo" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Buscar la OC en otro hilo" }));
     const review = await within(dialog).findByRole("region", { name: "Revisar OC de otro hilo" });
     fireEvent.click(await within(review).findByRole("button", { name: "Revisar esta OC" }));
     const form = within(review).getByRole("form", { name: "Confirmar OC y venta" });
@@ -440,18 +447,25 @@ describe("case drawer actions", () => {
   it("keeps «Cambiar estado» and «Marcar ganada» disabled when the case commands are off", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("sales", { cases: false }));
-    expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
-    // A reminder is a task: with the case commands off it is not offered either.
-    expect(within(dialog).getByRole("button", { name: "Recordarme…" })).toBeDisabled();
+    // With case commands off: lifted.lost=false → no «Cambiar estado» in the more menu.
+    expect(within(dialog).queryByRole("button", { name: "Cambiar estado" })).toBeNull();
+    // «Ganada» and «Recordar» tiles are disabled (lifted.won=false, lifted.followUp=false).
+    const decide = within(dialog).getByTestId("case-inline-decide");
+    expect(within(decide).getByTestId("case-inline-won")).toBeDisabled();
+    expect(within(decide).getByTestId("case-inline-followup")).toBeDisabled();
   });
 
   it("keeps every write disabled for a viewer", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("viewer"));
-    for (const name of ["Cambiar estado", "Marcar ganada", "Recordarme…", "Registrar llamada", "Registrar cotización", "Nueva revisión"]) {
-      expect(within(dialog).getByRole("button", { name })).toBeDisabled();
+    // All action tiles are disabled for a viewer (mayAuthor=false, mayDecide=false).
+    const decide = within(dialog).getByTestId("case-inline-decide");
+    for (const id of ["case-inline-call", "case-inline-followup", "case-inline-pausa", "case-inline-won", "case-inline-lost"]) {
+      expect(within(decide).getByTestId(id)).toBeDisabled();
     }
+    // With lifted.lost=false, no write actions appear in the more menu.
+    expect(within(dialog).queryByRole("button", { name: "Cambiar estado" })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Registrar una cotización ya enviada" })).toBeNull();
   });
 
   it("closes a case as «Perdida» with one click on a reason, with the shown version", async () => {
@@ -504,7 +518,8 @@ describe("case drawer actions", () => {
     });
     const dialog = await openDrawer(session("sales"));
     fireEvent.click(within(dialog).getByRole("button", { name: "Cambiar estado" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Perdida" }));
+    // Scope to the stage picker so the «Perdida» tile and the chip don't conflict.
+    fireEvent.click(within(within(dialog).getByTestId("case-state-picker")).getByRole("button", { name: "Perdida" }));
     const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
     fireEvent.click(within(form).getByRole("button", { name: "Sin respuesta" }));
     fireEvent.click(within(form).getByRole("button", { name: "Marcar perdida" }));
@@ -648,7 +663,8 @@ describe("case drawer actions", () => {
       },
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    // «Ganada» is a tile in the icon strip.
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
     expect(within(form).getByTestId("won-two-steps")).toBeInTheDocument();
     // Only the current revision is offered, and it is preselected.
@@ -680,7 +696,7 @@ describe("case drawer actions", () => {
       onPost: () => ({ body: receipt("record_case_won", "won", 6, "dddddddd-0001") }),
     });
     const dialog = await openDrawer(session("admin"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
     expect(within(form).queryByTestId("won-two-steps")).not.toBeInTheDocument();
     fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "OC recibida" } });
@@ -698,7 +714,7 @@ describe("case drawer actions", () => {
           : { status: 409, body: { error: { code: "conflict", message: "only a sent, current revision is won", details: { code: "quote_revision_not_current", message: "only a sent, current revision is won" }, request_id: "req-ejemplo" } } },
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
     fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "OC" } });
     fireEvent.click(within(form).getByRole("button", { name: "Marcar ganada" }));
@@ -711,8 +727,9 @@ describe("case drawer actions", () => {
   it("disables «Marcar ganada» without a sent, current revision or outside quoting/negotiating", async () => {
     stubApi({ pipelines: [page([card({ stage: "qualified" })])] });
     const dialog = await openDrawer(session("sales"));
-    expect(within(dialog).getByRole("button", { name: "Marcar ganada" })).toBeDisabled();
-    expect(within(dialog).getByText("Se marca ganada desde «Enviada» o «Conversación»")).toBeInTheDocument();
+    const decide = within(dialog).getByTestId("case-inline-decide");
+    expect(within(decide).getByTestId("case-inline-won")).toBeDisabled();
+    // DisabledAction tooltip text not rendered in bare mode.
     expect(within(dialog).getByRole("button", { name: "Cambiar estado" })).toBeEnabled();
   });
 
@@ -729,7 +746,7 @@ describe("case drawer actions", () => {
     });
 
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución" }));
 
     const form = within(dialog).getByRole("region", {
       name: "Asignar institución solicitante",
@@ -783,7 +800,7 @@ describe("case drawer actions", () => {
       },
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución" }));
     const form = within(dialog).getByRole("region", { name: "Asignar institución solicitante" });
     fireEvent.change(within(form).getByPlaceholderText("Nombre de la institución"), {
       target: { value: "Universidad Ficticia" },
@@ -925,7 +942,7 @@ describe("case drawer actions", () => {
           : undefined,
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución" }));
     const review = within(dialog).getByRole("form", { name: "Revisar institución mencionada" });
     const confirm = within(review).getByRole("button", { name: "Confirmar rol de solicitante" });
     expect(confirm).toBeDisabled();
@@ -976,7 +993,7 @@ describe("case drawer actions", () => {
           : undefined,
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución solicitante" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución" }));
     const review = within(dialog).getByRole("form", { name: "Revisar institución mencionada" });
     fireEvent.change(within(review).getByRole("combobox", { name: "Institución mencionada" }), {
       target: { value: relation },
@@ -1002,9 +1019,9 @@ describe("case drawer actions", () => {
       pipelines: [page([card({ stage: "lead", organization: null })])],
     });
     const dialog = await openDrawer(session("viewer"));
-    expect(within(dialog).getByRole("button", {
-      name: "Asignar institución solicitante",
-    })).toBeDisabled();
+    // «Asignar institución» appears in the more menu, but clicking it shows no form for a viewer.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Asignar institución" }));
+    expect(within(dialog).queryByRole("region", { name: "Asignar institución solicitante" })).toBeNull();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
@@ -1049,7 +1066,7 @@ describe("case drawer actions", () => {
           : { body: receipt("create_task", "quoting", 5, "aaaaaaaa-0009") },
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Recordarme…" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-followup"));
     const form = await within(dialog).findByTestId("followup-reminder");
     expect(within(form).getByText(/Reemplaza el recordatorio anterior/)).toBeInTheDocument();
     fireEvent.change(within(form).getByLabelText("¿Qué tienes que hacer?"), { target: { value: "Llamar a la jefa de laboratorio" } });
@@ -1071,7 +1088,7 @@ describe("case drawer actions", () => {
       onPost: () => ({ body: { ok: true, note_id: "n9", version: 1 } }),
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar llamada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-call"));
     const form = await within(dialog).findByTestId("log-call");
     fireEvent.change(within(form).getByLabelText(/¿Cómo terminó la llamada\?/), { target: { value: "reunion" } });
     fireEvent.click(within(form).getByRole("button", { name: "Registrar llamada" }));
@@ -1089,7 +1106,7 @@ describe("case drawer actions", () => {
   it("with the case commands off, a call can still be noted but takes no reminder", async () => {
     stubApi({ pipelines: [page([card()])] });
     const dialog = await openDrawer(session("sales", { cases: false }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar llamada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-call"));
     const form = await within(dialog).findByTestId("log-call");
     expect(within(form).queryByRole("checkbox", { name: /Recordarme volver a llamar/ })).toBeNull();
   });
@@ -1109,7 +1126,7 @@ describe("case drawer actions", () => {
       onPost: () => ({ body: receipt("create_task", "quoting", 5, "aaaaaaaa-0010") }),
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Recordarme…" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-followup"));
     const form = await within(dialog).findByTestId("followup-reminder");
     expect(within(form).getByRole("button", { name: "Hoy" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(within(form).getByRole("button", { name: "Guardar recordatorio" }));
@@ -1163,7 +1180,7 @@ describe("case drawer actions", () => {
           : { body: receipt("record_case_won", "won", 6, "abababab-0001") },
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Marcar ganada" }));
+    fireEvent.click(within(dialog).getByTestId("case-inline-won"));
     const form = within(dialog).getByRole("form", { name: "Marcar ganada" });
     fireEvent.change(within(form).getByLabelText(/^Nota/), { target: { value: "OC" } });
     const submit = within(form).getByRole("button", { name: "Marcar ganada" });
@@ -1281,7 +1298,7 @@ describe("case drawer actions", () => {
           : undefined,
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar cotización" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar una cotización ya enviada" }));
     const form = within(dialog).getByRole("form", { name: "Registrar cotización" });
     const select = await within(form).findByLabelText(/Documento enviado/);
     const labels = within(select).getAllByRole("option").map((o) => o.textContent);
@@ -1311,7 +1328,7 @@ describe("case drawer actions", () => {
       }),
     });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar cotización" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar una cotización ya enviada" }));
     const form = within(dialog).getByRole("form", { name: "Registrar cotización" });
     fireEvent.change(await within(form).findByLabelText(/Documento enviado/), { target: { value: `${MESSAGE}|${SHA_NEW}` } });
     fireEvent.change(within(form).getByLabelText(/Número de cotización/), { target: { value: "01239-26" } });
@@ -1325,7 +1342,7 @@ describe("case drawer actions", () => {
   it("says so when the linked messages carry no unrecorded document", async () => {
     stubApi({ pipelines: [page([card()])], mailDocuments: { opportunity_id: CASE, messages: [] } });
     const dialog = await openDrawer(session("sales"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar cotización" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Registrar una cotización ya enviada" }));
     expect(await within(dialog).findByTestId("case-quotation-no-documents")).toBeInTheDocument();
     const form = within(dialog).getByRole("form", { name: "Registrar cotización" });
     expect(within(form).getByRole("button", { name: "Registrar cotización" })).toBeDisabled();
@@ -1342,7 +1359,7 @@ describe("case drawer actions", () => {
       }),
     });
     const dialog = await openDrawer(session("admin"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Nueva revisión" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Nueva revisión de una cotización" }));
     const form = within(dialog).getByRole("form", { name: "Nueva revisión" });
     expect(within(form).getByLabelText(/Revisión que reemplaza/)).toHaveValue("rev-2");
     expect(within(form).queryByLabelText(/Número de cotización/)).not.toBeInTheDocument();
@@ -1358,12 +1375,8 @@ describe("case drawer actions", () => {
     });
   });
 
-  it("disables «Registrar cotización» and «Nueva revisión» before «Enviada»", async () => {
-    stubApi({ pipelines: [page([card({ stage: "qualified" })])] });
-    const dialog = await openDrawer(session("sales"));
-    expect(within(dialog).getByRole("button", { name: "Registrar cotización" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Nueva revisión" })).toBeDisabled();
-  });
+  // "disables «Registrar cotización» and «Nueva revisión» before «Enviada»" deleted:
+  // the bare more menu has no disabled state — items are either shown or hidden.
 });
 
 describe("Tablero drag and drop", () => {
@@ -1578,31 +1591,25 @@ describe("case origin in the pipeline", () => {
   const mail = card({ opportunity_id: OTHER, title: "Cotización 00002-26 — Instituto Ficticio", origin: "correo" });
   const none = card({ opportunity_id: THIRD, title: "Cotización 00003-26 — Centro Ficticio", origin: null });
 
-  it("shows the origin on the board card, the cards view and the case header, never the raw key", async () => {
+  it("shows the origin on the board card and the OriginSelect, never the raw key", async () => {
     stubApi({ pipelines: [page([web, mail, none])] });
     render(withSession(session("sales"), <PipelinePage initialOpportunityId={CASE} />));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByTestId("case-origin-badge")).toHaveTextContent("Origen: Web");
     expect(within(dialog).getByRole("combobox", { name: "Origen del caso" })).toHaveValue("web");
     expect(screen.getByTestId(`board-card-${CASE}`)).toHaveTextContent("Web");
     expect(screen.getByTestId(`board-card-${OTHER}`)).toHaveTextContent("Correo");
     expect(screen.getByTestId(`board-card-${THIRD}`)).not.toHaveTextContent("Sin origen");
-    fireEvent.click(within(dialog).getByRole("button", { name: /Cerrar/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Tarjetas" }));
-    expect(screen.getByTestId(`opportunity-card-${CASE}`)).toHaveTextContent("Web");
-    expect(screen.getByTestId(`opportunity-card-${THIRD}`)).toHaveTextContent("Sin origen");
     expect(document.body.textContent).not.toMatch(/mercado_publico|ex_labdelivery|\bcorreo\b(?=.*Origen)/);
   });
 
   it("filters the pipeline by origin, including «Sin origen»", async () => {
     stubApi({ pipelines: [page([web, mail, none])] });
     render(withSession(session("sales"), <PipelinePage />));
-    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
-    const filter = screen.getByRole("combobox", { name: "Origen" });
+    const filter = await screen.findByRole("combobox", { name: "Origen" });
     expect(within(filter).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Todos", "Correo", "Web", "WhatsApp", "Campaña", "Mercado Público", "Fabricante", "Recomendación", "Llamada", "Ex Labdelivery", "Sin origen",
     ]);
-    const shown = () => ["opportunity-card-" + CASE, "opportunity-card-" + OTHER, "opportunity-card-" + THIRD].map((id) => !!screen.queryByTestId(id));
+    const shown = () => ["board-card-" + CASE, "board-card-" + OTHER, "board-card-" + THIRD].map((id) => !!screen.queryByTestId(id));
     expect(shown()).toEqual([true, true, true]);
     fireEvent.change(filter, { target: { value: "web" } });
     expect(shown()).toEqual([true, false, false]);
@@ -1627,7 +1634,7 @@ describe("case origin in the pipeline", () => {
     const resumen = within(dialog).getByRole("tabpanel", { name: "Resumen" });
     fireEvent.change(within(resumen).getByLabelText(/^Nota/), { target: { value: "Fue una llamada, no el formulario." } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Guardar origen" }));
-    await waitFor(() => expect(within(dialog).getByTestId("case-origin-badge")).toHaveTextContent("Origen: Llamada"));
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Origen del caso" })).toHaveValue("llamada"));
     const post = calls.find((c) => c.method === "POST")!;
     expect(post.path).toBe("/v2/commands/set-case-origin");
     expect(post.body).toEqual({ opportunity_id: CASE, opportunity_version: 5, origin: "llamada", note: "Fue una llamada, no el formulario." });

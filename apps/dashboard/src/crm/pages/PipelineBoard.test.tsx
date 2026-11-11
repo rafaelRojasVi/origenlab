@@ -11,6 +11,7 @@ import { stagePath } from "../caseCommands";
 import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
 import { moveRefusal } from "./CaseMove";
 import { Board, cardMoney, columnMoney, silentFollowUpStep, sortCards } from "./PipelineBoard";
+import { urgencyByCase, urgencyText, type CaseUrgency } from "../urgency";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -577,11 +578,11 @@ describe("Pipeline page · Silenciosas (Task 8)", () => {
     window.location.hash = "";
   });
 
-  it("is headed «Pipeline» with «Tablero · Tarjetas · Cerradas»", async () => {
+  it("is headed «Pipeline» with «Tablero · Lista»", async () => {
     renderPage([silentNow()]);
     expect(await screen.findByRole("heading", { level: 1, name: "Pipeline" })).toBeInTheDocument();
     const vista = await screen.findByRole("group", { name: "Vista" });
-    expect(within(vista).getAllByRole("button").map((b) => b.textContent)).toEqual(["Tablero", "Tarjetas", "Cerradas"]);
+    expect(within(vista).getAllByRole("button").map((b) => b.textContent)).toEqual(["Tablero", "Lista"]);
   });
 
   it("¿Marcar perdida? opens the lost reasons for that case", async () => {
@@ -614,5 +615,40 @@ describe("Pipeline page · Silenciosas (Task 8)", () => {
     fireEvent.drop(target, { dataTransfer });
     expect(await screen.findByText("Silenciosas se llena sola: un caso entra a los 21 días sin respuesta.")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("renders an urgency-strip with at least one chip", async () => {
+    renderPage([silentNow()]);
+    const strip = await screen.findByTestId("urgency-strip");
+    expect(strip).toBeInTheDocument();
+    const chips = within(strip).queryAllByRole("button");
+    expect(chips.length).toBeGreaterThan(0);
+  });
+});
+
+describe("urgency helpers", () => {
+  const now = new Date("2026-11-11T12:00:00Z");
+
+  it("urgencyByCase marks closed/won/lost cases as cerrado, open cases without a step as sin", () => {
+    const open = card({ open_tasks: [] }, null);
+    const won = card({ stage: "won", closed_at: "2026-11-01T00:00:00Z" }, null);
+    const lost = card({ stage: "lost", closed_at: "2026-11-01T00:00:00Z" }, null);
+
+    const map = urgencyByCase([open, won, lost], now);
+    expect(map.get(open.opportunity_id)?.level).toBe("sin");
+    expect(map.get(won.opportunity_id)?.level).toBe("cerrado");
+    expect(map.get(lost.opportunity_id)?.level).toBe("cerrado");
+  });
+
+  it("urgencyText renders human labels for each level", () => {
+    // Use type assertions: urgencyText only reads level, step.dueDays and step.due.
+    const u = (level: CaseUrgency["level"], dueDays?: number): CaseUrgency =>
+      ({ level, step: dueDays !== undefined ? { dueDays, due: now } : null, rank: 0 } as unknown as CaseUrgency);
+
+    expect(urgencyText(u("atrasado", -5))).toBe("5 d atrasado");
+    expect(urgencyText(u("hoy", 0))).toBe("Hoy");
+    expect(urgencyText(u("pronto", 1))).toBe("Mañana");
+    expect(urgencyText(u("sin"))).toBe("Sin próximo paso");
+    expect(urgencyText(u("luego"))).toBe("Más adelante");
   });
 });

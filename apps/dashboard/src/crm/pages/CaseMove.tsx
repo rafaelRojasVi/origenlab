@@ -113,6 +113,7 @@ export function CaseMoveForm({
   onDone,
   now,
   initialReason = null,
+  showFrom = true,
 }: {
   card: OpportunityCardData;
   target: MoveTarget;
@@ -121,6 +122,8 @@ export function CaseMoveForm({
   now?: Date;
   /** A reason chip chosen up front («Cerrar sin respuesta» from «Hoy»). */
   initialReason?: string | null;
+  /** «Ahora: …»; off when the form was opened for this one target (its header says it). */
+  showFrom?: boolean;
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const from = boardColumnOf(card, at);
@@ -247,11 +250,11 @@ export function CaseMoveForm({
   const title = `Mover a «${COLUMN_LABEL[target]}»`;
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-3" aria-label={title} data-testid="case-move-form">
-      <p className="text-xs text-ink-muted">
+      {showFrom ? <p className="text-xs text-ink-muted">
         Ahora: <strong className="text-ink">{COLUMN_LABEL[from]}</strong>
         {from === "pausa" && card.paused_until ? ` hasta ${fmtDate(pauseDayIso(card.paused_until))}` : ""}
         {from !== "pausa" ? ` (${STAGE_LABEL[card.stage] ?? card.stage})` : ""}.
-      </p>
+      </p> : null}
       {refusal ? (
         <p role="alert" className="rounded-md border border-bad/40 bg-bad-bg px-3 py-2 text-xs text-bad">
           {refusal}

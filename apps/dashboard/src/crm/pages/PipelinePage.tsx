@@ -1,53 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchPipeline } from "../crmApi";
 import { crmHash } from "../crmRoute";
-import { CASE_ORIGINS, NO_ORIGIN_LABEL, ORIGIN_LABEL, matchesOrigin, originLabel, type OriginFilter } from "../caseOrigin";
+import { CASE_ORIGINS, NO_ORIGIN_LABEL, ORIGIN_LABEL, matchesOrigin, type OriginFilter } from "../caseOrigin";
 import type { OpportunityCardData } from "../crmTypes";
 import { CaseDrawer } from "../drawer/CaseDrawer";
 import type { Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
-import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
-import { ClosedCases, ClosedNote } from "./ClosedCases";
-import { DecideCases, reviewableOpenCards } from "./DecideCases";
+import { BOARD_SORT_LABEL, Board, cardMoney, type BoardSort } from "./PipelineBoard";
+import { DecideCases } from "./DecideCases";
+import { QueueIcon, stepAction, stepIcon } from "./HoyQueueParts";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
-import { quoteToOpen, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
-import { awaitsQuote, followUpsDue, isCotizarCase } from "../today";
+import { followUpsDue, isCotizarCase } from "../today";
 import { boardViewFromHash, type BoardView } from "../goals";
-import { contactLine, isDelivered } from "../caseDisplay";
-import { inSharedMailbox } from "../gmailLinks";
-import {
-  HISTORICAL_STAGE_LABEL,
-  STATUS_LABEL,
-  byLatestActivity,
-  matchesQuery,
-  pauseReturned,
-  pausedUntil,
-  stageBasis,
-  stageDisplay,
-  type BoardColumnKey,
-} from "../stage";
-import {
-  Badge,
-  Button,
-  EmptyState,
-  Modal,
-  PageHeader,
-  ResourceGate,
-  SearchInput,
-  Segmented,
-  Skeleton,
-  StatLine,
-  fmtDate,
-  initials,
-  toast,
-} from "../ui";
+import { contactLine, displayName } from "../caseDisplay";
+import { caseAmountClp } from "../nextSteps";
+import { formatMoney } from "../money";
+import { BOARD_COLUMNS, HISTORICAL_STAGE_LABEL, boardColumnOf, byLatestActivity, isOnBoard, matchesQuery, stageBasis, type BoardColumnKey } from "../stage";
+import { URGENCY_BADGE, URGENCY_EDGE, byUrgency, urgencyByCase, urgencyText, type CaseUrgency } from "../urgency";
+import { EmptyState, Modal, PageHeader, ResourceGate, SearchInput, Segmented, Skeleton, toast } from "../ui";
 import { GrowingListEnd } from "../GrowingListEnd";
 import { useGrowingList } from "../useGrowingList";
 import { useResource } from "../useResource";
-import { splitAddress } from "../address";
 
-type StatusFilter = "all" | "blocked" | "pending" | "ok";
-type View = "board" | "cards" | "cerradas";
+type View = "board" | "list";
+/** The urgency strip's filters: one at a time, a second click clears it. */
+type Focus = "atrasado" | "responder" | "hoy" | "sin";
 
 export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: string | null }) {
   const [state, reload, refreshing, patch] = useResource(fetchPipeline);
@@ -58,10 +35,7 @@ export function PipelinePage({ initialOpportunityId }: { initialOpportunityId?: 
   );
   return (
     <div className="space-y-3">
-      <PageHeader
-        title="Pipeline"
-        subtitle="Cada caso en su estado: lo que espera seguimiento, lo que está por cerrarse y lo ganado."
-      />
+      <PageHeader title="Pipeline" subtitle="Cada caso en su estado, lo más urgente arriba." />
       <ResourceGate state={state} reload={reload} skeleton={<Skeleton rows={6} cards />}>
         {(data) => (
           <Pipeline
@@ -92,16 +66,17 @@ function Pipeline({
   /** A refetch is running behind the cards on screen. */
   refreshing?: boolean;
 }) {
-  const [status, setStatus] = useState<StatusFilter>("all");
   const [view, setView] = useState<View>("board");
   const [q, setQ] = useState("");
   const [origin, setOrigin] = useState<OriginFilter>("all");
+  const [focus, setFocus] = useState<Focus | null>(null);
+  const [showClosed, setShowClosed] = useState(false);
   const [openId, setOpenId] = useState<string | null>(initialId);
   // A drawer opened by a drop on «Ganada» arrives with «Marcar ganada» open.
   const [openWith, setOpenWith] = useState<{ mode: Exclude<Mode, null>; target?: MoveTarget } | null>(null);
   const [moving, setMoving] = useState<{ id: string; to: MoveTarget } | null>(null);
-  const [sort, setSort] = useState<BoardSort>("recent");
-  const [deciding, setDeciding] = useState<false | "historical" | "open">(false);
+  const [sort, setSort] = useState<BoardSort>("urgent");
+  const [deciding, setDeciding] = useState(false);
   const mayDecide = useMayRunCaseCommands();
 
   function open(id: string | null, withForm: typeof openWith = null) {
@@ -125,35 +100,30 @@ function Pipeline({
     setMoving({ id: card.opportunity_id, to });
   }
 
-  // `?vista=seguimiento|cotizar` (Hoy's goal tiles): only the cases that tile counts, in Tablero
-  // and Tarjetas alike, until «Quitar filtro».
+  // `?vista=seguimiento|cotizar` (Hoy's goal tiles): only the cases that tile counts, until «Quitar filtro».
   const vista = useBoardView();
+  const now = useMemo(() => new Date(), [items]);
+  const urgency = useMemo(() => urgencyByCase(items, now), [items, now]);
   const viewItems = useMemo(() => {
     if (vista === null) return items;
-    const now = new Date();
     return items.filter((c) => (vista === "seguimiento" ? followUpsDue([c], now).length > 0 : isCotizarCase(c, now)));
-  }, [items, vista]);
+  }, [items, vista, now]);
 
-  const counts = useMemo(() => {
-    const c = { all: viewItems.length, blocked: 0, pending: 0, ok: 0 };
-    for (const i of viewItems) c[i.status] += 1;
-    return c;
-  }, [viewItems]);
-
+  const matchesFocus = (c: OpportunityCardData) => {
+    if (!focus) return true;
+    const u = urgency.get(c.opportunity_id);
+    if (!u) return false;
+    if (focus === "responder") return u.step?.kind === "responder" && u.step.dueDays <= 0;
+    return u.level === focus;
+  };
   const visible = useMemo(
-    () =>
-      viewItems
-        .filter((i) => (status === "all" || i.status === status) && matchesOrigin(i, origin) && matchesQuery(i, q))
-        .sort(byLatestActivity),
-    [viewItems, status, origin, q],
+    () => viewItems.filter((i) => matchesOrigin(i, origin) && matchesQuery(i, q)).sort(byLatestActivity),
+    [viewItems, origin, q],
   );
-  const quotes = items.reduce((n, i) => n + i.quotes.length, 0);
-  const revisions = items.reduce((n, i) => n + i.revision_count, 0);
-  const withDrive = items.filter((i) => i.drive_folder).length;
+  const focused = focus ? visible.filter(matchesFocus) : visible;
   const historicalCards = useMemo(() => items.filter((i) => stageBasis(i) === "historical_import"), [items]);
   const historical = historicalCards.length;
-  const openCards = useMemo(() => reviewableOpenCards(items), [items]);
-  const paused = items.filter((i) => pausedUntil(i) || pauseReturned(i)).length;
+  const closedCount = visible.filter((c) => urgency.get(c.opportunity_id)?.level === "cerrado" && isOnBoard(c, now)).length;
   const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
   const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
 
@@ -163,16 +133,7 @@ function Pipeline({
 
   return (
     <>
-      <StatLine
-        items={[
-          { label: "Oportunidades", value: items.length },
-          { label: "Cotizaciones", value: quotes },
-          { label: "Revisiones", value: revisions },
-          { label: "Con carpeta Drive", value: `${withDrive}/${items.length}` },
-          { label: "En pausa", value: paused },
-          { label: "Bloqueadas", value: counts.blocked, tone: counts.blocked ? "bad" : undefined },
-        ]}
-      />
+      <UrgencyStrip cards={visible} urgency={urgency} focus={focus} onFocus={(f) => setFocus(focus === f ? null : f)} />
       {historical > 0 && !deciding ? (
         <div
           className="flex flex-wrap items-center gap-3 rounded-lg border border-warn/30 bg-warn-bg/50 px-3 py-2.5 text-xs leading-5 text-ink-muted"
@@ -188,7 +149,7 @@ function Pipeline({
           {mayDecide ? (
             <button
               type="button"
-              onClick={() => setDeciding("historical")}
+              onClick={() => setDeciding(true)}
               className="inline-flex h-8 shrink-0 items-center rounded-md bg-brand-700 px-3 text-xs font-medium text-white hover:bg-brand-900"
             >
               Decidir {historical} casos
@@ -203,16 +164,15 @@ function Pipeline({
       ) : null}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Segmented
-          label="Estado"
-          value={status}
-          onChange={setStatus}
+          label="Vista"
+          value={view}
+          onChange={setView}
           options={[
-            { value: "all", label: "Todas", count: counts.all },
-            { value: "blocked", label: "Bloqueadas", count: counts.blocked },
-            { value: "pending", label: "Pendientes", count: counts.pending },
-            { value: "ok", label: "Al día", count: counts.ok },
+            { value: "board", label: "Tablero" },
+            { value: "list", label: "Lista" },
           ]}
         />
+        <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
         <label className="flex items-center gap-1.5 text-xs text-ink-muted">
           Origen
           <select
@@ -229,18 +189,7 @@ function Pipeline({
             <option value="none">{NO_ORIGIN_LABEL}</option>
           </select>
         </label>
-        <SearchInput value={q} onChange={setQ} label="Buscar oportunidades" placeholder="Institución, número, contacto…" />
-        <span className="text-xs text-ink-faint tabular-nums">{visible.length} resultados</span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {mayDecide && !deciding && openCards.length > 0 ? (
-            <button
-              type="button"
-              onClick={() => setDeciding("open")}
-              className="inline-flex h-8 items-center rounded-md border border-line-strong bg-canvas-raised px-3 text-xs font-medium text-ink hover:border-ink-faint"
-            >
-              Revisar casos abiertos ({openCards.length})
-            </button>
-          ) : null}
           {view === "board" ? (
             <label className="flex items-center gap-1.5 text-xs text-ink-muted">
               Ordenar
@@ -257,16 +206,10 @@ function Pipeline({
               </select>
             </label>
           ) : null}
-          <Segmented
-            label="Vista"
-            value={view}
-            onChange={setView}
-            options={[
-              { value: "board", label: "Tablero" },
-              { value: "cards", label: "Tarjetas" },
-              { value: "cerradas", label: "Cerradas" },
-            ]}
-          />
+          <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-line bg-canvas-raised px-2.5 text-xs font-medium text-ink-muted hover:text-ink">
+            <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} className="accent-[var(--color-accent)]" />
+            Ver cerradas <span className="tabular-nums text-ink-faint">{closedCount}</span>
+          </label>
         </div>
       </div>
 
@@ -286,28 +229,21 @@ function Pipeline({
       ) : null}
 
       {deciding ? (
-        <DecideCases
-          cards={deciding === "open" ? openCards : historicalCards}
-          mode={deciding}
-          onApplied={onChanged}
-          onClose={() => setDeciding(false)}
-        />
-      ) : visible.length === 0 ? (
-        <div className="space-y-4">
-          {view === "cerradas" ? <ClosedNote /> : null}
-          <EmptyState title="Ninguna oportunidad coincide">Cambia el filtro de estado u origen, o la búsqueda.</EmptyState>
-        </div>
-      ) : view === "cards" ? (
-        <CardGrid cards={visible} onOpen={(id) => open(id)} />
-      ) : view === "cerradas" ? (
-        <ClosedCases cards={visible} onOpen={(id) => open(id)} />
+        <DecideCases cards={historicalCards} mode="historical" onApplied={onChanged} onClose={() => setDeciding(false)} />
+      ) : focused.length === 0 ? (
+        <EmptyState title="Ninguna oportunidad coincide">Quita el filtro de urgencia u origen, o cambia la búsqueda.</EmptyState>
+      ) : view === "list" ? (
+        <UrgencyList cards={focused} urgency={urgency} showClosed={showClosed} now={now} onOpen={(id) => open(id)} />
       ) : (
         <Board
-          cards={visible}
+          cards={focused}
           onOpen={(id) => open(id)}
           onMove={mayDecide ? onMove : undefined}
           onLose={(card) => setMoving({ id: card.opportunity_id, to: "perdida" })}
           sort={sort}
+          urgency={urgency}
+          showClosed={showClosed}
+          onShowClosed={() => setShowClosed(true)}
         />
       )}
 
@@ -341,6 +277,119 @@ function Pipeline({
   );
 }
 
+/**
+ * What needs doing now, in one line: overdue, clients waiting on a reply, due today, no next step,
+ * and the money in the overdue cases. Each figure filters the board and the list.
+ */
+function UrgencyStrip({
+  cards, urgency, focus, onFocus,
+}: { cards: OpportunityCardData[]; urgency: Map<string, CaseUrgency>; focus: Focus | null; onFocus: (f: Focus) => void }) {
+  let atrasado = 0, responder = 0, hoy = 0, sin = 0, risk = 0;
+  for (const c of cards) {
+    const u = urgency.get(c.opportunity_id);
+    if (!u) continue;
+    if (u.level === "atrasado") { atrasado += 1; risk += caseAmountClp(c) ?? 0; }
+    if (u.level === "hoy") hoy += 1;
+    if (u.level === "sin") sin += 1;
+    if (u.step?.kind === "responder" && u.step.dueDays <= 0) responder += 1;
+  }
+  const chip = (f: Focus, n: number, label: string, tone: string) => (
+    <button
+      type="button"
+      onClick={() => onFocus(f)}
+      aria-pressed={focus === f}
+      disabled={n === 0 && focus !== f}
+      className={`inline-flex h-9 items-baseline gap-1.5 rounded-lg border px-3 pt-1.5 text-[12.5px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 disabled:opacity-50 ${
+        focus === f ? "border-ink bg-ink text-canvas" : "border-line bg-canvas-raised text-ink-muted hover:border-line-strong"
+      }`}
+      data-testid={`urgency-${f}`}
+    >
+      <b className={`text-[15px] tabular-nums ${focus === f ? "" : tone}`}>{n}</b>
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Urgencia" data-testid="urgency-strip">
+      {chip("atrasado", atrasado, "atrasados", "text-bad")}
+      {chip("responder", responder, "esperan respuesta", "text-warn")}
+      {chip("hoy", hoy, "para hoy", "text-ink")}
+      {chip("sin", sin, "sin próximo paso", "text-warn")}
+      {risk > 0 ? (
+        <button
+          type="button"
+          onClick={() => onFocus("atrasado")}
+          className="inline-flex h-9 items-baseline gap-1.5 rounded-lg px-2 pt-1.5 text-[12.5px] text-ink-muted hover:text-ink"
+          title="Neto de las cotizaciones de los casos atrasados"
+          data-testid="urgency-risk"
+        >
+          <b className="text-[15px] tabular-nums text-bad">{formatMoney(String(risk), "CLP")}</b> en riesgo
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+const COLUMN_NAME = Object.fromEntries(BOARD_COLUMNS.map((c) => [c.key, c.label])) as Record<BoardColumnKey, string>;
+
+/** Every case as one row, most urgent first: what is next, where it stands, how much. */
+function UrgencyList({
+  cards, urgency, showClosed, now, onOpen,
+}: {
+  cards: OpportunityCardData[];
+  urgency: Map<string, CaseUrgency>;
+  showClosed: boolean;
+  now: Date;
+  onOpen: (id: string) => void;
+}) {
+  const rows = useMemo(
+    () => cards.filter((c) => showClosed || urgency.get(c.opportunity_id)?.level !== "cerrado").sort(byUrgency(urgency)),
+    [cards, urgency, showClosed],
+  );
+  const { shown, hidden, showMore, endRef } = useGrowingList(rows);
+  return (
+    <div className="overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="pipeline-list">
+      <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1.6fr)_8.5rem_7.5rem] gap-3 border-b border-line bg-canvas-sunken/60 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-ink-faint md:grid">
+        <span>Caso</span><span>Próximo paso</span><span>Estado</span><span className="text-right">Neto</span>
+      </div>
+      <ul>
+        {shown.map((c) => {
+          const u = urgency.get(c.opportunity_id);
+          const { name } = displayName(c);
+          const who = contactLine(c);
+          const money = cardMoney(c).text;
+          return (
+            <li key={c.opportunity_id}>
+              <button
+                type="button"
+                onClick={() => onOpen(c.opportunity_id)}
+                className={`grid w-full grid-cols-1 gap-x-3 gap-y-1 border-b border-l-4 border-b-line px-4 py-2.5 text-left transition-colors hover:bg-canvas-sunken/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.6fr)_8.5rem_7.5rem] md:items-center ${u ? URGENCY_EDGE[u.level] : "border-l-transparent"}`}
+                data-testid={`pipeline-row-${c.opportunity_id}`}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-[13.5px] font-semibold text-ink">{name}</span>
+                  {who ? <span className="block truncate text-[12px] text-ink-muted">{who}</span> : null}
+                </span>
+                <span className="flex min-w-0 items-center gap-2">
+                  {u?.step ? <QueueIcon name={stepIcon(u.step)} /> : null}
+                  {u && u.level !== "cerrado" ? (
+                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${URGENCY_BADGE[u.level]}`}>{urgencyText(u)}</span>
+                  ) : null}
+                  <span className="min-w-0 truncate text-[12.5px] text-ink-muted">{u?.step ? stepAction(u.step) : c.next_action.text}</span>
+                </span>
+                <span className="truncate text-[12.5px] text-ink-muted">{COLUMN_NAME[boardColumnOf(c, now)]}</span>
+                <span className="text-right text-[13px] font-semibold tabular-nums text-ink">{money || "—"}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="p-2">
+        <GrowingListEnd hidden={hidden} onMore={showMore} endRef={endRef} />
+      </div>
+    </div>
+  );
+}
+
 const VISTA_LABEL: Record<BoardView, string> = { seguimiento: "Seguimiento vencido", cotizar: "Por cotizar" };
 
 /** The `?vista=` on the address, kept in step with it. */
@@ -352,290 +401,4 @@ function useBoardView(): BoardView | null {
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
   return boardViewFromHash(hash);
-}
-
-/** Every case as a card, drawn in slices: the list holds closed cases too. */
-function CardGrid({ cards, onOpen }: { cards: OpportunityCardData[]; onOpen: (id: string) => void }) {
-  const { shown, hidden, showMore, endRef } = useGrowingList(cards);
-  return (
-    <>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-3">
-        {shown.map((card, i) => (
-          <OpportunityCard key={card.opportunity_id} card={card} index={i} onOpen={onOpen} />
-        ))}
-      </div>
-      <div className="mt-3">
-        <GrowingListEnd hidden={hidden} onMore={showMore} endRef={endRef} />
-      </div>
-    </>
-  );
-}
-
-function Dot({ ok }: { ok: boolean }) {
-  return <span aria-hidden="true" className={`inline-block h-1.5 w-1.5 rounded-full ${ok ? "bg-good" : "bg-line-strong"}`} />;
-}
-
-const PRE_QUOTE_STAGES_CARD = new Set(["lead", "qualifying", "qualified"]);
-
-/** True for an open case at a pre-quote stage with no sent quote — shows the «Por cotizar» card variant. */
-function isSolicitudSinCotizar(card: OpportunityCardData): boolean {
-  return (
-    !card.closed_at &&
-    PRE_QUOTE_STAGES_CARD.has(card.stage) &&
-    awaitsQuote(card)
-  );
-}
-
-/** «Por cotizar» card: who, what they asked for, days waiting and two action buttons. */
-function SolicitudSinCotizarCard({
-  card,
-  index,
-  onOpen,
-}: {
-  card: OpportunityCardData;
-  index: number;
-  onOpen: (id: string) => void;
-}) {
-  const contact = contactLine(card);
-  const startAt = card.last_contact?.inbound?.at ?? card.created_at ?? null;
-  const waitMs = startAt ? Math.max(0, Date.now() - Date.parse(startAt)) : 0;
-  const waitDays = Math.floor(waitMs / 86_400_000);
-  const waitHours = Math.floor(waitMs / 3_600_000);
-  const waitLabel = waitHours < 24 ? `${waitHours} h` : `${waitDays} d`;
-  const waitToneClass = waitDays >= 14 ? "bg-bad-bg text-bad" : waitDays >= 3 ? "bg-warn-bg text-warn" : "bg-good-bg text-good";
-  const waitFullLabel = waitDays > 0 ? `${waitDays} ${waitDays === 1 ? "día" : "días"} esperando` : `${waitHours} ${waitHours === 1 ? "hora" : "horas"} esperando`;
-
-  const solicitudItem = card.title.match(/^[Ss]olicitud\s*[—–-]+\s*(.+)$/)?.[1]?.trim()
-    ?? card.last_contact?.inbound?.subject?.trim()
-    ?? card.title;
-  const originUrl = card.last_contact?.inbound?.url
-    ? (inSharedMailbox(card.last_contact.inbound.url) ?? card.last_contact.inbound.url)
-    : null;
-  // Sales and admin go straight to the Cotizador; anyone else opens the case, as before.
-  const mayQuote = useMayRunCaseCommands();
-  const quote = useOpenOrCreateQuote();
-
-  return (
-    <article
-      data-testid={`opportunity-card-${card.opportunity_id}`}
-      style={{ animationDelay: `${Math.min(index, 12) * 18}ms` }}
-      className="crm-card-in group flex flex-col gap-2 rounded-md border border-brand-600/30 bg-canvas-raised px-3 py-2.5 shadow-[0_1px_1px_rgb(24_24_27/0.03)] transition-[box-shadow,border-color] duration-150 focus-within:border-brand-600/50 hover:border-brand-600/50 hover:shadow-sm"
-    >
-      {/* Header: «Por cotizar» chip + days pill */}
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-accent" data-testid="por-cotizar-chip">
-          Por cotizar
-        </span>
-        <span
-          className={`ml-auto inline-flex items-center rounded-full px-2 py-0.5 text-[11.5px] font-bold tabular-nums ${waitToneClass}`}
-          aria-label={waitFullLabel}
-          data-testid="por-cotizar-wait"
-        >
-          {waitLabel} esperando
-        </span>
-      </div>
-      {card.origin ? (
-        <p className="text-[11px] leading-4 text-ink-faint" data-testid="card-origin">
-          Origen: {originLabel(card.origin)}
-        </p>
-      ) : null}
-
-      {/* Institution + contact */}
-      <button
-        type="button"
-        onClick={() => onOpen(card.opportunity_id)}
-        aria-haspopup="dialog"
-        className="block w-full min-w-0 rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        <span className="block truncate text-[13px] font-semibold leading-5 text-ink">
-          {card.organization?.name ?? <span className="text-bad">Sin institución</span>}
-        </span>
-        {contact ? <span className="block truncate text-xs leading-4 text-ink-muted">{contact}</span> : null}
-      </button>
-
-      {/* «Pide» box */}
-      <div className="rounded-md bg-canvas-sunken px-2.5 py-1.5 text-[12px]" data-testid="pide-box">
-        <span className="text-[11px] text-ink-faint">Pide</span>
-        <p className="mt-0.5 line-clamp-2 text-ink">{solicitudItem}</p>
-      </div>
-
-      {/* Action buttons */}
-      <div className="flex gap-2">
-        <Button
-          variant="primary"
-          busy={quote.busy}
-          busyLabel="Creando…"
-          className="min-h-[44px]"
-          onClick={() => (mayQuote ? void quote.run(card) : onOpen(card.opportunity_id))}
-        >
-          {mayQuote && quoteToOpen(card) ? "Continuar cotización" : "Cotizar"}
-        </Button>
-        {originUrl ? (
-          <a
-            href={originUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-7 items-center rounded-md border border-line bg-canvas-raised px-3 text-xs text-ink hover:border-line-strong"
-          >
-            Ver pedido ↗
-          </a>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
-export function OpportunityCard({
-  card,
-  index,
-  onOpen,
-}: {
-  card: OpportunityCardData;
-  index: number;
-  onOpen: (id: string) => void;
-}) {
-  // A case at a pre-quote stage with no sent quote uses the «Por cotizar» simplified card.
-  if (isSolicitudSinCotizar(card)) {
-    return <SolicitudSinCotizarCard card={card} index={index} onOpen={onOpen} />;
-  }
-
-  const latest = card.latest_revision;
-  const blocking = card.attention.find((a) => a.blocking);
-  const status = STATUS_LABEL[card.status];
-  const stage = stageDisplay(card);
-  // The quote of the latest revision leads; the others follow as "+N".
-  const numbers = latest
-    ? [latest.quote_number, ...card.quote_numbers.filter((n) => n !== latest.quote_number)]
-    : card.quote_numbers;
-  const contact = card.contact?.address ? splitAddress(card.contact.address) : null;
-  return (
-    <article
-      data-testid={`opportunity-card-${card.opportunity_id}`}
-      style={{ animationDelay: `${Math.min(index, 12) * 18}ms` }}
-      className="crm-card-in group flex flex-col rounded-md border border-line bg-canvas-raised px-3 py-2.5 shadow-[0_1px_1px_rgb(24_24_27/0.03)] transition-[box-shadow,border-color] duration-150 focus-within:border-brand-600/50 hover:border-line-strong hover:shadow-sm"
-    >
-      <div className="flex items-center gap-1.5">
-        <span className="min-w-0 truncate text-xs font-semibold tracking-wide text-ink tabular-nums" title={numbers.join(", ")}>
-          {numbers.length ? numbers[0] : "Sin cotización"}
-          {numbers.length > 1 ? <span className="font-normal text-ink-faint"> +{numbers.length - 1}</span> : null}
-        </span>
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          <Badge tone={stage.tone} glyph={false} title={stage.title}>
-            {stage.label}
-          </Badge>
-          {card.status !== "ok" ? <Badge tone={status.tone}>{status.label}</Badge> : null}
-        </span>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => onOpen(card.opportunity_id)}
-        aria-haspopup="dialog"
-        className="mt-1 block w-full min-w-0 rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-      >
-        <span className="block truncate text-[13px] font-semibold leading-5 text-ink">
-          {card.organization?.name ?? <span className="text-bad">Sin institución</span>}
-        </span>
-        <span className="block truncate text-xs leading-4 text-ink-muted">{card.title}</span>
-      </button>
-
-      <dl className="mt-2 grid grid-cols-[auto_1fr] items-center gap-x-2.5 gap-y-1 text-[11px] leading-4">
-        <dt className="text-ink-faint">Contacto</dt>
-        <dd className="min-w-0 truncate text-ink-muted" title={contact?.email ?? undefined}>
-          {card.contact ? (
-            <>
-              {card.contact.name ?? contact?.display ?? contact?.email}
-              {card.contact.others > 0 ? <span className="text-ink-faint"> +{card.contact.others}</span> : null}
-              {card.contact.source === "gmail_recipient" ? <span className="text-ink-faint"> · destinatario</span> : null}
-            </>
-          ) : (
-            <span className="text-ink-faint">Sin contacto</span>
-          )}
-        </dd>
-        <dt className="text-ink-faint">Origen</dt>
-        <dd className={`min-w-0 truncate ${card.origin ? "text-ink-muted" : "text-ink-faint"}`} data-testid="card-origin">
-          {originLabel(card.origin)}
-        </dd>
-        <dt className="text-ink-faint">Revisión</dt>
-        <dd className="min-w-0 truncate">
-          {latest ? (
-            <span className="text-ink">
-              <span className="font-semibold tabular-nums">
-                {card.quotes.length > 1 ? `${latest.quote_number} ` : ""}r{latest.revision_no}
-              </span>
-              <span className="text-ink-muted"> · {fmtDate(latest.sent_at)}</span>
-              {card.revision_count > 1 ? <span className="text-ink-faint"> · {card.revision_count} revisiones</span> : null}
-            </span>
-          ) : (
-            <span className="inline-flex rounded border border-dashed border-line-strong px-1 text-ink-muted">Sin revisión</span>
-          )}
-        </dd>
-        <dt className="text-ink-faint">Documento</dt>
-        <dd className="min-w-0 truncate text-ink-muted" title={latest?.document?.filename ?? undefined}>
-          {latest?.document?.filename ?? (latest?.document ? "PDF sin nombre" : "—")}
-        </dd>
-        <dt className="text-ink-faint">Evidencia</dt>
-        <dd className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-          {latest && !isDelivered(latest) ? (
-            <span className="text-ink-faint">En el Cotizador, sin enviar</span>
-          ) : (
-            <>
-          {card.drive_folder ? (
-            <a
-              href={card.drive_folder.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-good hover:underline"
-              aria-label={`Abrir carpeta de Drive de ${card.organization?.name ?? card.title}`}
-              title="Carpeta del caso en Drive"
-            >
-              <Dot ok /> Drive <span className="text-[9px] font-semibold uppercase text-ink-faint">local</span>
-            </a>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-ink-faint">
-              <Dot ok={false} /> sin Drive
-            </span>
-          )}
-          {latest?.gmail ? (
-            <a
-              href={latest.gmail.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-good hover:underline"
-              aria-label={`Abrir correo de Gmail de ${latest.quote_number}`}
-            >
-              <Dot ok /> Gmail
-            </a>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-ink-faint">
-              <Dot ok={false} /> sin Gmail
-            </span>
-          )}
-            </>
-          )}
-        </dd>
-      </dl>
-
-      {blocking ? (
-        <p className="mt-2 rounded bg-bad-bg px-1.5 py-1 text-[11px] font-medium leading-4 text-bad">
-          <span aria-hidden="true">✕ </span>
-          {blocking.label}
-        </p>
-      ) : null}
-
-      <div className="mt-auto flex items-center gap-2 border-t border-line/70 pt-1.5 text-[11px] leading-4 [margin-top:0.5rem]">
-        <p className="min-w-0 flex-1 truncate text-ink-muted" title={`${card.next_action.text} — sugerencia, no es una tarea del CRM`}>
-          <span className="text-ink-faint">Sugerencia · </span>
-          {card.next_action.text}
-        </p>
-        <span
-          className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-line bg-canvas-sunken text-[9px] font-semibold text-ink-muted"
-          title={card.organization?.name ?? ""}
-          aria-hidden="true"
-        >
-          {initials(card.organization?.name)}
-        </span>
-      </div>
-    </article>
-  );
 }

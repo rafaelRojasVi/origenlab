@@ -157,14 +157,25 @@ describe("CaseDrawer", () => {
     expect(within(dialog).getByRole("tabpanel", { name: "Resumen" })).toBeVisible();
     // The header carries what the case is and where it stands.
     expect(within(dialog).getByRole("heading", { name: "Instituto Ficticio" })).toBeInTheDocument();
-    expect(within(dialog).getByTestId("case-drawer-net")).toHaveTextContent("$ 11.580.000");
-    expect(within(dialog).getByTestId("case-origin-badge")).toHaveTextContent("Origen: Campaña");
+    // The net amount and next step appear in the stepper (case-inline-state).
+    expect(within(dialog).getByTestId("case-inline-state")).toHaveTextContent("11.580.000");
+    // Origin is now set via OriginSelect in Resumen, not a header badge.
     // The timeline, newest first.
     const timeline = await within(dialog).findByTestId("case-timeline");
     expect(within(timeline).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
       expect.stringContaining("01318-26 rev. 2 enviada"),
       expect.stringContaining("Caso creado"),
     ]);
+  });
+
+  it("«Más» offers «Registrar cotización» and «Nueva revisión» only where the command takes them", () => {
+    stub();
+    const lead = renderDrawer("sales", card({ stage: "lead" }));
+    fireEvent.click(within(lead).getByTestId("case-inline-more-toggle"));
+    const menu = within(lead).getByTestId("case-inline-more");
+    expect(within(menu).queryByRole("button", { name: "Registrar una cotización ya enviada" })).toBeNull();
+    expect(within(menu).queryByRole("button", { name: "Nueva revisión de una cotización" })).toBeNull();
+    expect(within(menu).getByRole("button", { name: "Cambiar estado" })).toBeInTheDocument();
   });
 
   it("keeps Resumen short: no «Sin origen» badge, no «Calificar» form (removed, owner 2026-11-11)", () => {
@@ -205,7 +216,8 @@ describe("CaseDrawer", () => {
     stub();
     const dialog = renderDrawer("sales");
     fireEvent.click(within(dialog).getByRole("tab", { name: "Correos" }));
-    fireEvent.click(within(within(dialog).getByTestId("case-drawer-actions")).getByRole("button", { name: "Registrar llamada" }));
+    // «Llamada» is a tile in the icon strip, always visible.
+    fireEvent.click(within(dialog).getByTestId("case-inline-call"));
     expect(within(dialog).getByRole("tab", { name: "Resumen" })).toHaveAttribute("aria-selected", "true");
     expect(await within(dialog).findByTestId("log-call")).toBeVisible();
   });
@@ -213,9 +225,9 @@ describe("CaseDrawer", () => {
   it("Marcar perdida opens the lost reasons", () => {
     stub();
     const dialog = renderDrawer("sales");
-    const footer = within(dialog).getByTestId("case-drawer-footer");
-    expect(within(footer).getByRole("button", { name: "Marcar ganada" })).toBeInTheDocument();
-    fireEvent.click(within(footer).getByRole("button", { name: "Marcar perdida" }));
+    // «Ganada» and «Perdida» are tiles in the icon strip (case-inline-won / case-inline-lost).
+    expect(within(dialog).getByTestId("case-inline-won")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByTestId("case-inline-lost"));
     const form = within(dialog).getByRole("form", { name: "Mover a «Perdida»" });
     expect(within(form).getByRole("button", { name: "Sin respuesta" })).toBeInTheDocument();
   });
@@ -232,8 +244,10 @@ describe("CaseDrawer", () => {
   it("viewer sees no footer buttons and no phones", async () => {
     const paths = stub();
     const dialog = renderDrawer("viewer");
-    expect(within(dialog).queryByTestId("case-drawer-footer")).toBeNull();
-    expect(within(within(dialog).getByTestId("case-drawer-actions")).queryByRole("button")).toBeNull();
+    // No footer in the new layout; action tiles exist but are all disabled for a viewer.
+    const decide = within(dialog).getByTestId("case-inline-decide");
+    expect(within(decide).getByTestId("case-inline-call")).toBeDisabled();
+    expect(within(decide).getByTestId("case-inline-followup")).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("tab", { name: "Contacto" }));
     expect(within(dialog).queryByTestId("person-phones")).toBeNull();
     expect(within(dialog).queryByRole("link", { name: /WhatsApp/ })).toBeNull();
@@ -313,9 +327,10 @@ describe("CaseDrawer", () => {
         "sales",
         card({ open_tasks: [met], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
       );
-      const footer = within(dialog).getByTestId("case-drawer-footer");
-      expect(footer).toHaveTextContent("Siguiente paso: Hacer seguimiento de 01318-26");
-      expect(footer).not.toHaveTextContent("Seguimiento 01318-26 ·");
+      // The stepper (case-inline-state) shows the next step.
+      const stepper = within(dialog).getByTestId("case-inline-state");
+      expect(stepper).toHaveTextContent("Siguiente: Hacer seguimiento de 01318-26");
+      expect(stepper).not.toHaveTextContent("Seguimiento 01318-26 ·");
     });
 
     it("a pending reminder is the next step, with its day", () => {
@@ -328,9 +343,9 @@ describe("CaseDrawer", () => {
         "sales",
         card({ open_tasks: [met, next], last_contact: { inbound: null, outbound: { at: "2026-11-07T12:00:00Z", subject: "Seguimiento", url: null } } }),
       );
-      const footer = within(dialog).getByTestId("case-drawer-footer");
-      expect(footer).toHaveTextContent(/Siguiente paso: Seguimiento 01318-26 · jue/);
-      expect(footer).not.toHaveTextContent("Seguimiento antiguo");
+      const stepper = within(dialog).getByTestId("case-inline-state");
+      expect(stepper).toHaveTextContent(/Siguiente: Seguimiento 01318-26 · jue/);
+      expect(stepper).not.toHaveTextContent("Seguimiento antiguo");
     });
 
     it("Resumen's reminder line skips a reminder our later email already met, like the chip and footer", () => {

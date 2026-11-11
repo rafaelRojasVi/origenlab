@@ -186,31 +186,26 @@ describe("PipelinePage", () => {
     };
     const calls = respond({ "/v2/workspace/pipeline": pipeline });
     render(<PipelinePage />);
-    // The Tablero is the default view; the card list is one click away.
-    fireEvent.click(await screen.findByRole("button", { name: "Tarjetas" }));
-    const first = await screen.findByTestId("opportunity-card-11111111-1111-4111-8111-111111111111");
-    expect(within(first).getByText("00001-26")).toBeInTheDocument();
-    expect(within(first).getByText(/Persona Ejemplo/)).toBeInTheDocument();
-    expect(within(first).getByText(/destinatario/)).toBeInTheDocument();
-    expect(within(first).getByLabelText(/Abrir carpeta de Drive/)).toHaveAttribute("href", "https://drive.google.com/drive/folders/d1");
-    expect(within(first).getByLabelText(/Abrir correo de Gmail/)).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/gm1");
+    // The Tablero is the default view; a board card for the first case should appear.
+    const firstCard = await screen.findByTestId("board-card-11111111-1111-4111-8111-111111111111");
+    // The board card shows Drive and Gmail links for the latest revision.
+    expect(within(firstCard).getByRole("link", { name: /PDF en Drive de/ })).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
+    expect(within(firstCard).getByRole("link", { name: /Correo de la cotización de/ })).toBeInTheDocument();
 
-    // Blocked filter.
-    fireEvent.click(screen.getByRole("button", { name: /^Bloqueadas/ }));
-    expect(screen.queryByTestId("opportunity-card-11111111-1111-4111-8111-111111111111")).not.toBeInTheDocument();
-    expect(screen.getByText("Hay más de una revisión vigente")).toBeInTheDocument();
-
-    // Drawer: revision history, links, and every write action disabled.
-    fireEvent.click(screen.getByRole("button", { name: /Otra Institución/ }));
+    // Open the second card (blocked, machine-proposed org) from the board.
+    fireEvent.click(screen.getByTestId("board-card-22222222-2222-4222-8222-222222222222"));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(/¿Institución correcta\?/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/registro local/)).not.toBeInTheDocument();
+    // PDF link in the Cotización tab.
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Cotización" }));
     expect(within(dialog).getByLabelText("Abrir PDF r1 en Drive")).toHaveAttribute("href", "https://drive.google.com/file/d/f1/view");
     // No signed-in session here: every case action stays disabled (CaseActions.test.tsx covers the rest).
-    fireEvent.click(within(dialog).getByRole("button", { name: "Más…" }));
-    for (const name of ["Cambiar estado", "Marcar ganada", "Recordarme…", "Nueva revisión", "Sí, confirmar"]) {
-      expect(within(dialog).getByRole("button", { name })).toBeDisabled();
-    }
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Resumen" }));
+    const decide = within(dialog).getByTestId("case-inline-decide");
+    expect(within(decide).getByTestId("case-inline-call")).toBeDisabled();
+    expect(within(decide).getByTestId("case-inline-won")).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Sí, confirmar" })).toBeDisabled();
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
