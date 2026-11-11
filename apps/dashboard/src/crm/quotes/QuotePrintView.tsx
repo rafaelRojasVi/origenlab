@@ -394,7 +394,7 @@ export function QuotePrintView({
       return;
     }
 
-    setPagination(paginate(blocks, PAGE_USABLE_H, theadH, BLOCK_GAP_PX));
+    setPagination(paginate(blocks, PAGE_USABLE_H, theadH, BLOCK_GAP_PX, BLOCK_FOOTER));
   }, []);
 
   // Re-measure after each render (quote or model map change).

@@ -87,12 +87,16 @@ export interface PagedResult {
  * @param contentH  Usable content height per page in px (default: PAGE_USABLE_H).
  * @param theadH    Height of the table's <thead> (for repeat calculation).
  * @param gapH      Gap between consecutive blocks inside a page.
+ * @param tailId    The closing block (signature): never left alone on a page. When it would
+ *                  be, the block before it (conditions, note) goes with it, so the last page
+ *                  never holds just a signature.
  */
 export function paginate(
   blocks: Block[],
   contentH: number = PAGE_USABLE_H,
   theadH: number = 0,
   gapH: number = BLOCK_GAP_PX,
+  tailId?: string,
 ): PagedResult {
   if (blocks.length === 0) return { pages: [[]], needsThead: [false] };
 
@@ -138,6 +142,13 @@ export function paginate(
     }
 
     pages[pages.length - 1].push({ id: block.id, kind: block.kind });
+  }
+
+  const last = pages[pages.length - 1];
+  const before = pages[pages.length - 2];
+  if (tailId && before && last.length === 1 && last[0].id === tailId && before.length > 1
+      && before[before.length - 1].kind !== 'row') {
+    last.unshift(before.pop()!);
   }
 
   return { pages, needsThead };

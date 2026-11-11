@@ -235,3 +235,30 @@ describe("paginate — defaults", () => {
     expect(pages.length).toBe(1);
   });
 });
+
+describe("paginate — the signature never sits alone", () => {
+  // CN01327 (10 nov 2026): one sonicator + three sonotrodes fit page 1, the signature did not,
+  // and page 2 held nothing but «Atentamente,».
+  const blocks: Block[] = [
+    b("header", "normal", 100), b("row-1", "row", 100), b("row-2", "row", 60),
+    b("totals", "avoid", 60), b("cond", "avoid", 100), b("footer", "avoid", 120),
+  ];
+
+  it("takes the conditions along when the signature has to move", () => {
+    const { pages } = paginate(blocks, CH, TH, GH, "footer");
+    expect(pages.map((p) => p.map((x) => x.id))).toEqual([
+      ["header", "row-1", "row-2", "totals"], ["cond", "footer"],
+    ]);
+  });
+
+  it("without a tail id the old behaviour stays", () => {
+    const { pages } = paginate(blocks, CH, TH, GH);
+    expect(pages[1].map((x) => x.id)).toEqual(["footer"]);
+  });
+
+  it("never moves a table row to keep the signature company", () => {
+    const rowsOnly: Block[] = [b("row-1", "row", 300), b("row-2", "row", 160), b("footer", "avoid", 120)];
+    const { pages } = paginate(rowsOnly, CH, TH, GH, "footer");
+    expect(pages[pages.length - 1].map((x) => x.id)).toEqual(["footer"]);
+  });
+});
