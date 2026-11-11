@@ -159,9 +159,42 @@ function followUpLabel(stepIndex: number, from: number): string {
 }
 
 /** The projections: the next follow-up day of each quoted case, and the tasks due in the coming days. */
+/**
+ * A quotation approved but never sent is today's step: «Enviar la cotización N» (owner 2026-11-11).
+ * Nothing else puts it anywhere — the case has no sent quote to follow up and no request to quote.
+ */
+/** The case's quotation whose newest revision is approved and unsent (an approved revision replaced by a
+ *  sent one stays «approved», so only the newest counts). */
+function approvedQuote(card: OpportunityCardData): OpportunityCardData["quotes"][number] | null {
+  for (const q of card.quotes) {
+    const newest = q.revisions.reduce<(typeof q.revisions)[number] | null>((m, r) => (!m || r.revision_no > m.revision_no ? r : m), null);
+    if (newest?.status === "approved") return q;
+  }
+  return null;
+}
+
+function readyToSend(items: OpportunityCardData[], now: Date, taken: Set<string>): NextStep[] {
+  const out: NextStep[] = [];
+  for (const card of items) {
+    if (card.closed_at || taken.has(card.opportunity_id)) continue;
+    const ready = approvedQuote(card);
+    if (!ready) continue;
+    const amountClp = caseAmountClp(card);
+    out.push({
+      id: card.opportunity_id, kind: "cotizar", group: "hoy", card, due: startOfDay(now), dueDays: 0, amountClp, owner: null,
+      score: scoreFor("cotizar", amountClp, 0), item: null, pause: null, state: null, actionable: true,
+      label: `Enviar la cotización ${ready.quote_number}`,
+    });
+    taken.add(card.opportunity_id);
+  }
+  return out;
+}
+
 function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, horizonDays: number): NextStep[] {
   const out: NextStep[] = [];
-  for (const f of followUpsDue(items, now)) {
+  // Young cases too: a quote sent or a follow-up written in the last two days has its next step on
+  // the rhythm's next day, never «no next step» (owner 2026-11-11).
+  for (const f of followUpsDue(items, now, { young: true })) {
     const id = f.card.opportunity_id;
     if (taken.has(id) || isFollowUpDueToday(f) || f.task) continue;
     const nextIndex = RHYTHM.findIndex((r) => r.from > f.days);
@@ -228,9 +261,15 @@ export function planNextSteps(
   items: OpportunityCardData[], now: Date, me: string | null, horizonDays = 7, allow: (s: NextStep) => boolean = () => true,
 ): StepPlan {
   const today = buildParaTiQueue(items, now, me).map((item) => fromQueueItem(item, now)).filter((s): s is NextStep => s !== null);
+  // A request whose quotation is already approved: the step is to send it, not to write it.
+  for (const s of today) {
+    const q = s.kind === "cotizar" ? approvedQuote(s.card) : null;
+    if (q) s.label = `Enviar la cotización ${q.quote_number}`;
+  }
   const taken = new Set(today.map((s) => s.id));
+  const ready = readyToSend(items, now, taken);
   const back = returnedPauses(items, now, taken);
-  const visible = [...today, ...back, ...upcoming(items, now, taken, horizonDays)].filter(allow);
+  const visible = [...today, ...ready, ...back, ...upcoming(items, now, taken, horizonDays)].filter(allow);
   const mine = (s: NextStep) => (me && s.owner === me ? 1 : 0);
   visible.sort((a, b) => mine(b) - mine(a) || KIND_RANK[a.kind] - KIND_RANK[b.kind] || b.score - a.score);
   const byGroup: Record<StepGroup, NextStep[]> = { atrasado: [], hoy: [], manana: [], semana: [] };
