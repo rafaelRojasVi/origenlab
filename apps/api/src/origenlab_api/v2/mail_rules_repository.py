@@ -92,6 +92,7 @@ from origenlab_api.v2.mail_rules import (
     domain_of,
     mail_direction,
     plan,
+    plan_case_people,
 )
 from origenlab_api.v2.quote_import_commands import (
     RECORD_HISTORICAL_QUOTATION,
@@ -467,6 +468,15 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
         by_case.setdefault(q["opportunity_id"], []).append(
             CaseQuote(id=qid, quote_number=q["number"], revisions=tuple(q["revisions"])))
 
+    # The case's current participants, apart from who wrote on it: R21 adds the missing ones.
+    cur.execute(_PARTICIPANT_PEOPLE_SQL)
+    participant_rows = cur.fetchall()
+    participants: dict[str, set[str]] = {}
+    for case_id, email in participant_rows:
+        email = (email or "").strip().lower()
+        if email:
+            participants.setdefault(case_id, set()).add(email)
+
     cur.execute(_CASES_SQL)
     cases = tuple(
         CaseState(id=r["id"], title=r["title"], stage=r["stage"], version=int(r["version"]),
@@ -474,7 +484,8 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                   thread_ids=tuple(sorted(case_threads.get(r["id"], ()))),
                   quotes=tuple(by_case.get(r["id"], ())),
                   people=tuple(sorted(case_people.get(r["id"], ()))),
-                  paused_until=r["paused_until"].isoformat() if r["paused_until"] else None)
+                  paused_until=r["paused_until"].isoformat() if r["paused_until"] else None,
+                  participants=tuple(sorted(participants.get(r["id"], ()))))
         for r in rows()
     )
 
@@ -494,8 +505,7 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
     pairs = cur.fetchall()
     # So is anyone the case names as a participant: the client a quote was made for may never have
     # written to contacto@ (a supplier passed the request on), yet their next web form is this case's.
-    cur.execute(_PARTICIPANT_PEOPLE_SQL)
-    for case_id, email in [*pairs, *cur.fetchall()]:
+    for case_id, email in [*pairs, *participant_rows]:
         email = (email or "").strip().lower()
         if case_id in by_case and email and domain_of(email) not in OWN_DOMAINS:
             extra.setdefault(case_id, set()).add(email)
@@ -571,7 +581,7 @@ class MailRulesRepository(V2CaseCommandRepository):
     def plan(self) -> tuple[list[PlannedAction], dict[str, dict[str, Any]], Snapshot]:
         with self._read() as cur:
             snapshot, display = read_snapshot(cur, settle_days=self.settle_days)
-        return plan(snapshot), display, snapshot
+        return [*plan(snapshot), *plan_case_people(snapshot)], display, snapshot
 
     def preview(self) -> dict[str, Any]:
         actions, display, snapshot = self.plan()
@@ -920,6 +930,23 @@ class MailRulesRepository(V2CaseCommandRepository):
             result = self._run_step(cur, operator, command, inputs, receipt_id)
             done.append({"command": command, **{k: result.get(k) for k in _RESULT_KEYS if k in result}})
 
+        if rule == "R21":
+            # The person R21 added stops being one of the case. The key stays applied, so the same
+            # address is never added to that case again.
+            for participant_id in created.get("participant_ids") or []:
+                cur.execute(
+                    "update crm.opportunity_participant "
+                    "set valid_to = greatest((now() at time zone 'America/Santiago')::date, valid_from + 1), "
+                    "updated_at = now() where id = %s and valid_to is null returning opportunity_id::text",
+                    (participant_id,),
+                )
+                ended = cur.fetchone()
+                if ended is not None:
+                    self._append_event(
+                        cur, aggregate_kind="opportunity_participant", aggregate_id=participant_id,
+                        event_type="participant.ended", payload={"opportunity_id": ended[0], "note": note},
+                        operator=operator, receipt_id=receipt_id)
+                    done.append({"command": "end_case_participant", "participant_id": participant_id})
         if rule == "R17":
             # Back to «Enviada» — unless a person moved the case since; then there is nothing of ours to undo.
             cur.execute("select stage, version from crm.opportunity where id = %s for update", (case_id,))
@@ -1289,6 +1316,8 @@ def _absorb(ctx: dict[str, Any], created: dict[str, Any], command: str, result: 
         created["organization_id"] = result["organization_id"]
     if command == OPEN_COMMERCIAL_CASE:
         created["opportunity_id"] = result["opportunity_id"]
+    if command == ADD_CASE_SENDER_PARTICIPANT and result.get("created"):
+        created.setdefault("participant_ids", []).append(result["participant_id"])
     elif command in (LINK_CASE_EVIDENCE, LINK_AFTER_CLOSE):
         created["opportunity_evidence_ids"].append(result["opportunity_evidence_id"])
     if command in (ATTACH_FORWARD, CREATE_REQUEST_FROM_FORWARD_STEP):
