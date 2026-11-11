@@ -274,6 +274,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "«La compra ya se efectuó a otro proveedor» en el hilo de la cotización 09876 → el caso pasa a «Perdida».",
   },
+  R21: {
+    cuando: "Alguien escribe en un caso abierto, o le escribimos desde un correo del caso con 5 destinatarios o menos, y todavía no es persona del caso. No cuenta una dirección nuestra, de Labdelivery, de un proveedor ni un robot (no-reply, rebotes, facturación).",
+    hace: "La agrega como persona del caso. Así ninguna campaña le escribe mientras el caso siga abierto. «Quitar» la saca y no la vuelve a agregar a ese caso.",
+    automatica: true,
+    ejemplo: "Carla responde desde carla@empresa-nueva.cl en el hilo de la cotización 09876 → queda como persona del caso.",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -296,6 +302,7 @@ const RULE_WHY: Record<string, string> = {
   R17: "el cliente respondió a la cotización",
   R18: "el cliente cerró la conversación",
   R19: "el correo del cliente dice que no sigue",
+  R21: "escribe en el caso",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -323,6 +330,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `No requiere respuesta el correo de${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
   } else if (rule === "R19") {
     verb = `Marcó perdido ${target}`;
+  } else if (rule === "R21") {
+    verb = `Agregó una persona a ${target}`;
   } else if (rule === "R15") {
     verb = `Confirmó la institución${a.organization_name ? ` «${a.organization_name}»` : ""}`;
   } else {

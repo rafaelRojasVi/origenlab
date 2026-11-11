@@ -76,7 +76,7 @@ from zoneinfo import ZoneInfo
 from origenlab_api.v2.case_origin import ORIGIN_CORREO, ORIGIN_WEB
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16", "R17", "R18", "R19")
+                             "R14", "R15", "R16", "R17", "R18", "R19", "R21")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -234,6 +234,8 @@ class CaseState:
     people: tuple[str, ...] = ()
     #: «En pausa hasta…»: the due date of the case's open «Retomar: …» task still in the future (R17).
     paused_until: str | None = None
+    #: Lower-case addresses of the case's current participants (R21 adds the ones still missing).
+    participants: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -853,6 +855,60 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
         confirmed = _confirm_institution_rule(inst, index)
         if confirmed is not None:
             out.append(confirmed)
+    return out
+
+
+#: R21 adds as people of an open case who we wrote to from one of its emails, as long as that email
+#: had at most this many outside recipients: a wider one is a bulk send, not a conversation.
+CASE_PEOPLE_MAX_RECIPIENTS = 5
+#: Addresses that never are a person of a case: robots, notices, billing mailboxes.
+_NOT_A_PERSON = re.compile(
+    r"^(?:no-?reply|donotreply|do-not-reply|notificaciones?|notifications?|newsletter|mailer|"
+    r"postmaster|mailer-daemon|bounces?|facturacion|facturas?|dte|cobranza|billing)(?:[+._-]|@)")
+
+
+def case_people_key(case_id: str, address: str) -> str:
+    """The R21 action key: one per (case, address), so a «Quitar» on one never comes back."""
+    return f"{case_id}:{address}"
+
+
+def plan_case_people(snapshot: Snapshot) -> list[PlannedAction]:
+    """R21 (owner 2026-11-11), its own pass after `plan`, one action per (case, address): everyone who writes on an open case, or whom we write to from it, is
+    a person of the case. The campaigns read the case's people to leave open cases alone, and a
+    pause is retaken by an email to one of them, so a case known only by its institution was
+    invisible to both (Corteva, U. de Talca, Arcegon and Agrícola El Nogal got the 11-nov campaign).
+    Suppliers, own and Labdelivery addresses, robots and bulk sends never count."""
+    supplier_domains = {d for o in snapshot.organizations if o.is_supplier for d in o.domains}
+    written: dict[str, set[str]] = {}
+    for e in snapshot.evidence:
+        if e.direction != "outbound" or e.campaign_thread or len(e.linked_case_ids) != 1:
+            continue
+        outside = [a for a in addresses(e.recipients) if domain_of(a) not in OWN_DOMAINS]
+        if 0 < len(outside) <= CASE_PEOPLE_MAX_RECIPIENTS:
+            written.setdefault(e.linked_case_ids[0], set()).update(outside)
+
+    def counts(address: str) -> bool:
+        d = domain_of(address)
+        return not (d in OWN_DOMAINS or any(d == s or d.endswith("." + s) for s in supplier_domains)
+                    or _NOT_A_PERSON.match(address) or BOUNCE_SENDER.match(address)
+                    or any(m in address for m in LABDELIVERY_MARKERS))
+
+    out: list[PlannedAction] = []
+    for c in sorted(snapshot.cases, key=lambda x: x.id):
+        if c.closed:
+            continue
+        missing = (set(c.people) | written.get(c.id, set())) - set(c.participants)
+        for address in sorted(a for a in missing if counts(a)):
+            key = case_people_key(c.id, address)
+            if key in snapshot.applied_evidence_ids:
+                continue
+            reasons = (f"«{address}» escribe en el caso o le escribimos desde él",
+                       "queda como persona del caso: ninguna campaña le escribe mientras siga abierto")
+            out.append(PlannedAction(
+                key, "R21", AUTO, reasons, case_id=c.id, case_title=c.title, organization_id=c.organization_id,
+                commands=({"command": ADD_CASE_SENDER_PARTICIPANT, "inputs": {
+                    "opportunity_id": "@case", "email": address, "note": _note("R21", list(reasons))}},),
+                context={"case": c.id, "case_version": c.version}))
     return out
 
 
@@ -2111,7 +2167,7 @@ def _inbound_rules(e: MailEvidence, ix: _Index, domains: list[str], origin: str 
 __all__ = [
     "AUTO", "CONTACT_SENDER", "FREE_MAIL_DOMAINS", "NOT_CUSTOMER_HINTS", "PURCHASE_ORDER_FILENAME", "LABDELIVERY_MARKERS", "LOST_CLOSE_REASON", "LOST_PHRASES", "NONE",
     "OWN_DOMAINS", "PROPOSAL", "PURCHASE_ORDER_NUMBER", "PURCHASE_ORDER_PHRASES", "QUOTE_REQUEST_WORDS",
-    "RULE_IDS", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "RECORD_WEB_FORM_INTEREST", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
+    "RULE_IDS", "CASE_PEOPLE_MAX_RECIPIENTS", "case_people_key", "plan_case_people", "SYSTEM_LABEL", "WEB_QUOTE_ORIGIN", "RECORD_WEB_FORM_INTEREST", "ADD_CASE_SENDER_PARTICIPANT", "ATTACH_FORWARD",
     "CONFIRM_ORGANIZATION_RECORD", "InstitutionFacts",
     "LATE_QUOTE_WINDOW_DAYS", "MACHINE_CREATORS", "SETTLE_DAYS", "UNCONFIRM_ORGANIZATION_RECORD", "UPDATE_ORGANIZATION", "CREATE_REQUEST_FROM_FORWARD_STEP", "CaseQuote", "CaseState", "ForwardRequest", "MailDocument", "MailEvidence", "Organization",
     "PlannedAction", "QuoteRevision", "Snapshot", "addresses", "canonical_quote_number", "domain_of", "fold",

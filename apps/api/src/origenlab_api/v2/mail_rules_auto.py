@@ -59,9 +59,10 @@ logger = logging.getLogger(__name__)
 
 #: Safe intake/link rules the timer applies (R11, forwarded requests: owner 2026-10-14). Terminal actions (R5/R6) and recipient-domain
 #: creation (R3/R4) still wait for an admin. R19 is terminal too, but runs by itself (owner 2026-10-29: the AI read the
-#: client's «no» in the body; «Quitar» reopens the case); R18 changes nothing in the CRM.
+#: client's «no» in the body; «Quitar» reopens the case); R18 changes nothing in the CRM. R21 adds who writes on an open
+#: case as one of its people (owner 2026-11-11); «Quitar» ends that participant.
 AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15",
-                                             "R16", "R17", "R18", "R19"})
+                                             "R16", "R17", "R18", "R19", "R21"})
 #: Rules with their own kill flag in settings (`v2_auto_rule_<id>_enabled`).
 FLAGGED_RULES: tuple[str, ...] = ("R14", "R15")
 SWITCH_COMMAND = "set_auto_mail_rules"
