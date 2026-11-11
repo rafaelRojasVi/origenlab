@@ -634,7 +634,8 @@ console.log('\nMenús desplegables (1440 px)');
   await page.waitForTimeout(450);
   check(await isOpen('aplicaciones'), 'el mouse abre Aplicaciones tras el retardo de intención');
   await page.mouse.move(720, 880);
-  await page.waitForTimeout(600);
+  // El cierre lleva retardo + transición; en un runner lento 600 ms fijos no bastaban. Espera hasta 2 s.
+  for (let i = 0; i < 20 && (await isOpen('aplicaciones')); i++) await page.waitForTimeout(100);
   check(!(await isOpen('aplicaciones')), 'al salir con el mouse el panel se cierra');
 
   await btn.click();
