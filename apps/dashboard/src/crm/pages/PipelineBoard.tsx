@@ -36,6 +36,8 @@ import {
   byLatestActivity,
   enviadaBand,
   isOnBoard,
+  pauseDayIso,
+  pauseReturned,
   pausedUntil,
   type BoardColumnKey,
   type EnviadaBandKey,
@@ -392,6 +394,8 @@ function MailIcon() {
 export function cardLine(card: OpportunityCardData, now: Date): { text: string; tone: string } {
   const until = pausedUntil(card, now);
   if (until) return { text: `Hasta ${fmtDate(until)} · ${card.pause_reason ?? "en pausa"}`, tone: "info" };
+  const back = pauseReturned(card, now);
+  if (back) return { text: `Venció el ${fmtDate(pauseDayIso(back.until))} · ${back.reason} · retomar`, tone: "bad" };
   const blocking = card.attention.find((a) => a.blocking);
   if (blocking) return { text: blocking.label, tone: "bad" };
   if (card.stage === "won") return { text: "Ganada", tone: "good" };

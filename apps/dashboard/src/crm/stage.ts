@@ -89,6 +89,11 @@ export function pauseReturned(card: OpportunityCardData, now: Date = new Date())
   return { until: card.paused_until, reason: card.pause_reason ?? "Sin motivo" };
 }
 
+/** The case holds a pause, ahead or come back: it is resumed by «Retomar ahora» or by a move. */
+export function isPaused(card: OpportunityCardData, now: Date = new Date()): boolean {
+  return pausedUntil(card, now) !== null || pauseReturned(card, now) !== null;
+}
+
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -180,9 +185,11 @@ export function monthKeySantiago(iso: string): string {
   return `${year}-${month}`;
 }
 
-/** The Tablero column a card sits in: «En pausa» first, then «Silenciosas», then the stage's column. */
+/** The Tablero column a card sits in: «En pausa» first, then «Silenciosas», then the stage's column.
+ *  A pause whose day came stays under «En pausa» until a person resumes it (owner 2026-11-11: the
+ *  column read empty while four paused cases waited in Hoy › Atrasado). */
 export function boardColumnOf(card: OpportunityCardData, now: Date = new Date()): BoardColumnKey {
-  if (pausedUntil(card, now)) return "pausa";
+  if (isPaused(card, now)) return "pausa";
   if (isSilent(card, now)) return "silenciosas";
   return BOARD_COLUMNS.find((c) => c.stages.includes(card.stage))?.key ?? "solicitada";
 }

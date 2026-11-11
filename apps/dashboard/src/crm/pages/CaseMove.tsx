@@ -34,7 +34,7 @@ import {
   STAGE_LABEL,
   boardColumnOf,
   pauseDayIso,
-  pausedUntil,
+  isPaused,
   type BoardColumnKey,
 } from "../stage";
 import { Button, ChoiceChips, FormField, TextInput, TextareaInput, fmtDate } from "../ui";
@@ -83,7 +83,7 @@ export function moveRefusal(card: OpportunityCardData, target: MoveTarget, now: 
   const inColumn = BOARD_COLUMNS.find((c) => c.key === target)?.stages.includes(card.stage) ?? false;
   // Resuming a paused case in its current column does not advance its stage.
   if (inColumn) {
-    return pausedUntil(card, now) ? null : `El caso ya está en «${COLUMN_LABEL[target]}».`;
+    return isPaused(card, now) ? null : `El caso ya está en «${COLUMN_LABEL[target]}».`;
   }
   if (stagePath(card.stage, to) === null) return "Ese cambio no está permitido desde el estado actual.";
 
@@ -124,7 +124,7 @@ export function CaseMoveForm({
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const from = boardColumnOf(card, at);
-  const paused = pausedUntil(card, at) !== null;
+  const paused = isPaused(card, at);
   const column = BOARD_COLUMNS.find((c) => c.key === target);
   // Staying in the same stage column only resumes the pause.
   const stageTarget =

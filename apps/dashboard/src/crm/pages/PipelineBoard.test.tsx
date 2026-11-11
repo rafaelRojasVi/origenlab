@@ -257,6 +257,14 @@ describe("Tablero", () => {
     expect(b).toHaveAttribute("title", "Próxima tarea: Retomar: Esperando la orden de compra");
   });
 
+  it("keeps a pause whose day came under «En pausa», marked overdue", () => {
+    const back = card({ paused_until: "2026-10-06", pause_reason: "Evaluando internamente" });
+    render(<Board cards={[back]} onOpen={() => undefined} now={NOW} />);
+    expect(screen.getByTestId("board-count-pausa")).toHaveTextContent("1");
+    const b = screen.getByTestId(`board-card-${back.opportunity_id}`);
+    expect(within(b).getByTestId("board-status-line")).toHaveTextContent("Venció el 06 oct 2026 · Evaluando internamente · retomar");
+  });
+
   it("is read-only without onMove, and reports a drop on another column with it", () => {
     const c = card();
     const { unmount } = render(<Board cards={[c]} onOpen={() => undefined} now={NOW} />);
