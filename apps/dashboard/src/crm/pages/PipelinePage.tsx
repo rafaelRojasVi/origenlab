@@ -20,6 +20,7 @@ import {
   STATUS_LABEL,
   byLatestActivity,
   matchesQuery,
+  pauseReturned,
   pausedUntil,
   stageBasis,
   stageDisplay,
@@ -152,7 +153,7 @@ function Pipeline({
   const historicalCards = useMemo(() => items.filter((i) => stageBasis(i) === "historical_import"), [items]);
   const historical = historicalCards.length;
   const openCards = useMemo(() => reviewableOpenCards(items), [items]);
-  const paused = items.filter((i) => pausedUntil(i)).length;
+  const paused = items.filter((i) => pausedUntil(i) || pauseReturned(i)).length;
   const openCard = items.find((i) => i.opportunity_id === openId) ?? null;
   const movingCard = moving ? (items.find((i) => i.opportunity_id === moving.id) ?? null) : null;
 

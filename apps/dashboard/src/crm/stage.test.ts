@@ -154,6 +154,11 @@ describe("Silenciosas", () => {
     expect(boardColumnOf(c, NOW)).toBe("pausa");
   });
 
+  it("a pause whose day came stays under pausa until someone resumes it", () => {
+    const c = sent(40, { paused_until: ago(6).slice(0, 10), pause_reason: "Evaluando internamente" });
+    expect(boardColumnOf(c, NOW)).toBe("pausa");
+  });
+
   it("draft first quote → not silent", () => {
     const c = sent(40, {}, "draft", "authored");
     expect(isSilent(c, NOW)).toBe(false);
