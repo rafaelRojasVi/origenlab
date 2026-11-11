@@ -98,7 +98,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # On a main push this job runs only when the release controller or its database contract
+      # changed — the same files that trigger it on a pull request, plus migrations. Any other push
+      # ends green in seconds instead of installing PostgreSQL 17 and running the restore tests
+      # (~7 min), so the release's preflight, which waits for this job, no longer waits on them.
+      - name: Decide whether the release contract changed
+        id: scope
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          relevant='^(\.github/workflows/production-db-migrations\.yml|supabase/scripts/|supabase/migrations/|scripts/deploy/|apps/api/scripts/release_read_check\.py|apps/api/tests/test_release_read_check\.py|docs/runbooks/PRODUCTION_DB_MIGRATIONS\.md)'
+          if [ "$EVENT" != push ] || [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] \
+             || ! git fetch --no-tags --depth=1 origin "$BEFORE" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          changed=$(git diff --name-only "$BEFORE" HEAD)
+          if printf '%s\n' "$changed" | grep -qE "$relevant"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing the release contract tests changed since $BEFORE: skipping them."
+          fi
       - name: Install PG17 client and age
+        if: steps.scope.outputs.run == 'true'
         run: |
           set -euo pipefail
           sudo apt-get update -qq
@@ -120,6 +145,7 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-17
           echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - name: Execute real transaction and encrypted restore regression tests
+        if: steps.scope.outputs.run == 'true'
         env:
           OL_RELEASE_TEST_PORT: "5432"
           OL_RELEASE_DB_TEST_REQUIRED: "true"
