@@ -188,7 +188,11 @@ export interface FollowUp {
   task: DueTask | null;
 }
 
-export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[] {
+/**
+ * `young`: also the cases touched less than three days ago (their first follow-up is still ahead) —
+ * for projecting the next step, never for today's list.
+ */
+export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = false }: { young?: boolean } = {}): FollowUp[] {
   const out: FollowUp[] = [];
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
@@ -224,7 +228,7 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date): FollowUp[
     const days = touchAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(touchAt)) / DAY_MS)) : 0;
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.
-    if (!task && days < RHYTHM[0].from) continue;
+    if (!task && days < RHYTHM[0].from && !young) continue;
     const rhythm = RHYTHM[stepForDays(days) - 1].key;
     out.push({ card, days, rhythm, byEmail, task });
   }

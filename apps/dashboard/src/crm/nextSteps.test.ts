@@ -109,3 +109,24 @@ describe("helpers", () => {
     expect(dayDiff(noon, new Date(2026, 10, 9, 0, 30, 0))).toBe(-1);
   });
 });
+
+describe("no case is left without a next step (owner 2026-11-11)", () => {
+  it("a quote sent yesterday has its first follow-up on day 3, not «no next step»", () => {
+    const fresh = card({ stage: "quoting" }, ago(1));
+    const step = planNextSteps([fresh], NOW, null).steps.find((s) => s.card === fresh);
+    expect(step?.kind).toBe("seguimiento");
+    expect(step?.dueDays).toBeGreaterThanOrEqual(2);
+    expect(step?.actionable).toBe(false);
+  });
+
+  it("a quotation approved and never sent is today's «Enviar la cotización»; one replaced by a sent revision is not", () => {
+    const approved = (no: number) => ({ ...rev(ago(1)), revision_id: `a-${no}`, revision_no: no, status: "approved", sent_at: null });
+    const sent = (no: number) => ({ ...rev(ago(2)), revision_id: `s-${no}`, revision_no: no });
+    const ready = card({ stage: "lead", quotes: [{ quote_id: "q-ready", quote_number: "00042-26", number_origin: "minted", revisions: [approved(1)] }] }, null);
+    const replaced = card({ quotes: [{ quote_id: "q-old", quote_number: "00043-26", number_origin: "minted", revisions: [approved(1), sent(2)] }] }, ago(2));
+    const plan = planNextSteps([ready, replaced], NOW, null);
+    const send = plan.steps.find((s) => s.card === ready);
+    expect(send).toMatchObject({ kind: "cotizar", group: "hoy", actionable: true, label: "Enviar la cotización 00042-26" });
+    expect(plan.steps.find((s) => s.card === replaced)?.label ?? "").not.toMatch(/Enviar la cotización/);
+  });
+});
