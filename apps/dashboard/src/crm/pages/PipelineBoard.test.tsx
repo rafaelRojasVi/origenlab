@@ -12,6 +12,7 @@ import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUnt
 import { moveRefusal } from "./CaseMove";
 import { Board, cardMoney, columnMoney, silentFollowUpStep, sortCards } from "./PipelineBoard";
 import { urgencyByCase, urgencyText, type CaseUrgency } from "../urgency";
+import { PipelineSheet } from "./PipelineSheet";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T12:00:00Z");
@@ -650,5 +651,23 @@ describe("urgency helpers", () => {
     expect(urgencyText(u("pronto", 1))).toBe("Mañana");
     expect(urgencyText(u("sin"))).toBe("Sin próximo paso");
     expect(urgencyText(u("luego"))).toBe("Más adelante");
+  });
+});
+
+describe("Pipeline «Lista» as a sheet", () => {
+  const money = (net: string) => [{ quote_number: "01239-26", revision_no: 1, currency: "CLP", net_total: net }] as OpportunityCardData["money"];
+  it("sorts by any column (Neto, highest first) and totals the net under «Neto»", () => {
+    const small = card({ money: money("100000") });
+    const big = card({ money: money("900000") });
+    const mid = card({ money: money("500000") });
+    const cards = [small, big, mid];
+    const onOpen = vi.fn();
+    render(<PipelineSheet cards={cards} urgency={urgencyByCase(cards, NOW)} showClosed={false} now={NOW} onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Neto/ }));
+    const ids = screen.getAllByTestId(/^pipeline-row-/).map((r) => r.getAttribute("data-testid"));
+    expect(ids).toEqual([big, mid, small].map((c) => `pipeline-row-${c.opportunity_id}`));
+    expect(screen.getByTestId("pipeline-list-total").textContent?.replace(/\D/g, "")).toBe("1500000");
+    fireEvent.click(screen.getByTestId(`pipeline-row-${mid.opportunity_id}`));
+    expect(onOpen).toHaveBeenCalledWith(mid.opportunity_id);
   });
 });

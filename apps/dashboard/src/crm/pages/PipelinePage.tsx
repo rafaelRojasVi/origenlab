@@ -6,20 +6,17 @@ import type { OpportunityCardData } from "../crmTypes";
 import { CaseDrawer } from "../drawer/CaseDrawer";
 import type { Mode } from "./CaseActions";
 import { COLUMN_LABEL, CaseMoveForm, moveRefusal, type MoveTarget } from "./CaseMove";
-import { BOARD_SORT_LABEL, Board, cardMoney, type BoardSort } from "./PipelineBoard";
+import { BOARD_SORT_LABEL, Board, type BoardSort } from "./PipelineBoard";
 import { DecideCases } from "./DecideCases";
-import { QueueIcon, stepAction, stepIcon } from "./HoyQueueParts";
+import { PipelineSheet } from "./PipelineSheet";
 import { applyCaseReceipt, onCaseReceipt, useMayRunCaseCommands } from "../caseCommands";
 import { followUpsDue, isCotizarCase } from "../today";
 import { boardViewFromHash, type BoardView } from "../goals";
-import { contactLine, displayName } from "../caseDisplay";
 import { caseAmountClp } from "../nextSteps";
 import { formatMoney } from "../money";
-import { BOARD_COLUMNS, HISTORICAL_STAGE_LABEL, boardColumnOf, byLatestActivity, isOnBoard, matchesQuery, stageBasis, type BoardColumnKey } from "../stage";
-import { URGENCY_BADGE, URGENCY_EDGE, byUrgency, urgencyByCase, urgencyText, type CaseUrgency } from "../urgency";
+import { HISTORICAL_STAGE_LABEL, byLatestActivity, isOnBoard, matchesQuery, stageBasis, type BoardColumnKey } from "../stage";
+import { urgencyByCase, type CaseUrgency } from "../urgency";
 import { EmptyState, Modal, PageHeader, ResourceGate, SearchInput, Segmented, Skeleton, toast } from "../ui";
-import { GrowingListEnd } from "../GrowingListEnd";
-import { useGrowingList } from "../useGrowingList";
 import { useResource } from "../useResource";
 
 type View = "board" | "list";
@@ -233,7 +230,7 @@ function Pipeline({
       ) : focused.length === 0 ? (
         <EmptyState title="Ninguna oportunidad coincide">Quita el filtro de urgencia u origen, o cambia la búsqueda.</EmptyState>
       ) : view === "list" ? (
-        <UrgencyList cards={focused} urgency={urgency} showClosed={showClosed} now={now} onOpen={(id) => open(id)} />
+        <PipelineSheet cards={focused} urgency={urgency} showClosed={showClosed} now={now} onOpen={(id) => open(id)} />
       ) : (
         <Board
           cards={focused}
@@ -325,67 +322,6 @@ function UrgencyStrip({
           <b className="text-[15px] tabular-nums text-bad">{formatMoney(String(risk), "CLP")}</b> en riesgo
         </button>
       ) : null}
-    </div>
-  );
-}
-
-const COLUMN_NAME = Object.fromEntries(BOARD_COLUMNS.map((c) => [c.key, c.label])) as Record<BoardColumnKey, string>;
-
-/** Every case as one row, most urgent first: what is next, where it stands, how much. */
-function UrgencyList({
-  cards, urgency, showClosed, now, onOpen,
-}: {
-  cards: OpportunityCardData[];
-  urgency: Map<string, CaseUrgency>;
-  showClosed: boolean;
-  now: Date;
-  onOpen: (id: string) => void;
-}) {
-  const rows = useMemo(
-    () => cards.filter((c) => showClosed || urgency.get(c.opportunity_id)?.level !== "cerrado").sort(byUrgency(urgency)),
-    [cards, urgency, showClosed],
-  );
-  const { shown, hidden, showMore, endRef } = useGrowingList(rows);
-  return (
-    <div className="overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="pipeline-list">
-      <div className="hidden grid-cols-[minmax(0,1.6fr)_minmax(0,1.6fr)_8.5rem_7.5rem] gap-3 border-b border-line bg-canvas-sunken/60 px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-ink-faint md:grid">
-        <span>Caso</span><span>Próximo paso</span><span>Estado</span><span className="text-right">Neto</span>
-      </div>
-      <ul>
-        {shown.map((c) => {
-          const u = urgency.get(c.opportunity_id);
-          const { name } = displayName(c);
-          const who = contactLine(c);
-          const money = cardMoney(c).text;
-          return (
-            <li key={c.opportunity_id}>
-              <button
-                type="button"
-                onClick={() => onOpen(c.opportunity_id)}
-                className={`grid w-full grid-cols-1 gap-x-3 gap-y-1 border-b border-l-4 border-b-line px-4 py-2.5 text-left transition-colors hover:bg-canvas-sunken/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1.6fr)_8.5rem_7.5rem] md:items-center ${u ? URGENCY_EDGE[u.level] : "border-l-transparent"}`}
-                data-testid={`pipeline-row-${c.opportunity_id}`}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-[13.5px] font-semibold text-ink">{name}</span>
-                  {who ? <span className="block truncate text-[12px] text-ink-muted">{who}</span> : null}
-                </span>
-                <span className="flex min-w-0 items-center gap-2">
-                  {u?.step ? <QueueIcon name={stepIcon(u.step)} /> : null}
-                  {u && u.level !== "cerrado" ? (
-                    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${URGENCY_BADGE[u.level]}`}>{urgencyText(u)}</span>
-                  ) : null}
-                  <span className="min-w-0 truncate text-[12.5px] text-ink-muted">{u?.step ? stepAction(u.step) : c.next_action.text}</span>
-                </span>
-                <span className="truncate text-[12.5px] text-ink-muted">{COLUMN_NAME[boardColumnOf(c, now)]}</span>
-                <span className="text-right text-[13px] font-semibold tabular-nums text-ink">{money || "—"}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="p-2">
-        <GrowingListEnd hidden={hidden} onMore={showMore} endRef={endRef} />
-      </div>
     </div>
   );
 }
