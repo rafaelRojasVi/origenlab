@@ -28,7 +28,7 @@ def planned(rule: str, *evidence: MailEvidence, cases=None, since: str | None = 
 
 
 def test_r18_and_r19_are_rules() -> None:
-    assert RULE_IDS[-2:] == ("R18", "R19")
+    assert RULE_IDS[-3:-1] == ("R18", "R19")
 
 
 def test_r18_marks_a_closing_reply() -> None:

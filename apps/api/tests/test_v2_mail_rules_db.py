@@ -697,7 +697,7 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     state = auto.state()
     assert (state["enabled"], state["changed_by"], state["note"], state["rules"]) == (
         True, "Admin Ficticio", "probado en vista previa",
-        ["R1", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R2", "R3", "R4", "R7", "R9"])
+        ["R1", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R2", "R21", "R3", "R4", "R7", "R9"])
 
     # One pass: R1/R2 link, R7 opens the RFQ lead and (2026-10-15) R4 opens the new domain's case too.
     result = auto.run_once()
@@ -715,6 +715,8 @@ def test_the_automatic_run_handles_r1_r2_and_r7_only_while_switched_on_and_stays
     assert _one(db, "select bool_and(actor_kind = 'worker'), bool_and(payload -> 'attribution' ->> 'trigger' = 'automatic') "
                     "from crm.domain_event where command_receipt_id = %s", applied[reply]["receipt_id"]) == (True, True)
     assert auto.last_run()["applied"] == result["applied"]
+    # The next pass adds the two writers R1/R2 just linked as people of the case (R21), then nothing.
+    assert auto.run_once()["applied"] == 2
     assert auto.run_once()["applied"] == 0  # nothing twice
 
     # Undo works exactly as for an action an admin applied.

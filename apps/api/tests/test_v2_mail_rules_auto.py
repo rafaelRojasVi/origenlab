@@ -48,8 +48,9 @@ def test_only_safe_intake_and_link_rules_are_automatic() -> None:
     # R14 and R15 (the obvious decisions) owner-approved 2026-10-19, each with its own kill flag.
     # R17 (a client's reply → «Conversación») owner-approved 2026-10-26.
     # R18 (a closing reply needs no answer) and R19 (the client's «no», read in the body → lost) 2026-10-29.
+    # R21 (who writes on an open case is one of its people) 2026-11-11.
     assert AUTOMATIC_RULES == {"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16",
-                               "R17", "R18", "R19"}
+                               "R17", "R18", "R19", "R21"}
 
 
 def test_a_kill_flag_keeps_its_rule_out_of_the_pass() -> None:
