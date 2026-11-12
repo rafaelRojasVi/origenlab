@@ -133,16 +133,19 @@ def intake_skip_reason(label_ids: Sequence[str], from_header: str | None = None)
     Label *ids*, never names: system ids (`DRAFT`, `SPAM`, `TRASH`, `INBOX`, `SENT`) are what the
     staging rule saw, and a user label named «Borradores 2026» must not exclude a message.
 
-    One exception: a delivery report in the trash is still captured (2026-10-21). People clear
+    One exception: a delivery report in the trash or in spam is still captured. People clear
     «Delivery Status Notification» conversations out of the inbox — our sent copy goes to the trash
     with them — and a bounce trashed before the next run was skipped for good, so its address was
-    never blocked (114 OHAUS campaign bounces, blocked by hand that day). The evidence check
-    (`require_stageable_gmail_payload`) makes the same exception, by the same sender pattern.
+    never blocked (114 OHAUS campaign bounces, blocked by hand on 2026-10-21). Gmail also files
+    some reports as spam (7 hard bounces of the sonicadores campaign, 2026-11-12); a report in spam
+    blocks only an address we wrote to (`triage.spam_report_guard`), so a forged one cannot block
+    a contact. The evidence check (`require_stageable_gmail_payload`) makes the same exception, by
+    the same sender pattern.
     """
     bounce = bool(from_header and DELIVERY_REPORT_SENDER.search(from_header))
     for label in label_ids:
         reason = SKIPPED_INTAKE.get(classify_intake_folder(label))
-        if reason == "trash" and bounce:
+        if reason in ("trash", "spam") and bounce:
             continue
         if reason is not None:
             return reason

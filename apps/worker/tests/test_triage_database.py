@@ -5,6 +5,7 @@ proposals and their idempotency, the catalog queries, and a job deferred into Pr
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from email.message import EmailMessage
 
@@ -70,9 +71,10 @@ def ndr_raw(body: str, *, failed: str | None = None) -> bytes:
     return msg.as_bytes()
 
 
-def capture(target, mailbox_id, store: Store, gmail_id: str, raw: bytes) -> str:
-    c = build_capture(raw, gmail_message_id=gmail_id, gmail_thread_id=f"t-{gmail_id}", label_ids=("INBOX",),
-                      label_names={}, internal_date_ms=NOW_MS, mailbox_address=MAILBOX)
+def capture(target, mailbox_id, store: Store, gmail_id: str, raw: bytes, *,
+            labels: tuple[str, ...] = ("INBOX",), internal_ms: int = NOW_MS) -> str:
+    c = build_capture(raw, gmail_message_id=gmail_id, gmail_thread_id=f"t-{gmail_id}", label_ids=labels,
+                      label_names={}, internal_date_ms=internal_ms, mailbox_address=MAILBOX)
     key = f"{MAILBOX}/2026/10/{gmail_id}.eml"
     store.objects[key] = raw
     with open_worker_db(target) as db:
@@ -215,6 +217,39 @@ def test_a_clear_no_such_user_bounce_becomes_a_global_block(dsn, target, mailbox
         "(select id from outbound.contact_control where scope='address' and value_norm=%s and kind='block' and purpose='all')",
         (address,),
     ) == [("worker", "bounce_no_such_user", "no_such_user")]
+
+
+def test_a_bounce_in_spam_blocks_only_an_address_we_wrote_to_lately(dsn, target, mailbox_id) -> None:
+    """2026-11-12: a forged report in Spam must not block a contact. One block per report: sent to
+    yesterday → blocked; never written to, or last written to two months ago → not blocked."""
+    tag = uuid.uuid4().hex[:8]
+    recent, never, old = (f"{kind}-{tag}@cliente.invalid" for kind in ("recent", "never", "old"))
+    store = Store()
+    yesterday_ms = int(time.time() * 1000) - 86_400_000
+    for address, when in ((recent, yesterday_ms), (old, yesterday_ms - 60 * 86_400_000)):
+        sent = make_raw(frm=f"OrigenLab <{MAILBOX}>", to=address, subject="Sonicadores",
+                        message_id=f"<s-{uuid.uuid4().hex}@origenlab.invalid>")
+        capture(target, mailbox_id, store, f"tr-s-{uuid.uuid4().hex[:8]}", sent, labels=("SENT",), internal_ms=when)
+    results = {}
+    for address in (recent, never, old):
+        raw = ndr_raw(f"Final-Recipient: rfc822; {address}\nAction: failed\nStatus: 5.1.1\n"
+                      "Diagnostic-Code: smtp; 550 5.1.1 User unknown; address does not exist.\n")
+        sid = source_record(dsn, capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}", raw,
+                                         labels=("SPAM",)))
+        with triage_conn(target) as conn:
+            results[address] = (sid, triage_one(TriageDb(conn), store, sid, ModelSettings(None, DEFAULT_MODEL)))
+
+    assert {a: (r.outcome, r.triage_class) for a, (_, r) in results.items()} == {
+        a: ("recorded", "bounce") for a in (recent, never, old)}
+    blocked = {row[0] for row in owner_rows(
+        dsn, "select value_norm from outbound.contact_control where scope = 'address' and kind = 'block' "
+             "and value_norm = any(%s)", ([recent, never, old],))}
+    assert blocked == {recent}
+    # The dropped addresses stay out of the assertion, like any non-blocking recipient.
+    assert owner_rows(
+        dsn, "select value->>'reason_code', jsonb_array_length(value->'auto_block_addresses'), value->>'block_reason' "
+             "from evidence.assertion where source_record_id = %s and kind = 'delivery_failure'",
+        (results[never][0],)) == [("bounce_no_such_user", 0, None)]
 
 
 def test_a_microsoft_not_in_directory_bounce_becomes_a_global_block(dsn, target, mailbox_id) -> None:
