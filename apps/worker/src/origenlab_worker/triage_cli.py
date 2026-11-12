@@ -545,6 +545,7 @@ def _serve_tenders(config: BidConfig, *, discovery: Callable[[], dict[str, Any]]
     """Run the tender queue until SIGTERM: one preparation at a time, and the discovery sweep."""
     from origenlab_worker import task_queue
 
+    task_queue.CONTEXT.target = config.database  # the daily prospect enqueue writes its run row
     task_queue.CONTEXT.bid_sweep = bid_sweep_for(config)
     task_queue.CONTEXT.discovery = discovery
     task_queue.CONTEXT.prospect_search = prospect_search

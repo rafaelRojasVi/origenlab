@@ -73,6 +73,21 @@ def test_the_bid_sweep_runs_the_configured_sweep_and_logs_its_counts(monkeypatch
     assert logged == [{"event": "bid_preparation_sweep", "outcome": "ran", "claimed": 1}]
 
 
+def test_the_daily_prospect_enqueue_is_a_no_op_while_the_feature_is_off(monkeypatch) -> None:
+    """Off means no prospect sweep, so a queued run would never be claimed; the job must not fail
+    every morning for lack of a database target the tender child never needed."""
+    monkeypatch.setattr(task_queue, "CONTEXT", task_queue.QueueContext())
+    built = task_queue.build_app(testing.InMemoryConnector(), queues=(task_queue.TENDER_QUEUE,))
+    built.tasks["prospect_daily_enqueue"](timestamp=0)
+
+
+def test_the_daily_prospect_enqueue_refuses_to_run_on_without_a_target(monkeypatch) -> None:
+    monkeypatch.setattr(task_queue, "CONTEXT", task_queue.QueueContext(prospect_search=lambda: {}))
+    built = task_queue.build_app(testing.InMemoryConnector(), queues=(task_queue.TENDER_QUEUE,))
+    with pytest.raises(RuntimeError, match="queue_context_not_configured"):
+        built.tasks["prospect_daily_enqueue"](timestamp=0)
+
+
 def test_the_discovery_refuses_to_run_unconfigured_and_logs_its_counts_once_configured(monkeypatch) -> None:
     monkeypatch.setattr(task_queue, "CONTEXT", task_queue.QueueContext())
     built = task_queue.build_app(testing.InMemoryConnector(), queues=(task_queue.TENDER_QUEUE,))

@@ -212,6 +212,8 @@ def _register_tender_tasks(app: procrastinate.App) -> None:
     def prospect_daily_enqueue(timestamp: int) -> None:
         """Insert a 'daily' queued run row if one does not already exist for today."""
         ctx = CONTEXT
+        if ctx.prospect_search is None:
+            return  # feature off: nothing would claim the run
         if ctx.target is None:
             raise RuntimeError("queue_context_not_configured")
         import json as _json

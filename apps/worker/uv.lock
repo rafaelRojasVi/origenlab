@@ -1799,6 +1799,7 @@ source = { editable = "../api" }
 dependencies = [
     { name = "cryptography" },
     { name = "fastapi", extra = ["standard"] },
+    { name = "jsonschema" },
     { name = "origenlab-email-pipeline" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
@@ -1813,6 +1814,7 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115" },
     { name = "google-auth", marker = "extra == 'drive'", specifier = ">=2" },
     { name = "google-auth-oauthlib", marker = "extra == 'drive-bootstrap'", specifier = ">=1" },
+    { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "origenlab-email-pipeline", editable = "../email-pipeline" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.2" },
     { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'postgres'", specifier = ">=3.2" },
