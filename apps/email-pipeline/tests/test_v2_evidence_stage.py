@@ -546,19 +546,18 @@ def test_an_excluded_label_beside_a_permitted_one_is_still_refused() -> None:
 
 @pytest.mark.parametrize("sender", ["Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
                                     "postmaster@uni.example"])
-def test_a_delivery_report_in_the_trash_is_stageable_and_nothing_else_is(sender) -> None:
-    """2026-10-21: a bounce someone deleted still carries a dead address; Spam and drafts stay refused."""
-    record = _gmail_record(labels=["TRASH", "CATEGORY_UPDATES"])
-    record["payload"]["sender"] = sender
-    parse_manifest(_manifest(records=[record]))
-    spam = _gmail_record(labels=["SPAM"])
-    spam["payload"]["sender"] = sender
-    with pytest.raises(ManifestRefused, match="excluded_spam"):
-        parse_manifest(_manifest(records=[spam]))
-    person = _gmail_record(labels=["TRASH"])
-    person["payload"]["sender"] = "no-postmaster@uni.example"
-    with pytest.raises(ManifestRefused, match="excluded_trash"):
-        parse_manifest(_manifest(records=[person]))
+def test_a_delivery_report_in_the_trash_or_spam_is_stageable_and_nothing_else_is(sender) -> None:
+    """A bounce someone deleted (2026-10-21) or Gmail filed as spam (2026-11-12) still carries a
+    dead address; a person's mail in either stays refused."""
+    for label in ("TRASH", "SPAM"):
+        record = _gmail_record(labels=[label, "CATEGORY_UPDATES"])
+        record["payload"]["sender"] = sender
+        parse_manifest(_manifest(records=[record]))
+    for label, why in (("TRASH", "excluded_trash"), ("SPAM", "excluded_spam")):
+        person = _gmail_record(labels=[label])
+        person["payload"]["sender"] = "no-postmaster@uni.example"
+        with pytest.raises(ManifestRefused, match=why):
+            parse_manifest(_manifest(records=[person]))
 
 
 @pytest.mark.parametrize("declared", ["excluded_spam", "excluded_trash", "metadata_only", None, ""])

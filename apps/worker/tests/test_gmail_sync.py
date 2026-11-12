@@ -55,6 +55,15 @@ def test_a_trashed_bounce_is_captured_and_other_trash_is_not() -> None:
     assert "t" not in gmail.raw_calls
 
 
+def test_a_bounce_in_spam_is_captured_and_other_spam_is_not() -> None:
+    bounce = make_raw(frm="Mail Delivery Subsystem <mailer-daemon@googlemail.com>", to=MAILBOX,
+                      subject="Delivery Status Notification (Failure)")
+    gmail = gmail_with(b=FakeMessage(bounce, labels=("SPAM",)), s=FakeMessage(INBOUND, labels=("SPAM",)))
+    c = run(FakeDb(), gmail).counts
+    assert (c.stored, c.skipped_spam) == (1, 1)
+    assert "s" not in gmail.raw_calls
+
+
 def test_drafts_and_trash_are_skipped_and_counted() -> None:
     gmail = gmail_with(d=FakeMessage(INBOUND, labels=("DRAFT",)), t=FakeMessage(INBOUND, labels=("INBOX", "TRASH")))
     c = run(FakeDb(), gmail).counts

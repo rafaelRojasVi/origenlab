@@ -112,11 +112,13 @@ def test_drafts_spam_and_trash_are_skipped_by_label_id(labels, reason) -> None:
     ("no-postmaster@cliente.invalid", "trash"),
     (None, "trash"),
 ])
-def test_a_delivery_report_in_the_trash_is_still_captured(sender, reason) -> None:
+def test_a_delivery_report_in_the_trash_or_spam_is_still_captured(sender, reason) -> None:
     # Someone deleted the bounce's conversation: its address must still reach the block list.
     assert intake_skip_reason(("TRASH", "CATEGORY_UPDATES"), sender) == reason
-    # Spam and drafts stay skipped, bounce or not.
-    assert intake_skip_reason(("SPAM",), sender) == "spam"
+    # Gmail filed it as spam (2026-11-12): captured too; triage blocks only addresses we wrote to.
+    assert intake_skip_reason(("SPAM",), sender) == (reason and "spam")
+    # Drafts stay skipped, bounce or not.
+    assert intake_skip_reason(("DRAFT",), sender) == "draft"
 
 
 def test_an_outbound_campaign_send_is_a_bulk_send_and_a_newsletter_is_not() -> None:

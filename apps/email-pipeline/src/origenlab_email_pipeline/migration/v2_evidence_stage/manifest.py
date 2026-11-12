@@ -159,10 +159,12 @@ def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> Non
     the message actually carries. A draft, a Spam message or a Trash message is refused on
     the labels alone, so a mistyped or optimistic `intake_class` cannot let one through.
 
-    One exception (2026-10-21): a delivery report in the Trash is stageable. It is a machine's
-    notice that an address is dead, not a person's mail someone discarded; people clear bounce
-    conversations out of the inbox, and the address must still reach the block list. Only the
-    Trash, only a report's sender (`payload.sender`); a bounce in Spam or a draft stays refused.
+    One exception: a delivery report in the Trash (2026-10-21) or in Spam (2026-11-12) is
+    stageable. It is a machine's notice that an address is dead, not a person's mail someone
+    discarded; people clear bounce conversations out of the inbox, Gmail files some reports as
+    spam, and the address must still reach the block list. Only a report's sender
+    (`payload.sender`); a draft stays refused. A report from Spam blocks only an address we wrote
+    to (the worker's `triage.spam_report_guard`).
     """
     declared = payload.get("intake_class")
     _require(
@@ -180,7 +182,7 @@ def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> Non
     bounce = bool(DELIVERY_REPORT_SENDER.search(str(payload.get("sender") or "")))
     for label in labels:
         label_class = classify_intake_folder(label)
-        if label_class == "excluded_trash" and bounce:
+        if label_class in ("excluded_trash", "excluded_spam") and bounce:
             continue
         _require(
             label_class not in ("metadata_only", "excluded_spam", "excluded_trash"),

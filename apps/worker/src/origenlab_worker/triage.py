@@ -35,7 +35,7 @@ import re
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 from origenlab_api.v2.mail_rules import FREE_MAIL_DOMAINS, PURCHASE_ORDER_FILENAME, PURCHASE_ORDER_NUMBER, fold, quote_number_tokens
@@ -161,6 +161,16 @@ select sr.id::text
    )
  order by m.internal_date desc
  limit %s
+"""
+#: A delivery report Gmail filed as spam blocks only an address we wrote to in this window: a forged
+#: report naming a contact we never emailed cannot block them (owner 2026-11-12).
+SPAM_REPORT_SENT_WITHIN_DAYS = 30
+_SENT_TO_RECENTLY = """
+select distinct p.address_norm
+  from comms.message_participant p
+  join comms.message m on m.id = p.message_id
+ where m.direction = 'outbound' and p.role in ('to', 'cc', 'bcc')
+   and p.address_norm = any(%s) and m.internal_date > now() - make_interval(days => %s)
 """
 _ONE = """
 select sr.id::text, m.id::text, m.direction, m.labels, m.eml_storage_path, m.provider_thread_id, m.internal_date,
@@ -508,6 +518,15 @@ class TriageDb:
         with self._tx() as cur:
             return match_products(cur, mail.subject, mail.body)
 
+    def sent_to_recently(self, addresses: Sequence[str], days: int) -> set[str]:
+        """The addresses among `addresses` that an outbound message of ours (to, cc or bcc) reached
+        in the last `days` days. Campaign sends count: capture keeps them in `comms.message`."""
+        if not addresses:
+            return set()
+        with self._tx() as cur:
+            cur.execute(_SENT_TO_RECENTLY, ([a.lower() for a in addresses], days))
+            return {row[0] for row in cur.fetchall()}
+
     def requester_match(self, body: str) -> dict[str, Any]:
         """Exact, unique CRM institution name in the cleaned body; no model and no fuzzy match."""
         with self._tx() as cur:
@@ -830,6 +849,20 @@ def reading_value(verdict: RuleVerdict, mail: MailText, candidates: Sequence[Pro
 PERMANENT_STORAGE_ERRORS = frozenset({"storage_get_http_404", "storage_get_http_410"})
 
 
+def spam_report_guard(db: TriageDb, labels: Sequence[str], analysis: BounceAnalysis) -> BounceAnalysis:
+    """A report from Spam keeps only the addresses we wrote to lately; any other report is unchanged.
+
+    Capture lets delivery reports out of Spam since 2026-11-12 (`capture.intake_skip_reason`). A
+    real one is about mail we sent; a forged one could name anyone, so its other addresses are
+    dropped and stay only in the raw .eml, like any non-blocking recipient.
+    """
+    if "SPAM" not in labels or not analysis.auto_block_addresses:
+        return analysis
+    sent = db.sent_to_recently(analysis.auto_block_addresses, SPAM_REPORT_SENT_WITHIN_DAYS)
+    kept = tuple(a for a in analysis.auto_block_addresses if a.lower() in sent)
+    return replace(analysis, auto_block_addresses=kept, block_reason=analysis.block_reason if kept else None)
+
+
 def _unreadable(db: TriageDb, source_record_id: str, reason: str, *, done: bool, bounce: bool) -> TriageResult:
     """Close a message that cannot be read, once (2026-10-30, Render bandwidth).
 
@@ -877,7 +910,7 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     # Independent backfills never re-run the model. Hard-bounce evidence keeps triage:v1 exactly;
     # requester:v1 only reads the cleaned body and a read-only CRM organization list.
     if needs_delivery_backfill:
-        analysis = analyze_bounce(raw)
+        analysis = spam_report_guard(db, message.labels, analyze_bounce(raw))
         db.record_delivery_failure(message.source_record_id, analysis)
         return TriageResult("recorded", "bounce", "not_needed", 0)
     if needs_requester_backfill:
@@ -925,7 +958,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     record_web_form_reading(db, message.source_record_id, raw, mail)
     written = db.record(message.source_record_id, value, mentions, requester, match_value)
     if verdict.triage_class == "bounce":
-        db.record_delivery_failure(message.source_record_id, analyze_bounce(raw))
+        db.record_delivery_failure(message.source_record_id,
+                                   spam_report_guard(db, message.labels, analyze_bounce(raw)))
     record_people_reading(db, message, mail, reading, verdict.triage_class)
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     record_quote_refs(db, message.source_record_id, mail)
