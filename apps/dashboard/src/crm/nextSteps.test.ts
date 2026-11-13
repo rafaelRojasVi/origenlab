@@ -50,14 +50,22 @@ describe("planNextSteps", () => {
     expect(plan.overdue).toBe(1);
   });
 
-  it("projects the next follow-up day of a quoted case that is not due today", () => {
-    const fiveDays = card({}, ago(5)); // between day 3 and day 7
-    const plan = planNextSteps([fiveDays], NOW, null);
-    const s = plan.steps.find((x) => x.card === fiveDays);
+  it("projects the first follow-up day of a quote sent yesterday", () => {
+    const oneDay = card({}, ago(1)); // day 3 is two days ahead
+    const plan = planNextSteps([oneDay], NOW, null);
+    const s = plan.steps.find((x) => x.card === oneDay);
     expect(s?.group).toBe("semana");
     expect(s?.dueDays).toBe(2);
-    expect(s?.label).toBe("Seguimiento 2 de 3 · día 7");
+    expect(s?.label).toBe("Seguimiento 1 de 3 · día 3");
     expect(plan.days[2].count).toBe(1);
+  });
+
+  it("keeps a follow-up past its day in today's queue until we touch the case", () => {
+    // Owner 2026-11-13: day 5 (past day 3, no email since) is due now — never parked until day 7.
+    const fiveDays = card({}, ago(5));
+    const plan = planNextSteps([fiveDays], NOW, null);
+    const s = plan.steps.find((x) => x.card === fiveDays);
+    expect(s?.group).not.toBe("semana");
   });
 
   it("puts the operator's own steps first, then the higher amount", () => {
@@ -89,8 +97,8 @@ describe("order inside a group", () => {
 describe("weekend", () => {
   it("rolls a follow-up that would fall on Saturday to Monday", () => {
     const thursday = new Date(2026, 10, 12, 15, 0, 0); // jueves 12 nov 2026
-    const sentFiveDaysAgo = new Date(thursday.getTime() - 5 * DAY).toISOString(); // day 7 = sábado 14
-    const plan = planNextSteps([card({}, sentFiveDaysAgo)], thursday, null);
+    const sentYesterday = new Date(thursday.getTime() - 1 * DAY).toISOString(); // day 3 = sábado 14
+    const plan = planNextSteps([card({}, sentYesterday)], thursday, null);
     const s = plan.steps[0];
     expect(s.due.getDay()).toBe(1);
     expect(s.dueDays).toBe(4);

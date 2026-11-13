@@ -796,7 +796,8 @@ describe("«Licitación cierra mañana»", () => {
 
   it("a case never turns into a tender line: only tenders_closing does", async () => {
     stub();
-    renderTenders(undefined, [card({ title: "Licitación 1234567-12-LE26 — Compra" })]);
+    // Quoted yesterday: no follow-up due yet, so the queue is empty apart from tenders.
+    renderTenders(undefined, [card({ title: "Licitación 1234567-12-LE26 — Compra" }, "2026-10-05T15:00:00Z")]);
     await screen.findByText("No hay nada que hacer ahora mismo.");
     expect(screen.queryByText(/Licitación cierra mañana/)).toBeNull();
   });
@@ -896,8 +897,8 @@ describe("Task 4 review fixes", () => {
   });
 
   it("the empty state's «Próximos seguimientos» shows only in a view with calls", () => {
-    // Five days since the quote: a follow-up coming up, not due today.
-    const soon = card({}, "2026-10-01T15:00:00Z");
+    // One day since the quote: its first follow-up (day 3) is coming up, not due today.
+    const soon = card({}, "2026-10-05T15:00:00Z");
     renderBody(as("sales", null), [soon]);
     expect(screen.getByTestId("today-empty")).toHaveTextContent("Próximos seguimientos");
     cleanup();
