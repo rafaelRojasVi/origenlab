@@ -66,6 +66,7 @@ import {
   type FollowUp,
   type OverdueTask,
   useHomeFilter,
+  isFollowUpDueToday,
 } from "../today";
 
 /** Local filter over the unified «Para hoy» queue by row kind, or null for all. */
@@ -218,7 +219,11 @@ export function TodayBody({
   const tenderLines = useMemo(() => (showTenders ? tenderClosingLines(tendersClosing) : []), [tendersClosing, showTenders]);
   const totalQueue = queue.length + forwards.length + tenderLines.length;
   const showPreview = HOME_FILTER_KINDS[view].has("followup");
-  const nextFollowUps = useMemo(() => (showPreview ? followUpsDue(items, at).slice(0, 3) : []), [items, at, showPreview]);
+  // Coming up: quotes and follow-ups younger than day 3 — every older one is already in today's queue.
+  const nextFollowUps = useMemo(
+    () => (showPreview ? followUpsDue(items, at, { young: true }).filter((f) => !isFollowUpDueToday(f)).slice(0, 3) : []),
+    [items, at, showPreview],
+  );
 
   return (
     <OpenCaseContext.Provider value={openCase}>

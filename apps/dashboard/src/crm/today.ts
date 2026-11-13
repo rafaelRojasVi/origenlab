@@ -334,11 +334,13 @@ export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: s
 
 /* ────────────────────────────────────────────────────────── «Para ti» queue ── */
 
-/** A follow-up shows on «Hoy» only the day it first crosses a rhythm boundary, or when the
- *  operator explicitly set a reminder that is due today (or overdue). */
+/** A follow-up stays on «Hoy» from day 3 until OrigenLab touches the case — an email or a call that
+ *  reached the client restarts the clock — or shows when the operator's reminder is due today (or
+ *  overdue). Owner 2026-11-13: showing it only on the exact day 3, 7, 10 or 15 hid every case nobody
+ *  acted on that day (or whose day fell on a weekend) until the next step, and after day 15 for good. */
 export function isFollowUpDueToday(f: FollowUp): boolean {
   if (f.task !== null) return true;
-  return RHYTHM.some((r) => f.days === r.from);
+  return f.days >= RHYTHM[0].from;
 }
 
 /** A pre-quote open case with no sent quote: the operator must still write the quotation. */
@@ -445,7 +447,7 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     queue.set(id, { kind: "task", opportunity_id: id, card: due.card, due, waitMs });
   }
 
-  // 3. Follow-ups due today only (exact threshold crossing or operator reminder)
+  // 3. Follow-ups due: from day 3 until OrigenLab touches the case, or an operator reminder due today
   for (const f of followUpsDue(items, now).filter(isFollowUpDueToday)) {
     const id = f.card.opportunity_id;
     if (queue.has(id) || answered.has(id)) continue;
