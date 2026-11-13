@@ -101,7 +101,9 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   let small = isSmall();
   let tier: Tier = options.tier ?? 'high';
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: !small, alpha: true });
-  const pixelRatio = () => Math.min(window.devicePixelRatio, small || tier === 'medium' ? 1.5 : 2);
+  // 1,5× es casi indistinguible de 2× en un equipo de laboratorio y dibuja 44 % menos píxeles (2026-11-13:
+  // «el computador se pone lento»); teléfonos y nivel medio, 1,25×.
+  const pixelRatio = () => Math.min(window.devicePixelRatio, small || tier === 'medium' ? 1.25 : 1.5);
   renderer.setPixelRatio(pixelRatio());
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.shadowMap.enabled = true;
@@ -133,7 +135,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   const shade = new THREE.DirectionalLight(0xffffff, 0);
   shade.position.set(0.5, 10, 0.8);
   shade.castShadow = true;
-  shade.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
+  shade.shadow.mapSize.set(small ? 512 : 1024, small ? 512 : 1024);
   Object.assign(shade.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5 });
   shade.shadow.bias = -0.0004;
   scene.add(shade);
@@ -241,6 +243,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     if (!controls.enabled) return;
     idle = false;
     tween = null;
+    wake();
   };
   canvas.addEventListener('pointerdown', onPointerDown);
 
@@ -253,11 +256,14 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     if (nowSmall !== small) {
       small = nowSmall;
       renderer.setPixelRatio(pixelRatio());
-      shade.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
+      shade.shadow.mapSize.set(small ? 512 : 1024, small ? 512 : 1024);
       shade.shadow.map?.dispose();
       shade.shadow.map = null;
     }
     renderer.setSize(w, h, false);
+    // `setSize` borra el lienzo: hay que dibujar otra vez. En un microtask, porque el primer
+    // `resize()` corre durante el montaje, antes de que existan `wake` y el bucle.
+    queueMicrotask(() => wake(300));
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     if (idle && !tween) {
@@ -270,11 +276,22 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   observer.observe(canvas);
   resize();
 
-  /* ── bucle: sólo mientras la escena está en pantalla y la pestaña visible ── */
+  /* ── bucle: sólo mientras la escena está en pantalla, la pestaña visible y algo se mueve ──
+   * Sin nadie tocándola, la escena se mece `IDLE_MS` y se detiene en el último cuadro: antes
+   * dibujaba 60 cuadros por segundo mientras estuviera a la vista y calentaba equipos modestos
+   * (2026-11-13). Cada orden de la página, un arrastre o volver a la vista la despiertan. */
+  const IDLE_MS = 6000;
+  const RUNNING_FRAME_MS = 50;
+  let throttle = 0;
+  let awakeUntil = performance.now() + IDLE_MS;
+  const wake = (ms = IDLE_MS) => {
+    awakeUntil = Math.max(awakeUntil, performance.now() + ms);
+    start();
+  };
   let visible = true;
   const io = new IntersectionObserver(([entry]) => {
     visible = entry.isIntersecting;
-    if (visible) start();
+    if (visible) wake();
   });
   io.observe(canvas);
 
@@ -359,16 +376,29 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     }
 
     renderer.render(scene, camera);
-    if (visible && !document.hidden) start();
+    // Sigue a pleno mientras haya un viaje de cámara o tiempo despierto. Con el equipo sólo en marcha
+    // (o apagándose) y nadie tocando nada, ~20 cuadros por segundo bastan para la vibración y las
+    // burbujas, y cuestan un tercio.
+    if (!visible || document.hidden) return;
+    if (tween !== null || now < awakeUntil) start();
+    else if (powered || level > 0.001) throttle = window.setTimeout(() => { throttle = 0; start(); }, RUNNING_FRAME_MS);
   };
   function start() {
     if (raf || lost) return;
+    if (throttle) {
+      clearTimeout(throttle);
+      throttle = 0;
+    }
     last = performance.now();
     raf = requestAnimationFrame(frame);
   }
   const onVisibility = () => {
-    if (!document.hidden && visible) start();
+    if (!document.hidden && visible) wake();
   };
+  // Arrastrar o hacer zoom despierta la escena; la inercia de OrbitControls necesita unos cuadros más.
+  const onControlsChange = () => wake(1500);
+  controls.addEventListener('start', onControlsChange);
+  controls.addEventListener('change', onControlsChange);
   document.addEventListener('visibilitychange', onVisibility);
   start();
 
@@ -376,6 +406,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     setPower(on) {
       powered = on;
       model.setPower(on);
+      wake();
     },
     setModel(next) {
       stage.remove(model.root);
@@ -388,23 +419,30 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
       mount(next);
       idle = true;
       tween = { fromP: camera.position.clone(), fromT: controls.target.clone(), view: 'general', t: 0, ms: 1200, smooth: false };
-      start();
+      wake();
     },
-    goTo,
-    tweenTo: (name, ms = 800) => startTween(name, ms, true),
+    goTo(name) {
+      goTo(name);
+      wake();
+    },
+    tweenTo(name, ms = 800) {
+      startTween(name, ms, true);
+      wake();
+    },
     setLevel(next) {
       levelOverride = next === null ? null : Math.min(1, Math.max(0, next));
       if (levelOverride !== null) level = levelOverride;
+      wake(1000);
     },
     setYaw(offset) {
       yawOffset = offset;
       if (offset === null) idle = true;
-      start();
+      wake();
     },
     snapYaw(offset) {
       yawOffset = offset;
       stage.rotation.y = yaw + offset;
-      start();
+      wake(300);
     },
     setControls(enabled) {
       controls.enabled = enabled;
@@ -414,6 +452,7 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
       tier = next;
       applyTier();
       resize();
+      wake();
     },
     onFrame(callback) {
       frameCallback = callback;
@@ -423,12 +462,15 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
     },
     dispose(discard = false) {
       lost = true;
+      clearTimeout(throttle);
       cancelAnimationFrame(raf);
       raf = 0;
       observer.disconnect();
       io.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
       canvas.removeEventListener('pointerdown', onPointerDown);
+      controls.removeEventListener('start', onControlsChange);
+      controls.removeEventListener('change', onControlsChange);
       canvas.removeEventListener('webglcontextlost', onContextLost);
       controls.dispose();
       model.dispose();
