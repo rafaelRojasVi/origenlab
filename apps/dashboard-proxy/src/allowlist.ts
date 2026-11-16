@@ -182,6 +182,8 @@ export const ALLOWED_UPSTREAM_PATHS: readonly RegExp[] = [
   // One output file of a preparation: a signed link (GET-only; a `viewer` is 403 upstream).
   /^\/v2\/tenders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/preparations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/files\/[a-z0-9_-]{1,64}\/url$/,
   /^\/v2\/workspace\/pipeline$/,
+  // «Borrador en Gmail»: per open case, how many reply drafts wait in contacto@ (ids only, GET-only).
+  /^\/v2\/workspace\/pipeline\/drafts$/,
   /^\/v2\/workspace\/drive$/,
   /^\/v2\/workspace\/review$/,
   // Exchange rates for the Resumen (dólar observado, euro, UF): Banco Central figures the API

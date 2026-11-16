@@ -25,6 +25,7 @@ from origenlab_api.v2.campaign_test_send import SENDER_ADDRESS, TEST_SENDS_PER_D
 from origenlab_api.v2.cockpit_routes import Operator
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.case_documents import mail_storage_key
+from origenlab_api.v2.case_drafts import read_case_drafts
 from origenlab_api.v2.case_mail import MAX_EML_BYTES, read_message, valid_message_id
 from origenlab_api.v2.catalog.storage import StorageUnavailable
 from origenlab_api.v2.marketing_analytics import UnknownFigure
@@ -79,6 +80,16 @@ def get_pipeline(_: Operator, repo: Repo, request: Request) -> Any:
     body = repo.pipeline()
     body["drive_casos_url"] = getattr(request.app.state, "drive_casos_url", None)
     return body
+
+
+@workspace_router.get("/pipeline/drafts")
+def get_pipeline_drafts(_: Operator, repo: Repo, request: Request) -> Any:
+    """«Borrador en Gmail»: per open case, how many reply drafts wait in contacto@ on its threads.
+
+    `available: false` when Gmail is not connected or has never answered; Hoy then shows nothing.
+    """
+    return read_case_drafts(getattr(request.app.state, "gmail_drafts", None), repo._connect, repo._dsn,
+                            repo._statement_timeout_ms)
 
 
 @workspace_router.get("/providers")

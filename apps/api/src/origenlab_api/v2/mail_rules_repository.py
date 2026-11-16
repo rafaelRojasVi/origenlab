@@ -48,10 +48,12 @@ from origenlab_api.v2.case_commands import (
     LINK_CASE_EVIDENCE,
     OPEN_COMMERCIAL_CASE,
     RECORD_CASE_WON,
+    SET_CASE_PAUSE,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
     LinkCaseEvidenceBody,
     OpenCommercialCaseBody,
+    SetCasePauseBody,
     validated_case,
 )
 from origenlab_api.v2.case_won import record_case_won
@@ -150,7 +152,8 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
        requester.value as requester_match, quote_refs.value as quote_refs, po_refs.value as po_refs, ai.intent as model_intent,
        ai.stage as model_stage, ai.needs_reply as model_needs_reply, ai.summary as model_summary,
        ai.triage_class,
-       case_match.value as case_match, web_form.is_web_form, web_form.reply_to, web_form_facts.value as web_form_facts
+       case_match.value as case_match, web_form.is_web_form, web_form.reply_to, web_form_facts.value as web_form_facts,
+       own_closing.value as own_closing
   from evidence.source_record sr
   join lateral (select cm.id, cm.direction, cm.provider_thread_id from comms.message cm
                  where cm.provider_message_id = sr.payload ->> 'gmail_message_id'
@@ -212,6 +215,12 @@ select sr.id::text as id, sr.payload, m.direction, m.provider_thread_id,
         where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'web_form:v1'
         limit 1
   ) web_form_facts on true
+  left join lateral (
+       -- Our own email that closes the follow-up (`outbound_intent:v1`, the worker's triage): R22.
+       select a.value from evidence.assertion a
+        where a.source_record_id = sr.id and a.kind = 'message_triage' and a.value_norm = 'outbound_intent:v1'
+        limit 1
+  ) own_closing on true
  where sr.kind = 'gmail_message' and not sr.is_quarantined
    and sr.review_status <> 'rejected'
    and sr.payload ->> 'staging_source_record_sha256' is null
@@ -447,6 +456,7 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
             web_form_product=_web_form_fact(r, "product"),
             web_form_consent_version=_web_form_fact(r, "consent_version"),
             web_form_accepted_at=_web_form_fact(r, "accepted_at"),
+            own_closing=_json(r.get("own_closing")) or None,
         ))
         display[r["id"]] = {"subject": p.get("subject_raw"), "sent_at": p.get("sent_at"),
                             "direction": direction}
@@ -832,6 +842,8 @@ class MailRulesRepository(V2CaseCommandRepository):
                 "organization_name": action.organization_name,
                 "quote_number": action.quote_number,
                 "from_stage": ctx.get("from_stage"),
+                # R22: the pause it set, so «Quitar» ends only that pause and not a later one.
+                "paused_until": ctx.get("paused_until"),
                 "created": created,
                 "steps": results,
                 "trigger": trigger,
@@ -954,6 +966,13 @@ class MailRulesRepository(V2CaseCommandRepository):
             if row is not None and row[0] == "negotiating":
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
                                          "stage": "quoting", "note": note})
+        if rule == "R22":
+            # The pause R22 set ends — unless a person changed or ended it since; then it is theirs.
+            cur.execute("select version, paused_until::text from crm.opportunity where id = %s for update", (case_id,))
+            row = cur.fetchone()
+            if row is not None and row[1] is not None and row[1] == action.get("paused_until"):
+                run(SET_CASE_PAUSE, {"opportunity_id": case_id, "opportunity_version": int(row[0]),
+                                     "paused_until": None, "reason": None, "note": note})
         if rule in ("R5", "R6", "R19"):
             came_from = "negotiating" if rule == "R5" else action.get("from_stage")
             run(CORRECT_CASE_STAGE, {"opportunity_id": case_id, "to_stage": came_from, "note": note})
@@ -1237,6 +1256,7 @@ _CASE_BODIES: dict[str, Any] = {
     ADD_CASE_ORGANIZATION: AddCaseOrganizationBody,
     ADVANCE_CASE_STAGE: AdvanceCaseStageBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
+    SET_CASE_PAUSE: SetCasePauseBody,
 }
 _QUOTE_BODIES: dict[str, Any] = {
     RECORD_HISTORICAL_QUOTATION: RecordHistoricalQuotationBody,

@@ -48,12 +48,16 @@ class FakeDb:
         self.case_matches: list[tuple[str, dict]] = []
         self.people = ("ana@cliente.invalid", {"ana@cliente.invalid": "Ana Pérez"}, ("lab@cliente.invalid",))
         self.people_recorded: list[tuple[str, dict]] = []
+        self.intents: list[tuple[str, dict]] = []
 
     def message_people(self, message_id):
         return self.people
 
     def record_people(self, sid, value):
         self.people_recorded.append((sid, value))
+
+    def record_outbound_intent(self, sid, value):
+        self.intents.append((sid, value))
 
     def load(self, sid):
         if sid != "sr-1":
@@ -617,3 +621,31 @@ def test_a_failing_people_write_never_breaks_the_triage() -> None:
     db = Broken()
     assert triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "recorded"
     assert db.recorded
+
+
+def test_our_closing_email_is_recorded_with_the_day_it_names() -> None:
+    """Owner 2026-11-16: Tatiana's «lo dejo en pausa hasta marzo» pauses the case (rule R22 in the API)."""
+    db = FakeDb(direction="outbound")
+    raw = make_raw(frm="OrigenLab <contacto@origenlab.cl>", to="Ana <ana@cliente.invalid>",
+                   subject="Re: Cotización", body="Estimada Ana: lo dejo en pausa hasta marzo. Saludos.\n")
+    triage_one(db, FakeStore(raw), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert len(db.intents) == 1
+    sid, value = db.intents[0]
+    assert sid == "sr-1" and value["closing"] is True and value["until"].endswith("-03-01")
+
+
+def test_an_ordinary_outbound_email_records_no_closing() -> None:
+    db = FakeDb(direction="outbound")
+    triage_one(db, FakeStore(make_raw(body="Adjunto la cotización. Quedo atenta a sus comentarios.\n")), "sr-1",
+               ModelSettings(None, DEFAULT_MODEL))
+    assert db.intents == []
+
+
+def test_a_failing_closing_write_never_breaks_the_triage() -> None:
+    class Broken(FakeDb):
+        def record_outbound_intent(self, sid, value):
+            raise RuntimeError("boom")
+
+    db = Broken(direction="outbound")
+    raw = make_raw(body="Lo dejo en pausa por ahora.\n")
+    assert triage_one(db, FakeStore(raw), "sr-1", ModelSettings(None, DEFAULT_MODEL)).outcome == "recorded"

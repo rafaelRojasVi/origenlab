@@ -83,6 +83,7 @@ describe("allowlist", () => {
     for (const path of [
       "/v2/workspace/overview",
       "/v2/workspace/pipeline",
+      "/v2/workspace/pipeline/drafts",
       "/v2/workspace/drive",
       "/v2/workspace/review",
       "/v2/workspace/fx",

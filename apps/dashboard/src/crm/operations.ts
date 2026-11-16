@@ -280,6 +280,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "Carla responde desde carla@empresa-nueva.cl en el hilo de la cotización 09876 → queda como persona del caso.",
   },
+  R22: {
+    cuando: "Le escribimos al cliente en un caso abierto, en los últimos 14 días, y nuestro correo cierra el seguimiento: «lo dejo en pausa», «quedo atenta para cuando tengan el presupuesto», «lo retomamos en marzo». El cliente no ha escrito después.",
+    hace: "Deja el caso «En pausa» hasta el día que nombra el correo (un mes, «el próximo año», «en dos semanas»); si no nombra ninguno, 30 días. Mientras tanto no aparece en Seguimientos. «Quitar» lo reanuda.",
+    automatica: true,
+    ejemplo: "«Entiendo, lo dejo en pausa hasta marzo» en el hilo de la cotización 09876 → el caso queda en pausa hasta el 1 de marzo.",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -303,6 +309,7 @@ const RULE_WHY: Record<string, string> = {
   R18: "el cliente cerró la conversación",
   R19: "el correo del cliente dice que no sigue",
   R21: "escribe en el caso",
+  R22: "nuestro correo cierra el seguimiento",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -330,6 +337,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `No requiere respuesta el correo de${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
   } else if (rule === "R19") {
     verb = `Marcó perdido ${target}`;
+  } else if (rule === "R22") {
+    verb = `Dejó en pausa ${target}`;
   } else if (rule === "R21") {
     verb = `Agregó una persona a ${target}`;
   } else if (rule === "R15") {

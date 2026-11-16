@@ -72,6 +72,7 @@ import {
 /** Local filter over the unified «Para hoy» queue by row kind, or null for all. */
 export type QueueKindFilter = "reply" | "cotizar" | "followup" | "pausa" | "task" | null;
 import { fetchJsonGet, operatorApiUrl } from "../../api/operatorClient";
+import { fetchCaseDrafts, type CaseDraft } from "../crmApi";
 import { Button, FormField, Modal, Segmented, TextInput, buttonClass, fmtDate, toast } from "../ui";
 import { useResource } from "../useResource";
 import { useLeave } from "../useLeave";
@@ -543,6 +544,9 @@ function ParaTiSection({
 }) {
   const [tab, setTab] = useState<HoyTab>("ahora");
   const [selected, setSelected] = useState<string | null>(null);
+  // «Borrador en Gmail»: a follow-up already written waits in Gmail; it only needs sending.
+  const [draftState] = useResource(fetchCaseDrafts);
+  const drafts = draftState.kind === "ready" ? draftState.data.items : {};
   const live = plan.steps.filter((s) => !goneIds.has(s.card.opportunity_id));
   if (live.length === 0 && forwards.length === 0) return null;
 
@@ -579,7 +583,7 @@ function ParaTiSection({
       return <CotizarQueueRow key={s.id} item={item} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} />;
     }
     if (item.kind === "followup") {
-      return <FollowUpQueueRow key={s.id} followUp={item.followUp} waitMs={item.waitMs} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} onClose={onClose} now={now} />;
+      return <FollowUpQueueRow key={s.id} followUp={item.followUp} draft={drafts[s.card.opportunity_id]} waitMs={item.waitMs} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} onClose={onClose} now={now} />;
     }
     return <TaskQueueRow key={s.id} due={item.due} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} now={now} pause={s.pause} />;
   };
@@ -1296,9 +1300,10 @@ function FollowUpPhoneLinks({ personId, step }: { personId: string; step: 2 | 3 
 /* ─────────────────────────────────────────────── Follow-up row ── */
 
 function FollowUpQueueRow({
-  followUp, waitMs, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
+  followUp, draft, waitMs, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
 }: {
   followUp: FollowUp;
+  draft?: CaseDraft;
   waitMs: number;
   index: number;
   navigate: Navigate;
@@ -1400,6 +1405,18 @@ function FollowUpQueueRow({
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
           <span className="font-semibold text-ink" data-testid="today-followup-step">Seguimiento {fStep} de 4</span>
           <FollowUpActionChip step={fStep} days={f.days} />
+          {draft ? (
+            <a
+              href={draft.url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center rounded-full bg-good-bg px-1.5 py-px text-[10.5px] font-semibold text-good hover:underline"
+              data-testid="today-followup-draft"
+              title="Ya hay una respuesta escrita en Gmail: revísala y envíala"
+            >
+              {draft.drafts > 1 ? `${draft.drafts} borradores listos` : "Borrador listo"}
+            </a>
+          ) : null}
           {what ? <span className="truncate">{` · ${what}`}</span> : null}
         </p>
         {(fStep === 2 || fStep === 3) && f.card.contact?.person_id ? (

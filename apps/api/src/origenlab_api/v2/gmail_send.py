@@ -39,6 +39,8 @@ SEND_AS_URL_TEMPLATE = "https://gmail.googleapis.com/gmail/v1/users/me/settings/
 TEST_SUBJECT_PREFIX = "[PRUEBA] "
 TIMEOUT_SECONDS = 10.0
 REFRESH_MARGIN_SECONDS = 60.0
+#: How many drafts «Borrador en Gmail» reads at most (newest first, as Gmail lists them).
+DRAFT_LIST_LIMIT = 500
 #: How long (seconds) to cache the contacto@ send-as signature in-process.
 SIGNATURE_CACHE_TTL_SECONDS = 600.0
 
@@ -303,6 +305,45 @@ class GmailSender:
                                  f"Gmail returned invalid data ({type(exc).__name__})",
                                  "HTTP 200 invalid_response") from exc
         return draft_id, message_id
+
+    def list_draft_threads(self, limit: int = DRAFT_LIST_LIMIT) -> dict[str, list[str]]:
+        """The mailbox's drafts that answer a thread: Gmail thread id → the drafts' message ids.
+
+        Reads ids only (no subject, no body). Requires gmail.compose (or modify) scope. A draft that
+        starts a new conversation has its own thread and simply matches no case. At most `limit`
+        drafts are read. Raises GmailSendError on network or API failure.
+        """
+        token = self._access_token()
+        out: dict[str, list[str]] = {}
+        page: str | None = None
+        seen = 0
+        while seen < limit:
+            query = {"maxResults": str(min(100, limit - seen))}
+            if page:
+                query["pageToken"] = page
+            url = f"{DRAFT_URL}?{urllib.parse.urlencode(query)}"
+            status, body = self._call("GET", url, {"Authorization": f"Bearer {token}"}, b"")
+            if status != 200:
+                detail = _http_detail(status, body)
+                raise GmailSendError("draft_list_failed", f"Gmail answered {detail}", detail)
+            try:
+                data = json.loads(body)
+                if not isinstance(data, dict):
+                    raise ValueError("not an object")
+                drafts = data.get("drafts") or []
+                for d in drafts:
+                    message = d.get("message") or {}
+                    thread, mid = message.get("threadId"), message.get("id")
+                    if isinstance(thread, str) and isinstance(mid, str):
+                        out.setdefault(thread, []).append(mid)
+                page = data.get("nextPageToken")
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise GmailSendError("draft_list_failed", f"Gmail returned invalid data ({type(exc).__name__})",
+                                     "HTTP 200 invalid_response") from exc
+            seen += len(drafts)
+            if not page or not drafts:
+                break
+        return out
 
     def _ensure_label(self, token: str, name: str) -> str:
         """Return the Gmail label id for `name`, creating it if it does not exist."""

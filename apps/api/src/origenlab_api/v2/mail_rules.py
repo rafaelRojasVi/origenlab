@@ -27,6 +27,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R17 | inbound, already on exactly one case in «Enviada» (`quoting`), sent in the last `REPLY_WINDOW_DAYS` and after that case's live quote was sent, from neither us nor a supplier, not an automatic reply | auto: the case → «Conversación» (`negotiating`). Reads an email another rule acted on (R1 links it a pass earlier), once |
 | R18 | inbound from the client (not ours, a supplier, a bounce or an automatic reply) on exactly one open **or won** case (linked, or on its thread when not linked), sent in the last `REPLY_WINDOW_DAYS`, whose triage reading says `needs_reply: false` and not `stage: lost` | auto: a receipt only — no CRM write; the card marks that email `no_reply` and Hoy leaves it out of «Responder». Reads an email another rule acted on, once |
 | R19 | inbound from the client, the newest one on exactly one open case not «En pausa», whose triage reading says `stage: lost` (the body, which R6 never reads) | auto: the case → «Perdida» (`READ_LOST_CLOSE_REASON`); R6's sender gate, else a proposal; waits a pass while R17 moves the case. Reads an email another rule acted on, once |
+| R22 | outbound from contacto@, sent in the last `REPLY_WINDOW_DAYS`, on exactly one open case not «En pausa» (linked, or on its thread), whose worker reading (`outbound_intent:v1`) says our own email closes the follow-up («lo dejo en pausa», «quedo atenta para cuando…»), and the client has not written since | auto: the case «En pausa» until the day the email names, else 30 days after it (owner 2026-11-16); «Quitar» resumes it |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -68,7 +69,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -76,7 +77,7 @@ from zoneinfo import ZoneInfo
 from origenlab_api.v2.case_origin import ORIGIN_CORREO, ORIGIN_WEB
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16", "R17", "R18", "R19", "R21")
+                             "R14", "R15", "R16", "R17", "R18", "R19", "R21", "R22")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -197,6 +198,9 @@ class MailEvidence:
     web_form_product: str | None = None
     web_form_consent_version: str | None = None
     web_form_accepted_at: str | None = None
+    #: The worker's reading of OUR email (`outbound_intent:v1`): it closes the follow-up, and the day it
+    #: names (owner 2026-11-16). Written only when it closes. R22 reads it.
+    own_closing: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -840,6 +844,11 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
             read_lost = _read_lost_rule(e, index)
             if read_lost is not None:
                 out.append(read_lost)
+        # R22 pauses the case on our own closing email; it waits while another rule moves the case.
+        if (action is None or action.mode != AUTO) and (e.id, "R22") not in snapshot.applied_pairs:
+            own = _own_closing_rule(e, index)
+            if own is not None:
+                out.append(own)
         # R18 runs no command, so it never waits for another rule: a receipt that says the email
         # needs no answer, read on the pass after the triage's reading exists.
         if (e.id, "R18") not in snapshot.applied_pairs:
@@ -1843,6 +1852,53 @@ def _read_lost_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                          organization_id=c.organization_id,
                          commands=(_advance_step("lost", note, READ_LOST_CLOSE_REASON),),
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+#: R22's pause reason, and how long it pauses when our email names no day (owner 2026-11-16).
+OWN_CLOSING_PAUSE_REASON = "Cliente lo evaluará"
+OWN_CLOSING_DEFAULT_DAYS = 30
+
+
+def _own_closing_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R22 (owner 2026-11-16): our own email closes the follow-up — «lo dejo en pausa hasta marzo»,
+    «quedo atenta para cuando tengan el presupuesto». The case pauses until the day the email names
+    (the worker's `outbound_intent:v1` reading), else `OWN_CLOSING_DEFAULT_DAYS` after the email, so
+    Hoy stops asking for a follow-up nobody should send. «Quitar» resumes it.
+
+    Only our email, sent in the last `REPLY_WINDOW_DAYS`, on exactly one open case that is not
+    already «En pausa» (linked, or on its thread), when the client has not written since."""
+    own = e.own_closing or {}
+    if e.direction != "outbound" or own.get("closing") is not True:
+        return None
+    on = list(e.linked_case_ids) or [c.id for c in ix.by_thread.get(e.thread_id or "", [])]
+    if len(set(on)) != 1:
+        return None
+    at, since = _instant(e.sent_at), _instant(ix.reply_since)
+    if at is None or since is None or at < since:
+        return None
+    c = ix.cases.get(on[0])
+    if c is None or c.closed or c.paused_until is not None:
+        return None
+    newest = ix.newest_inbound.get(c.id)
+    if newest is not None and newest > at:
+        return None
+    sent_day = at.astimezone(SANTIAGO).date()
+    until = None
+    try:
+        named = date.fromisoformat(str(own.get("until"))) if own.get("until") else None
+    except ValueError:
+        named = None
+    until = named if named is not None and named > sent_day else sent_day + timedelta(days=OWN_CLOSING_DEFAULT_DAYS)
+    phrase = " ".join(str(own.get("phrase") or "").split())[:SUMMARY_CHARS]
+    reasons = [f"nuestro correo cierra el seguimiento: «{phrase}»" if phrase else "nuestro correo cierra el seguimiento",
+               f"en pausa hasta {until.isoformat()}"]
+    note = _note("R22", reasons)
+    return PlannedAction(e.id, "R22", AUTO, tuple(reasons), case_id=c.id, case_title=c.title,
+                         organization_id=c.organization_id,
+                         commands=({"command": "set_case_pause", "inputs": {
+                             "opportunity_id": "@case", "opportunity_version": "@case_version",
+                             "paused_until": until.isoformat(), "reason": OWN_CLOSING_PAUSE_REASON, "note": note}},),
+                         context={"case": c.id, "case_version": c.version, "paused_until": until.isoformat()})
 
 
 def _revision_label(quote_number: str, revision_no: int) -> str:

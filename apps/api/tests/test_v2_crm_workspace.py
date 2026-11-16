@@ -746,6 +746,7 @@ def test_workspace_routes_are_get_only_under_prefix() -> None:
     assert paths == {
         "/v2/workspace/overview",
         "/v2/workspace/pipeline",
+        "/v2/workspace/pipeline/drafts",
         "/v2/workspace/providers",
         "/v2/workspace/equipment-interests",
         "/v2/workspace/people/{person_id}",

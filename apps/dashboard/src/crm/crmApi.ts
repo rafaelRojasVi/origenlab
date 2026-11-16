@@ -33,6 +33,7 @@ import type { CaseMessage, CaseThreadsResponse, QuoteReadingsResponse } from "./
 export const WORKSPACE_PATHS = {
   overview: "/v2/workspace/overview",
   pipeline: "/v2/workspace/pipeline",
+  pipelineDrafts: "/v2/workspace/pipeline/drafts",
   quoteReadings: "/v2/workspace/quote-readings",
   providers: "/v2/workspace/providers",
   equipmentInterests: "/v2/workspace/equipment-interests",
@@ -116,6 +117,10 @@ export const fetchEquipmentInterests = () =>
   fetchJsonGet<EquipmentInterestsResponse>(operatorApiUrl(WORKSPACE_PATHS.equipmentInterests));
 export const fetchMarketing = () => fetchJsonGet<MarketingResponse>(operatorApiUrl(WORKSPACE_PATHS.marketing));
 export const fetchDriveArchive = () => fetchJsonGet<DriveArchiveResponse>(operatorApiUrl(WORKSPACE_PATHS.drive));
+/** «Borrador en Gmail»: per open case, the reply drafts waiting in contacto@ on its threads. */
+export type CaseDraft = { drafts: number; url: string };
+export type CaseDraftsResponse = { available: boolean; items: Record<string, CaseDraft> };
+export const fetchCaseDrafts = () => fetchJsonGet<CaseDraftsResponse>(operatorApiUrl(WORKSPACE_PATHS.pipelineDrafts));
 export const fetchFx = () => fetchJsonGet<FxResponse>(operatorApiUrl(WORKSPACE_PATHS.fx));
 export const fetchReview = () => fetchJsonGet<ReviewResponse>(operatorApiUrl(WORKSPACE_PATHS.review));
 export const fetchMailQuoteNumbers = () =>

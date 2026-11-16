@@ -24,6 +24,7 @@ def make_raw(
     pdf_inline_with_cid: bool = False,
     logo: bool = False,
     list_unsubscribe: bool = False,
+    body: str = "Hola,\nadjunto el documento.\n",
 ) -> bytes:
     msg = EmailMessage()
     if frm is not None:
@@ -38,7 +39,7 @@ def make_raw(
         msg["Message-ID"] = message_id
     if list_unsubscribe:
         msg["List-Unsubscribe"] = f"<mailto:{MAILBOX}?subject=REMOVER>"
-    msg.set_content("Hola,\nadjunto el documento.\n")
+    msg.set_content(body)
     if pdf_name:
         msg.add_attachment(
             PDF, maintype="application", subtype="pdf", filename=pdf_name,
