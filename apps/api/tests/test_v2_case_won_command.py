@@ -192,6 +192,28 @@ def test_a_person_wins_a_case_against_the_current_revision(db, world) -> None:
     assert row == ("won", quote_id, 2, True, version + 1)
 
 
+def test_a_win_drops_the_follow_ups_and_keeps_a_delivery_task(db, world) -> None:
+    """2026-11-16: a won case kept «Seguimiento de CN09876» open forever. Winning cancels the
+    follow-up and legacy «Retomar:» tasks; a task about delivering the sale stays open."""
+    import psycopg
+
+    case_id, version, quote_id = _quoted_case(db, world)
+    titles = ("Seguimiento de la cotización", "Retomar: Evaluando internamente", "Coordinar despacho")
+    with psycopg.connect(db) as conn:
+        conn.execute("set role origenlab_owner")
+        for title in titles:
+            conn.execute(
+                "insert into crm.task (opportunity_id, owner_operator_id, title, due_at) "
+                "values (%s, (select id from platform.operator order by created_at limit 1), %s, now() + interval '2 days')",
+                (case_id, title))
+    result = _won(db, world, case_id, version, quote_id, 2)
+    assert len(result["event_ids"]) == 4  # staged + closed + two follow-ups cancelled
+    with psycopg.connect(db) as conn:
+        conn.execute("set role origenlab_owner")
+        rows = dict(conn.execute("select title, status from crm.task where opportunity_id = %s", (case_id,)).fetchall())
+    assert rows == {titles[0]: "cancelled", titles[1]: "cancelled", titles[2]: "open"}
+
+
 def test_the_win_is_the_operators_not_the_systems(db, world) -> None:
     case_id, version, quote_id = _quoted_case(db, world)
     result = _won(db, world, case_id, version, quote_id, 2)

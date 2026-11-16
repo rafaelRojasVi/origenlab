@@ -78,6 +78,26 @@ SWEEP_LIMIT = 200
 #: Anything else fails the job at once; the sweep re-enqueues the message a minute later.
 RETRY = procrastinate.RetryStrategy(max_attempts=6, wait=30, linear_wait=90, retry_exceptions={ModelUnavailable})
 
+#: Daily queue housekeeping (2026-11-16: 23 jobs had sat in «doing» since October, left by workers a
+#: deploy replaced, and 8,053 failed jobs had piled up). 08:15 UTC ≈ 05:15 in Santiago, before work.
+HOUSEKEEPING_CRON = "15 8 * * *"
+HOUSEKEEPING_LOCK = "queue-housekeeping"
+#: A job is abandoned when its worker has sent no heartbeat for this long (heartbeats come every 10 s).
+HOUSEKEEPING_STALLED_AFTER_S = 3600
+#: Finished jobs (failed, cancelled, aborted; succeeded ones are already deleted) are kept this long.
+HOUSEKEEPING_KEEP_FINISHED_HOURS = 14 * 24
+
+
+async def housekeep(manager: Any) -> dict[str, int]:
+    """Mark the jobs of dead workers failed and delete finished jobs older than two weeks, on every
+    queue. A job of a live worker is never touched (Procrastinate selects stalled jobs by heartbeat)."""
+    stalled = list(await manager.get_stalled_jobs(seconds_since_heartbeat=HOUSEKEEPING_STALLED_AFTER_S))
+    for job in stalled:
+        await manager.finish_job(job, status=procrastinate.jobs.Status.FAILED, delete_job=False)
+    await manager.delete_old_jobs(nb_hours=HOUSEKEEPING_KEEP_FINISHED_HOURS, include_failed=True,
+                                  include_cancelled=True, include_aborted=True)
+    return {"stalled_failed": len(stalled)}
+
 
 @dataclass
 class QueueContext:
@@ -164,6 +184,13 @@ def build_app(connector: Any | None = None, *, queues: tuple[str, ...] = (QUEUE,
         deferred = defer_triage(context.app, pending)
         ctx.log({"event": "triage_sweep", "found": len(pending), "deferred": deferred,
                  "revision": ctx.revision})
+
+    @app.periodic(cron=HOUSEKEEPING_CRON, periodic_id="housekeeping")
+    @app.task(name="queue_housekeeping", queue=QUEUE, queueing_lock=HOUSEKEEPING_LOCK, retry=False,
+              pass_context=True)
+    async def queue_housekeeping(context: procrastinate.JobContext, timestamp: int) -> None:
+        result = await housekeep(context.app.job_manager)
+        CONTEXT.log({"event": "queue_housekeeping", **result})
 
     return app
 

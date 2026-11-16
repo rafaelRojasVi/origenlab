@@ -26,6 +26,7 @@ def test_both_tasks_are_on_the_triage_queue_and_the_sweep_runs_every_minute(app)
     periodic = sorted(built.periodic_registry.periodic_tasks.values(), key=lambda p: p.periodic_id)
     assert [(p.task.name, p.cron, p.periodic_id) for p in periodic] == [
         ("bid_preparation_sweep", "* * * * *", "bids"), ("tender_discovery", "0 * * * *", "discovery"),
+        ("queue_housekeeping", task_queue.HOUSEKEEPING_CRON, "housekeeping"),
         ("prospect_daily_enqueue", "0 9 * * *", "prospect_daily"),
         ("prospect_search_sweep", "* * * * *", "prospect_sweep"),
         ("sweep_untriaged", "* * * * *", "sweep")]
@@ -38,7 +39,7 @@ def test_each_child_app_carries_only_its_own_queue_so_no_periodic_job_waits_unse
     def own(app):
         return {name for name in app.tasks if "builtin" not in name}
 
-    assert own(task_queue.app) == {"triage_message", "sweep_untriaged"}
+    assert own(task_queue.app) == {"triage_message", "sweep_untriaged", "queue_housekeeping"}
     assert own(task_queue.tender_app) == {"bid_preparation_sweep", "tender_discovery",
                                           "prospect_daily_enqueue", "prospect_search_sweep"}
     by_id = {p.periodic_id: p for p in task_queue.tender_app.periodic_registry.periodic_tasks.values()}
@@ -98,6 +99,51 @@ def test_the_discovery_refuses_to_run_unconfigured_and_logs_its_counts_once_conf
         discovery=lambda: {"outcome": "ran", "candidates": 3}, log=logged.append))
     built.tasks["tender_discovery"](timestamp=0)
     assert logged == [{"event": "tender_discovery", "outcome": "ran", "candidates": 3}]
+
+
+def test_housekeeping_fails_jobs_left_by_dead_workers_and_deletes_old_finished_ones(app) -> None:
+    """2026-11-16: 23 jobs sat in «doing» since October (their workers were replaced by deploys) and
+    8,053 failed jobs piled up. The daily housekeeping marks a job of a worker with no heartbeat for an
+    hour as failed, leaves a live worker's job alone, and deletes finished jobs older than 14 days."""
+    import asyncio
+    import datetime
+
+    from procrastinate import utils
+
+    built, connector = app
+    live_worker = asyncio.run(connector.register_worker_one())["worker_id"]
+    dead_worker = asyncio.run(connector.register_worker_one())["worker_id"]
+    connector.workers[dead_worker] = utils.utcnow() - datetime.timedelta(days=30)
+    long_ago = utils.utcnow() - datetime.timedelta(days=20)
+
+    def job(source_record_id: str, status: str, worker_id, last_event_at) -> int:
+        task_queue.defer_triage(built, [source_record_id])
+        job_id = max(connector.jobs)
+        connector.jobs[job_id].update(status=status, worker_id=worker_id)
+        connector.events[job_id] = [{"type": status, "at": last_event_at}]
+        return job_id
+
+    stuck = job("stuck", "doing", dead_worker, long_ago)
+    orphan = job("orphan", "doing", None, long_ago)
+    running = job("running", "doing", live_worker, utils.utcnow())
+    old_failed = job("old", "failed", None, long_ago)
+    recent_failed = job("recent", "failed", None, utils.utcnow())
+
+    result = asyncio.run(task_queue.housekeep(built.job_manager))
+
+    assert result == {"stalled_failed": 2}
+    assert connector.jobs[stuck]["status"] == connector.jobs[orphan]["status"] == "failed"
+    assert connector.jobs[running]["status"] == "doing"
+    assert old_failed not in connector.jobs
+    assert connector.jobs[recent_failed]["status"] == "failed"
+
+
+def test_housekeeping_runs_daily_on_the_triage_queue_with_one_waiting_at_most(app) -> None:
+    built, _ = app
+    task = built.tasks["queue_housekeeping"]
+    assert (task.queue, task.queueing_lock) == ("triage", task_queue.HOUSEKEEPING_LOCK)
+    by_id = {p.periodic_id: p for p in built.periodic_registry.periodic_tasks.values()}
+    assert by_id["housekeeping"].cron == task_queue.HOUSEKEEPING_CRON
 
 
 def test_one_waiting_job_per_message(app) -> None:
@@ -169,7 +215,7 @@ def test_the_periodic_sweep_defers_into_the_connector_the_cli_swaps_in() -> None
         async def tick() -> None:
             async with swapped.open_async():
                 deferrer = periodic.PeriodicDeferrer(registry=swapped.periodic_registry)
-                (sweep,) = swapped.periodic_registry.periodic_tasks.values()
+                (sweep,) = [p for p in swapped.periodic_registry.periodic_tasks.values() if p.periodic_id == "sweep"]
                 await deferrer.defer_jobs([(sweep, 1_800_000_000)])
 
         asyncio.run(tick())
