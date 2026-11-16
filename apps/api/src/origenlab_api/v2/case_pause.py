@@ -5,6 +5,9 @@ reason, or both null to resume, with one `opportunity.pause_set` event. It also 
 representation of a pause (W11): the case's open «Retomar: …» tasks, cancelled here with their own
 `task.cancelled` events, so the case never says two different things. That task SQL is why this
 lives outside `case_command_repository.py`, like the quote acts and the win.
+
+`retire_on_close` is the other writer: a case that closes (lost, abandoned or won) drops its pause and
+cancels its open tasks in the closing command's transaction (2026-11-16).
 """
 
 from __future__ import annotations
@@ -17,6 +20,60 @@ from origenlab_api.v2.identity import OperatorIdentity
 
 #: The cancel reason written on a legacy «Retomar: …» task this command retires.
 LEGACY_TASK_RETIRED = "La pausa del caso se lleva ahora en el caso (set-case-pause)."
+#: The cancel reason written on every open task of a case when the case closes.
+TASK_RETIRED_ON_CLOSE = "El caso se cerró ({stage}); la tarea ya no corresponde."
+
+
+def retire_on_close(
+    repo: Any, cur: Any, operator: OperatorIdentity, *, case_id: str, stage: str,
+    paused_until: str | None, pause_reason: str | None, note: str, command: str, receipt_id: str,
+    only_follow_ups: bool = False,
+) -> list[str]:
+    """What a closed case may no longer hold (2026-11-16): a pause, and open tasks. Run inside the
+    closing command's transaction, after the case row is closed. The pause is cleared with an
+    `opportunity.pause_set` event (to null) and open tasks are cancelled with their own
+    `task.cancelled` event; a case with neither adds no event. Returns the new event ids.
+
+    A lost or abandoned case drops every open task. A won case (`only_follow_ups`) drops only the
+    ones about getting the sale — «Seguimiento …» and the legacy «Retomar: …» — and keeps any task
+    about delivering it. The case's version is not bumped again: the closing command already moved it."""
+    events: list[str] = []
+    if paused_until is not None:
+        cur.execute(
+            "update crm.opportunity set paused_until = null, pause_reason = null, updated_at = now() where id = %s",
+            (case_id,),
+        )
+        events.append(repo._append_event(
+            cur,
+            aggregate_kind="opportunity",
+            aggregate_id=case_id,
+            event_type="opportunity.pause_set",
+            payload={"from_paused_until": str(paused_until), "from_reason": pause_reason,
+                     "to_paused_until": None, "to_reason": None, "note": note},
+            operator=operator,
+            receipt_id=receipt_id,
+        ))
+    cur.execute(
+        """
+        update crm.task
+           set status = 'cancelled', cancel_reason = %s, version = version + 1, updated_at = now()
+         where opportunity_id = %s and status = 'open'
+           and (not %s or title ~* '^\\s*(seguimiento|retomar:)')
+        returning id::text as id
+        """,
+        (TASK_RETIRED_ON_CLOSE.format(stage=stage), case_id, only_follow_ups),
+    )
+    for task in cur.fetchall():
+        events.append(repo._append_event(
+            cur,
+            aggregate_kind="task",
+            aggregate_id=task[0],
+            event_type="task.cancelled",
+            payload={"status": "cancelled", "note": note, "replaced_by": command},
+            operator=operator,
+            receipt_id=receipt_id,
+        ))
+    return events
 
 
 def set_case_pause(

@@ -2092,6 +2092,67 @@ def test_set_case_pause_pauses_repauses_and_resumes_with_an_event_each_and_retir
 
 
 @_needs_db
+def test_closing_a_case_clears_its_pause_and_cancels_its_open_tasks_with_an_event_each(
+    disposable_database, world,
+) -> None:
+    """A closed case is not paused and has nothing left to do (2026-11-16: a lost case kept its pause and
+    four lost cases kept open follow-ups). Closing clears the pause and cancels every open task in the
+    same transaction, each with its own event; a task already done stays done."""
+    import datetime as dt
+
+    import psycopg
+
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso que se pierde en pausa")
+    paused = _run(repo, SET_CASE_PAUSE, SetCasePauseBody(
+        opportunity_id=case_id, opportunity_version=version, paused_until=dt.date(2099, 1, 15),
+        reason="Evaluando internamente", note="lo pidió el cliente"), world)
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        tasks = []
+        for title, status in (("Seguimiento de la cotización", "open"), ("Llamar al laboratorio", "open"),
+                              ("Enviar ficha técnica", "done")):
+            cur.execute(
+                "insert into crm.task (opportunity_id, owner_operator_id, title, due_at, status, completed_at) "
+                "values (%s, (select id from platform.operator order by created_at limit 1), %s, "
+                "now() + interval '3 days', %s, case when %s = 'done' then now() end) returning id::text",
+                (case_id, title, status, status))
+            tasks.append(cur.fetchone()[0])
+        conn.commit()
+
+    closed = _run(repo, ADVANCE_CASE_STAGE, AdvanceCaseStageBody(
+        opportunity_id=case_id, opportunity_version=paused["opportunity_version"], stage="abandoned",
+        close_reason="Compró a otro proveedor", note="el cliente avisó"), world)
+    # staged + closed + the pause cleared + two open tasks cancelled
+    assert len(closed["event_ids"]) == 5
+
+    with psycopg.connect(disposable_database) as conn, conn.cursor() as cur:
+        cur.execute("select stage, paused_until, pause_reason from crm.opportunity where id = %s", (case_id,))
+        assert cur.fetchone() == ("abandoned", None, None)
+        cur.execute("select status, cancel_reason from crm.task where id = any(%s::uuid[]) order by title", (tasks,))
+        rows = cur.fetchall()
+        assert [r[0] for r in rows] == ["done", "cancelled", "cancelled"]
+        assert all("cerr" in r[1] for r in rows if r[0] == "cancelled")
+        cur.execute("select payload from crm.domain_event where aggregate_id = %s "
+                    "and event_type = 'opportunity.pause_set' order by seq", (case_id,))
+        last = cur.fetchall()[-1][0]
+        assert (last["from_paused_until"], last["to_paused_until"], last["to_reason"]) == ("2099-01-15", None, None)
+        cur.execute("select count(*) from crm.domain_event where aggregate_id = any(%s::uuid[]) "
+                    "and event_type = 'task.cancelled'", (tasks,))
+        assert cur.fetchone()[0] == 2
+
+
+@_needs_db
+def test_closing_a_case_with_no_pause_and_no_open_task_adds_no_extra_event(disposable_database, world) -> None:
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso que se pierde sin más")
+    closed = _run(repo, ADVANCE_CASE_STAGE, AdvanceCaseStageBody(
+        opportunity_id=case_id, opportunity_version=version, stage="abandoned",
+        close_reason="Sin respuesta", note="no contestó"), world)
+    assert len(closed["event_ids"]) == 2  # staged + closed, nothing else
+
+
+@_needs_db
 def test_set_case_origin_refuses_a_stale_version_and_writes_nothing(disposable_database, world) -> None:
     import psycopg
 

@@ -87,7 +87,7 @@ from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_quotation import record_case_quotation
 from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
-from origenlab_api.v2.case_pause import set_case_pause
+from origenlab_api.v2.case_pause import retire_on_close, set_case_pause
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused, as_uuid, normalize_email
@@ -1293,6 +1293,11 @@ class V2CaseCommandRepository(CommandTransaction):
                     receipt_id=receipt_id,
                 )
             )
+            events.extend(retire_on_close(
+                self, cur, operator, case_id=case["id"], stage=target,
+                paused_until=case["paused_until"], pause_reason=case["pause_reason"],
+                note=fields["note"], command=ADVANCE_CASE_STAGE, receipt_id=receipt_id,
+            ))
 
         return {
             "command": ADVANCE_CASE_STAGE,

@@ -15,8 +15,9 @@ follows, which revision may be named, the three columns that move together — i
 here, so a person and a rule cannot record two different kinds of win.
 
 This module reads `crm.quote` and `crm.quote_revision` to check the named revision and writes
-neither. The only row it writes is `crm.opportunity` (plus its two events), on the handler's
-transaction and under the handler's receipt.
+neither. It writes `crm.opportunity` (plus its two events) and, through `retire_on_close`, clears
+the case's pause and cancels its follow-up tasks (2026-11-16), on the handler's transaction and
+under the handler's receipt.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from typing import Any
 
 from origenlab_api.v2.case_commands import RECORD_CASE_WON, WON_FROM_STAGE
 from origenlab_api.v2.case_kind import refuse_tender
+from origenlab_api.v2.case_pause import retire_on_close
 from origenlab_api.v2.commands import CommandRefused, as_uuid
 from origenlab_api.v2.identity import OperatorIdentity
 
@@ -122,6 +124,13 @@ def record_case_won(
             operator=operator, receipt_id=receipt_id,
         ),
     ]
+    # A won case is not paused and is no longer being followed up (2026-11-16): its pause and its
+    # «Seguimiento …» / «Retomar: …» tasks go; a task about delivering the sale stays.
+    events.extend(retire_on_close(
+        repo, cur, operator, case_id=case["id"], stage="won", paused_until=case["paused_until"],
+        pause_reason=case["pause_reason"], note=fields["note"], command=RECORD_CASE_WON,
+        receipt_id=receipt_id, only_follow_ups=True,
+    ))
     return {
         "command": RECORD_CASE_WON,
         "opportunity_id": case["id"],
