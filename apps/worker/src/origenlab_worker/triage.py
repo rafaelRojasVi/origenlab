@@ -49,6 +49,7 @@ from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, is_forward_subject, read_forward
 from origenlab_worker.people_reading import NO_PEOPLE_CLASSES, PEOPLE_VALUE_NORM, is_own_address, people_value
 from origenlab_worker.mail_text import MailText, parse_mail
+from origenlab_worker.outbound_intent import OUTBOUND_INTENT_VALUE_NORM, read_outbound_intent
 from origenlab_worker.quote_reader import pdf_text
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
 from origenlab_worker.storage import StorageError
@@ -471,6 +472,15 @@ class TriageDb:
 
         with self._tx() as cur:
             cur.execute(_INSERT_ASSERTION, (source_record_id, "message_triage", PEOPLE_VALUE_NORM, Jsonb(value)))
+
+    def record_outbound_intent(self, source_record_id: str, value: dict[str, Any]) -> None:
+        """`outbound_intent:v1` — our own email closes the follow-up (`outbound_intent.py`). Written
+        only when it does; read by the API's rule R22."""
+        from psycopg.types.json import Jsonb
+
+        with self._tx() as cur:
+            cur.execute(_INSERT_ASSERTION,
+                        (source_record_id, "message_triage", OUTBOUND_INTENT_VALUE_NORM, Jsonb(value)))
 
     def pending_people(self, *, since_days: int, limit: int) -> list[str]:
         """Inbound emails of the last days whose latest triage reading (any `triage:v<N>`) is of a
@@ -961,6 +971,8 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
         db.record_delivery_failure(message.source_record_id,
                                    spam_report_guard(db, message.labels, analyze_bounce(raw)))
     record_people_reading(db, message, mail, reading, verdict.triage_class)
+    if verdict.triage_class == "outbound":
+        record_outbound_intent(db, message, mail)
     record_forward_reading(db, message.source_record_id, raw, mail.sender, mail.subject)
     record_quote_refs(db, message.source_record_id, mail)
     if message.direction == "inbound":
@@ -969,6 +981,23 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
         record_memory_reading(db, message, match, mail.body, cases)
     decision = match.decision if match else ("unavailable" if verdict.triage_class in HUMAN_CLASSES else None)
     return TriageResult("recorded", verdict.triage_class, state, written, decision)
+
+
+def record_outbound_intent(db: Any, message: PendingMessage, mail: MailText) -> bool:
+    """Our own email that closes the follow-up («lo dejo en pausa», «quedo atenta para cuando…»):
+    recorded with the day it names, for rule R22 to pause the case (owner 2026-11-16)."""
+    import datetime as _dt
+
+    try:
+        sent = _dt.date.fromisoformat(message.sent_at[:10]) if message.sent_at else _dt.date.today()
+        found = read_outbound_intent(mail.body, sent)
+        if found is None:
+            return False
+        db.record_outbound_intent(message.source_record_id, found)
+        return True
+    except Exception as exc:  # noqa: BLE001 - never let this optional reading break the triage
+        logger.warning("outbound intent reading skipped: %s", type(exc).__name__)
+        return False
 
 
 def record_people_reading(db: Any, message: PendingMessage, mail: MailText, reading: ModelReading | None,

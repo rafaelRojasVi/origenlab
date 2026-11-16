@@ -228,6 +228,7 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
         statement_timeout_ms=settings.v2_statement_timeout_ms,
     )
     app.state.v1_lane_content_dir = settings.v2_v1_lane_content_dir
+    app.state.gmail_drafts = _gmail_drafts(settings)
     casos = (settings.drive_casos_folder_id or "").strip()
     app.state.drive_casos_url = f"https://drive.google.com/drive/folders/{casos}" if casos else None
     app.state.org_suggestions_file = settings.v2_org_suggestions_file
@@ -339,6 +340,21 @@ def _mount_campaign_planning(app: FastAPI, settings: Settings, dsn: str, connect
         connect, dsn, statement_timeout_ms=settings.v2_statement_timeout_ms
     )
     app.include_router(campaign_planning_router)
+
+
+def _gmail_drafts(settings: Settings) -> Any:
+    """«Borrador en Gmail» (owner 2026-11-16): the drafts waiting in contacto@, read with the send
+    token (gmail.compose, ids only). No token, or a bad one: the cards say nothing about drafts."""
+    if not settings.v2_test_send_token_file:
+        return None
+    from origenlab_api.v2.case_drafts import DraftThreads
+    from origenlab_api.v2.gmail_send import GmailSender, load_send_token
+
+    try:
+        return DraftThreads(GmailSender(load_send_token(settings.v2_test_send_token_file)))
+    except ValueError as exc:
+        logging.getLogger(__name__).warning("gmail drafts off: %s", exc)
+        return None
 
 
 def _mount_campaign_test_send(app: FastAPI, settings: Settings, dsn: str, connect: Any) -> None:

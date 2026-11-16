@@ -242,7 +242,7 @@ interface Call {
   body: Record<string, unknown> | null;
 }
 
-function stub(): Call[] {
+function stub(drafts: unknown = { available: true, items: {} }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
@@ -254,6 +254,7 @@ function stub(): Call[] {
       const json = (b: unknown) =>
         Promise.resolve(new Response(JSON.stringify(b), { status: 200, headers: { "Content-Type": "application/json" } }));
       if (path === "/v2/workspace/person-suggestions") return json({ items: [], total: 0 });
+      if (path === "/v2/workspace/pipeline/drafts") return json(drafts);
       // The case shown inline in Hoy reads its detail; these tests are about the queue's own actions.
       if (!init?.body) return Promise.resolve(new Response("{}", { status: 404 }));
       return json({ command: "x", opportunity_id: "o", opportunity_version: 5, command_receipt_id: "rcpt-1", replayed: false });
@@ -509,6 +510,24 @@ describe("Hoy actions", () => {
       due_at: "2026-10-13T15:00:00.000Z",
     });
     expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("says a follow-up already drafted in Gmail only needs sending", async () => {
+    const c = card({}, "2026-09-21T15:00:00Z");
+    stub({ available: true, items: { [c.opportunity_id]: { drafts: 1, url: "https://mail.google.com/mail/u/0/#all/t-ficticio" } } });
+    renderToday([c]);
+    const row = screen.getByTestId(`today-followup-${c.opportunity_id}`);
+    const badge = await within(row).findByTestId("today-followup-draft");
+    expect(badge).toHaveTextContent("Borrador listo");
+    expect(badge).toHaveAttribute("href", "https://mail.google.com/mail/u/0/#all/t-ficticio");
+  });
+
+  it("shows no draft badge when Gmail has none for the case", async () => {
+    const c = card({}, "2026-09-21T15:00:00Z");
+    const calls = stub();
+    renderToday([c]);
+    await waitFor(() => expect(calls.some((x) => x.path === "/v2/workspace/pipeline/drafts")).toBe(true));
+    expect(within(screen.getByTestId(`today-followup-${c.opportunity_id}`)).queryByTestId("today-followup-draft")).toBeNull();
   });
 
   it("closes a 15-day silent case as «Sin respuesta» from the rhythm", async () => {

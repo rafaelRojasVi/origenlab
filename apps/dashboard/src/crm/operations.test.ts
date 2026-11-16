@@ -7,8 +7,8 @@ const base: OpsAction = {
 };
 
 describe("rule guide", () => {
-  it("explains exactly R1–R19 and R21, in full", () => {
-    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R21"]);
+  it("explains exactly R1–R19, R21 and R22, in full", () => {
+    expect(Object.keys(RULE_GUIDE)).toEqual(["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R21", "R22"]);
     for (const [id, g] of Object.entries(RULE_GUIDE)) {
       for (const field of [g.cuando, g.hace, g.ejemplo]) expect(field.trim().length, id).toBeGreaterThan(10);
     }
@@ -16,7 +16,7 @@ describe("rule guide", () => {
 
   it("marks as automatic only the rules the API runs on its timer", () => {
     const auto = Object.entries(RULE_GUIDE).filter(([, g]) => g.automatica).map(([id]) => id);
-    expect(auto).toEqual(["R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R21"]);
+    expect(auto).toEqual(["R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R21", "R22"]);
   });
 });
 
@@ -46,5 +46,13 @@ describe("actionSentence", () => {
   });
   it("says when it was undone", () => {
     expect(actionSentence({ ...base, undone: true })).toMatch(/· deshecho$/);
+  });
+});
+
+describe("R22 sentence", () => {
+  it("says the case was paused", () => {
+    expect(actionSentence({ rule_id: "R22", case_title: "Sonicador ficticio" } as OpsAction)).toBe(
+      "Dejó en pausa el caso «Sonicador ficticio» — nuestro correo cierra el seguimiento (R22)",
+    );
   });
 });

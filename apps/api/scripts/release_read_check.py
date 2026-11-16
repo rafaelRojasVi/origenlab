@@ -49,6 +49,19 @@ HOSTED_ENV_DIR = Path(__file__).resolve().parents[3] / "supabase" / "scripts"
 # -- without GITHUB_ACTIONS=true or the supabase/scripts directory on sys.path.
 
 
+
+class _NoGmail:
+    """The release check never calls Gmail: one invented thread id exercises the drafts query."""
+
+    def list_draft_threads(self) -> dict[str, list[str]]:
+        return {"release-check-thread": ["release-check-message"]}
+
+
+def _case_drafts_check(connect: Any, dsn: str) -> Any:
+    from origenlab_api.v2.case_drafts import DraftThreads, read_case_drafts
+
+    return read_case_drafts(DraftThreads(_NoGmail()), connect, dsn, 5000)
+
 # -- coverage sets ---------------------------------------------------------------
 # Every pattern in ALLOWED_UPSTREAM_PATHS must appear in exactly one of these two
 # sets.  The strings are the TypeScript regex source between the outer /.../ delimiters.
@@ -62,6 +75,8 @@ CHECKED_PATTERNS: frozenset[str] = frozenset(
         r"^\/v2\/workspace\/finance\/expenses$",
         r"^\/v2\/workspace\/finance\/supplier-orders$",
         r"^\/v2\/workspace\/finance\/settings$",
+        # «Borrador en Gmail»: the drafts query, with an invented thread id (Gmail is not called)
+        r"^\/v2\/workspace\/pipeline\/drafts$",
         # «Pendientes» and «Pagos»
         r"^\/v2\/workspace\/todos$",
         r"^\/v2\/workspace\/invoices$",
@@ -402,6 +417,10 @@ _READS: list[tuple[str, Callable[..., Any]]] = [
     (
         "GET /v2/workspace/pipeline",
         lambda c, d: CrmWorkspaceRepository(c, d).pipeline(),
+    ),
+    (
+        "GET /v2/workspace/pipeline/drafts",
+        lambda c, d: _case_drafts_check(c, d),
     ),
     (
         "GET /v2/workspace/marketing",

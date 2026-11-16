@@ -21,6 +21,7 @@ const DASHBOARD = "https://dashboard.origenlab.cl";
 const READS = [
   "/v2/workspace/overview",
   "/v2/workspace/pipeline",
+  "/v2/workspace/pipeline/drafts",
   "/v2/workspace/providers",
   "/v2/workspace/marketing",
   "/v2/workspace/drive",
