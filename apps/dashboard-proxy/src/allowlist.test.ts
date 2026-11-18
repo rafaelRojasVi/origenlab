@@ -549,13 +549,15 @@ describe("V2 durable read boundary allowlist", () => {
       "/v2/commands/set-case-origin",
       // «En pausa hasta…» as a state (2026-11-13).
       "/v2/commands/set-case-pause",
+      // The follow-up encargado + channel pair («Ventas › Seguimiento», 2026-11-18).
+      "/v2/commands/set-case-follow-up",
       // «Finanzas» commands: expenses, supplier orders, monthly target, partner rule (2026-11-09).
       "/v2/commands/upsert-expense",
       "/v2/commands/upsert-supplier-order",
       "/v2/commands/set-monthly-target",
       "/v2/commands/set-partner-rule",
     ];
-    expect(CASE_COMMAND_POST_PATHS).toHaveLength(31);
+    expect(CASE_COMMAND_POST_PATHS).toHaveLength(32);
     for (const path of allowed) {
       expect(isAllowedCaseCommandPostPath(path), path).toBe(true);
       expect(isAllowedPostPath(path), path).toBe(true);
