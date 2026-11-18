@@ -81,7 +81,7 @@ ROUTES: tuple[tuple[str, str, dict], ...] = (
      {"opportunity_id": CASE_ID, "opportunity_version": 1, "paused_until": "2099-01-15",
       "reason": "Esperando fondos o proyecto", "note": "porque sí"}),
     ("/v2/commands/set-case-follow-up", SET_CASE_FOLLOW_UP,
-     {"opportunity_id": CASE_ID, "opportunity_version": 1, "operator_id": None, "channel": "llamada",
+     {"opportunity_id": CASE_ID, "opportunity_version": 1, "follow_up_operator_id": None, "channel": "llamada",
       "note": "porque sí"}),
     ("/v2/commands/create-request-from-forward", CREATE_REQUEST_FROM_FORWARD,
      {"forwarded_request_id": RECORD_ID, "new_organization_name": "Laboratorio Ficticio", "note": "porque sí"}),
@@ -303,13 +303,6 @@ def test_every_case_command_requires_a_reason(path: str, _command: str, body: di
 @pytest.mark.parametrize(("path", "_command", "body"), ROUTES)
 def test_the_operator_is_never_taken_from_the_body(path: str, _command: str, body: dict) -> None:
     """A caller cannot decide *as* somebody else, and cannot even ask to."""
-    if _command == SET_CASE_FOLLOW_UP:
-        # `operator_id` there is the encargado being assigned, never the actor (always the session's;
-        # test_the_router_hands_the_repository_the_command_it_named). Any other extra key is still a 422.
-        body = {**body, "operator_id": None}
-        response = _client(_FakeCaseRepo()).post(path, json={**body, "actor_id": "x"}, headers=_headers())
-        assert response.status_code == 422
-        return
     repo = _FakeCaseRepo()
     response = _client(repo).post(
         path,

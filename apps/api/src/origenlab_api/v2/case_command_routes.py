@@ -412,7 +412,7 @@ def set_case_follow_up(
     repo: V2CaseCommandRepository = Depends(get_case_command_repository),
     idempotency_key: IdempotencyKey = None,
 ) -> dict[str, Any]:
-    """Set the case's encargado (`operator_id`, null = sin asignar) and next channel (`channel`, null =
+    """Set the case's encargado (`follow_up_operator_id`, null = sin asignar) and next channel (`channel`, null =
     not chosen) together. The case version shown must be current (409 `case_version_conflict`), the
     case must exist and be open (404 / 409) and the operator must exist (422
     `follow_up_operator_not_found`). Writes one `opportunity.follow_up_set` event.

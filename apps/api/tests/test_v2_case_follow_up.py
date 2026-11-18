@@ -33,12 +33,12 @@ from test_v2_case_command_boundary import (  # noqa: F401 - fixtures and helpers
 )
 
 PATH = "/v2/commands/set-case-follow-up"
-BODY = {"opportunity_id": CASE_ID, "opportunity_version": 1, "operator_id": None, "channel": "llamada"}
+BODY = {"opportunity_id": CASE_ID, "opportunity_version": 1, "follow_up_operator_id": None, "channel": "llamada"}
 
 
 def _follow_up(repo, world, case_id, version, operator_id, channel, **kwargs):
     return _run(repo, SET_CASE_FOLLOW_UP, SetCaseFollowUpBody(
-        opportunity_id=case_id, opportunity_version=version, operator_id=operator_id, channel=channel,
+        opportunity_id=case_id, opportunity_version=version, follow_up_operator_id=operator_id, channel=channel,
         **({"note": kwargs.pop("note")} if "note" in kwargs else {})), world, **kwargs)
 
 
@@ -58,9 +58,9 @@ def _events(dsn, case_id):
 
 def test_bad_channel_and_extra_fields_are_422_and_both_fields_are_required() -> None:
     repo = _FakeCaseRepo()
-    for bad in ({"channel": "sms"}, {"channel": ""}, {"operator_id": 7}, {"price": 10}, {"status": "won"}):
+    for bad in ({"channel": "sms"}, {"channel": ""}, {"follow_up_operator_id": 7}, {"price": 10}, {"status": "won"}):
         assert _client(repo).post(PATH, json={**BODY, **bad}, headers=_headers()).status_code == 422, bad
-    for missing in ("operator_id", "channel"):
+    for missing in ("follow_up_operator_id", "channel"):
         without = {k: v for k, v in BODY.items() if k != missing}
         assert _client(repo).post(PATH, json=without, headers=_headers()).status_code == 422, missing
     assert repo.calls == []
@@ -72,7 +72,7 @@ def test_bad_channel_and_extra_fields_are_422_and_both_fields_are_required() -> 
 
 def test_set_case_follow_up_carries_nothing_but_the_case_the_version_the_pair_and_a_note() -> None:
     assert set(SetCaseFollowUpBody.model_fields) == {
-        "opportunity_id", "opportunity_version", "operator_id", "channel", "note"}
+        "opportunity_id", "opportunity_version", "follow_up_operator_id", "channel", "note"}
 
 
 @needs_db

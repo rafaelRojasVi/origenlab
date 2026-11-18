@@ -611,7 +611,7 @@ class SetCaseFollowUpBody(_CaseBody):
     """Set who follows a case up and by which channel — `crm.opportunity.follow_up_operator_id` and
     `follow_up_channel` («Ventas › Seguimiento»).
 
-    The client always sends the full pair, and both are set: `operator_id` null is «Sin asignar» and
+    The client always sends the full pair, and both are set: `follow_up_operator_id` null is «Sin asignar» and
     `channel` null is «not chosen». Neither has a default, so a request that leaves one out is a 422.
     The operator must exist in `platform.operator` (422 `follow_up_operator_not_found`). A closed case
     has no follow-up. It moves nothing else on the case.
@@ -620,7 +620,7 @@ class SetCaseFollowUpBody(_CaseBody):
     """
 
     note: Annotated[str, Field(min_length=1, max_length=2000)] = "Encargado o próximo contacto del seguimiento"
-    operator_id: str | None
+    follow_up_operator_id: str | None
     channel: FollowUpChannel | None
 
 
@@ -759,7 +759,8 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
     elif isinstance(body, SetCaseOriginBody):
         fields["origin"] = body.origin
     elif isinstance(body, SetCaseFollowUpBody):
-        fields["operator_id"] = as_uuid(body.operator_id, "operator_id") if body.operator_id else None
+        fields["operator_id"] = (
+            as_uuid(body.follow_up_operator_id, "follow_up_operator_id") if body.follow_up_operator_id else None)
         fields["channel"] = body.channel
     elif isinstance(body, SetCasePauseBody):
         fields["paused_until"] = body.paused_until
