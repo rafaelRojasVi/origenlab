@@ -141,3 +141,32 @@ def test_calls_by_operator_today(disposable_database, world) -> None:
     assert by_op[world["operator_id"]]["today"] == 2
     assert by_op[world["other_operator_id"]]["today"] == 1
     assert by_op[world["operator_id"]]["operator_name"] == "Pytest Operator"
+
+
+@needs_db
+def test_contact_phone_via_email_address(disposable_database, world) -> None:
+    """A case contact known only as the address we quoted to still gets the phone of its owner."""
+    import json
+    import uuid
+
+    dsn = disposable_database
+    case_id, _ = _open_case(_repo(dsn), world, "Caso por correo")
+    tag = uuid.uuid4().hex[:8]
+    address = f"persona-{tag}@ejemplo.invalid"
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Ficticia', "
+                         "'machine_proposed') returning id")[0][0]
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('email', %s, %s, %s, 'personal', 'confirmed')", (address, address, person))
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('phone', %s, '+56 9 1234 5678', %s, 'personal', 'confirmed')", (f"+569{uuid.uuid4().int % 10**8:08d}", person))
+    record = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', "
+                         "%s, %s::jsonb) returning id", (f"via-email-{tag}", json.dumps(
+                             {"recipients": f"Persona Ficticia <{address.upper()}>"})))[0][0]
+    quote = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) values (%s, %s, "
+                        "'printed_historical') returning id", (case_id, f"H{tag}"))[0][0]
+    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, status, origin, pdf_sha256, sent_at, "
+                "origin_source_record_id) values (%s, 1, 'sent', 'historical_import', %s, now(), %s)",
+           (quote, tag * 8, record))
+    card, _ = _card(dsn, case_id)
+    assert card["contact"]["source"] == "gmail_recipient"
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1234 5678", True)

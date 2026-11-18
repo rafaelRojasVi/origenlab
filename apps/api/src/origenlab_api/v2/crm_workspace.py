@@ -48,6 +48,7 @@ from origenlab_api.v2.campaign_state import (  # noqa: F401 - re-exported from h
 )
 from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
 from origenlab_api.v2.case_won import quote_outcome
+from origenlab_api.v2.commands import normalize_email
 from origenlab_api.v2.drive_ledgers import (  # noqa: F401 - DriveLink, load_drive_ledgers: this module's API
     DRIVE_FILE_URL,
     DRIVE_FOLDER_URL,
@@ -414,15 +415,22 @@ _SQL_PIPELINE_LAST_CALLS = """
      order by n.subject_id, coalesce(r.created_at, n.created_at) desc, n.id desc
 """
 # «Ventas › Seguimiento»: the person's phone on each case (the case contact's `crm.contact_point`,
-# kind phone): a confirmed one first, then the newest.
+# kind phone): a confirmed one first, then the newest. Keyed `person:<id>` or `email:<value_norm>`,
+# so a case whose contact is only an address finds the person who owns it.
 _SQL_PIPELINE_PHONES = """
-    select distinct on (cp.person_id)
-           cp.person_id::text as person_id, cp.value_display as phone,
-           (cp.confirmation = 'confirmed') as confirmed
-      from crm.contact_point cp
-     where cp.kind = 'phone' and cp.status = 'active'
-       and cp.person_id in (select p.person_id from crm.opportunity_participant p where p.valid_to is null)
-     order by cp.person_id, (cp.confirmation = 'confirmed') desc, cp.created_at desc, cp.id
+    with best as (
+        select distinct on (cp.person_id)
+               cp.person_id, cp.value_display as phone, (cp.confirmation = 'confirmed') as confirmed
+          from crm.contact_point cp
+         where cp.kind = 'phone' and cp.status = 'active' and cp.person_id is not null
+         order by cp.person_id, (cp.confirmation = 'confirmed') desc, cp.created_at desc, cp.id
+    )
+    select 'person:' || b.person_id::text as key, b.phone, b.confirmed from best b
+    union all
+    -- A contact known only by the address we wrote to: the person who owns that email point.
+    select 'email:' || e.value_norm, b.phone, b.confirmed
+      from best b
+      join crm.contact_point e on e.person_id = b.person_id and e.kind = 'email' and e.status = 'active'
 """
 # Every live call (`crm.note`, note_kind 'llamada'), one row each: an edit is a new row, so only the
 # newest revision counts, on the day of the root (when the call was first logged) and under the
@@ -1220,7 +1228,12 @@ def compose_pipeline(
             attention.append("no_crm_contact")
 
         # «Ventas › Seguimiento»: the contact person's phone (confirmed first), when the CRM has one.
-        phone = (phones or {}).get(contact.get("person_id") or "") if contact else None
+        phone = None
+        if contact is not None:
+            phone = (phones or {}).get("person:" + str(contact.get("person_id") or ""))
+            if phone is None and contact.get("address"):
+                bare = addresses_in(contact["address"])
+                phone = (phones or {}).get("email:" + normalize_email(bare[0])) if bare else None
         if contact is not None:
             contact["phone"] = phone["phone"] if phone else None
             contact["phone_confirmed"] = bool(phone["confirmed"]) if phone else None
@@ -1702,7 +1715,7 @@ class CrmWorkspaceRepository:
             calls = [{"day": r["day"], "outcome": r["outcome"], "count": int(r["count"])}
                      for r in self._rows(cur_calls)]
             last_calls = self._rows(cur_last_calls)
-            phones = {r["person_id"]: r for r in self._rows(cur_phones)}
+            phones = {r["key"]: r for r in self._rows(cur_phones)}
             call_counts = {r["opportunity_id"]: r for r in self._rows(cur_call_counts)}
             last_calls_any = self._rows(cur_last_call_any)
             calls_by_operator = self._rows(cur_calls_by_operator)
