@@ -80,7 +80,7 @@ from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_c
 )
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 from origenlab_api.v2.web_quote_form import SUBJECT_PREFIX as WEB_FORM_SUBJECT_PREFIX
-from origenlab_api.v2.tenders.reads import TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
+from origenlab_api.v2.tenders.reads import SANTIAGO, TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
 
 
 def _cross_thread_quote_code(title: str) -> str | None:
@@ -273,6 +273,9 @@ _SQL_PIPELINE_OPPS = f"""
            o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
            op.won_quote_id::text as won_quote_id, op.won_revision_no,
+           -- «Ventas › Seguimiento»: the encargado (an operator) and the next channel, both or either null.
+           op.follow_up_operator_id::text as follow_up_operator_id, fo.display_name as follow_up_operator_name,
+           op.follow_up_channel as follow_up_channel,
            -- A case opened from a forwarded request (Solicitudes): who asked, as the worker read it.
            -- Its emails come from Labdelivery or our own mailbox, so «Asignar institución» suggests
            -- from these when no client email on the case does.
@@ -287,6 +290,7 @@ _SQL_PIPELINE_OPPS = f"""
                       then (osr.payload->>'sent_at')::timestamptz else osr.acquired_at end)::text as requested_at
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
+      left join platform.operator fo on fo.id = op.follow_up_operator_id
       left join evidence.source_record fr
         on fr.id = op.origin_source_record_id and fr.kind = 'forwarded_request'
       left join evidence.source_record osr on osr.id = op.origin_source_record_id
@@ -408,6 +412,59 @@ _SQL_PIPELINE_LAST_CALLS = """
        and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion')
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
      order by n.subject_id, coalesce(r.created_at, n.created_at) desc, n.id desc
+"""
+# «Ventas › Seguimiento»: the person's phone on each case (the case contact's `crm.contact_point`,
+# kind phone): a confirmed one first, then the newest.
+_SQL_PIPELINE_PHONES = """
+    select distinct on (cp.person_id)
+           cp.person_id::text as person_id, cp.value_display as phone,
+           (cp.confirmation = 'confirmed') as confirmed
+      from crm.contact_point cp
+     where cp.kind = 'phone' and cp.status = 'active'
+       and cp.person_id in (select p.person_id from crm.opportunity_participant p where p.valid_to is null)
+     order by cp.person_id, (cp.confirmation = 'confirmed') desc, cp.created_at desc, cp.id
+"""
+# Every live call (`crm.note`, note_kind 'llamada'), one row each: an edit is a new row, so only the
+# newest revision counts, on the day of the root (when the call was first logged) and under the
+# root's author. The three «Seguimiento» call reads below share it.
+_LIVE_CALLS_CTE = """
+    with live_calls as (
+        select n.subject_kind, n.subject_id, n.id, n.call_outcome,
+               coalesce(r.created_at, n.created_at) as logged_at,
+               coalesce(r.author_operator_id, n.author_operator_id) as author_operator_id
+          from crm.note n
+          left join crm.note r on r.id = n.root_note_id
+         where n.note_kind = 'llamada' and n.status = 'active'
+           and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
+    )
+"""
+# Calls per case: all of them, and those of today (`%(today)s`, the America/Santiago day).
+_SQL_PIPELINE_CALL_COUNTS = _LIVE_CALLS_CTE + """
+    select c.subject_id::text as opportunity_id, count(*)::int as total,
+           (count(*) filter (where (c.logged_at at time zone 'America/Santiago')::date = %(today)s::date))::int as today
+      from live_calls c
+     where c.subject_kind = 'opportunity'
+     group by c.subject_id
+"""
+# The newest call on each case, whatever its outcome (`_SQL_PIPELINE_LAST_CALLS` keeps only answered ones).
+_SQL_PIPELINE_LAST_CALL_ANY = _LIVE_CALLS_CTE + """
+    select distinct on (c.subject_id)
+           c.subject_id::text as opportunity_id,
+           to_char(c.logged_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+           c.call_outcome as outcome, o.display_name as author_display_name
+      from live_calls c
+      join platform.operator o on o.id = c.author_operator_id
+     where c.subject_kind = 'opportunity'
+     order by c.subject_id, c.logged_at desc, c.id desc
+"""
+# Today's calls per operator, on a person, an institution or a case (the sheet's KPI per person).
+_SQL_PIPELINE_CALLS_BY_OPERATOR = _LIVE_CALLS_CTE + """
+    select c.author_operator_id::text as operator_id, o.display_name as operator_name, count(*)::int as today
+      from live_calls c
+      join platform.operator o on o.id = c.author_operator_id
+     where (c.logged_at at time zone 'America/Santiago')::date = %(today)s::date
+     group by c.author_operator_id, o.display_name
+     order by 3 desc, 2, 1
 """
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
@@ -970,6 +1027,9 @@ def compose_pipeline(
     notes: list[Mapping[str, Any]] | None = None,
     documents: list[Mapping[str, Any]] | None = None,
     last_calls: list[Mapping[str, Any]] | None = None,
+    phones: Mapping[str, Mapping[str, Any]] | None = None,
+    call_counts: Mapping[str, Mapping[str, Any]] | None = None,
+    last_calls_any: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -1018,6 +1078,14 @@ def compose_pipeline(
         current = call_by_opp.get(row["opportunity_id"])
         if current is None or str(row["at"]) > str(current["at"]):
             call_by_opp[row["opportunity_id"]] = {"at": row["at"], "outcome": row["outcome"]}
+
+    # The newest call on each case, whatever its outcome (`_SQL_PIPELINE_LAST_CALL_ANY`).
+    call_any_by_opp: dict[str, dict[str, Any]] = {}
+    for row in last_calls_any or []:
+        current = call_any_by_opp.get(row["opportunity_id"])
+        if current is None or str(row["at"]) > str(current["at"]):
+            call_any_by_opp[row["opportunity_id"]] = {
+                "at": row["at"], "outcome": row["outcome"], "author_name": row.get("author_display_name")}
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -1151,6 +1219,12 @@ def compose_pipeline(
                 }
             attention.append("no_crm_contact")
 
+        # «Ventas › Seguimiento»: the contact person's phone (confirmed first), when the CRM has one.
+        phone = (phones or {}).get(contact.get("person_id") or "") if contact else None
+        if contact is not None:
+            contact["phone"] = phone["phone"] if phone else None
+            contact["phone_confirmed"] = bool(phone["confirmed"]) if phone else None
+
         drive_folder = None
         for rc in sorted(all_revs, key=_sort_key_sent, reverse=True):
             if rc["drive"] and rc["drive"]["folder_id"]:
@@ -1260,6 +1334,18 @@ def compose_pipeline(
                 # The newest call the client answered (contestó · reunión), or null: a follow-up
                 # touch on «Hoy», like an email we sent.
                 "last_call": call_by_opp.get(oid),
+                # «Ventas › Seguimiento»: who follows the case and by which channel (nulls when unset), how
+                # many calls it has had (all, and today in Santiago), and the newest call of any outcome.
+                "follow_up": {
+                    "operator_id": opp.get("follow_up_operator_id"),
+                    "operator_name": opp.get("follow_up_operator_name"),
+                    "channel": opp.get("follow_up_channel"),
+                },
+                "call_counts": {
+                    "total": int((call_counts or {}).get(oid, {}).get("total", 0)),
+                    "today": int((call_counts or {}).get(oid, {}).get("today", 0)),
+                },
+                "last_call_any": call_any_by_opp.get(oid),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
                 or suggest_next_action(opp, blocked, live_latest, last_contact=(contacts or {}).get(oid)),
             }
@@ -1544,7 +1630,9 @@ class CrmWorkspaceRepository:
 
     # -- pipeline
 
-    def pipeline(self) -> dict[str, Any]:
+    def pipeline(self, now: datetime | None = None) -> dict[str, Any]:
+        # «Today» is the America/Santiago day of this one instant, for every call count in the read.
+        today = (now or datetime.now(UTC)).astimezone(SANTIAGO).date()
         with self._connect(self._dsn, autocommit=False) as conn:
             # Setup: 2 statements in 1 RTT.
             setup = conn.cursor()
@@ -1566,6 +1654,10 @@ class CrmWorkspaceRepository:
             cur_tenders = conn.cursor()
             cur_calls = conn.cursor()
             cur_last_calls = conn.cursor()
+            cur_phones = conn.cursor()
+            cur_call_counts = conn.cursor()
+            cur_last_call_any = conn.cursor()
+            cur_calls_by_operator = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1582,6 +1674,10 @@ class CrmWorkspaceRepository:
                 # Hoy's «Alcance» and the follow-up touch a call makes.
                 cur_calls.execute(_SQL_PIPELINE_CALLS)
                 cur_last_calls.execute(_SQL_PIPELINE_LAST_CALLS)
+                cur_phones.execute(_SQL_PIPELINE_PHONES)
+                cur_call_counts.execute(_SQL_PIPELINE_CALL_COUNTS, {"today": today})
+                cur_last_call_any.execute(_SQL_PIPELINE_LAST_CALL_ANY)
+                cur_calls_by_operator.execute(_SQL_PIPELINE_CALLS_BY_OPERATOR, {"today": today})
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1606,11 +1702,16 @@ class CrmWorkspaceRepository:
             calls = [{"day": r["day"], "outcome": r["outcome"], "count": int(r["count"])}
                      for r in self._rows(cur_calls)]
             last_calls = self._rows(cur_last_calls)
+            phones = {r["person_id"]: r for r in self._rows(cur_phones)}
+            call_counts = {r["opportunity_id"]: r for r in self._rows(cur_call_counts)}
+            last_calls_any = self._rows(cur_last_call_any)
+            calls_by_operator = self._rows(cur_calls_by_operator)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
             opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes,
-            documents=documents, last_calls=last_calls,
+            documents=documents, last_calls=last_calls, phones=phones, call_counts=call_counts,
+            last_calls_any=last_calls_any,
         )
         return {
             "items": cards,
@@ -1619,6 +1720,8 @@ class CrmWorkspaceRepository:
             "tenders_closing": tenders_closing,
             # The team's calls per Santiago day and outcome, the last 35 days (Hoy's «Alcance»).
             "calls": calls,
+            # Today's calls per operator (Santiago day), for the sheet's per-person goal.
+            "calls_by_operator": calls_by_operator,
         }
 
     # -- providers

@@ -174,7 +174,8 @@ def list_profiles(request: Request) -> JSONResponse:
     cards = config.profiles.list_profiles(principal.principal_id)
     return _json(200, {
         "principal": {"email": principal.email_norm},
-        "profiles": [card.public() for card in cards],
+        # `key` (profile_key) is not secret: the dashboard reads it to decide who may use WhatsApp.
+        "profiles": [{**card.public(), "key": card.profile_key} for card in cards],
     })
 
 

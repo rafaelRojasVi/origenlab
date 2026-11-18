@@ -140,6 +140,7 @@ class ProfileCard:
     operator_id: str
     display_name: str
     role: str
+    profile_key: str | None = None
 
     def public(self) -> dict[str, str]:
         return {"id": self.operator_id, "display_name": self.display_name,
@@ -383,7 +384,7 @@ class ProfileAuthRepository:
         with self._read() as cur:
             cur.execute(
                 """
-                select p.operator_id::text, o.display_name, o.role
+                select p.operator_id::text, o.display_name, o.role, p.profile_key
                   from platform.operator_profile p
                   join platform.operator o on o.id = p.operator_id
                  where p.principal_id = %s::uuid

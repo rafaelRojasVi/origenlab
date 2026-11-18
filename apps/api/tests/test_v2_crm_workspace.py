@@ -209,6 +209,9 @@ def test_card_carries_quote_revision_gmail_and_drive(tmp_path: Path) -> None:
         "others": 1,
         # Joins the card to its equipment interests when a viewer sees the address masked.
         "address_ref": address_ref("persona@ejemplo.invalid"),
+        # A Gmail recipient is no CRM person, so it has no phone on file.
+        "phone": None,
+        "phone_confirmed": None,
     }
     assert card["status"] == "ok"
     assert card["next_action"]["source"] == "suggested"
