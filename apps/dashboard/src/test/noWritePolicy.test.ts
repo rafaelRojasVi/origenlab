@@ -98,6 +98,7 @@ describe("dashboard read-only policy", () => {
     // «Origen del caso» (2026-11-07): an operator corrects the channel a case came from, with a note.
     "/v2/commands/set-case-origin",
     "/v2/commands/set-case-pause",
+    "/v2/commands/set-case-follow-up",
   ];
   const CASE_DOCUMENTS_FILE = "../crm/caseDocuments.ts";
   const CASE_DOCUMENT_PATHS = [

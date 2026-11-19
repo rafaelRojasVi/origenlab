@@ -41,6 +41,7 @@ export const CASE_COMMAND_PATHS = {
   removeAutomaticAction: "/v2/commands/remove-automatic-action",
   setCaseOrigin: "/v2/commands/set-case-origin",
   setCasePause: "/v2/commands/set-case-pause",
+  setCaseFollowUp: "/v2/commands/set-case-follow-up",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -500,6 +501,18 @@ export interface SetCasePauseBody {
 
 export const setCasePause = (body: SetCasePauseBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.setCasePause, body, idempotencyKey);
+
+/** «Ventas › Seguimiento»: who follows the case and by which channel; nulls clear them. */
+export interface SetCaseFollowUpBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  follow_up_operator_id: string | null;
+  channel: "llamada" | "correo" | "whatsapp" | null;
+  note?: string;
+}
+
+export const setCaseFollowUp = (body: SetCaseFollowUpBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.setCaseFollowUp, body, idempotencyKey);
 
 /** «En pausa hasta <día>» for a reason: one command, one receipt. */
 export async function pauseCase(
