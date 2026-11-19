@@ -220,7 +220,7 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
     const next = nextContact(card, now);
     if (!next) continue;
     const t = next.task;
-    const due = t ? new Date(t.due_at) : localDay(card.paused_until as string);
+    const due = t ? new Date(t.due_at) : next.source === "pause" ? localDay(card.paused_until as string) : new Date(next.at);
     const ahead = dayDiff(now, due);
     if (ahead <= 0 || ahead > horizonDays) continue;
     const amountClp = caseAmountClp(card);

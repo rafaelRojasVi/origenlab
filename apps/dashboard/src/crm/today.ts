@@ -23,7 +23,7 @@
  */
 import type { HomeFilter } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
-import { callTouch, conversation, lastTouch } from "./caseDisplay";
+import { anyCallTouch, callTouch, conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { pausedUntil, stageBasis } from "./stage";
 
@@ -186,6 +186,14 @@ export interface FollowUp {
   byEmail: boolean;
   /** The «Seguimiento …» task due today that put the case here, if one did. */
   task: DueTask | null;
+  /**
+   * Days since our last touch of any kind — the quote, our email, or any logged call (a voicemail
+   * too): Hoy's «N d sin toque». `days` keeps the rhythm, where only a call that reached the client
+   * counts.
+   */
+  touchDays: number;
+  /** When that last touch was, or null when the case has none. */
+  touchAt: string | null;
 }
 
 /**
@@ -230,7 +238,9 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     // to be reminded today: a reminder they set is shown on its day.
     if (!task && days < RHYTHM[0].from && !young) continue;
     const rhythm = RHYTHM[stepForDays(days) - 1].key;
-    out.push({ card, days, rhythm, byEmail, task });
+    const anyTouch = later(touchAt, anyCallTouch(card));
+    const touchDays = anyTouch ? Math.max(0, Math.floor((now.getTime() - Date.parse(anyTouch)) / DAY_MS)) : days;
+    out.push({ card, days, rhythm, byEmail, task, touchDays, touchAt: anyTouch });
   }
   return out.sort((a, b) => b.days - a.days);
 }
@@ -458,7 +468,8 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   for (const f of followUpsDue(items, now).filter(isFollowUpDueToday)) {
     const id = f.card.opportunity_id;
     if (queue.has(id) || answered.has(id)) continue;
-    queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f, waitMs: f.days * DAY_MS });
+    queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f,
+      waitMs: f.touchAt ? Math.max(0, now.getTime() - Date.parse(f.touchAt)) : f.touchDays * DAY_MS });
   }
 
   // Display order (owner, 2026-11-10 Hoy v3): Responder · Cotizar · Seguimiento · Tareas;

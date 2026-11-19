@@ -16,6 +16,19 @@ export function parseWhatsappNumber(raw: string | undefined | null): string | nu
   return /^56\d{8,9}$/.test(digits) ? digits : null;
 }
 
+/**
+ * A Chilean mobile as WhatsApp wants it, `569XXXXXXXX`, or null for anything else — a landline
+ * (+56 2 …, +56 41 …) has no WhatsApp (QA 2026-11-19). Accepts «+56 9 …», «0056 9 …», «56 9 …»,
+ * a bare «9 XXXX XXXX» and the old trunk «09 XXXX XXXX».
+ */
+export function chileanMobile(phone: string): string | null {
+  let digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  if (digits.length === 10 && digits.startsWith("09")) digits = digits.slice(1);
+  if (digits.length === 9 && digits.startsWith("9")) digits = `56${digits}`;
+  return /^569\d{8}$/.test(digits) ? digits : null;
+}
+
 export const WHATSAPP_NUMBER: string | null = parseWhatsappNumber(import.meta.env.VITE_ORIGENLAB_WHATSAPP);
 
 /** `wa.me` link that opens a chat with the message already typed: «Hola OrigenLab, cotización CN…» (short on purpose: it has to fit the QR with room to spare). */

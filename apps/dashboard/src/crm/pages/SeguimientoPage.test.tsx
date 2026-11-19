@@ -369,7 +369,7 @@ describe("SeguimientoPage", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Ver guion" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Ver guion" }));
     const guion = within(screen.getByRole("complementary", { name: "Guion de llamada" }));
     const say = guion.getByTestId("guion-say");
     expect(say).toHaveTextContent("¿hablo con Persona Uno?");
@@ -401,7 +401,7 @@ describe("SeguimientoPage", () => {
     expect(within(row(A)).getByRole("link", { name: /\+56 9 1234 5678/ })).toHaveAttribute("href", "tel:+56912345678");
     expect(within(row(B)).getByText("Sin teléfono")).toBeInTheDocument();
     fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
-    expect(screen.getByRole("menuitem", { name: "Abrir el correo en Gmail" })).toHaveAttribute("href", expect.stringContaining("authuser="));
+    expect(await screen.findByRole("menuitem", { name: "Abrir el correo en Gmail" })).toHaveAttribute("href", expect.stringContaining("authuser="));
     expect(within(row(A)).getByTestId("seg-days")).toHaveTextContent("8 d");
   });
 
@@ -426,7 +426,7 @@ describe("SeguimientoPage", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Ya no sigue" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Ya no sigue" }));
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.click(dialog.getByRole("button", { name: "Sin respuesta" }));
     expect(dialog.getByText("¿Por qué ya no sigue?")).toBeInTheDocument();
@@ -444,7 +444,7 @@ describe("SeguimientoPage", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Pausar…" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Pausar…" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Pausar el seguimiento" }));
     expect(dialog.getByLabelText(/Retomar el/)).toBeInTheDocument();
     expect(dialog.getByRole("group", { name: "Motivo de la pausa" })).toBeInTheDocument();
@@ -736,7 +736,7 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Ya no sigue" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Ya no sigue" }));
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.click(dialog.getByRole("button", { name: "Precio" }));
     fireEvent.click(dialog.getByRole("button", { name: "Ya no sigue" }));
@@ -751,7 +751,7 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Pausar…" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Pausar…" }));
     const dialog = within(await screen.findByRole("dialog", { name: "Pausar el seguimiento" }));
     fireEvent.click(dialog.getByRole("button", { name: dialog.getAllByRole("button").find((b) => b.closest("[role=group]"))!.textContent! }));
     fireEvent.click(dialog.getByRole("button", { name: "Pausar" }));
@@ -759,6 +759,156 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
     expect(await screen.findByText("Listo: la pausa se deshizo.")).toBeInTheDocument();
     const pauses = calls.filter((c) => c.path.endsWith("/set-case-pause"));
     expect(pauses[1].body).toMatchObject({ opportunity_id: A, opportunity_version: 4, paused_until: null, reason: null });
+  });
+
+  it("«Ya no sigue · Sin respuesta» on a case with a reminder is one command, and «Deshacer» reopens it", async () => {
+    // The close cancels the case's tasks itself (API 2026-11-16): cancelling them again was refused,
+    // so the toast said «1/2 · Estado → Cerrada · abandonada» and offered no «Deshacer».
+    const calls = stubApi(
+      (n) => {
+        const data = fixture(n);
+        data.items[0] = { ...data.items[0], open_tasks: [{ task_id: "t-a", title: "Seguimiento de CN09876", due_at: "2026-11-19T12:00:00Z", version: 1, owner: null }] };
+        return data;
+      },
+      (call) => (call.path.endsWith("/advance-case-stage") ? receipt(A, call.body.stage === "quoting" ? 5 : 4, { command: "advance_case_stage", stage: call.body.stage }) : null),
+    );
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Ya no sigue" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Sin respuesta" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Ya no sigue" }));
+    expect(await screen.findByText("Caso cerrado: sale del seguimiento.")).toBeInTheDocument();
+    expect(calls.some((c) => c.path.endsWith("/cancel-task"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Deshacer" }));
+    expect(await screen.findByText("Listo: el caso vuelve al seguimiento.")).toBeInTheDocument();
+    const moves = calls.filter((c) => c.path.endsWith("/advance-case-stage"));
+    expect(moves.map((m) => [m.body.stage, m.body.opportunity_version])).toEqual([["abandoned", 3], ["quoting", 4]]);
+  });
+
+  it("the «⋯» menu sits outside the table, opens upward without room below, and works by keyboard", async () => {
+    stubApi();
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    const more = within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" });
+    // The button sits 40 px above the bottom of an 800 px window; the menu is 120 px tall.
+    vi.spyOn(more, "getBoundingClientRect").mockReturnValue({ top: 716, bottom: 760, left: 900, right: 944, width: 44, height: 44, x: 900, y: 716, toJSON: () => ({}) } as DOMRect);
+    const tall = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(120);
+    vi.stubGlobal("innerHeight", 800);
+    fireEvent.click(more);
+    const menu = await screen.findByRole("menu");
+    // In <body>, not inside the row or the table: nothing can clip it.
+    expect(row(A).contains(menu)).toBe(false);
+    expect(menu.parentElement).toBe(document.body);
+    await waitFor(() => expect(menu.style.top).toBe(`${716 - 120 - 4}px`));
+    tall.mockRestore();
+    // Focus starts on the first item; arrows move; Escape closes and returns the focus to «⋯».
+    const items = within(menu).getAllByRole("menuitem");
+    await waitFor(() => expect(items[0]).toHaveFocus());
+    fireEvent.keyDown(items[0], { key: "ArrowDown" });
+    expect(items[1]).toHaveFocus();
+    fireEvent.keyDown(items[1], { key: "ArrowUp" });
+    expect(items[0]).toHaveFocus();
+    fireEvent.keyDown(items[0], { key: "End" });
+    expect(items[items.length - 1]).toHaveTextContent("Ya no sigue");
+    expect(items[items.length - 1]).toHaveFocus();
+    // A click inside the portaled menu is not a click «outside»: the item runs.
+    fireEvent.mouseDown(items[items.length - 1]);
+    fireEvent.click(items[items.length - 1]);
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Ya no sigue");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancelar" }));
+    fireEvent.click(more);
+    const again = await screen.findByRole("menu");
+    fireEvent.keyDown(within(again).getAllByRole("menuitem")[0], { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(more).toHaveFocus();
+  });
+
+  it("leaving the tab clears the search; the filters in the address stay", async () => {
+    window.location.hash = "#/ventas/seguimiento?encargado=karla";
+    stubApi();
+    const first = renderPage();
+    await screen.findByTestId(`seg-row-${B}`);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Buscar" }), { target: { value: "laboratorio" } });
+    await waitFor(() => expect(screen.getByRole("searchbox", { name: "Buscar" })).toHaveValue("laboratorio"));
+    // A re-read of the page itself (same tab) keeps it…
+    act(() => {
+      window.location.hash = "#/ventas/seguimiento?encargado=karla&caso=" + A;
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(screen.getByRole("searchbox", { name: "Buscar" })).toHaveValue("laboratorio");
+    // …going to Hoy and back does not.
+    act(() => {
+      window.location.hash = "#/hoy";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    first.unmount();
+    window.location.hash = "#/ventas/seguimiento?encargado=karla";
+    renderPage();
+    await screen.findByTestId(`seg-row-${B}`);
+    expect(screen.getByRole("searchbox", { name: "Buscar" })).toHaveValue("");
+    expect(within(screen.getByRole("group", { name: "Encargado" })).getByRole("button", { pressed: true })).toBeInTheDocument();
+  });
+
+  it("at phone width the small controls are 44 px tap targets, and a card's name and contact are one", async () => {
+    screenWidth(390);
+    stubApi((n) => {
+      const data = fixture(n);
+      // A landline: no WhatsApp button, even for the technical person.
+      data.items[0] = { ...data.items[0], follow_up: { operator_id: "op-tati", operator_name: "Tati", channel: "llamada" }, contact: { ...data.items[0].contact!, phone: "+56 2 2123 4567" } };
+      return data;
+    });
+    renderPage();
+    const cardA = within(await screen.findByTestId(`seg-card-${A}`));
+    const name = cardA.getByRole("button", { name: "Instituto Ficticio" });
+    expect(name).toHaveTextContent("Persona Uno");
+    expect(name).toHaveAccessibleDescription(/Persona Uno/);
+    expect(name.className).toMatch(/max-sm:min-h-11/);
+    expect(name.className).toMatch(/w-full/);
+    expect(cardA.getByRole("link", { name: /Llamar a Instituto Ficticio/ })).toBeInTheDocument();
+    expect(cardA.queryByRole("link", { name: /WhatsApp/ })).not.toBeInTheDocument();
+    fireEvent.click(cardA.getByRole("button", { name: "Ver guion para Instituto Ficticio" }));
+    const modal = await screen.findByRole("dialog", { name: "Guion de llamada" });
+    expect(within(modal).getByRole("button", { name: "Cerrar guion" })).toHaveClass("tap-44");
+    expect(within(modal).getAllByRole("button", { name: "Cerrar" })[0]).toHaveClass("tap-44");
+  });
+
+  it("a case whose pause day is past: the panel says «Volvió de pausa» and «Próximo» is the follow-up due today", async () => {
+    stubApi((n) => {
+      const data = fixture(n);
+      data.items[0] = {
+        ...data.items[0], paused_until: "2026-10-25", pause_reason: "Evaluando internamente",
+        last_contact: { inbound: null, outbound: { at: "2026-11-15T14:00:00Z", url: null } } as OpportunityCardData["last_contact"],
+      };
+      return data;
+    });
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Instituto Ficticio" }));
+    const panel = within(await screen.findByRole("dialog"));
+    expect(panel.getByTestId("case-drawer-pause")).toHaveTextContent("Volvió de pausa el");
+    expect(panel.getByTestId("case-drawer-pause")).not.toHaveTextContent("En pausa hasta");
+    expect(panel.getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 3 · hoy");
+    expect(panel.getByTestId("drawer-next-rhythm")).toHaveTextContent("Próximo contacto: Seguimiento 1 de 3 · hoy");
+    expect(panel.queryByTestId("drawer-next-pause")).not.toBeInTheDocument();
+    expect(within(row(A)).getByTestId("seg-next")).toHaveTextContent(/^hoy/);
+  });
+
+  it("«Pausar» from the case panel offers «Deshacer» too", async () => {
+    const calls = stubApi(fixture, (call) => (call.path.endsWith("/set-case-pause") ? receipt(A, call.body.paused_until ? 4 : 5, { command: "set_case_pause" }) : null));
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Instituto Ficticio" }));
+    const panel = within(await screen.findByRole("dialog"));
+    fireEvent.click(panel.getByTestId("case-inline-pausa"));
+    const form = within(panel.getByTestId("case-move-form"));
+    fireEvent.click(form.getAllByRole("button").find((b) => b.closest("[role=group]"))!);
+    fireEvent.click(form.getByRole("button", { name: "Pausar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    expect(await screen.findByText("Listo: la pausa se deshizo.")).toBeInTheDocument();
+    const pauses = calls.filter((c) => c.path.endsWith("/set-case-pause"));
+    expect(pauses[1].body).toMatchObject({ opportunity_id: A, opportunity_version: 4, paused_until: null });
   });
 
   it("shows the newest note under the client, and the last three on tap", async () => {

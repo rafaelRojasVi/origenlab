@@ -349,7 +349,7 @@ export function Toaster() {
               {t.action.label}
             </button>
           ) : null}
-          <button type="button" onClick={() => dismissToast(t.id)} aria-label="Cerrar aviso" className="shrink-0 opacity-70 hover:opacity-100">
+          <button type="button" onClick={() => dismissToast(t.id)} aria-label="Cerrar aviso" className="tap-44 shrink-0 opacity-70 hover:opacity-100">
             ✕
           </button>
         </div>
@@ -677,7 +677,7 @@ export function Modal({
             onClick={onClose}
             disabled={busy}
             aria-label="Cerrar"
-            className="h-7 w-7 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink disabled:opacity-50"
+            className="tap-44 h-7 w-7 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink disabled:opacity-50"
           >
             ✕
           </button>

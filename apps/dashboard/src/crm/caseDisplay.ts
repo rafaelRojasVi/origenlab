@@ -182,6 +182,20 @@ export function callTouch(card: OpportunityCardData): string | null {
   return call.at;
 }
 
+/**
+ * When OrigenLab last called after the quote went out, whatever the outcome (a voicemail too), or
+ * null. «Días sin toque» counts from it (QA 2026-11-19); meeting a reminder and «esperando
+ * respuesta» still need a call that reached the client (`callTouch`).
+ */
+export function anyCallTouch(card: OpportunityCardData): string | null {
+  if (lastTouch(card).by === "none") return null;
+  const sent = card.latest_revision?.sent_at ?? null;
+  const later = [card.last_call_any?.at, card.last_call?.at].filter((at): at is string => !!at && !Number.isNaN(Date.parse(at)));
+  const at = later.sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  if (!at || (sent && Date.parse(at) <= Date.parse(sent))) return null;
+  return at;
+}
+
 /** Where the conversation stands since the latest quote went out, and for how many days. */
 export function conversation(
   card: OpportunityCardData,

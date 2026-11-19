@@ -83,8 +83,7 @@ export function SegCard({
           />
         ) : null}
         <div className="min-w-0 flex-1">
-          <CaseName row={row} onOpen={on.onOpen} wrap />
-          <div className="truncate text-[12px] text-ink-muted">{contactLine(row.card) ?? "Sin contacto"}</div>
+          <CaseName row={row} onOpen={on.onOpen} wrap sub={contactLine(row.card) ?? "Sin contacto"} />
         </div>
         <span className="shrink-0 text-[13px] font-bold tabular-nums text-ink">{money || <span className="font-normal text-ink-faint">Sin monto</span>}</span>
       </div>

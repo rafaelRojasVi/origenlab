@@ -199,7 +199,7 @@ function QuickLinks() {
           rel="noopener noreferrer"
           title={l.title}
           aria-label={l.label}
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-canvas-raised px-1.5 text-[12px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 sm:px-2"
+          className="tap-44 inline-flex h-7 items-center justify-center gap-1 rounded-md border border-line bg-canvas-raised px-1.5 max-sm:min-w-11 text-[12px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 sm:px-2"
         >
           {/* Phones get the short word and no arrow, so the sign-out button stays on screen. */}
           <span className="sm:hidden">{l.short}</span>
@@ -224,7 +224,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
           aria-expanded={menuOpen}
           aria-controls="crm-sidenav"
           aria-label="Menú"
-          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
+          className="tap-44 -ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
         >
           ☰
         </button>
@@ -356,7 +356,7 @@ function ThemeToggle() {
       title={`Tema: ${THEME_LABEL[choice]} · cambiar a ${THEME_LABEL[next]}`}
       aria-label={`Tema: ${THEME_LABEL[choice]}. Cambiar a ${THEME_LABEL[next]}`}
       data-testid="crm-theme-toggle"
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="tap-44 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
     >
       <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d={THEME_ICON[choice]} />

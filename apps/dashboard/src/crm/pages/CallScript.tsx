@@ -41,7 +41,7 @@ export function CallScript({
           type="button"
           aria-label="Cerrar guion"
           onClick={onClose}
-          className="inline-grid h-9 w-9 place-items-center rounded-md border border-line-strong text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+          className="tap-44 inline-grid h-9 w-9 place-items-center rounded-md border border-line-strong text-ink-muted hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
         >
           <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
             <path d="m4 4 8 8M12 4l-8 8" />

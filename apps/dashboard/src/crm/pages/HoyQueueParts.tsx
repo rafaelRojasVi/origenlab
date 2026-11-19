@@ -5,7 +5,7 @@
  */
 import type { NextStep } from "../nextSteps";
 import { displayName, quoteProduct } from "../caseDisplay";
-import { followUpStep } from "../today";
+import { nextContactChannel } from "../nextContact";
 
 export type HoyTab = "ahora" | "manana" | "semana";
 
@@ -55,14 +55,10 @@ export function stepIcon(step: NextStep): IconName {
   if (step.kind === "cotizar") return "doc";
   if (step.kind === "pausa") return "clock";
   if (step.kind === "tarea") return "check";
-  // The channel chosen in Seguimiento («Próximo contacto») wins over the rhythm's suggestion.
-  const chosen = step.card.follow_up?.channel;
-  if (chosen) return CHANNEL_ICON[chosen];
-  if (step.item?.kind === "followup") {
-    const n = followUpStep(step.item.followUp);
-    return n === 2 ? "phone" : n === 3 ? "chat" : "mail";
-  }
-  return "mail";
+  // The same channel Seguimiento shows for the case (`nextContactChannel`): the one chosen there,
+  // else a call when the case has a phone, else an email (QA 2026-11-19: Hoy said «correo» while
+  // Seguimiento said «Llamada» for one case).
+  return CHANNEL_ICON[nextContactChannel(step.card)];
 }
 
 export function QueueIcon({ name, size = "md" }: { name: IconName; size?: "md" | "lg" }) {
@@ -85,7 +81,8 @@ const CHANNEL_WORD: Partial<Record<IconName, string>> = { phone: "llamar", chat:
 export function stepAction(step: NextStep): string {
   if (step.label) return step.label;
   const ch = step.kind === "seguimiento" ? CHANNEL_WORD[stepIcon(step)] : null;
-  const base = ACTION[step.kind];
+  // A pause whose day is past already came back: said in the past, never as a future «Vuelve».
+  const base = step.kind === "pausa" && step.dueDays < 0 ? "Volvió de pausa" : ACTION[step.kind];
   return ch ? `${base} · ${ch}` : base;
 }
 

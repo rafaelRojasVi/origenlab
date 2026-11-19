@@ -7,7 +7,7 @@
  * The case name opens the case; «Llamé» opens the inline call form under its row (one at a time,
  * kept in `segStore` so a refetch never closes it); in selection mode a checkbox per row.
  */
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, type ReactNode } from "react";
 import type { ProfileCard } from "../../api/authClient";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { useMayRunCaseCommands, type CaseCommandReceipt } from "../caseCommands";
@@ -295,24 +295,48 @@ const TH = "sticky top-12 z-10 border-b border-line bg-canvas-sunken";
 const TF = "sticky bottom-0 z-10 border-t border-line bg-canvas-sunken px-2.5 py-2.5";
 
 /** The case's name: a button that opens it, or plain text where no drawer is offered. */
-export function CaseName({ row, onOpen, wrap = false }: { row: SegRow; onOpen?: (id: string) => void; wrap?: boolean }) {
+export function CaseName({
+  row,
+  onOpen,
+  wrap = false,
+  sub,
+}: {
+  row: SegRow;
+  onOpen?: (id: string) => void;
+  wrap?: boolean;
+  /** A line under the name (the card's contact) that belongs to the same tap target. */
+  sub?: string;
+}) {
   const name = displayName(row.card).name;
+  const subId = useId();
   // On a card the name wraps (two lines at most) instead of running under the amount.
-  const cls = `block min-h-6 max-w-full text-left font-bold leading-tight text-ink ${wrap ? "line-clamp-2 break-words" : "truncate"}`;
-  if (!onOpen) return <div className={cls} title={name}>{name}</div>;
+  const nameCls = `block max-w-full text-left font-bold leading-tight text-ink ${wrap ? "line-clamp-2 break-words" : "truncate"}`;
+  const subLine = sub !== undefined ? <span id={subId} className="block truncate text-[12px] font-normal text-ink-muted">{sub}</span> : null;
+  if (!onOpen) {
+    return (
+      <div className="min-w-0">
+        <div className={`${nameCls} min-h-6`} title={name}>{name}</div>
+        {subLine}
+      </div>
+    );
+  }
   const id = row.card.opportunity_id;
   return (
     <button
       type="button"
       title={`Abrir el caso de ${name}`}
+      aria-label={sub !== undefined ? name : undefined}
+      aria-describedby={sub !== undefined ? subId : undefined}
       data-case={id}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(id);
       }}
-      className={`${cls} rounded-sm hover:text-accent hover:underline hover:underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600`}
+      // With a line under it (a card) the name and that line are one target, 44 px tall on a phone.
+      className={`group/name block min-h-6 max-w-full rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${sub !== undefined ? "w-full max-sm:min-h-11" : ""}`}
     >
-      {name}
+      <span className={`${nameCls} group-hover/name:text-accent group-hover/name:underline group-hover/name:underline-offset-2`}>{name}</span>
+      {subLine}
     </button>
   );
 }

@@ -20,13 +20,11 @@ import { bulkResultText, runBulkFollowUp } from "../bulkAssign";
 import {
   applyCaseReceipt,
   caseRefusalText,
-  moveCase,
   onCaseReceipt,
-  resumeCase,
   setCaseFollowUp,
   useMayRunCaseCommands,
-  type CaseCommandReceipt,
 } from "../caseCommands";
+import { toastWithUndo } from "../caseUndo";
 import { displayName } from "../caseDisplay";
 import { fetchPipeline } from "../crmApi";
 import type { OpportunityCardData, PipelineResponse } from "../crmTypes";
@@ -121,12 +119,6 @@ async function loadProfiles(): Promise<ProfileCard[]> {
 
 const realClock = () => new Date();
 const idOf = (r: SegRow) => r.card.opportunity_id;
-
-/** The newest version a set of receipts left the case at. */
-function lastVersion(receipts: CaseCommandReceipt[] | undefined, id: string): number | null {
-  const mine = (receipts ?? []).filter((r) => r.opportunity_id === id && typeof r.opportunity_version === "number");
-  return mine.length ? Math.max(...mine.map((r) => r.opportunity_version)) : null;
-}
 
 export function SeguimientoPage({
   initialOpportunityId = null,
@@ -448,48 +440,16 @@ function Seguimiento({
     reload();
   }
 
-  const undoClose = useCallback(
-    async (id: string, previousStage: string, closed: { stage: string; version: number }) => {
-      try {
-        await moveCase({ opportunity_id: id, stage: closed.stage, version: closed.version }, previousStage, "Deshecho desde Seguimiento: el caso sigue.", null);
-        toast("Listo: el caso vuelve al seguimiento.");
-      } catch (err) {
-        toast(caseRefusalText(err), "bad");
-      }
-      reload();
-    },
-    [reload],
-  );
-  const undoPause = useCallback(
-    async (id: string, version: number) => {
-      try {
-        await resumeCase({ opportunity_id: id, version }, "Pausa deshecha desde Seguimiento.");
-        toast("Listo: la pausa se deshizo.");
-      } catch (err) {
-        toast(caseRefusalText(err), "bad");
-      }
-      reload();
-    },
-    [reload],
-  );
-
   function actionDone(o: MoveOutcome, refetch: boolean, action: RowAction, card: OpportunityCardData) {
     setActing(null);
     if (refetch) reload();
-    if (o.tone !== "good") {
+    if (o.tone === "bad") {
       toast(o.lines.join(" "), o.tone);
       return;
     }
-    const id = card.opportunity_id;
-    const version = lastVersion(o.receipts, id);
-    const text = action === "pausa" ? "Caso en pausa: vuelve ese día." : "Caso cerrado: sale del seguimiento.";
-    if (version === null) {
-      toast(text);
-      return;
-    }
-    const closedStage = [...(o.receipts ?? [])].reverse().find((r) => typeof r.stage === "string")?.stage ?? "lost";
-    const undo = action === "pausa" ? () => void undoPause(id, version) : () => void undoClose(id, card.stage, { stage: closedStage, version });
-    toast(text, "good", { action: { label: "Deshacer", onClick: undo } });
+    // A close recorded in part still closed the case: its «Deshacer» stays on offer.
+    const text = o.tone === "warn" ? o.lines.join(" ") : action === "pausa" ? "Caso en pausa: vuelve ese día." : "Caso cerrado: sale del seguimiento.";
+    toastWithUndo(text, action, card, o.receipts, reload, o.tone);
   }
 
   const handlers: CardHandlers = useMemo(

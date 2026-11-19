@@ -15,7 +15,6 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import {
   WonFlowError,
-  cancelTask,
   caseRefusalText,
   isReopenable,
   isStaleRefusal,
@@ -157,12 +156,7 @@ export function CaseMoveForm({
     return {
       move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()],
       create: newCaseCommandKey(),
-      cancel: {} as Record<string, string>,
     };
-  }
-  function cancelKeys(): Record<string, string> {
-    for (const t of card.open_tasks ?? []) keysRef.current.cancel[t.task_id] ??= newCaseCommandKey();
-    return keysRef.current.cancel;
   }
 
   const refusal = moveRefusal(card, target, at);
@@ -205,14 +199,9 @@ export function CaseMoveForm({
             keysRef.current.move,
           )),
         );
-        // Nothing is left to follow up on a closed case.
-        for (const t of card.open_tasks ?? []) {
-          const receipt = await cancelTask(
-            { task_id: t.task_id, task_version: t.version, note: "El caso se cerró." },
-            cancelKeys()[t.task_id],
-          );
-          done.push({ label: "Tarea cancelada", receipt });
-        }
+        // Nothing is left to follow up on a closed case: the closing command itself cancels the open
+        // tasks and clears the pause, in its own transaction (API 2026-11-16). Cancelling them again
+        // here was refused (the task was already cancelled) and turned a done close into «1/2 · …».
       } else {
         // Leaving «En pausa» ends the pause first (its own event), then the stage move runs against
         // the version that command returned.
@@ -242,6 +231,7 @@ export function CaseMoveForm({
           {
             tone: "warn",
             lines: [...recorded.map((s, i) => receiptLine(s, i + 1, recorded.length + 1)), `No se registró el resto: ${caseRefusalText(err)}`],
+            receipts: recorded.map((s) => s.receipt),
           },
           true,
         );
@@ -328,8 +318,7 @@ export function NotRequestConfirm({
   onDone: (o: MoveOutcome, refetch: boolean) => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const keysRef = useRef({ move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()],
-    cancel: {} as Record<string, string> });
+  const keysRef = useRef({ move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()] });
   const stage = LOST_REASONS.find((r) => r.label === NOT_A_REQUEST)?.stage ?? "abandoned";
   const refusal = moveRefusal(card, "perdida");
 
@@ -347,17 +336,10 @@ export function NotRequestConfirm({
           keysRef.current.move,
         )),
       );
-      for (const t of card.open_tasks ?? []) {
-        keysRef.current.cancel[t.task_id] ??= newCaseCommandKey();
-        const receipt = await cancelTask(
-          { task_id: t.task_id, task_version: t.version, note: "El caso se cerró." },
-          keysRef.current.cancel[t.task_id],
-        );
-        done.push({ label: "Tarea cancelada", receipt });
-      }
-      onDone({ tone: "good", lines: done.map((s, i) => receiptLine(s, i + 1, done.length)) }, true);
+      // The close cancels the case's open tasks itself (API 2026-11-16).
+      onDone({ tone: "good", lines: done.map((s, i) => receiptLine(s, i + 1, done.length)), receipts: done.map((s) => s.receipt) }, true);
     } catch (err) {
-      keysRef.current = { move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()], cancel: {} };
+      keysRef.current = { move: [newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey(), newCaseCommandKey()] };
       const recorded = [...done, ...(err instanceof WonFlowError ? err.done : [])];
       if (recorded.length > 0) {
         onDone({ tone: "warn", lines: [...recorded.map((s, i) => receiptLine(s, i + 1, recorded.length + 1)),

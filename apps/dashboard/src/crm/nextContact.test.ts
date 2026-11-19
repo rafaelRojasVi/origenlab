@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
-import { nextContact } from "./nextContact";
+import { nextContact, nextContactChannel } from "./nextContact";
+import { buildParaTiQueue } from "./today";
 import { planNextSteps } from "./nextSteps";
-import { stepAge } from "./pages/HoyQueueParts";
+import { stepAction, stepAge, stepIcon } from "./pages/HoyQueueParts";
 import { urgencyByCase, urgencyText } from "./urgency";
 import { nextContactAt } from "./seguimientoView";
 
@@ -36,7 +37,7 @@ describe("nextContact: one rule", () => {
   it("else the earliest other task, else the pause day, else none", () => {
     expect(nextContact(card({ open_tasks: [task({ title: "Enviar ficha", due_at: local(25) }), task({ title: "Llamar", due_at: local(22) })] }), NOW))
       .toMatchObject({ source: "task", at: local(22) });
-    expect(nextContact(card({ paused_until: "2026-11-15", pause_reason: "Esperan fondos" }), NOW)).toMatchObject({
+    expect(nextContact(card({ paused_until: "2026-11-24", pause_reason: "Esperan fondos" }), NOW)).toMatchObject({
       source: "pause", label: "Vuelve de pausa · Esperan fondos",
     });
     expect(nextContact(card(), NOW)).toBeNull();
@@ -69,5 +70,57 @@ describe("nextContact: one rule", () => {
   it("the Pipeline's step for a paused case with a task is the task, not the pause", () => {
     const c = card({ paused_until: "2026-11-24", pause_reason: "Vacaciones", open_tasks: [task({ title: "Llamar", due_at: local(20) })] });
     expect(planNextSteps([c], NOW, null).steps.map((s) => s.label)).toEqual(["Llamar"]);
+  });
+
+  it("a pause whose day is past: the rhythm's follow-up due today wins, else it reads «Volvió de pausa»", () => {
+    // Paused until 25 Oct; our email on 15 Nov puts the case on «Seguimiento 1 de 3» today (day 3).
+    const pausedCase = card({
+      paused_until: "2026-10-25", pause_reason: "Evaluando internamente",
+      last_contact: { inbound: null, outbound: { at: "2026-11-15T11:00:00Z", url: null } } as OpportunityCardData["last_contact"],
+    });
+    expect(nextContact(pausedCase, NOW)).toMatchObject({ source: "rhythm", label: "Seguimiento 1 de 3" });
+    expect(nextContactAt(pausedCase, NOW)?.slice(0, 10)).toBe(NOW.toISOString().slice(0, 10));
+    // No quote, so no rhythm: the pause stays, in the past tense — never a future «Vuelve de pausa».
+    const back = card({ paused_until: "2026-10-25", pause_reason: "Evaluando internamente", quotes: [], latest_revision: null });
+    expect(nextContact(back, NOW)).toMatchObject({ source: "pause", label: "Volvió de pausa · Evaluando internamente" });
+    // An open «Seguimiento» reminder due today wins over both.
+    const reminded = card({ paused_until: "2026-10-25", open_tasks: [task({ due_at: local(18, 15) })] });
+    expect(nextContact(reminded, NOW)).toMatchObject({ source: "followup", at: local(18, 15) });
+  });
+});
+
+describe("Hoy and Seguimiento agree on one case (QA 2026-11-19)", () => {
+  // A voicemail yesterday, a «Seguimiento» reminder for today 15:06, a phone and no channel chosen.
+  const voicemailCase = () => card({
+    latest_revision: { revision_id: "r1", revision_no: 1, status: "sent", origin: null, sent_at: "2026-10-28T15:00:00Z", superseded_by_revision_no: null, is_active: true, document: null, gmail: null, drive: null, quote_number: "CN09876", candidates: [] } as unknown as OpportunityCardData["latest_revision"],
+    contact: { name: "Ana Ficticia", address: "ana@ejemplo.invalid", phone: "+56 9 1111 2222", phone_confirmed: true } as unknown as OpportunityCardData["contact"],
+    last_call_any: { at: new Date(2026, 10, 17, 13, 0).toISOString(), outcome: "buzon", author_name: "Tati" },
+    open_tasks: [task({ due_at: new Date(2026, 10, 18, 15, 6).toISOString(), created_at: new Date(2026, 10, 17, 13, 1).toISOString() })],
+  });
+
+  it("the channel is the one Seguimiento shows: the chosen one, else a call with a phone, else email", () => {
+    const c = voicemailCase();
+    expect(nextContactChannel(c)).toBe("llamada");
+    const step = planNextSteps([c], NOW, null).steps[0];
+    expect(stepIcon(step)).toBe("phone");
+    expect(stepAction(step)).toBe("Seguimiento · llamar");
+    expect(nextContactChannel({ ...c, follow_up: { operator_id: null, operator_name: null, channel: "correo" } })).toBe("correo");
+    expect(stepIcon({ ...step, card: { ...c, follow_up: { operator_id: null, operator_name: null, channel: "correo" } } })).toBe("mail");
+    expect(nextContactChannel({ ...c, contact: null })).toBe("correo");
+  });
+
+  it("any logged call is a touch for «días sin toque»; the reminder still needs a call that reached the client", () => {
+    const c = voicemailCase();
+    const item = buildParaTiQueue([c], NOW, null)[0];
+    expect(item.kind).toBe("followup");
+    // The voicemail did not meet the reminder: the case is still on today's list…
+    expect(item.kind === "followup" && item.followUp.task).not.toBeNull();
+    // …but it was touched yesterday, not 21 days ago.
+    const step = planNextSteps([c], NOW, null).steps[0];
+    expect(stepAge(step).text).toBe("23 h");
+    expect(item.kind === "followup" && item.followUp.touchDays).toBe(0);
+    // Without the call, the count runs from the quote.
+    const silent = buildParaTiQueue([{ ...c, last_call_any: null }], NOW, null)[0];
+    expect(silent.kind === "followup" && silent.followUp.touchDays).toBe(21);
   });
 });

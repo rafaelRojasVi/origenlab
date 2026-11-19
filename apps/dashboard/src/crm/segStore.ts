@@ -58,6 +58,28 @@ function subscribe(l: () => void) {
   return () => listeners.delete(l);
 }
 
+/**
+ * Leaving the tab clears the search (QA 2026-11-19: a search kept from an earlier visit filtered
+ * the list on return, so «Atrasado» read 0). The filters stay: they live in the address. A re-mount
+ * on the tab itself (a session re-read) keeps it.
+ */
+export const SEGUIMIENTO_HASH = "#/ventas/seguimiento";
+
+export function onHashChange(hash: string): void {
+  if (hash === SEGUIMIENTO_HASH || hash.startsWith(`${SEGUIMIENTO_HASH}?`)) return;
+  let changed = false;
+  for (const [key, s] of byScope) {
+    if (s.q === "" && s.menuOpen === null) continue;
+    byScope.set(key, { ...s, q: "", menuOpen: null });
+    changed = true;
+  }
+  if (changed) listeners.forEach((l) => l());
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("hashchange", () => onHashChange(window.location.hash));
+}
+
 /** Tests: forget everything. */
 export function resetSegUi(): void {
   byScope.clear();

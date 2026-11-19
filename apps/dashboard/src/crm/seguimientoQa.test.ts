@@ -5,6 +5,7 @@ import { bulkResultText, runBulkFollowUp } from "./bulkAssign";
 import type { SetCaseFollowUpBody } from "./caseCommands";
 import type { OpportunityCardData } from "./crmTypes";
 import { compactClp } from "./money";
+import { whatsAppUrl } from "./drawer/PersonPhones";
 import { rowNotes, waHref } from "./pages/SegParts";
 import type { SegRow } from "./seguimiento";
 import { bulkBodies, dueForCall, foldText, keepOrder } from "./seguimientoView";
@@ -101,6 +102,17 @@ describe("small helpers", () => {
   it("wa.me needs international digits", () => {
     expect(waHref("+56 9 1234 5678")).toBe("https://wa.me/56912345678");
     expect(waHref("9 1234 5678")).toBe("https://wa.me/56912345678");
+    expect(waHref("0056 9 1234 5678")).toBe("https://wa.me/56912345678");
+    expect(waHref("09 1234 5678")).toBe("https://wa.me/56912345678");
+  });
+  it("wa.me only for a Chilean mobile: never a landline (QA 2026-11-19)", () => {
+    expect(waHref("+56 2 2123 4567")).toBeNull();
+    expect(waHref("+56 41 212 3456")).toBeNull();
+    expect(waHref("22 123 4567")).toBeNull();
+    expect(waHref("+56 9 1234 567")).toBeNull();
+    expect(whatsAppUrl("+56 2 2123 4567")).toBeNull();
+    expect(whatsAppUrl("+56 9 1234 5678")).toBe("https://wa.me/56912345678");
+    expect(whatsAppUrl("+54 9 11 1234 5678")).toBe("https://wa.me/5491112345678");
   });
   it("compact pesos for a KPI tile", () => {
     expect(compactClp(466_297_700)).toBe("$466 M");

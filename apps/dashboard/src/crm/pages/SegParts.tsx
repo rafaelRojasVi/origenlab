@@ -2,9 +2,11 @@
  * The small pieces every «Seguimiento» view shares: the days pill, the phone and WhatsApp buttons,
  * the last touch, the next date, the latest notes, the icon buttons and the «⋯» menu of a case.
  */
-import { useEffect, useId, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import type { ProfileCard } from "../../api/authClient";
 import { callOutcomeLabel, defaultCallBody, type CallOutcome } from "../callOutcome";
+import { chileanMobile } from "../company";
 import { dateSantiago } from "../goals";
 import { isMaskedPhone } from "../redaction";
 import { channelsFor, touchedToday, type SegRow } from "../seguimiento";
@@ -41,11 +43,10 @@ export function nextReminder(row: SegRow, now: Date = new Date()): string | null
 
 export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
 
-/** `https://wa.me/<digits>`: international digits only; a bare Chilean mobile (9 XXXX XXXX) gets 56. */
-export function waHref(phone: string): string {
-  let digits = phone.replace(/\D/g, "");
-  if (digits.length === 9 && digits.startsWith("9")) digits = `56${digits}`;
-  return `https://wa.me/${digits}`;
+/** `https://wa.me/569XXXXXXXX` for a Chilean mobile; null for a landline or anything else. */
+export function waHref(phone: string): string | null {
+  const mobile = chileanMobile(phone);
+  return mobile ? `https://wa.me/${mobile}` : null;
 }
 
 /** The case's encargado (or suggestion) may write on WhatsApp. */
@@ -127,9 +128,9 @@ export function ContactButtons({ row, profiles, compact = false }: { row: SegRow
         <Icon d={PHONE_ICON} />
         <span className="truncate">{compact ? row.phone : "Llamar"}</span>
       </a>
-      {whatsappAllowed(row, profiles) ? (
+      {whatsappAllowed(row, profiles) && waHref(row.phone) ? (
         <a
-          href={waHref(row.phone)}
+          href={waHref(row.phone) as string}
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`Escribir por WhatsApp a ${client}`}
@@ -207,13 +208,15 @@ export function noteLine(n: RowNote, now: Date, max = 80): string {
 }
 
 /** Close a menu or popover on a click outside it, or on Escape. */
-function useAway(open: boolean, ref: RefObject<HTMLElement | null>, close: () => void) {
+function useAway(open: boolean, ref: RefObject<HTMLElement | null>, close: () => void, also?: RefObject<HTMLElement | null>) {
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
     if (!open) return;
     const away = (e: Event) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) closeRef.current();
+      const t = e.target as Node;
+      if (also?.current?.contains(t)) return;
+      if (ref.current && !ref.current.contains(t)) closeRef.current();
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeRef.current();
@@ -224,7 +227,7 @@ function useAway(open: boolean, ref: RefObject<HTMLElement | null>, close: () =>
       document.removeEventListener("mousedown", away);
       document.removeEventListener("keydown", esc);
     };
-  }, [open, ref]);
+  }, [open, ref, also]);
 }
 
 /**
@@ -296,15 +299,62 @@ export function RowMenu({
   const key = `menu:${id}`;
   const open = ui.menuOpen === key;
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  useAway(open, ref, () => act.openMenu(null));
+  useAway(open, ref, () => act.openMenu(null), menuRef);
+  // The menu lives in <body> (a portal), placed by the «⋯» button, so no scroll box or short table
+  // clips it (QA 2026-11-19: with one row, «Ya no sigue» sat under the table and could not be
+  // clicked). It opens upward when there is no room below, and follows the button on scroll and
+  // resize.
+  const [place, setPlace] = useState<{ top: number; right: number } | null>(null);
+  const reposition = useCallback(() => {
+    const btn = buttonRef.current?.getBoundingClientRect();
+    if (!btn) return;
+    const height = menuRef.current?.offsetHeight ?? 0;
+    const below = window.innerHeight - btn.bottom;
+    const up = below < height + 8 && btn.top > below;
+    setPlace({ top: up ? btn.top - height - 4 : btn.bottom + 4, right: Math.max(8, window.innerWidth - btn.right) });
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlace(null);
+      return;
+    }
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [open, reposition]);
+  // Focus the first item once the menu is placed (a hidden element cannot take the focus).
+  const placed = place !== null;
   useEffect(() => {
-    if (open) ref.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
-  }, [open]);
+    if (open && placed) menuRef.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+  }, [open, placed]);
   if (!onAction && !gmail && !onGuion) return null;
   const item =
     "flex min-h-11 w-full items-center rounded-md px-3 text-left text-[13px] font-medium text-ink hover:bg-canvas-sunken focus:bg-canvas-sunken focus:outline-none sm:min-h-9";
   const close = () => act.openMenu(null);
+  /** Arrows move between the items; Escape and Tab close it and give the focus back to «⋯». */
+  const onMenuKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = [...(menuRef.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = e.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+      items[next]?.focus();
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      items[e.key === "Home" ? 0 : items.length - 1]?.focus();
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      close();
+      buttonRef.current?.focus();
+    }
+  };
   const pick = (a: RowAction) => {
     close();
     onAction?.(a);
@@ -312,6 +362,7 @@ export function RowMenu({
   return (
     <div ref={ref} className="relative" onClick={(e) => e.stopPropagation()}>
       <button
+        ref={buttonRef}
         type="button"
         aria-label={`Más acciones para ${client}`}
         aria-haspopup="menu"
@@ -322,12 +373,17 @@ export function RowMenu({
       >
         <Icon d={MORE_ICON} />
       </button>
-      {open ? (
+      {open ? createPortal(
         <div
+          ref={menuRef}
           id={menuId}
           role="menu"
           aria-label={`Acciones para ${client}`}
-          className="absolute right-0 top-full z-30 mt-1 w-56 rounded-lg border border-line bg-canvas-raised p-1 text-left shadow-lg motion-safe:animate-fade-in-up"
+          onKeyDown={onMenuKey}
+          onClick={(e) => e.stopPropagation()}
+          data-testid="seg-row-menu"
+          style={place ? { top: place.top, right: place.right } : { visibility: "hidden", top: 0, right: 0 }}
+          className="fixed z-50 w-56 rounded-lg border border-line bg-canvas-raised p-1 text-left shadow-lg motion-safe:animate-fade-in-up"
         >
           {gmail ? (
             <a role="menuitem" href={gmail} target="_blank" rel="noopener noreferrer" className={item} onClick={close}>
@@ -349,7 +405,8 @@ export function RowMenu({
               </button>
             </>
           ) : null}
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

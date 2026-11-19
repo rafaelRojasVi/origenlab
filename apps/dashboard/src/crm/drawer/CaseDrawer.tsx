@@ -27,7 +27,7 @@ import { FollowUpPicker } from "../pages/FollowUpPicker";
 import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { isMaskedAddress } from "../redaction";
-import { STATUS_LABEL } from "../stage";
+import { STATUS_LABEL, pauseDayIso, pausedUntil } from "../stage";
 import { nextContact } from "../nextContact";
 import { endOfDay, followUpStep, followUpsDue, pendingFollowUpTasks } from "../today";
 import { Badge, Button, Drawer, Section, fmtDate } from "../ui";
@@ -186,7 +186,7 @@ function CaseDrawerBody({
   // The same reminder the chip reads: a pending one only (one our later email already met is done).
   // The one próximo contacto every screen shows (`nextContact`), else the API's suggestion.
   const next = nextContact(card);
-  const nextStep = next ? `${next.label} · ${shortDay(next.at)}` : card.next_action.text;
+  const nextStep = next ? `${next.label} · ${next.source === "rhythm" ? "hoy" : shortDay(next.at)}` : card.next_action.text;
 
   const decide: { key: string; label: string; icon: IconName; on: boolean; go: () => void }[] = [
     { key: "call", label: "Llamada", icon: "phone", on: lifted.call, go: () => ask("call") },
@@ -260,7 +260,12 @@ function CaseDrawerBody({
           </span>
         ) : null}
         {lostState ? <span className="font-semibold text-bad">{lostState}{card.close_reason ? ` · ${card.close_reason}` : ""}</span> : null}
-        {pausedDay ? <span className="font-semibold text-warn">En pausa hasta {shortDay(pausedDay)}{card.pause_reason ? ` · ${card.pause_reason}` : ""}</span> : null}
+        {pausedDay ? (
+          // A pause whose day is past is not «hasta» a future day any more.
+          <span className="font-semibold text-warn" data-testid="case-drawer-pause">
+            {pausedUntil(card) !== null ? "En pausa hasta" : "Volvió de pausa el"} {shortDay(pauseDayIso(pausedDay))}{card.pause_reason ? ` · ${card.pause_reason}` : ""}
+          </span>
+        ) : null}
         {net ? <span className="font-semibold tabular-nums text-ink">{net} <span className="font-normal text-ink-muted">neto</span></span> : null}
         <span className="min-w-0 text-ink-muted">Siguiente: <strong className="font-semibold text-ink">{nextStep}</strong></span>
       </div>
@@ -456,6 +461,14 @@ function NextStepLine({ card, inFooter }: { card: OpportunityCardData; inFooter:
           {next.task.owner ? `, ${next.task.owner}` : ""}
           {more > 0 ? ` (${more} más)` : ""}
         </span>
+      </p>
+    );
+  }
+  if (next?.source === "rhythm") {
+    return (
+      <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-next-rhythm">
+        <span className="text-ink-faint">Próximo contacto: </span>
+        {next.label} · hoy
       </p>
     );
   }
