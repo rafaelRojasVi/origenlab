@@ -151,10 +151,10 @@ function stubApi(pipeline: (notes: number) => PipelineResponse = fixture): Call[
 
 const pipelineReads = (calls: Call[]) => calls.filter((c) => c.method === "GET" && c.path.endsWith("/v2/workspace/pipeline")).length;
 
-function renderPage(props: { initialOpportunityId?: string | null } = {}) {
+function renderPage(props: { initialOpportunityId?: string | null; now?: Date; clock?: () => Date } = {}) {
   return render(
     <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
-      <SeguimientoPage now={NOW} {...props} />
+      <SeguimientoPage now={NOW} clock={() => NOW} {...props} />
       <Toaster />
     </AuthSessionContext.Provider>,
   );
@@ -205,6 +205,16 @@ describe("SeguimientoPage", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     expect(shownIds()).toEqual([A]);
+  });
+
+  it("an unknown encargado in the hash shows everything", async () => {
+    window.location.hash = "#/ventas/seguimiento?encargado=nadie";
+    stubApi();
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    await waitFor(() => expect(filters().getByRole("button", { name: /^Karla/ })).toBeInTheDocument());
+    expect(shownIds().sort()).toEqual([A, B, C].sort());
+    expect(filters().getByRole("button", { name: /^Todos/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("searches client, contact and quote N°", async () => {
@@ -276,6 +286,36 @@ describe("SeguimientoPage", () => {
     await screen.findByText("Llamada guardada · próximo: Hoy en 2 h");
     const task = calls.find((c) => c.path.endsWith("/create-task"))!;
     expect(task.body.due_at).toBe(new Date(NOW.getTime() + 2 * 3_600_000).toISOString());
+  });
+
+  it("a call saved hours after the page loaded is due two hours after the save", async () => {
+    const calls = stubApi();
+    const saveAt = new Date(NOW.getTime() + 3 * 3_600_000);
+    renderPage({ clock: () => saveAt });
+    await screen.findByTestId(`seg-row-${A}`);
+    await openCall(A);
+    const form = within(screen.getByTestId(`seg-call-${A}`));
+    fireEvent.click(form.getByRole("button", { name: "No contestó" }));
+    fireEvent.click(form.getByRole("button", { name: "Guardar llamada" }));
+    await screen.findByText("Llamada guardada · próximo: Hoy en 2 h");
+    const task = calls.find((c) => c.path.endsWith("/create-task"))!;
+    expect(task.body.due_at).toBe(new Date(NOW.getTime() + 5 * 3_600_000).toISOString());
+  });
+
+  it("«Mañana» is the day after the save, even when the page loaded before midnight", async () => {
+    const calls = stubApi();
+    // Local (browser) days, as the reminder's 09:00 is local.
+    const loaded = new Date(2026, 10, 17, 23, 30);
+    const saveAt = new Date(2026, 10, 18, 1, 0);
+    renderPage({ now: loaded, clock: () => saveAt });
+    await screen.findByTestId(`seg-row-${A}`);
+    await openCall(A);
+    const form = within(screen.getByTestId(`seg-call-${A}`));
+    fireEvent.click(form.getByRole("button", { name: "Mañana" }));
+    fireEvent.click(form.getByRole("button", { name: "Guardar llamada" }));
+    await screen.findByText("Llamada guardada · próximo: Mañana");
+    const task = calls.find((c) => c.path.endsWith("/create-task"))!;
+    expect(task.body.due_at).toBe(new Date(2026, 10, 19, 9, 0).toISOString());
   });
 
   it("three saves increment hoy count", async () => {

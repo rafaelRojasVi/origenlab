@@ -74,12 +74,27 @@ function matchesSearch(r: SegRow, q: string): boolean {
   return hay.includes(needle);
 }
 
-export function SeguimientoPage({ initialOpportunityId = null, now: fixedNow }: { initialOpportunityId?: string | null; now?: Date }) {
+/** Module-level, so `useResource` keeps it between visits. */
+async function loadProfiles(): Promise<ProfileCard[]> {
+  const r = await fetchProfiles();
+  return r.kind === "ok" ? r.profiles : [];
+}
+
+const realClock = () => new Date();
+
+export function SeguimientoPage({
+  initialOpportunityId = null,
+  now: fixedNow,
+  clock = realClock,
+}: {
+  initialOpportunityId?: string | null;
+  /** What the page shows «as of»; by default the time of each read. */
+  now?: Date;
+  /** The real time when a call is saved (tests pass a fixed one). */
+  clock?: () => Date;
+}) {
   const [state, reload, refreshing, patch] = useResource(fetchPipeline);
-  const [profileState] = useResource<ProfileCard[]>(async () => {
-    const r = await fetchProfiles();
-    return r.kind === "ok" ? r.profiles : [];
-  });
+  const [profileState] = useResource<ProfileCard[]>(loadProfiles);
   // A recorded command (encargado, canal) shows at once, with the version the next command needs.
   useEffect(
     () => onCaseReceipt((receipt) => patch((data) => ({ ...data, items: applyCaseReceipt(data.items, receipt) }))),
@@ -94,6 +109,7 @@ export function SeguimientoPage({ initialOpportunityId = null, now: fixedNow }: 
             data={data}
             profiles={profiles}
             fixedNow={fixedNow}
+            clock={clock}
             initialId={initialOpportunityId}
             reload={reload}
             refreshing={refreshing}
@@ -118,6 +134,7 @@ function Seguimiento({
   data,
   profiles,
   fixedNow,
+  clock,
   initialId,
   reload,
   refreshing,
@@ -126,6 +143,7 @@ function Seguimiento({
   data: PipelineResponse;
   profiles: ProfileCard[];
   fixedNow?: Date;
+  clock: () => Date;
   initialId: string | null;
   reload: () => void;
   refreshing: boolean;
@@ -158,7 +176,6 @@ function Seguimiento({
     writeFilter(f);
   }, []);
 
-  const visible = rows.filter((r) => matchesFilter(r, filter, me, profiles) && (!onlyLate || r.late) && matchesSearch(r, q));
   const count = (f: Filter) => rows.filter((r) => matchesFilter(r, f, me, profiles)).length;
   const filterOptions: { value: Filter; label: string }[] = [
     { value: "todos", label: "Todos" },
@@ -166,6 +183,9 @@ function Seguimiento({
     ...profiles.map((p) => ({ value: filterKey(p), label: p.displayName })),
     { value: "sin", label: "Sin asignar" },
   ];
+  // An unknown `?encargado=` (an old link, a profile that left) shows everything.
+  const active: Filter = filterOptions.some((o) => o.value === filter) ? filter : "todos";
+  const visible = rows.filter((r) => matchesFilter(r, active, me, profiles) && (!onlyLate || r.late) && matchesSearch(r, q));
   const guionRow = rows.find((r) => r.card.opportunity_id === selectedId) ?? visible[0] ?? null;
 
   function onCallSaved(id: string, said: string) {
@@ -199,7 +219,7 @@ function Seguimiento({
           <div className="flex flex-wrap items-center gap-2">
             <div role="group" aria-label="Encargado" className="inline-flex flex-wrap gap-0.5 rounded-lg border border-line bg-canvas-sunken p-[3px]">
               {filterOptions.map((o) => {
-                const on = o.value === filter;
+                const on = o.value === active;
                 return (
                   <button
                     key={o.value}
@@ -245,6 +265,7 @@ function Seguimiento({
                 onReceipt={onReceipt}
                 onConflict={reload}
                 callsPaused={refreshing}
+                clock={clock}
               />
             )}
             {guionOpen && guionRow ? <CallScript row={guionRow} me={myName} now={now} onClose={() => setGuionOpen(false)} /> : null}

@@ -82,6 +82,7 @@ export function SeguimientoSheet({
   onReceipt,
   onConflict,
   callsPaused = false,
+  clock,
 }: {
   rows: SegRow[];
   profiles: ProfileCard[];
@@ -97,6 +98,8 @@ export function SeguimientoSheet({
   onConflict: () => void;
   /** The cases are being read again: a call now would replace a reminder that is already gone. */
   callsPaused?: boolean;
+  /** The real time when a call is saved; the sheet's `now` is only for what it shows. */
+  clock?: () => Date;
 }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
   const [callOpen, setCallOpen] = useState<string | null>(null);
@@ -280,7 +283,7 @@ export function SeguimientoSheet({
                     <SeguimientoCallRow
                       row={r}
                       colSpan={COLUMNS}
-                      now={now}
+                      clock={clock}
                       onCancel={() => setCallOpen(null)}
                       onSaved={(said) => {
                         setCallOpen(null);

@@ -21,7 +21,7 @@ function renderRow(onSaved = vi.fn()) {
   render(
     <table>
       <tbody>
-        <SeguimientoCallRow row={row} colSpan={11} now={NOW} onSaved={onSaved} onCancel={vi.fn()} />
+        <SeguimientoCallRow row={row} colSpan={11} clock={() => NOW} onSaved={onSaved} onCancel={vi.fn()} />
       </tbody>
     </table>,
   );

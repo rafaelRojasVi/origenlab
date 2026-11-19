@@ -34,13 +34,14 @@ const NEXT_BY_LABEL = new Map(NEXTS.map((n) => [n.label, n]));
 export function SeguimientoCallRow({
   row,
   colSpan,
-  now,
+  clock = () => new Date(),
   onSaved,
   onCancel,
 }: {
   row: SegRow;
   colSpan: number;
-  now: Date;
+  /** The real time at save (the page's «now» is as of its last read, maybe hours ago). */
+  clock?: () => Date;
   /** The call and its reminder were recorded; gets the next contact as said in the toast. */
   onSaved: (nextSaid: string) => void;
   onCancel: () => void;
@@ -72,6 +73,7 @@ export function SeguimientoCallRow({
     const body = buildCallNote(card.opportunity_id, { outcome, nextStep: "", text });
     const sig = JSON.stringify([body, next]);
     if (keys.current.sig !== sig) keys.current = { sig, note: newCaseCommandKey(), follow: newFollowUpKeys() };
+    const now = clock();
     setBusy(true);
     setError(null);
     try {
