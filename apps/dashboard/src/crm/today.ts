@@ -216,7 +216,10 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     const clock = touch.by === "settled" ? later(touch.at, email) : email;
     // A follow-up task is done once OrigenLab writes on the case on or after its day: nobody has
     // to press «Hecho» — the email the sync captures is the proof.
-    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)));
+    // While the pause is ahead, an overdue reminder from before it is not due (`livePauseFilter`).
+    const pausedAhead = pausedUntil(card, now) !== null;
+    const stale = (t: OpenTask) => pausedAhead && (dueToday(t, now) ?? 0) > 0;
+    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)) && !stale(t));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
     const decided = open.some(isFollowUpTask);
     let task: DueTask | null = null;
@@ -227,6 +230,8 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
         break;
       }
     }
+    // A paused case has no rhythm follow-up until its pause comes back.
+    if (!task && pausedAhead) continue;
     if (!task && (pending.length > 0 || (!decided && stageBasis(card, now) === "historical_import"))) continue;
     const sent = card.latest_revision?.sent_at ?? null;
     if (!sent && !task) continue;

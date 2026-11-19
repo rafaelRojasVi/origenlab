@@ -126,3 +126,36 @@ describe("Hoy and Seguimiento agree on one case (QA 2026-11-19)", () => {
     expect(silent.kind === "followup" && silent.followUp.touchDays).toBe(21);
   });
 });
+
+describe("a pause still ahead hides reminders left over from before it (owner 2026-11-19)", () => {
+  // Paused until 9 Dec after a close-out email; an October «Seguimiento» reminder was never closed.
+  const paused = (tasks: OpenTask[]) =>
+    card({
+      paused_until: "2026-12-09",
+      pause_reason: "Sin respuesta",
+      last_contact: { outbound: { at: santiago(9, 10).toISOString() } } as unknown as OpportunityCardData["last_contact"],
+      open_tasks: tasks,
+    });
+  const october = task({ due_at: "2026-10-20T12:00:00Z", created_at: "2026-10-17T12:00:00Z" });
+
+  it("the próximo contacto is the pause, not the stale reminder", () => {
+    expect(nextContact(paused([october]), NOW)).toMatchObject({ source: "pause", label: "Vuelve de pausa · Sin respuesta" });
+  });
+
+  it("Hoy and the next steps do not list it today", () => {
+    const c = paused([october]);
+    expect(buildParaTiQueue([c], NOW, null).filter((i) => i.kind === "followup")).toEqual([]);
+    const today = planNextSteps([c], NOW, null).steps.filter((s) => s.dueDays <= 0);
+    expect(today).toEqual([]);
+  });
+
+  it("a reminder someone set during the pause still wins on its day", () => {
+    const friday = task({ due_at: santiago(18, 15).toISOString(), created_at: santiago(17, 10).toISOString() });
+    expect(nextContact(paused([october, friday]), NOW)).toMatchObject({ source: "followup", at: friday.due_at });
+  });
+
+  it("once the pause has come back, the case is due again (the rhythm, since our 9 Nov email met the old reminder)", () => {
+    const c = { ...paused([october]), paused_until: "2026-11-10" };
+    expect(nextContact(c, NOW)?.source).toBe("rhythm");
+  });
+});
