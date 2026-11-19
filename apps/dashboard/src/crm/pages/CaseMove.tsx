@@ -24,6 +24,7 @@ import {
   pauseCase,
   resumeCase,
   stagePath,
+  type CaseCommandReceipt,
   type WonStep,
 } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
@@ -42,6 +43,8 @@ import { Button, ChoiceChips, FormField, TextInput, TextareaInput, fmtDate } fro
 export interface MoveOutcome {
   tone: "good" | "bad" | "warn";
   lines: string[];
+  /** The receipts recorded, in order (a page offers «Deshacer» against the last version). */
+  receipts?: CaseCommandReceipt[];
 }
 
 /** The targets «Cambiar estado» offers; «Ganada» is «Marcar ganada», which names a revision. */
@@ -114,6 +117,7 @@ export function CaseMoveForm({
   now,
   initialReason = null,
   showFrom = true,
+  lostWording,
 }: {
   card: OpportunityCardData;
   target: MoveTarget;
@@ -124,6 +128,8 @@ export function CaseMoveForm({
   initialReason?: string | null;
   /** «Ahora: …»; off when the form was opened for this one target (its header says it). */
   showFrom?: boolean;
+  /** «Ya no sigue» (Seguimiento) words the close its own way: the button and the reason's label. */
+  lostWording?: { submit: string; reason: string; hint: string };
 }) {
   const at = useMemo(() => now ?? new Date(), [now]);
   const from = boardColumnOf(card, at);
@@ -227,7 +233,7 @@ export function CaseMoveForm({
           );
         }
       }
-      onDone({ tone: "good", lines: done.map((s, i) => receiptLine(s, i + 1, done.length)) }, true);
+      onDone({ tone: "good", lines: done.map((s, i) => receiptLine(s, i + 1, done.length)), receipts: done.map((s) => s.receipt) }, true);
     } catch (err) {
       keysRef.current = freshKeys();
       const recorded = [...done, ...(err instanceof WonFlowError ? err.done : [])];
@@ -261,7 +267,7 @@ export function CaseMoveForm({
         </p>
       ) : target === "perdida" ? (
         <>
-          <FormField label="Motivo" required hint="«Sin respuesta» y «No es una solicitud» cierran como abandonado; se conserva la evidencia.">
+          <FormField label={lostWording?.reason ?? "Motivo"} required hint={lostWording?.hint ?? "«Sin respuesta» y «No es una solicitud» cierran como abandonado; se conserva la evidencia."}>
             <ChoiceChips label="Motivo de pérdida" options={LOST_REASONS.map((r) => r.label)} value={reason} onChange={setReason} />
           </FormField>
           <FormField label="Detalle (opcional)" htmlFor="case-lost-detail">
@@ -300,7 +306,7 @@ export function CaseMoveForm({
           Cancelar
         </Button>
         <Button type="submit" variant={target === "perdida" ? "danger" : "primary"} disabled={!ready} busy={busy} busyLabel="Registrando…">
-          {target === "perdida" ? reason === "No es una solicitud" ? "Cerrar caso incorrecto" : "Marcar perdida" : target === "pausa" ? "Pausar" : "Mover"}
+          {target === "perdida" ? lostWording?.submit ?? (reason === "No es una solicitud" ? "Cerrar caso incorrecto" : "Marcar perdida") : target === "pausa" ? "Pausar" : "Mover"}
         </Button>
       </div>
     </form>

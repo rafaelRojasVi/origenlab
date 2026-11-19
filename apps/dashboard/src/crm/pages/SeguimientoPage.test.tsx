@@ -156,9 +156,9 @@ function stubApi(
 
 const pipelineReads = (calls: Call[]) => calls.filter((c) => c.method === "GET" && c.path.endsWith("/v2/workspace/pipeline")).length;
 
-function renderPage(props: { initialOpportunityId?: string | null; now?: Date; clock?: () => Date } = {}) {
+function renderPage(props: { initialOpportunityId?: string | null; now?: Date; clock?: () => Date } = {}, as: AuthSessionState = session) {
   return render(
-    <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+    <AuthSessionContext.Provider value={{ session: as, signOut: async () => true }}>
       <SeguimientoPage now={NOW} clock={() => NOW} {...props} />
       <Toaster />
     </AuthSessionContext.Provider>,
@@ -180,9 +180,20 @@ async function openCall(id: string) {
 }
 const filters = () => within(screen.getByRole("group", { name: "Encargado" }));
 
+/** A screen `width` px wide: the media queries the page asks answer as a browser that wide would. */
+function screenWidth(width: number) {
+  vi.stubGlobal("matchMedia", (q: string) => {
+    const min = /min-width:\s*(\d+)px/.exec(q);
+    const max = /max-width:\s*(\d+)px/.exec(q);
+    const matches = (!min || width >= Number(min[1])) && (!max || width <= Number(max[1]));
+    return { matches, media: q, addEventListener: () => undefined, removeEventListener: () => undefined };
+  });
+}
+
 beforeEach(() => {
   window.location.hash = "#/ventas/seguimiento";
   localStorage.clear();
+  screenWidth(1440);
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -357,7 +368,8 @@ describe("SeguimientoPage", () => {
     stubApi();
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
-    fireEvent.click(within(row(A)).getByRole("button", { name: "Ver guion para Instituto Ficticio" }));
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Ver guion" }));
     const guion = within(screen.getByRole("complementary", { name: "Guion de llamada" }));
     const say = guion.getByTestId("guion-say");
     expect(say).toHaveTextContent("¿hablo con Persona Uno?");
@@ -368,7 +380,7 @@ describe("SeguimientoPage", () => {
     expect(screen.queryByRole("complementary", { name: "Guion de llamada" })).not.toBeInTheDocument();
   });
 
-  it("caso param selects row", async () => {
+  it("caso param selects the row, opens its panel and lights the row", async () => {
     window.location.hash = `#/ventas/seguimiento?caso=${B}`;
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
@@ -377,7 +389,9 @@ describe("SeguimientoPage", () => {
     await screen.findByTestId(`seg-row-${B}`);
     await waitFor(() => expect(row(B)).toHaveAttribute("aria-current", "true"));
     expect(row(A)).not.toHaveAttribute("aria-current");
+    expect(row(B)).toHaveAttribute("data-flash", "true");
     expect(scrolled).toHaveBeenCalled();
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Laboratorio Ejemplo");
   });
 
   it("shows phone, Gmail link and the per-row facts", async () => {
@@ -385,11 +399,9 @@ describe("SeguimientoPage", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     expect(within(row(A)).getByRole("link", { name: /\+56 9 1234 5678/ })).toHaveAttribute("href", "tel:+56912345678");
-    expect(within(row(B)).getByText("Sin fono · pedir por correo")).toBeInTheDocument();
-    expect(within(row(A)).getByRole("link", { name: "Abrir el correo de Instituto Ficticio en Gmail" })).toHaveAttribute(
-      "href",
-      expect.stringContaining("authuser="),
-    );
+    expect(within(row(B)).getByText("Sin teléfono")).toBeInTheDocument();
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    expect(screen.getByRole("menuitem", { name: "Abrir el correo en Gmail" })).toHaveAttribute("href", expect.stringContaining("authuser="));
     expect(within(row(A)).getByTestId("seg-days")).toHaveTextContent("8 d");
   });
 
@@ -417,7 +429,8 @@ describe("SeguimientoPage", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Ya no sigue" }));
     const dialog = within(await screen.findByRole("dialog"));
     fireEvent.click(dialog.getByRole("button", { name: "Sin respuesta" }));
-    fireEvent.click(dialog.getByRole("button", { name: "Marcar perdida" }));
+    expect(dialog.getByText("¿Por qué ya no sigue?")).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "Ya no sigue" }));
     await screen.findByText("Caso cerrado: sale del seguimiento.");
     const close = calls.find((c) => c.path.endsWith("/advance-case-stage"))!;
     expect(close.body).toMatchObject({ opportunity_id: A, opportunity_version: 3, stage: "abandoned", close_reason: "Sin respuesta" });
@@ -483,7 +496,7 @@ describe("SeguimientoPage", () => {
   });
 
   it("on a phone the sheet is stacked cards", async () => {
-    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q === "(max-width: 639px)", media: q, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    screenWidth(390);
     stubApi();
     renderPage();
     const cards = await screen.findByTestId("seg-cards");
@@ -518,7 +531,7 @@ describe("SeguimientoPage", () => {
       await waitFor(() => expect(cardIn("op-rafa", B)).toBeInTheDocument());
       const post = calls.find((c) => c.path.endsWith("/set-case-follow-up"))!;
       expect(post.body).toEqual({ opportunity_id: B, opportunity_version: 3, follow_up_operator_id: "op-rafa", channel: "correo" });
-      expect(await screen.findByText("Laboratorio Ejemplo: ahora con Rafa.")).toBeInTheDocument();
+      expect(await screen.findByText("Asignado a Rafa")).toBeInTheDocument();
     });
 
     it("a refused move puts the card back and rereads", async () => {
@@ -533,5 +546,254 @@ describe("SeguimientoPage", () => {
       await waitFor(() => expect(cardIn("sin", B)).not.toBeInTheDocument());
       await waitFor(() => expect(pipelineReads(calls)).toBeGreaterThan(reads));
     });
+  });
+});
+
+const receipt = (id: string, version: number, over: Record<string, unknown> = {}) =>
+  json({ command: "x", opportunity_id: id, opportunity_version: version, command_receipt_id: "r", idempotency_key: "k", replayed: false, ...over });
+
+describe("Seguimiento QA fixes (2026-11-19)", () => {
+  it("an open «Llamé» and its typed note survive a re-mount and a refetch; only one is open", async () => {
+    stubApi();
+    const first = renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    await openCall(A);
+    fireEvent.click(within(screen.getByTestId(`seg-call-${A}`)).getByRole("button", { name: "Buzón de voz" }));
+    fireEvent.change(within(screen.getByTestId(`seg-call-${A}`)).getByLabelText("Nota (opcional)"), { target: { value: "Dejé recado con secretaría" } });
+    // The dashboard re-mounts (a session re-read): the form comes back as it was.
+    first.unmount();
+    renderPage();
+    const form = within(await screen.findByTestId(`seg-call-${A}`));
+    expect(form.getByLabelText("Nota (opcional)")).toHaveValue("Dejé recado con secretaría");
+    expect(form.getByRole("button", { name: "Buzón de voz" })).toHaveAttribute("aria-pressed", "true");
+    // Opening another case's «Llamé» closes this one; its draft stays for when it reopens.
+    await openCall(B);
+    expect(screen.queryByTestId(`seg-call-${A}`)).not.toBeInTheDocument();
+    expect(screen.getAllByTestId(/^seg-call-[a-f0-9]{8}-/)).toHaveLength(1);
+  });
+
+  it("fits the sheet at 1440 px and shows cards under 1280 px", async () => {
+    stubApi();
+    screenWidth(1200);
+    renderPage();
+    expect(await screen.findByTestId("seg-cards")).toBeInTheDocument();
+    expect(screen.queryByTestId("seg-sheet")).not.toBeInTheDocument();
+  });
+
+  it("a phone card shows and sets encargado and canal, calls, WhatsApp for Tati, and the guion", async () => {
+    screenWidth(390);
+    stubApi((n) => {
+      const data = fixture(n);
+      data.items[0] = { ...data.items[0], follow_up: { operator_id: "op-tati", operator_name: "Tati", channel: "whatsapp" } };
+      return data;
+    });
+    renderPage();
+    const cardA = within(await screen.findByTestId(`seg-card-${A}`));
+    expect(cardA.getByLabelText("Encargado")).toHaveValue("op-tati");
+    expect(cardA.getByLabelText("Próximo contacto")).toHaveValue("whatsapp");
+    expect(cardA.getByRole("link", { name: /Llamar a Instituto Ficticio/ })).toHaveAttribute("href", "tel:+56912345678");
+    expect(cardA.getByRole("link", { name: /WhatsApp/ })).toHaveAttribute("href", "https://wa.me/56912345678");
+    const cardB = within(screen.getByTestId(`seg-card-${B}`));
+    expect(cardB.getByText("Sin teléfono")).toBeInTheDocument();
+    expect(cardB.queryByRole("link", { name: /WhatsApp/ })).not.toBeInTheDocument();
+    fireEvent.click(cardA.getByRole("button", { name: "Ver guion para Instituto Ficticio" }));
+    expect(await screen.findByRole("dialog", { name: "Guion de llamada" })).toHaveTextContent("¿hablo con Persona Uno?");
+  });
+
+  it("search ignores accents and case, and finds contact, institution, N° and product", async () => {
+    stubApi((n) => {
+      const data = fixture(n);
+      data.items[1] = { ...data.items[1], organization: { organization_id: "org-b", name: "Universidad Católica Ficticia", confirmation: "confirmed", version: 1 } };
+      return data;
+    });
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    const search = screen.getByRole("searchbox", { name: "Buscar" });
+    for (const [text, ids] of [["catolica", [B]], ["CATÓLICA", [B]], ["persona tres", [C]], ["balanza", [A, B, C]], ["cn09877", [C]]] as const) {
+      fireEvent.change(search, { target: { value: text } });
+      await showing([...ids]);
+    }
+  });
+
+  it("filters, order and view stay after a save, and rows keep their place", async () => {
+    // After the call A would sort last: the reread drops its score.
+    stubApi((n) => {
+      const data = fixture(n);
+      if (n > 0) data.items[0] = { ...data.items[0], money: [{ currency: "CLP", net_total: "1", quote_number: "CN09876" }] };
+      return data;
+    });
+    window.location.hash = "#/ventas/seguimiento?canal=llamada,correo";
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    const before = shownIds();
+    await openCall(A);
+    fireEvent.click(within(screen.getByTestId(`seg-call-${A}`)).getByRole("button", { name: "Guardar llamada" }));
+    await screen.findByText(/Llamada guardada/);
+    await waitFor(() => expect(row(A)).not.toHaveTextContent("$ 1.000.000"));
+    expect(shownIds()).toEqual(before);
+    expect(window.location.hash).toMatch(/canal=llamada(,|%2C)correo/);
+    expect(within(screen.getByRole("group", { name: "Canal" })).getByRole("button", { name: /^Correo/ })).toHaveAttribute("aria-pressed", "true");
+    // The name still opens its own case.
+    fireEvent.click(within(row(before[0])).getAllByRole("button").find((b) => b.getAttribute("data-case") === before[0])!);
+    const name = before[0] === A ? "Instituto Ficticio" : before[0] === B ? "Laboratorio Ejemplo" : "Centro Prueba";
+    expect(await screen.findByRole("dialog")).toHaveTextContent(name);
+    expect(window.location.hash).toContain(`caso=${before[0]}`);
+  });
+
+  it("the guion for the technical person speaks as her, with no hand-off", async () => {
+    stubApi();
+    renderPage({}, { ...session, kind: "signed_in", profile: { id: "op-tati", displayName: "Tati", roleLabel: "Ventas" } } as AuthSessionState);
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(screen.getByRole("button", { name: "Guion de llamada" }));
+    const guion = within(await screen.findByRole("complementary", { name: "Guion de llamada" }));
+    expect(guion.getByTestId("guion-say")).toHaveTextContent("Le habla Tati, de OrigenLab.");
+    expect(guion.queryByText(/con Tati/)).not.toBeInTheDocument();
+    expect(guion.getByText(/respóndela tú/)).toBeInTheDocument();
+  });
+
+  it("the KPI amount is compact, with the exact amount as its title", async () => {
+    stubApi();
+    renderPage();
+    const money = await screen.findByTestId("kpi-money-value");
+    expect(money).toHaveTextContent("$4 M");
+    expect(money).toHaveAttribute("title", "$ 4.000.000");
+  });
+
+  it("assigns the selected cases one command each and says how many failed", async () => {
+    let n = 0;
+    const calls = stubApi(fixture, (call) => {
+      if (!call.path.endsWith("/set-case-follow-up")) return null;
+      n += 1;
+      return n === 2 ? json({ detail: { code: "case_version_conflict" } }, 409) : receipt(String(call.body.opportunity_id), 4, { operator_id: call.body.follow_up_operator_id, channel: call.body.channel });
+    });
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(screen.getByRole("button", { name: "Seleccionar" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Seleccionar todos los visibles" }));
+    expect(screen.getByTestId("seg-bulk-bar")).toHaveTextContent("3 seleccionados");
+    const reads = pipelineReads(calls);
+    fireEvent.change(screen.getByRole("combobox", { name: "Asignar a…" }), { target: { value: "op-tati" } });
+    expect(await screen.findByText("2 asignados, 1 falló")).toBeInTheDocument();
+    const posts = calls.filter((c) => c.path.endsWith("/set-case-follow-up"));
+    expect(posts.map((p) => p.body.follow_up_operator_id)).toEqual(["op-tati", "op-tati", "op-tati"]);
+    expect(new Set(posts.map((p) => p.key)).size).toBe(3);
+    await waitFor(() => expect(pipelineReads(calls)).toBeGreaterThan(reads));
+  });
+
+  it("«Confirmar todos los sugeridos» confirms each suggestion with its channel", async () => {
+    const calls = stubApi(fixture, (call) =>
+      call.path.endsWith("/set-case-follow-up") ? receipt(String(call.body.opportunity_id), 4, { operator_id: call.body.follow_up_operator_id, channel: call.body.channel }) : null,
+    );
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(await screen.findByRole("button", { name: "Confirmar todos los sugeridos (1)" }));
+    expect(await screen.findByText("1 asignado")).toBeInTheDocument();
+    const [post] = calls.filter((c) => c.path.endsWith("/set-case-follow-up"));
+    expect(post.body).toEqual({ opportunity_id: C, opportunity_version: 3, follow_up_operator_id: "op-karla", channel: "correo" });
+  });
+
+  it("«Modo llamadas» walks the cases due today, «N de M», opening each «Llamé»", async () => {
+    stubApi((n, all) => {
+      const data = fixture(n);
+      // C has a reminder due this morning; A is late with no date; B was called today.
+      data.items[2] = { ...data.items[2], open_tasks: [{ task_id: "t-c", title: "Seguimiento de CN09877", due_at: "2026-11-18T12:00:00Z", version: 1, owner: null }] };
+      if (all.some((c) => c.path.endsWith("/add-note"))) data.items[0] = { ...data.items[0], call_counts: { total: 1, today: 1 } };
+      return data;
+    });
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(screen.getByRole("button", { name: "Modo llamadas" }));
+    const mode = await screen.findByTestId("seg-call-mode");
+    expect(within(mode).getByTestId("seg-call-mode-at")).toHaveTextContent("1 de 2");
+    const firstId = screen.getAllByTestId(/^seg-call-[a-f0-9]{8}-/)[0].getAttribute("data-testid")!.slice("seg-call-".length);
+    fireEvent.click(within(screen.getByTestId(`seg-call-${firstId}`)).getByRole("button", { name: "Guardar llamada" }));
+    await waitFor(() => expect(within(screen.getByTestId("seg-call-mode")).getByTestId("seg-call-mode-at")).toHaveTextContent("2 de 2"));
+    const other = firstId === A ? C : A;
+    expect(await screen.findByTestId(`seg-call-${other}`)).toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId("seg-call-mode")).getByRole("button", { name: "Salir" }));
+    expect(screen.queryByTestId("seg-call-mode")).not.toBeInTheDocument();
+    expect(screen.queryByTestId(`seg-call-${other}`)).not.toBeInTheDocument();
+  });
+
+  it("after a call, «Siguiente →» opens the next due case", async () => {
+    stubApi((n) => {
+      const data = fixture(n);
+      data.items[2] = { ...data.items[2], open_tasks: [{ task_id: "t-c", title: "Seguimiento de CN09877", due_at: "2026-11-18T12:00:00Z", version: 1, owner: null }] };
+      return data;
+    });
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    await openCall(A);
+    fireEvent.click(within(screen.getByTestId(`seg-call-${A}`)).getByRole("button", { name: "Guardar llamada" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Siguiente →" }));
+    expect(await screen.findByTestId(`seg-call-${C}`)).toBeInTheDocument();
+  });
+
+  it("«Ya no sigue» can be undone: the case reopens at its previous stage", async () => {
+    const calls = stubApi(fixture, (call) =>
+      call.path.endsWith("/advance-case-stage") ? receipt(A, call.body.stage === "quoting" ? 5 : 4, { command: "advance_case_stage", stage: call.body.stage }) : null,
+    );
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Ya no sigue" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Precio" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Ya no sigue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    expect(await screen.findByText("Listo: el caso vuelve al seguimiento.")).toBeInTheDocument();
+    const moves = calls.filter((c) => c.path.endsWith("/advance-case-stage"));
+    expect(moves.map((m) => [m.body.stage, m.body.opportunity_version])).toEqual([["lost", 3], ["quoting", 4]]);
+  });
+
+  it("«Pausar…» can be undone: the pause is lifted", async () => {
+    const calls = stubApi(fixture, (call) => (call.path.endsWith("/set-case-pause") ? receipt(A, call.body.paused_until ? 4 : 5, { command: "set_case_pause" }) : null));
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pausar…" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Pausar el seguimiento" }));
+    fireEvent.click(dialog.getByRole("button", { name: dialog.getAllByRole("button").find((b) => b.closest("[role=group]"))!.textContent! }));
+    fireEvent.click(dialog.getByRole("button", { name: "Pausar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    expect(await screen.findByText("Listo: la pausa se deshizo.")).toBeInTheDocument();
+    const pauses = calls.filter((c) => c.path.endsWith("/set-case-pause"));
+    expect(pauses[1].body).toMatchObject({ opportunity_id: A, opportunity_version: 4, paused_until: null, reason: null });
+  });
+
+  it("shows the newest note under the client, and the last three on tap", async () => {
+    stubApi((n) => {
+      const data = fixture(n);
+      data.items[1] = {
+        ...data.items[1],
+        recent_notes: [
+          { at: "2026-11-18T13:00:00Z", body: "Llamada: Contestó", kind: "llamada", outcome: "contesto", author: "Karla" },
+          { at: "2026-11-17T13:00:00Z", body: "Pide la ficha técnica del equipo ficticio antes de decidir.", kind: null, outcome: null, author: "Rafa" },
+          { at: "2026-11-16T13:00:00Z", body: "Dejé recado", kind: "llamada", outcome: "buzon", author: "Karla" },
+        ],
+      };
+      return data;
+    });
+    renderPage();
+    await screen.findByTestId(`seg-row-${B}`);
+    const last = within(row(B)).getByTestId("seg-last-note");
+    expect(last).toHaveTextContent("Contestó · Karla · hoy 10:00");
+    fireEvent.click(last);
+    const pop = within(row(B)).getByTestId("seg-notes-popover");
+    expect(pop).toHaveAttribute("data-open", "true");
+    expect(pop).toHaveTextContent("Pide la ficha técnica del equipo ficticio antes de decidir.");
+    expect(pop).toHaveTextContent("Buzón de voz");
+  });
+
+  it("a reassign from the board picker says «Asignado a …»", async () => {
+    window.location.hash = "#/ventas/seguimiento?vista=encargado";
+    stubApi(fixture, (call) => (call.path.endsWith("/set-case-follow-up") ? receipt(B, 4, { operator_id: call.body.follow_up_operator_id, channel: call.body.channel }) : null));
+    renderPage();
+    const board = await screen.findByTestId("seg-board");
+    expect(within(board).getAllByRole("heading")[0]).toHaveTextContent("Sin confirmar");
+    const cardB = within(await screen.findByTestId(`seg-card-${B}`));
+    await waitFor(() => expect(cardB.getByLabelText("Encargado")).toHaveValue("op-karla"));
+    fireEvent.change(cardB.getByLabelText("Encargado"), { target: { value: "op-tati" } });
+    expect(await screen.findByText("Asignado a Tati")).toBeInTheDocument();
   });
 });

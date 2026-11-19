@@ -6,7 +6,7 @@
  * - **Por encargado**: a column per person plus «Sin confirmar». A card dragged to another column
  *   (native drag and drop) changes its encargado; the picker on each card is the keyboard and touch way.
  */
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ProfileCard } from "../../api/authClient";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { useMayRunCaseCommands } from "../caseCommands";
@@ -14,7 +14,7 @@ import { formatMoney } from "../money";
 import { useFlip, usePresence } from "../motion";
 import type { SegRow } from "../seguimiento";
 import { agendaGroups, boardColumns } from "../seguimientoView";
-import { SegCard, type CardHandlers } from "./SegCard";
+import { SegCard, type CardHandlers, type CardSelection } from "./SegCard";
 
 const rowKey = (r: SegRow) => r.card.opportunity_id;
 
@@ -25,6 +25,9 @@ interface ViewProps {
   clock?: () => Date;
   callsPaused: boolean;
   on: CardHandlers;
+  /** The row to highlight for a moment (`?caso=`, «Modo llamadas»). */
+  flashId?: string | null;
+  selection?: CardSelection | null;
 }
 
 function usePermissions() {
@@ -33,26 +36,27 @@ function usePermissions() {
 }
 
 /** Cards in a column, with leave and move motion. */
-function CardStack({ rows, label, ownerPicker = false, showPhone = false, onDragStart, listClassName = "flex flex-col gap-2", ...props }: ViewProps & {
+function CardStack({ rows, label, onDragStart, listClassName = "flex flex-col gap-2", flashId = null, ...props }: ViewProps & {
   label: string;
   listClassName?: string;
-  ownerPicker?: boolean;
-  showPhone?: boolean;
   onDragStart?: (row: SegRow, e: DragEvent<HTMLElement>) => void;
 }) {
   const perms = usePermissions();
   const shown = usePresence(rows, rowKey);
   const ref = useRef<HTMLUListElement>(null);
   useFlip(ref, rows.map(rowKey).join("|"));
+  useEffect(() => {
+    if (!flashId) return;
+    ref.current?.querySelector(`[data-testid="seg-card-${flashId}"]`)?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [flashId]);
   return (
     <ul ref={ref} aria-label={label} className={listClassName}>
       {shown.map(({ item, key, leaving }) => (
-        <li key={key}>
+        <li key={key} className="min-w-0">
           <SegCard
             row={item}
             leaving={leaving}
-            ownerPicker={ownerPicker}
-            showPhone={showPhone}
+            flash={key === flashId}
             onDragStart={onDragStart ? (e) => onDragStart(item, e) : undefined}
             {...perms}
             {...props}
@@ -63,11 +67,11 @@ function CardStack({ rows, label, ownerPicker = false, showPhone = false, onDrag
   );
 }
 
-/** The sheet on a phone: the same rows as stacked cards. */
+/** The Tabla under 1280 px: the same rows as cards (two columns from a tablet). */
 export function SegCardList(props: ViewProps) {
   return (
     <div data-testid="seg-cards">
-      <CardStack {...props} label="Casos" showPhone />
+      <CardStack {...props} label="Casos" listClassName="grid gap-2 md:grid-cols-2" />
     </div>
   );
 }
@@ -82,7 +86,7 @@ export function SeguimientoAgenda(props: ViewProps) {
             <span className={g.key === "atrasados" ? "text-bad" : ""}>{g.label}</span>
             <span className="text-[12px] font-semibold tabular-nums text-ink-faint">{g.rows.length}</span>
           </h2>
-          <CardStack {...props} rows={g.rows} label={g.label} showPhone listClassName="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3" />
+          <CardStack {...props} rows={g.rows} label={g.label} listClassName="grid gap-2 sm:grid-cols-2 2xl:grid-cols-3" />
         </section>
       ))}
     </div>
@@ -143,7 +147,6 @@ export function SeguimientoBoard({ onMove, ...props }: ViewProps & { onMove: (ro
               {...props}
               rows={c.rows}
               label={c.label}
-              ownerPicker
               onDragStart={(row, e) => {
                 dragged.current = row;
                 e.dataTransfer?.setData("text/plain", row.card.opportunity_id);

@@ -274,7 +274,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
                   <button
                     type="button"
                     onClick={() => void switchProfile?.()}
-                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink max-sm:min-h-11 max-sm:px-1.5 max-sm:text-[12px]"
                     title="Vuelve a la pantalla de perfiles. La sesión de Google sigue abierta."
                     aria-label="Cambiar perfil"
                     data-testid="crm-switch-profile"
@@ -285,7 +285,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
                   <button
                     type="button"
                     onClick={() => void signOut()}
-                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink max-sm:min-h-11 max-sm:px-1.5 max-sm:text-[12px]"
                     aria-label="Cerrar sesión"
                     data-testid="crm-sign-out"
                   >
@@ -309,7 +309,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
                   <button
                     type="button"
                     onClick={() => void signOut()}
-                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink max-sm:min-h-11 max-sm:px-1.5 max-sm:text-[12px]"
                     data-testid="crm-sign-out"
                   >
                     Cerrar sesión

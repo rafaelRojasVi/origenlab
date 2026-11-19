@@ -336,3 +336,22 @@ body {
   .crm-mail-open { animation: none; }
   .crm-ai-sweep { display: none; }
 }
+
+/* «Seguimiento» on a phone: every chip of the «Llamé» form is a 44 px tap target. */
+@media (max-width: 639px) {
+  .seg-call-form [role="group"] > button {
+    min-height: 44px;
+    padding-inline: 14px;
+    font-size: 13px;
+  }
+}
+
+/* «Seguimiento»: the row a link (`?caso=`) or «Modo llamadas» points at glows for a moment. */
+@keyframes seg-flash {
+  0%, 55% { background-color: var(--color-brand-100); }
+  100% { background-color: transparent; }
+}
+.seg-flash, tr.seg-flash > td { animation: seg-flash 2400ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .seg-flash, tr.seg-flash > td { animation: none; background-color: var(--color-brand-100); }
+}

@@ -20,6 +20,15 @@ import { Button, SelectInput, toast } from "../ui";
 
 const CHANNEL_LABEL: Record<FollowUpChannel, string> = { llamada: "Llamada", correo: "Correo", whatsapp: "WhatsApp" };
 
+/** The toast after a new encargado: «Asignado a Tati», or that nobody is confirmed any more. */
+export function assignedText(ownerId: string | null, profiles: ProfileCard[]): string {
+  const name = ownerId ? profiles.find((p) => p.id === ownerId)?.displayName : null;
+  return name ? `Asignado a ${name}` : "Sin encargado confirmado";
+}
+
+/** 44 px on a phone (a finger), the usual size from `sm`. */
+const SELECT_TAP = "max-sm:min-h-11 max-sm:text-[13px]";
+
 export function FollowUpPicker({
   card,
   profiles,
@@ -27,6 +36,7 @@ export function FollowUpPicker({
   compact = false,
   only,
   onConflict,
+  announce = false,
 }: {
   card: OpportunityCardData;
   profiles: ProfileCard[];
@@ -36,6 +46,8 @@ export function FollowUpPicker({
   only?: "owner" | "channel";
   /** The case changed under us (409): the page refetches it. */
   onConflict?: () => void;
+  /** Say «Asignado a X» once a new encargado is recorded (Seguimiento). */
+  announce?: boolean;
 }) {
   const may = useMayRunCaseCommands();
   const [ownerId, setOwnerId] = useState<string | null>(card.follow_up?.operator_id ?? null);
@@ -74,6 +86,7 @@ export function FollowUpPicker({
         channel: sentChannel,
       });
       version.current = receipt.opportunity_version;
+      if (announce && nextOwner !== ownerId) toast(assignedText(nextOwner, profiles));
       setOwnerId(nextOwner);
       setChannel(sentChannel);
       onChanged(receipt);
@@ -102,6 +115,7 @@ export function FollowUpPicker({
           id={`${ids}-owner`}
           value={shownOwner ?? ""}
           disabled={busy}
+          className={SELECT_TAP}
           options={ownerOptions}
           onChange={(v) => void save(v === "" ? null : v, shownChannel)}
         />
@@ -109,6 +123,7 @@ export function FollowUpPicker({
           <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-muted">
             <span>{compact ? "Sugerido" : `${suggestedName} es el sugerido.`}</span>
             <Button
+              className="max-sm:h-11"
               variant={compact ? "quiet" : "secondary"}
               busy={busy}
               aria-label={`Confirmar a ${suggestedName}`}
@@ -125,6 +140,7 @@ export function FollowUpPicker({
           id={`${ids}-channel`}
           value={shownChannel}
           disabled={busy}
+          className={SELECT_TAP}
           options={channelOptions}
           onChange={(v) => void save(shownOwner, v as FollowUpChannel)}
         />

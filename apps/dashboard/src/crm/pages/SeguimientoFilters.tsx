@@ -31,7 +31,7 @@ export function ViewSwitch({ view, onChange }: { view: SegView; onChange: (v: Se
           type="button"
           aria-pressed={v.key === view}
           onClick={() => onChange(v.key)}
-          className={`relative z-[1] inline-flex h-8 items-center justify-center whitespace-nowrap rounded-md px-3 text-[13px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${v.key === view ? "text-ink" : "text-ink-muted hover:text-ink"}`}
+          className={`relative z-[1] inline-flex h-11 items-center sm:h-8 justify-center whitespace-nowrap rounded-md px-3 text-[13px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${v.key === view ? "text-ink" : "text-ink-muted hover:text-ink"}`}
         >
           {v.label}
         </button>
@@ -41,7 +41,7 @@ export function ViewSwitch({ view, onChange }: { view: SegView; onChange: (v: Se
 }
 
 const CHIP_BASE =
-  "inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[12.5px] font-semibold transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600";
+  "inline-flex h-11 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 sm:h-8 sm:px-3 text-[12.5px] font-semibold transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600";
 
 /** One group of chips; a chip with nothing to show is dimmed but still pressable (to unpress it). */
 const ChipGroup = memo(function ChipGroup({
@@ -113,12 +113,12 @@ export function FilterBar({
     <section aria-label="Filtros" className="space-y-2.5 rounded-xl border border-line bg-canvas-raised p-3">
       <div className="flex flex-wrap items-center gap-2">
         <div className="w-full sm:w-auto">
-          <SearchInput value={q} onChange={onSearch} placeholder="Buscar cliente, contacto o N°…" label="Buscar" />
+          <SearchInput value={q} onChange={onSearch} placeholder="Buscar cliente, contacto, N° o producto…" label="Buscar" className="max-sm:h-11 max-sm:text-[14px] sm:w-72" />
         </div>
         <label className="flex items-center gap-2 text-[12px] font-semibold text-ink-muted">
           Orden
           <span className="w-44">
-            <SelectInput value={order} onChange={(v) => onOrder(v as SegOrder)} options={SEG_ORDERS.map((o) => ({ value: o.key, label: o.label }))} />
+            <SelectInput value={order} onChange={(v) => onOrder(v as SegOrder)} options={SEG_ORDERS.map((o) => ({ value: o.key, label: o.label }))} className="max-sm:min-h-11 max-sm:text-[13px]" />
           </span>
         </label>
         <p className="ml-auto text-[12px] tabular-nums text-ink-muted" aria-live="polite" data-testid="seg-showing">
@@ -128,7 +128,7 @@ export function FilterBar({
           <button
             type="button"
             onClick={onClear}
-            className="inline-flex h-8 items-center rounded-md px-2.5 text-[12.5px] font-semibold text-accent hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            className="inline-flex h-11 items-center rounded-md px-3 text-[12.5px] font-semibold text-accent sm:h-8 sm:px-2.5 hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
           >
             Limpiar
           </button>

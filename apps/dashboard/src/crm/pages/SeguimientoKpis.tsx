@@ -1,6 +1,6 @@
 /** «Seguimiento»'s KPI strip: the whole team's numbers for today, whatever the filters. */
 import type { ProfileCard } from "../../api/authClient";
-import { formatMoney } from "../money";
+import { compactClp, formatMoney } from "../money";
 import type { seguimientoKpis } from "../seguimiento";
 import { initials } from "../ui";
 
@@ -57,7 +57,9 @@ export function KpiStrip({ kpis, profiles, rowsCount }: { kpis: Kpis; profiles: 
       </div>
       <div className={tile} data-testid="kpi-money">
         <span className={label}>En seguimiento</span>
-        <span className={`${value} truncate`}>{formatMoney(String(kpis.moneyClp), "CLP")}</span>
+        <span className={value} title={formatMoney(String(kpis.moneyClp), "CLP") ?? undefined} data-testid="kpi-money-value">
+          {compactClp(kpis.moneyClp)}
+        </span>
         <span className={sub}>{rowsCount} {rowsCount === 1 ? "cotización" : "cotizaciones"}</span>
       </div>
     </section>

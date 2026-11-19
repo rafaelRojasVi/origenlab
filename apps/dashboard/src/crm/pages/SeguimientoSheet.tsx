@@ -1,10 +1,13 @@
 /**
- * «Ventas › Seguimiento» as a sheet: one row per open case with a sent quote, one fact per column, a
- * fixed header, a frozen first column (Encargado), Monto and Sin respuesta as orders, and a totals
- * row. The case name opens the case; «Llamé» opens the inline call form under its row; «⋯» holds
- * «Pausar…» and «Ya no sigue». Rows that leave fade out, rows that move glide (`motion.ts`).
+ * «Ventas › Seguimiento» as a sheet (≥ 1280 px; narrower screens get the cards): one row per open
+ * case with a sent quote, a fixed header, Monto and Sin respuesta as orders, and a totals row. It
+ * fits the screen with no sideways scroll: the contact, quote and latest note sit under the client,
+ * the last touch and the next contact share a cell, and Gmail and the guion live in «⋯».
+ *
+ * The case name opens the case; «Llamé» opens the inline call form under its row (one at a time,
+ * kept in `segStore` so a refetch never closes it); in selection mode a checkbox per row.
  */
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import type { ProfileCard } from "../../api/authClient";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { useMayRunCaseCommands, type CaseCommandReceipt } from "../caseCommands";
@@ -13,29 +16,26 @@ import { formatMoney } from "../money";
 import { useFlip, usePresence } from "../motion";
 import { quoteNumberOf, type SegRow } from "../seguimiento";
 import type { SegOrder } from "../seguimientoView";
-import { Button, initials } from "../ui";
+import { useSegUi } from "../segStore";
+import { Button } from "../ui";
 import { caseGmailUrl } from "./CaseQuotes";
 import { FollowUpPicker } from "./FollowUpPicker";
 import { cardMoney, shortDate } from "./PipelineBoard";
 import { SeguimientoCallRow } from "./SeguimientoCallRow";
 import {
+  ContactButtons,
   DaysPill,
-  ICON_BUTTON,
   Icon,
+  LastNote,
   LastTouch,
-  MAIL_ICON,
   NextDate,
-  PhoneLink,
   RowMenu,
-  SCRIPT_ICON,
   SORT_ICON,
   nextReminder,
   type RowAction,
 } from "./SegParts";
 
 export { daysTone } from "./SegParts";
-
-const COLUMNS = 11;
 
 const rowKey = (r: SegRow) => r.card.opportunity_id;
 
@@ -51,24 +51,32 @@ export interface SheetHandlers {
   onConflict: () => void;
 }
 
+/** Selection mode: a checkbox per row and «Seleccionar todos los visibles». */
+export interface SheetSelection {
+  selected: ReadonlySet<string>;
+  onToggle: (id: string) => void;
+  onToggleAll: () => void;
+}
+
 export function SeguimientoSheet({
   rows,
   profiles,
   now,
   selectedId,
-  scrollToId = null,
+  flashId = null,
   order = "prioridad",
   onOrder,
   callsPaused = false,
   clock,
+  selection,
   ...on
 }: {
   rows: SegRow[];
   profiles: ProfileCard[];
   now: Date;
   selectedId: string | null;
-  /** Bring this row into view once it is on screen (`?caso=`). */
-  scrollToId?: string | null;
+  /** Highlight this row for a moment (`?caso=`, «Modo llamadas»). */
+  flashId?: string | null;
   order?: SegOrder;
   /** Monto and Sin respuesta in the header choose the page's order. */
   onOrder?: (order: SegOrder) => void;
@@ -76,8 +84,9 @@ export function SeguimientoSheet({
   callsPaused?: boolean;
   /** The real time when a call is saved; the sheet's `now` is only for what it shows. */
   clock?: () => Date;
+  selection?: SheetSelection | null;
 } & Partial<SheetHandlers> & Pick<SheetHandlers, "onSelect" | "onGuion" | "onCallSaved" | "onReceipt" | "onConflict">) {
-  const [callOpen, setCallOpen] = useState<string | null>(null);
+  const [ui, act] = useSegUi();
   const mayCommand = useMayRunCaseCommands();
   // A call is a note (CRM authoring) plus its reminder (a case command).
   const mayCall = useMayAuthorCrm() && mayCommand;
@@ -86,31 +95,28 @@ export function SeguimientoSheet({
   const callsToday = rows.reduce((sum, r) => sum + r.callsToday, 0);
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   useFlip(bodyRef, rows.map(rowKey).join("|"));
+  const selecting = !!selection;
+  const columns = selecting ? 8 : 7;
+  const allSelected = selecting && rows.length > 0 && rows.every((r) => selection.selected.has(rowKey(r)));
 
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const scrolled = useRef<string | null>(null);
   useEffect(() => {
-    if (!scrollToId || scrolled.current === scrollToId) return;
-    const el = rowRefs.current.get(scrollToId);
+    if (!flashId || scrolled.current === flashId) return;
+    const el = rowRefs.current.get(flashId);
     if (!el) return;
-    scrolled.current = scrollToId;
-    el.scrollIntoView?.({ block: "center" });
-  }, [scrollToId, rows]);
-
-  const nameOf = (id: string | null) => profiles.find((p) => p.id === id)?.displayName ?? null;
+    scrolled.current = flashId;
+    el.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  }, [flashId, rows]);
 
   const sortButton = (key: SegOrder, label: string, right = false) => {
     const active = order === key;
     return (
-      <th
-        scope="col"
-        aria-sort={active ? "descending" : "none"}
-        className={`sticky top-0 z-10 border-b border-line bg-canvas-sunken p-0 ${right ? "text-right" : "text-left"}`}
-      >
+      <th scope="col" aria-sort={active ? "descending" : "none"} className={`${TH} p-0 ${right ? "text-right" : "text-left"}`}>
         <button
           type="button"
           onClick={() => onOrder?.(active ? "prioridad" : key)}
-          className={`inline-flex h-9 w-full items-center gap-1 whitespace-nowrap px-3 text-[11px] font-bold hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600 ${right ? "justify-end" : ""} ${active ? "text-ink" : "text-ink-muted"}`}
+          className={`inline-flex h-9 w-full items-center gap-1 whitespace-nowrap px-2.5 text-[11px] font-bold hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600 ${right ? "justify-end" : ""} ${active ? "text-ink" : "text-ink-muted"}`}
         >
           {label}
           <span className={active ? "text-ink" : "text-ink-faint"}>
@@ -120,163 +126,189 @@ export function SeguimientoSheet({
       </th>
     );
   };
-  const th = (label: ReactNode, cls = "") => (
-    <th scope="col" className={`sticky top-0 z-10 h-9 whitespace-nowrap border-b border-line bg-canvas-sunken px-3 text-left text-[11px] font-bold text-ink-muted ${cls}`}>
-      {label}
-    </th>
-  );
-  const td = "border-b border-line px-3 py-2.5 align-middle";
+  const th = (label: ReactNode, cls = "") => <th scope="col" className={`${TH} h-9 whitespace-nowrap px-2.5 text-left text-[11px] font-bold text-ink-muted ${cls}`}>{label}</th>;
+  const td = "border-b border-line px-2.5 py-2.5 align-top";
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="seg-sheet">
-      {/* `relative`: the screen-reader-only labels inside (absolute) are clipped here, not by the page. */}
-      <div className="relative max-h-[calc(100vh-17rem)] min-h-64 overflow-auto">
-        <table className="w-full min-w-[76rem] border-separate border-spacing-0 text-[13px] tabular-nums">
-          <thead>
-            <tr>
-              {th("Encargado", "left-0 !z-20 w-44 min-w-44 shadow-[1px_0_0] shadow-line")}
-              {th("Cliente y contacto")}
-              {th("Teléfono")}
-              {th("Cotización")}
-              {sortButton("monto", "Monto", true)}
-              {th("Enviada")}
-              {sortButton("dias", "Sin respuesta")}
-              {th("Último toque")}
-              {th("Llamadas", "text-right")}
-              {th("Próximo", "w-36")}
-              {th(<span className="sr-only">Acciones</span>)}
-            </tr>
-          </thead>
-          <tbody ref={bodyRef}>
-            {shown.map(({ item: r, key: id, leaving }) => {
-              const selected = id === selectedId;
-              return (
-                <Fragment key={id}>
-                  <tr
-                    ref={(el) => {
-                      if (el) rowRefs.current.set(id, el);
-                      else rowRefs.current.delete(id);
-                    }}
-                    data-flip={leaving ? undefined : id}
-                    data-leaving={leaving || undefined}
-                    aria-current={selected ? "true" : undefined}
-                    onClick={() => on.onSelect(id)}
-                    className={`transition-colors ${leaving ? "crm-row-out" : ""} ${selected ? "bg-brand-50" : "bg-canvas-raised hover:bg-canvas-sunken"}`}
-                    data-testid={`seg-row-${id}`}
-                  >
-                    <td className={`${td} sticky left-0 z-[1] bg-inherit shadow-[1px_0_0] shadow-line`}>
-                      <div className="flex items-start gap-2">
-                        <span
-                          aria-hidden="true"
-                          className={`mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full text-[10px] font-bold ${r.ownerId || r.suggestedOwnerId ? "bg-canvas-sunken text-ink-muted" : "border border-dashed border-line-strong text-ink-faint"}`}
-                        >
-                          {r.ownerId || r.suggestedOwnerId ? initials(nameOf(r.ownerId ?? r.suggestedOwnerId)) : "?"}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          {mayCommand ? (
-                            <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="owner" />
-                          ) : (
-                            <span className="text-[12.5px] text-ink">{nameOf(r.ownerId) ?? "Sin confirmar"}</span>
-                          )}
-                        </div>
-                      </div>
+    // `overflow-clip`, not `overflow-hidden`: the rounded corners clip, and the header still sticks under the top bar.
+    <div className="overflow-clip rounded-xl border border-line bg-canvas-raised" data-testid="seg-sheet">
+      <table className="w-full table-fixed border-separate border-spacing-0 text-[13px] tabular-nums">
+        <colgroup>
+          {selecting ? <col className="w-11" /> : null}
+          <col className="w-[9rem]" />
+          <col />
+          <col className="w-[6.75rem]" />
+          <col className="w-[6.5rem]" />
+          <col className="w-[11rem]" />
+          <col className="w-[8.5rem]" />
+          <col className="w-[8.5rem]" />
+        </colgroup>
+        <thead>
+          <tr>
+            {selecting ? (
+              <th scope="col" className={`${TH} h-9 px-2.5`}>
+                <input
+                  type="checkbox"
+                  aria-label="Seleccionar todos los visibles"
+                  checked={allSelected}
+                  onChange={selection.onToggleAll}
+                  className="h-5 w-5 accent-[var(--color-brand-700)]"
+                />
+              </th>
+            ) : null}
+            {th("Encargado")}
+            {th("Cliente, contacto y cotización")}
+            {sortButton("monto", "Monto", true)}
+            {sortButton("dias", "Sin respuesta")}
+            {th("Último toque · Próximo")}
+            {th("Teléfono · Llamadas")}
+            {th(<span className="sr-only">Acciones</span>)}
+          </tr>
+        </thead>
+        <tbody ref={bodyRef}>
+          {shown.map(({ item: r, key: id, leaving }) => {
+            const selected = id === selectedId;
+            const flash = id === flashId;
+            const checked = selection?.selected.has(id) ?? false;
+            const client = displayName(r.card).name;
+            const callOpen = ui.callOpen === id && !leaving;
+            return (
+              <Fragment key={id}>
+                <tr
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(id, el);
+                    else rowRefs.current.delete(id);
+                  }}
+                  data-flip={leaving ? undefined : id}
+                  data-leaving={leaving || undefined}
+                  data-flash={flash || undefined}
+                  aria-current={selected ? "true" : undefined}
+                  onClick={() => on.onSelect(id)}
+                  className={`transition-colors duration-300 ${leaving ? "crm-row-out" : ""} ${flash ? "seg-flash" : ""} ${selected || checked ? "bg-brand-50" : "bg-canvas-raised hover:bg-canvas-sunken"}`}
+                  data-testid={`seg-row-${id}`}
+                >
+                  {selecting ? (
+                    <td className={td} onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Seleccionar ${client}`}
+                        checked={checked}
+                        onChange={() => selection.onToggle(id)}
+                        className="mt-0.5 h-5 w-5 accent-[var(--color-brand-700)]"
+                      />
                     </td>
-                    <td className={td}>
-                      <CaseName row={r} onOpen={on.onOpen} />
-                      <div className="max-w-[15rem] truncate text-[12px] text-ink-muted">{contactLine(r.card) ?? "Sin contacto"}</div>
-                    </td>
-                    <td className={`${td} whitespace-nowrap`}>
-                      <PhoneLink row={r} />
-                    </td>
-                    <td className={td}>
-                      <span className="whitespace-nowrap font-mono text-[12px]">
+                  ) : null}
+                  <td className={td}>
+                    {mayCommand ? (
+                      <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="owner" announce />
+                    ) : (
+                      <span className="text-[12.5px] text-ink">{profiles.find((p) => p.id === r.ownerId)?.displayName ?? "Sin confirmar"}</span>
+                    )}
+                  </td>
+                  <td className={`${td} min-w-0`}>
+                    <CaseName row={r} onOpen={on.onOpen} />
+                    <div className="truncate text-[12px] text-ink-muted">{contactLine(r.card) ?? "Sin contacto"}</div>
+                    <div className="truncate text-[12px] text-ink-muted" title={quoteProduct(r.card) ?? undefined}>
+                      <span className="font-mono text-[11.5px] text-ink">
                         {quoteNumberOf(r.card) ?? "Sin número"}
                         {r.card.quote_numbers.length > 1 ? ` +${r.card.quote_numbers.length - 1}` : ""}
                       </span>
-                      <div className="max-w-[13rem] truncate text-[12px] text-ink-muted" title={quoteProduct(r.card) ?? undefined}>
-                        {quoteProduct(r.card) ?? ""}
-                      </div>
-                    </td>
-                    <td className={`${td} whitespace-nowrap text-right font-bold text-ink`}>{cardMoney(r.card).text || <span className="text-ink-faint">Sin monto</span>}</td>
-                    <td className={`${td} whitespace-nowrap text-[12px] text-ink-muted`}>{r.sentAt ? shortDate(r.sentAt, now) : "Sin fecha"}</td>
-                    <td className={td}>
-                      <DaysPill row={r} now={now} />
-                    </td>
-                    <td className={`${td} text-[12px] leading-snug text-ink-muted`}>
+                      {quoteProduct(r.card) ? ` · ${quoteProduct(r.card)}` : ""}
+                    </div>
+                    <LastNote row={r} now={now} />
+                  </td>
+                  <td className={`${td} whitespace-nowrap text-right font-bold text-ink`}>{cardMoney(r.card).text || <span className="font-normal text-ink-faint">Sin monto</span>}</td>
+                  <td className={td}>
+                    <DaysPill row={r} now={now} />
+                    <div className="mt-1 whitespace-nowrap text-[11.5px] text-ink-faint">{r.sentAt ? `env. ${shortDate(r.sentAt, now)}` : "Sin fecha"}</div>
+                  </td>
+                  <td className={`${td} text-[12px] leading-snug text-ink-muted`}>
+                    <div className="line-clamp-2">
                       <LastTouch row={r} now={now} />
-                    </td>
-                    <td className={`${td} whitespace-nowrap text-right`}>
-                      <span data-testid="seg-calls" className="font-bold">
-                        <span className={r.callsToday > 0 ? "text-accent" : "text-ink"}>{r.callsToday}</span>
-                        <small className="text-[11px] font-semibold text-ink-faint"> hoy</small> · {r.callsTotal}
-                      </span>
-                    </td>
-                    <td className={`${td} min-w-[9.5rem]`}>
-                      {mayCommand ? (
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span className="text-ink-faint">Próximo:</span>
+                      <NextDate due={nextReminder(r, now)} now={now} />
+                    </div>
+                    {mayCommand ? (
+                      <div className="mt-1">
                         <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="channel" />
-                      ) : null}
-                      <NextDate due={nextReminder(r)} now={now} />
-                    </td>
-                    <td className={`${td} text-right`}>
-                      <Actions
-                        row={r}
-                        open={callOpen === id}
-                        onGuion={() => on.onGuion(id)}
-                        onToggle={() => setCallOpen(callOpen === id ? null : id)}
-                        onAction={mayCommand && on.onAction ? (a) => on.onAction!(id, a) : undefined}
-                        mayCall={mayCall}
-                        paused={callsPaused}
-                      />
-                    </td>
-                  </tr>
-                  {callOpen === id && !leaving ? (
-                    <SeguimientoCallRow
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className={`${td} min-w-0`}>
+                    <ContactButtons row={r} profiles={profiles} compact />
+                    <div data-testid="seg-calls" className="mt-1 whitespace-nowrap text-[12px] font-bold">
+                      <span className={r.callsToday > 0 ? "text-accent" : "text-ink"}>{r.callsToday}</span>
+                      <small className="text-[11px] font-semibold text-ink-faint"> hoy</small> · {r.callsTotal}
+                      <small className="text-[11px] font-semibold text-ink-faint"> {r.callsTotal === 1 ? "llamada" : "llamadas"}</small>
+                    </div>
+                  </td>
+                  <td className={`${td} text-right`}>
+                    <Actions
                       row={r}
-                      colSpan={COLUMNS}
-                      clock={clock}
-                      onCancel={() => setCallOpen(null)}
-                      onSaved={(said) => {
-                        setCallOpen(null);
-                        on.onCallSaved(id, said);
-                      }}
+                      open={callOpen}
+                      onGuion={() => on.onGuion(id)}
+                      onToggle={() => act.openCall(callOpen ? null : id)}
+                      onAction={mayCommand && on.onAction ? (a) => on.onAction!(id, a) : undefined}
+                      mayCall={mayCall}
+                      paused={callsPaused}
                     />
-                  ) : null}
-                </Fragment>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr className="text-[12.5px] font-bold text-ink" data-testid="seg-total">
-              <td className="sticky bottom-0 left-0 z-20 border-t border-line bg-canvas-sunken px-3 py-2.5 shadow-[1px_0_0] shadow-line">
-                {rows.length} casos
-              </td>
-              <td colSpan={3} className="sticky bottom-0 z-10 border-t border-line bg-canvas-sunken" />
-              <td className="sticky bottom-0 z-10 whitespace-nowrap border-t border-line bg-canvas-sunken px-3 py-2.5 text-right" data-testid="seg-total-money">
-                {formatMoney(String(total), "CLP")}
-              </td>
-              <td colSpan={3} className="sticky bottom-0 z-10 border-t border-line bg-canvas-sunken" />
-              <td className="sticky bottom-0 z-10 whitespace-nowrap border-t border-line bg-canvas-sunken px-3 py-2.5 text-right">{callsToday} hoy</td>
-              <td colSpan={2} className="sticky bottom-0 z-10 border-t border-line bg-canvas-sunken" />
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+                  </td>
+                </tr>
+                {callOpen ? (
+                  <SeguimientoCallRow
+                    row={r}
+                    colSpan={columns}
+                    clock={clock}
+                    onCancel={() => act.openCall(null)}
+                    onSaved={(said) => {
+                      act.openCall(null);
+                      on.onCallSaved(id, said);
+                    }}
+                  />
+                ) : null}
+              </Fragment>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="text-[12.5px] font-bold text-ink" data-testid="seg-total">
+            <td colSpan={selecting ? 3 : 2} className={TF}>
+              {rows.length} casos
+            </td>
+            <td className={`${TF} whitespace-nowrap text-right`} data-testid="seg-total-money">
+              {formatMoney(String(total), "CLP")}
+            </td>
+            <td colSpan={2} className={TF} />
+            <td className={`${TF} whitespace-nowrap`}>{callsToday} hoy</td>
+            <td className={TF} />
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }
 
+/** The header sticks under the 48 px top bar while the page scrolls. */
+const TH = "sticky top-12 z-10 border-b border-line bg-canvas-sunken";
+const TF = "sticky bottom-0 z-10 border-t border-line bg-canvas-sunken px-2.5 py-2.5";
+
 /** The case's name: a button that opens it, or plain text where no drawer is offered. */
-export function CaseName({ row, onOpen }: { row: SegRow; onOpen?: (id: string) => void }) {
+export function CaseName({ row, onOpen, wrap = false }: { row: SegRow; onOpen?: (id: string) => void; wrap?: boolean }) {
   const name = displayName(row.card).name;
-  const cls = "block max-w-[15rem] truncate text-left font-bold leading-tight text-ink";
+  // On a card the name wraps (two lines at most) instead of running under the amount.
+  const cls = `block min-h-6 max-w-full text-left font-bold leading-tight text-ink ${wrap ? "line-clamp-2 break-words" : "truncate"}`;
   if (!onOpen) return <div className={cls} title={name}>{name}</div>;
+  const id = row.card.opportunity_id;
   return (
     <button
       type="button"
       title={`Abrir el caso de ${name}`}
+      data-case={id}
       onClick={(e) => {
         e.stopPropagation();
-        onOpen(row.card.opportunity_id);
+        onOpen(id);
       }}
       className={`${cls} rounded-sm hover:text-accent hover:underline hover:underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600`}
     >
@@ -293,6 +325,7 @@ export function Actions({
   onGuion,
   onToggle,
   onAction,
+  guionButton = false,
 }: {
   row: SegRow;
   open: boolean;
@@ -301,37 +334,24 @@ export function Actions({
   onGuion?: () => void;
   onToggle: () => void;
   onAction?: (action: RowAction) => void;
+  /** Show the guion as a button of its own (cards), not only in «⋯». */
+  guionButton?: boolean;
 }) {
   const client = displayName(row.card).name;
   const gmail = caseGmailUrl(row.card);
   return (
-    <div className="flex items-center justify-end gap-1.5">
-      {gmail ? (
-        <a
-          href={gmail}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Abrir el correo de ${client} en Gmail`}
-          title="Abrir el hilo en Gmail"
-          onClick={(e) => e.stopPropagation()}
-          className={ICON_BUTTON}
-        >
-          <Icon d={MAIL_ICON} />
-        </a>
-      ) : (
-        <span className="w-9" aria-hidden="true" />
-      )}
-      {onGuion ? (
-        <button type="button" aria-label={`Ver guion para ${client}`} title="Guion de llamada" onClick={onGuion} className={ICON_BUTTON}>
-          <Icon d={SCRIPT_ICON} />
-        </button>
+    <div className="flex flex-wrap items-center justify-end gap-1.5 xl:flex-nowrap">
+      {guionButton && onGuion ? (
+        <Button aria-label={`Ver guion para ${client}`} onClick={onGuion} className="max-sm:h-11">
+          Guion
+        </Button>
       ) : null}
       {mayCall ? (
-        <Button variant="primary" aria-expanded={open} disabled={paused && !open} onClick={onToggle} className="h-9">
+        <Button variant="primary" aria-expanded={open} disabled={paused && !open} onClick={onToggle} className="h-11 px-4 text-[13px] sm:h-9">
           Llamé
         </Button>
       ) : null}
-      {onAction ? <RowMenu client={client} onAction={onAction} /> : null}
+      <RowMenu id={row.card.opportunity_id} client={client} onAction={onAction} gmail={gmail} onGuion={guionButton ? undefined : onGuion} />
     </div>
   );
 }

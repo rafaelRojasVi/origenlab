@@ -190,11 +190,14 @@ export function SearchInput({
   onChange,
   placeholder,
   label,
+  className,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
   label: string;
+  /** Extra classes (a page's tap-target size). */
+  className?: string;
 }) {
   return (
     <input
@@ -203,7 +206,7 @@ export function SearchInput({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="h-7 w-full rounded-md border border-line bg-canvas-raised px-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 sm:w-64"
+      className={`h-7 w-full rounded-md border border-line bg-canvas-raised px-2.5 text-xs text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600 sm:w-64${className ? ` ${className}` : ""}`}
     />
   );
 }
@@ -889,6 +892,8 @@ export function SelectInput({
   invalid,
   describedBy,
   placeholder,
+  className,
+  ariaLabel,
 }: {
   id?: string;
   value: string;
@@ -899,9 +904,13 @@ export function SelectInput({
   invalid?: boolean;
   describedBy?: string;
   placeholder?: string;
+  /** Extra classes (a page's tap-target size). */
+  className?: string;
+  ariaLabel?: string;
 }) {
   return (
     <select
+      aria-label={ariaLabel}
       id={id}
       value={value}
       onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
@@ -909,7 +918,7 @@ export function SelectInput({
       disabled={disabled}
       aria-invalid={invalid || undefined}
       aria-describedby={describedBy}
-      className={INPUT_CLS}
+      className={className ? `${INPUT_CLS} ${className}` : INPUT_CLS}
     >
       {placeholder ? <option value="">{placeholder}</option> : null}
       {options.map((o) => (
