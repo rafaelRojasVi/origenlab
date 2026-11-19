@@ -1,11 +1,13 @@
 /**
  * «Encargado» and «Próximo contacto» for one case: who follows it and by which channel. Used in Hoy's
- * case panel and, `compact`, in the Seguimiento sheet. Every change is one command carrying the full
+ * case panel and, `compact`, in the Seguimiento sheet, where `only` puts each select in its own
+ * column (the other value is still sent, as the card holds it). Every change is one command carrying the full
  * pair, so the API never holds a half-set state, and the next command uses the version the last
  * receipt returned (two quick changes never collide).
  */
 import { useEffect, useRef, useState } from "react";
 import type { ProfileCard } from "../../api/authClient";
+import { OperatorApiError } from "../../api/operatorClient";
 import {
   caseRefusalText,
   setCaseFollowUp,
@@ -23,11 +25,17 @@ export function FollowUpPicker({
   profiles,
   onChanged,
   compact = false,
+  only,
+  onConflict,
 }: {
   card: OpportunityCardData;
   profiles: ProfileCard[];
   onChanged: (receipt: CaseCommandReceipt) => void;
   compact?: boolean;
+  /** Render just one of the two selects (a sheet column each). */
+  only?: "owner" | "channel";
+  /** The case changed under us (409): the page refetches it. */
+  onConflict?: () => void;
 }) {
   const may = useMayRunCaseCommands();
   const [ownerId, setOwnerId] = useState<string | null>(card.follow_up?.operator_id ?? null);
@@ -71,6 +79,7 @@ export function FollowUpPicker({
       onChanged(receipt);
     } catch (err) {
       toast(caseRefusalText(err), "bad");
+      if (err instanceof OperatorApiError && err.status === 409) onConflict?.();
     } finally {
       setBusy(false);
     }
@@ -81,12 +90,13 @@ export function FollowUpPicker({
     ...profiles.map((p) => ({ value: p.id, label: p.id === suggested ? `${p.displayName} (sugerido)` : p.displayName })),
   ];
   const channelOptions = channelsFor(shownOwner, profiles).map((c) => ({ value: c, label: CHANNEL_LABEL[c] }));
-  const label = "mb-1 block text-[12px] font-semibold text-ink-muted";
+  // In the sheet the column header names the select; the label stays for screen readers.
+  const label = compact ? "sr-only" : "mb-1 block text-[12px] font-semibold text-ink-muted";
   const ids = `follow-up-${card.opportunity_id}`;
 
   return (
     <div className={compact ? "flex flex-wrap items-end gap-2" : "grid gap-3 sm:grid-cols-2"} data-testid="follow-up-picker">
-      <div className="min-w-0">
+      {only !== "channel" ? <div className="min-w-0">
         <label htmlFor={`${ids}-owner`} className={label}>Encargado</label>
         <SelectInput
           id={`${ids}-owner`}
@@ -97,14 +107,19 @@ export function FollowUpPicker({
         />
         {suggested ? (
           <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-muted">
-            <span>{suggestedName} es el sugerido.</span>
-            <Button variant="secondary" busy={busy} onClick={() => void save(suggested, shownChannel)}>
+            <span>{compact ? "Sugerido" : `${suggestedName} es el sugerido.`}</span>
+            <Button
+              variant={compact ? "quiet" : "secondary"}
+              busy={busy}
+              aria-label={`Confirmar a ${suggestedName}`}
+              onClick={() => void save(suggested, shownChannel)}
+            >
               Confirmar
             </Button>
           </div>
         ) : null}
-      </div>
-      <div className="min-w-0">
+      </div> : null}
+      {only !== "owner" ? <div className="min-w-0">
         <label htmlFor={`${ids}-channel`} className={label}>Próximo contacto</label>
         <SelectInput
           id={`${ids}-channel`}
@@ -113,7 +128,7 @@ export function FollowUpPicker({
           options={channelOptions}
           onChange={(v) => void save(shownOwner, v as FollowUpChannel)}
         />
-      </div>
+      </div> : null}
     </div>
   );
 }

@@ -18,6 +18,7 @@ import { useTheme, type ThemeChoice } from "../lib/theme";
  * chunk, fetched the first time it is opened (the browser keeps it after that).
  */
 const PipelinePage = lazyPage(() => import("./pages/PipelinePage").then((m) => m.PipelinePage));
+const SeguimientoPage = lazyPage(() => import("./pages/SeguimientoPage").then((m) => m.SeguimientoPage));
 const OrganizationsPage = lazyPage(() => import("./pages/OrganizationsPage").then((m) => m.OrganizationsPage));
 const PeoplePage = lazyPage(() => import("./pages/PeoplePage").then((m) => m.PeoplePage));
 const CatalogPage = lazyPage(() => import("./pages/CatalogPage").then((m) => m.CatalogPage));
@@ -69,7 +70,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
   }, []);
   const title = sectionTitle(route.section);
   // The Tablero, Cotizador, and Hoy use the whole screen; reading pages keep a comfortable line length.
-  const wide = route.section === "oportunidades" || route.section === "cotizador" || route.section === "resumen";
+  const wide = route.section === "oportunidades" || route.section === "seguimiento" || route.section === "cotizador" || route.section === "resumen";
   // A «Datos» tab is part of the address: a link to another tab remounts the page on it.
   const routeKey = route.tab ? `${route.section}/${route.tab}` : route.section;
 
@@ -142,6 +143,8 @@ function Section({
   switch (section) {
     case "oportunidades":
       return <PipelinePage key={id ?? "all"} initialOpportunityId={id} />;
+    case "seguimiento":
+      return <SeguimientoPage initialOpportunityId={id} />;
     case "organizaciones":
       return <OrganizationsPage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "personas":

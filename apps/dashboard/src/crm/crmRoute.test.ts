@@ -9,6 +9,7 @@ describe("section paths", () => {
     expect(SECTION_PATH).toEqual({
       resumen: "hoy",
       oportunidades: "ventas/pipeline",
+      seguimiento: "ventas/seguimiento",
       cotizador: "ventas/cotizaciones",
       organizaciones: "ventas/clientes",
       personas: "ventas/clientes/personas",
@@ -67,6 +68,7 @@ describe("section paths", () => {
 
   it("keeps a page's own query out of the route", () => {
     expect(parseCrmHash("#/catalogo?s=x&q=y")).toEqual({ section: "catalogo", id: null });
+    expect(parseCrmHash(`#/ventas/seguimiento?caso=${ID}&encargado=karla`)).toEqual({ section: "seguimiento", id: null });
     expect(parseCrmHash(`#/catalogo/${ID}?q=y`)).toEqual({ section: "catalogo", id: ID });
   });
 

@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState, ProfileCard } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData } from "../crmTypes";
+import { useState } from "react";
+import { applyCaseReceipt, type CaseCommandReceipt } from "../caseCommands";
 import { FollowUpPicker } from "./FollowUpPicker";
 
 // Every value below is invented; the repository is public.
@@ -164,5 +166,63 @@ describe("FollowUpPicker", () => {
   it("hidden for viewer role", () => {
     renderPicker(card(), "viewer");
     expect(screen.queryByLabelText("Encargado")).not.toBeInTheDocument();
+  });
+
+  it("only renders one of the two selects, with the other kept in the command", async () => {
+    const posts = stubPosts();
+    const c = card({ follow_up: { operator_id: "op-tati", operator_name: "Tati", channel: "whatsapp" } });
+    const { unmount } = render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <FollowUpPicker card={c} profiles={PROFILES} onChanged={vi.fn()} compact only="owner" />
+      </AuthSessionContext.Provider>,
+    );
+    expect(screen.queryByLabelText("Próximo contacto")).not.toBeInTheDocument();
+    fireEvent.change(owner(), { target: { value: "op-karla" } });
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].body).toMatchObject({ follow_up_operator_id: "op-karla", channel: "llamada" });
+    unmount();
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <FollowUpPicker card={c} profiles={PROFILES} onChanged={vi.fn()} compact only="channel" />
+      </AuthSessionContext.Provider>,
+    );
+    expect(screen.queryByLabelText("Encargado")).not.toBeInTheDocument();
+    expect(channel().value).toBe("whatsapp");
+  });
+
+  it("owner then channel on two pickers of one row use the version the first receipt returned", async () => {
+    const posts = stubPosts();
+    function Row() {
+      const [c, setC] = useState(card({ follow_up: { operator_id: "op-karla", operator_name: "Karla", channel: "llamada" } }));
+      const apply = (r: CaseCommandReceipt) => setC((prev) => applyCaseReceipt([prev], r)[0]);
+      return (
+        <>
+          <FollowUpPicker card={c} profiles={PROFILES} onChanged={apply} compact only="owner" />
+          <FollowUpPicker card={c} profiles={PROFILES} onChanged={apply} compact only="channel" />
+        </>
+      );
+    }
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <Row />
+      </AuthSessionContext.Provider>,
+    );
+    fireEvent.change(owner(), { target: { value: "op-tati" } });
+    await waitFor(() => expect(optionTexts(channel())).toContain("whatsapp"));
+    fireEvent.change(channel(), { target: { value: "whatsapp" } });
+    await waitFor(() => expect(posts).toHaveLength(2));
+    expect(posts[1].body).toMatchObject({ opportunity_version: 5, follow_up_operator_id: "op-tati", channel: "whatsapp" });
+  });
+
+  it("a 409 asks the page to refetch", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("{}", { status: 409 }))));
+    const onConflict = vi.fn();
+    render(
+      <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
+        <FollowUpPicker card={card()} profiles={PROFILES} onChanged={vi.fn()} onConflict={onConflict} />
+      </AuthSessionContext.Provider>,
+    );
+    fireEvent.change(owner(), { target: { value: "op-karla" } });
+    await waitFor(() => expect(onConflict).toHaveBeenCalledTimes(1));
   });
 });

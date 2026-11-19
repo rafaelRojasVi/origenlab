@@ -366,13 +366,13 @@ describe("dashboard shell", () => {
     expect(within(nav).getByRole("link", { name: "Hoy" })).not.toHaveAttribute("aria-current");
   });
 
-  it("Ventas shows its five tabs and marks Pipeline current", async () => {
+  it("Ventas shows its six tabs and marks Pipeline current", async () => {
     signedInAt(`#/ventas/pipeline`);
     const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
     const links = tabs.getAllByRole("link");
-    expect(links.map((a) => a.textContent)).toEqual(["Pipeline", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(links.map((a) => a.textContent)).toEqual(["Pipeline", "Seguimiento", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
-      "#/ventas/pipeline", "#/ventas/cotizaciones", "#/ventas/clientes", "#/ventas/listas", "#/ventas/licitaciones",
+      "#/ventas/pipeline", "#/ventas/seguimiento", "#/ventas/cotizaciones", "#/ventas/clientes", "#/ventas/listas", "#/ventas/licitaciones",
     ]);
     expect(links.filter((a) => a.getAttribute("aria-current") === "page").map((a) => a.textContent)).toEqual(["Pipeline"]);
     // The side nav lists the same tabs under the open area.
@@ -385,7 +385,7 @@ describe("dashboard shell", () => {
   it("viewer sees no Cotizaciones tab", async () => {
     signedInAt(`#/ventas/pipeline`, "viewer");
     const tabs = within(await screen.findByRole("navigation", { name: "Pestañas de Ventas" }));
-    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Pipeline", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(tabs.getAllByRole("link").map((a) => a.textContent)).toEqual(["Pipeline", "Seguimiento", "Clientes", "Listas y llamadas", "Licitaciones"]);
     expect(within(await sideNav()).queryByRole("link", { name: "Cotizaciones" })).not.toBeInTheDocument();
   });
 

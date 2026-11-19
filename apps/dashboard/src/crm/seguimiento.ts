@@ -128,6 +128,11 @@ function santiagoDaysSince(at: string, now: Date): number {
 const onSantiagoDay = (at: string | null | undefined, now: Date): boolean =>
   !!at && dateSantiago(new Date(at)) === dateSantiago(now);
 
+/** A call or one of our emails on the Santiago day of `now`. */
+export function touchedToday(row: SegRow, now: Date): boolean {
+  return row.callsToday > 0 || onSantiagoDay(row.card.last_contact?.outbound?.at, now);
+}
+
 function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date): SegRow {
   const sentAt = sentAtOf(card);
   const outbound = card.last_contact?.outbound?.at ?? null;
@@ -196,9 +201,14 @@ export function seguimientoKpis(
     callsByOperator,
     callsToday: callsByOperator.reduce((sum, o) => sum + o.today, 0),
     goal: PILOT_CALLS_PER_DAY,
-    touchedToday: rows.filter((r) => r.callsToday > 0 || onSantiagoDay(r.card.last_contact?.outbound?.at, now)).length,
+    touchedToday: rows.filter((r) => touchedToday(r, now)).length,
     late: rows.filter((r) => r.late).length,
     emailsToday: rows.filter((r) => onSantiagoDay(r.card.last_contact?.outbound?.at, now)).length,
     moneyClp: rows.reduce((sum, r) => sum + (r.amountClp ?? 0), 0),
   };
+}
+
+/** The quote number a row is known by: the amount's, else the latest revision's, else the case's first. */
+export function quoteNumberOf(card: OpportunityCardData): string | null {
+  return (card.money ?? [])[0]?.quote_number ?? card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? null;
 }

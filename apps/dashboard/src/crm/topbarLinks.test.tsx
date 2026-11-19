@@ -60,7 +60,7 @@ describe("the Cotizador section", () => {
     return paths;
   }
 
-  it("is Ventas' «Cotizaciones» tab for sales, after Pipeline, lit while open", async () => {
+  it("is Ventas' «Cotizaciones» tab for sales, after Pipeline and Seguimiento, lit while open", async () => {
     stubFetch();
     render(
       <AuthSessionContext.Provider value={{ session: session("sales"), signOut: async () => true }}>
@@ -70,7 +70,7 @@ describe("the Cotizador section", () => {
     expect(document.title).toBe("Cotizaciones · OrigenLab");
     const menu = within(screen.getByRole("navigation", { name: "Secciones del panel" }));
     const names = menu.getAllByRole("link").map((a) => a.textContent);
-    expect(names.indexOf("Cotizaciones")).toBe(names.indexOf("Pipeline") + 1);
+    expect(names.indexOf("Cotizaciones")).toBe(names.indexOf("Pipeline") + 2);
     expect(names.indexOf("Clientes")).toBe(names.indexOf("Cotizaciones") + 1);
     expect(menu.getByRole("link", { name: "Licitaciones" })).toHaveAttribute("href", "#/ventas/licitaciones");
     expect(menu.getByRole("link", { name: "Ventas" })).toHaveAttribute("aria-current", "true");
@@ -99,5 +99,57 @@ describe("the Cotizador section", () => {
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(paths.some((p) => p.startsWith("/v2/quotes"))).toBe(false);
     expect(localStorage.getItem("cotizador:tabs:op-viewer")).toBeNull();
+  });
+});
+
+describe("the Seguimiento section", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearResourceCache();
+  });
+
+  const session: AuthSessionState = {
+    kind: "signed_in",
+    method: "google_profile",
+    operator: { operatorId: "op-sales", email: "ventas@example.cl", displayName: "Ventas", role: "sales" },
+    caseCommandsEnabled: true,
+    crmAuthoringEnabled: true,
+  };
+  function stubEmpty() {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const path = new URL(raw, "http://localhost").pathname;
+        const body = path.endsWith("/pipeline") ? { items: [], total: 0, drive_configured: false } : { profiles: [] };
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+      }),
+    );
+  }
+
+  it("tab appears after Pipeline", () => {
+    stubEmpty();
+    render(
+      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+        <CrmApp route={{ section: "seguimiento", id: null }} />
+      </AuthSessionContext.Provider>,
+    );
+    const tabs = within(screen.getByRole("navigation", { name: "Pestañas de Ventas" }));
+    const names = tabs.getAllByRole("link").map((a) => a.textContent);
+    expect(names.indexOf("Seguimiento")).toBe(names.indexOf("Pipeline") + 1);
+    expect(tabs.getByRole("link", { name: "Seguimiento" })).toHaveAttribute("href", "#/ventas/seguimiento");
+    expect(tabs.getByRole("link", { name: "Seguimiento" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("route ventas/seguimiento renders SeguimientoPage", async () => {
+    stubEmpty();
+    render(
+      <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
+        <CrmApp route={{ section: "seguimiento", id: null }} />
+      </AuthSessionContext.Provider>,
+    );
+    expect(document.title).toBe("Seguimiento · OrigenLab");
+    expect(await screen.findByRole("heading", { name: "Seguimiento" }, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText("No hay cotizaciones enviadas esperando respuesta.")).toBeInTheDocument();
   });
 });

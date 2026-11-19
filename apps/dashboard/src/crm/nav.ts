@@ -27,6 +27,7 @@ export const AREAS: Area[] = [
     label: "Ventas",
     tabs: [
       { label: "Pipeline", sections: ["oportunidades"] },
+      { label: "Seguimiento", sections: ["seguimiento"] },
       { label: "Cotizaciones", sections: ["cotizador"], quoting: true },
       { label: "Clientes", sections: ["organizaciones", "personas"] },
       { label: "Listas y llamadas", sections: ["prospectos", "marketing"] },
