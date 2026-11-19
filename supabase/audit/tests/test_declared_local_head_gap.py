@@ -119,8 +119,8 @@ def current_head_report():
             "RLS policies: 2 entr(y|ies) in the baseline are absent here: " + REMOVED,
             "RLS policies: 124 entr(y|ies) are present here and not in the baseline: " + policies]),
         _check("a10", "FAIL",
-               {"foreign_key_count": 207, "covered_count": 207, "covered_unconditionally": 162},
-               ["foreign keys: observed 207, expected 102"]),
+               {"foreign_key_count": 208, "covered_count": 208, "covered_unconditionally": 162},
+               ["foreign keys: observed 208, expected 102"]),
     ]
     return {
         "run": {"mode": "local", "simulated": False, "hosted_contacted": False},
@@ -426,8 +426,8 @@ class DeclaredGapTest(unittest.TestCase):
         self.assert_refused(report, "a09.policy_count: observed 240, expected 249")
 
     def test_the_historical_origin_foreign_key_is_declared(self):
-        self.assertEqual(89, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
-        self.assertEqual(207, gap.EXPECTED_FOREIGN_KEY_COUNT)
+        self.assertEqual(90, len(gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS))
+        self.assertEqual(208, gap.EXPECTED_FOREIGN_KEY_COUNT)
         self.assertEqual(162, gap.EXPECTED_COVERED_UNCONDITIONALLY)
         self.assertIn("platform.auth_session.(account_operator_id, sign_in_kind)"
                       " -> platform.operator.(id, sign_in_kind)", gap.POST_COMMERCIAL_CASE_FOREIGN_KEYS)
@@ -478,7 +478,7 @@ class DeclaredGapTest(unittest.TestCase):
         a10 = check_of(report, "a10")
         a10["summary"].update(foreign_key_count=202, covered_count=202)
         a10["findings"] = ["foreign keys: observed 202, expected 102"]
-        self.assert_refused(report, "a10.foreign_key_count: observed 202, expected 207")
+        self.assert_refused(report, "a10.foreign_key_count: observed 202, expected 208")
 
     def test_another_required_check_failing_is_refused(self):
         report = current_head_report()
