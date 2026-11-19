@@ -11,6 +11,7 @@ import { OriginSelect } from "../authoring/OriginSelect";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { isReopenable, mayCarryAQuote, useMayRunCaseCommands, winnableRevisions } from "../caseCommands";
 import { quoteProduct, systemNotes } from "../caseDisplay";
+import { fetchProfiles, type ProfileCard } from "../../api/authClient";
 import { fetchCaseNotes } from "../crmApi";
 import { crmHash } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
@@ -22,6 +23,7 @@ import { CaseMemory } from "../pages/CaseMemory";
 import type { MoveTarget } from "../pages/CaseMove";
 import { CaseLinkIcons, CaseMoneySummary, QuoteList } from "../pages/CaseQuotes";
 import { CaseThreads } from "../pages/CaseThreads";
+import { FollowUpPicker } from "../pages/FollowUpPicker";
 import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { isMaskedAddress } from "../redaction";
@@ -147,6 +149,12 @@ function CaseDrawerBody({
   const mayAuthor = useMayAuthorCrm();
   const mayQuote = useMayRunCaseCommands();
   const mayOpenCotizador = useMayOpenCotizador();
+  // Hoy's pane names the encargado and next channel; the drawer does not (Seguimiento does).
+  const [profileState] = useResource<ProfileCard[]>(
+    async () => (embedded ? ((r) => (r.kind === "ok" ? r.profiles : []))(await fetchProfiles()) : []),
+    [embedded],
+  );
+  const profiles = profileState.kind === "ready" ? profileState.data : [];
   const lifted = hoistedActions(card, mayQuote, mayAuthor);
   const [tab, setTab] = useState<DrawerTab>("resumen");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -283,6 +291,14 @@ function CaseDrawerBody({
         </div>
       ) : null}
       {stepper}
+      {embedded && profiles.length > 0 ? (
+        <section className="space-y-1.5" aria-label="Seguimiento" data-testid="case-inline-follow-up">
+          <FollowUpPicker card={card} profiles={profiles} onChanged={() => onChanged()} />
+          <a href={`#/ventas/seguimiento?caso=${card.opportunity_id}`} className="text-[12.5px] font-medium text-accent hover:underline">
+            Ver en Seguimiento
+          </a>
+        </section>
+      ) : null}
       {iconStrip}
       {moreOpen ? (
         <ul className="grid gap-1 rounded-lg border border-line p-1.5" data-testid="case-inline-more">
