@@ -316,6 +316,8 @@ export interface OpportunityCardData {
   call_counts?: { total: number; today: number };
   /** The newest call whatever its outcome; `last_call` only keeps those that reached the client. */
   last_call_any?: { at: string; outcome: string; author_name: string | null } | null;
+  /** «Seguimiento»: the three newest live notes and calls, newest first (`kind` "llamada" for a call). */
+  recent_notes?: { at: string; body: string; kind: string | null; outcome: string | null; author: string | null }[];
   /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
   next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
 }

@@ -242,3 +242,25 @@ def test_pipeline_masks_contact_phone_for_viewer(disposable_database, world) -> 
     [masked] = [c for c in response.json()["items"] if c["opportunity_id"] == case_id]
     assert masked["contact"]["phone"] == "***"
     assert number not in response.text
+
+
+@needs_db
+def test_card_carries_the_three_newest_notes_and_calls(disposable_database, world) -> None:
+    """«Seguimiento»'s notes on the row: the three newest live notes and calls, newest first, in one read."""
+    dsn = disposable_database
+    case_id, _ = _open_case(_repo(dsn), world, "Caso con notas")
+    op = world["operator_id"]
+    _owner(dsn, "insert into crm.note (subject_kind, subject_id, body, author_operator_id, created_at) values "
+                "('opportunity', %s, 'Nota más antigua.', %s, %s)", (case_id, op, NOW - timedelta(days=3)))
+    _call(dsn, case_id, op, NOW - timedelta(days=2), "contesto")
+    _owner(dsn, "insert into crm.note (subject_kind, subject_id, body, author_operator_id, created_at) values "
+                "('opportunity', %s, 'Pide la ficha técnica del equipo ficticio.', %s, %s)",
+           (case_id, op, NOW - timedelta(hours=5)))
+    _call(dsn, case_id, op, NOW - timedelta(hours=1))
+    card, _ = _card(dsn, case_id)
+    notes = card["recent_notes"]
+    assert [(n["kind"], n["outcome"]) for n in notes] == [("llamada", "no_contesto"), (None, None), ("llamada", "contesto")]
+    assert notes[1]["body"] == "Pide la ficha técnica del equipo ficticio."
+    assert notes[0]["author"] == "Pytest Operator" and notes[0]["at"].endswith("Z")
+    other, _ = _card(dsn, _open_case(_repo(dsn), world, "Caso sin notas")[0])
+    assert other["recent_notes"] == []

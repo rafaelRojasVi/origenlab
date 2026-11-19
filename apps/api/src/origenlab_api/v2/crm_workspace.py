@@ -465,6 +465,32 @@ _SQL_PIPELINE_LAST_CALL_ANY = _LIVE_CALLS_CTE + """
      where c.subject_kind = 'opportunity'
      order by c.subject_id, c.logged_at desc, c.id desc
 """
+# «Seguimiento»'s notes on the row: the three newest live notes and calls of each live case (open,
+# or won), newest first, in one read (no per-case query). A call's time and author are its root's
+# (when it happened, `occurred_at`), like the other call reads; an edited note shows its newest text.
+_SQL_PIPELINE_RECENT_NOTES = """
+    select opportunity_id, at, body, kind, outcome, author_display_name
+      from (
+        select n.subject_id::text as opportunity_id,
+               to_char(coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) at time zone 'UTC',
+                       'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+               left(n.body, 160) as body, n.note_kind as kind, n.call_outcome as outcome,
+               o.display_name as author_display_name,
+               row_number() over (
+                 partition by n.subject_id
+                 order by coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) desc, n.id desc
+               ) as rn
+          from crm.note n
+          left join crm.note r on r.id = n.root_note_id
+          join platform.operator o on o.id = coalesce(r.author_operator_id, n.author_operator_id)
+          join crm.opportunity op on op.id = n.subject_id
+         where n.subject_kind = 'opportunity' and n.status = 'active'
+           and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
+           and (op.closed_at is null or op.stage = 'won')
+      ) recent
+     where rn <= 3
+     order by opportunity_id, rn
+"""
 # Today's calls per operator, on a person, an institution or a case (the sheet's KPI per person).
 _SQL_PIPELINE_CALLS_BY_OPERATOR = _LIVE_CALLS_CTE + """
     select c.author_operator_id::text as operator_id, o.display_name as operator_name, count(*)::int as today
@@ -1044,6 +1070,7 @@ def compose_pipeline(
     phones: Mapping[str, Mapping[str, Any]] | None = None,
     call_counts: Mapping[str, Mapping[str, Any]] | None = None,
     last_calls_any: list[Mapping[str, Any]] | None = None,
+    recent_notes: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -1100,6 +1127,14 @@ def compose_pipeline(
         if current is None or str(row["at"]) > str(current["at"]):
             call_any_by_opp[row["opportunity_id"]] = {
                 "at": row["at"], "outcome": row["outcome"], "author_name": row.get("author_display_name")}
+
+    # The three newest notes and calls per case (`_SQL_PIPELINE_RECENT_NOTES`), newest first.
+    recent_by_opp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sorted(recent_notes or [], key=lambda r: str(r["at"]), reverse=True):
+        kept = recent_by_opp[row["opportunity_id"]]
+        if len(kept) < 3:
+            kept.append({"at": row["at"], "body": row["body"], "kind": row.get("kind"),
+                         "outcome": row.get("outcome"), "author": row.get("author_display_name")})
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -1365,6 +1400,7 @@ def compose_pipeline(
                     "today": int((call_counts or {}).get(oid, {}).get("today", 0)),
                 },
                 "last_call_any": call_any_by_opp.get(oid),
+                "recent_notes": recent_by_opp.get(oid, []),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
                 or suggest_next_action(opp, blocked, live_latest, last_contact=(contacts or {}).get(oid)),
             }
@@ -1665,7 +1701,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 13 data queries in 1 RTT via psycopg pipeline mode.
+            # 18 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1683,6 +1719,7 @@ class CrmWorkspaceRepository:
             cur_call_counts = conn.cursor()
             cur_last_call_any = conn.cursor()
             cur_calls_by_operator = conn.cursor()
+            cur_recent_notes = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1703,6 +1740,7 @@ class CrmWorkspaceRepository:
                 cur_call_counts.execute(_SQL_PIPELINE_CALL_COUNTS, {"today": today})
                 cur_last_call_any.execute(_SQL_PIPELINE_LAST_CALL_ANY)
                 cur_calls_by_operator.execute(_SQL_PIPELINE_CALLS_BY_OPERATOR, {"today": today})
+                cur_recent_notes.execute(_SQL_PIPELINE_RECENT_NOTES)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1731,12 +1769,13 @@ class CrmWorkspaceRepository:
             call_counts = {r["opportunity_id"]: r for r in self._rows(cur_call_counts)}
             last_calls_any = self._rows(cur_last_call_any)
             calls_by_operator = self._rows(cur_calls_by_operator)
+            recent_notes = self._rows(cur_recent_notes)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
             opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes,
             documents=documents, last_calls=last_calls, phones=phones, call_counts=call_counts,
-            last_calls_any=last_calls_any,
+            last_calls_any=last_calls_any, recent_notes=recent_notes,
         )
         return {
             "items": cards,
