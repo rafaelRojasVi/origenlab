@@ -32,6 +32,39 @@ export function dateSantiago(now: Date): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
 
+/** The Santiago wall-clock parts of an instant. */
+function santiagoParts(at: Date): { y: number; mo: number; d: number; h: number; mi: number } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    })
+      .formatToParts(at)
+      .map((p) => [p.type, Number(p.value)]),
+  );
+  return { y: parts.year, mo: parts.month, d: parts.day, h: parts.hour, mi: parts.minute };
+}
+
+/** `HH:00` of the current Santiago hour (a time input's default). */
+export function santiagoHour(now: Date): string {
+  return `${String(santiagoParts(now).h).padStart(2, "0")}:00`;
+}
+
+/**
+ * The instant of a Santiago wall-clock `day` (`YYYY-MM-DD`) and `time` (`HH:MM`), as ISO 8601 UTC.
+ * Found by guessing UTC and correcting by the zone's offset at the guess (twice, for a DST change).
+ */
+export function santiagoInstant(day: string, time: string): string {
+  const [y, m, d] = day.split("-").map(Number);
+  const [h, mi] = time.split(":").map(Number);
+  const wanted = Date.UTC(y, m - 1, d, h, mi);
+  let at = wanted;
+  for (let i = 0; i < 2; i += 1) {
+    const p = santiagoParts(new Date(at));
+    at += wanted - Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi);
+  }
+  return new Date(at).toISOString();
+}
+
 /** A `YYYY-MM-DD` day as a UTC-noon date, so day arithmetic never crosses a zone shift. */
 function dayDate(day: string): Date {
   const [y, m, d] = day.split("-").map(Number);

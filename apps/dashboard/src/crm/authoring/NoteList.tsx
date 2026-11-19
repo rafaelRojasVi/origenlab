@@ -11,6 +11,7 @@ import {
   Section,
   TextareaInput,
   fmtDate,
+  fmtDateTime,
   toast,
 } from "../ui";
 import {
@@ -100,7 +101,18 @@ export function NoteList({ notes, subjectKind, subjectId, mayAuthor, onRefresh }
                 <div className="flex flex-wrap items-start gap-2">
                   <div className="min-w-0 flex-1">
                     <p className="font-medium text-ink">{n.author_name}</p>
-                    <p className="text-[11px] text-ink-faint">{fmtDate(n.created_at)}</p>
+                    {n.note_kind === "llamada" ? (
+                      // A call shows when it happened; one logged later says when it was written down.
+                      <p
+                        className="text-[11px] text-ink-faint"
+                        title={n.occurred_at ? `Registrada el ${fmtDateTime(n.created_at)}` : undefined}
+                        data-testid="note-time"
+                      >
+                        {fmtDateTime(n.occurred_at ?? n.created_at)}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-ink-faint">{fmtDate(n.created_at)}</p>
+                    )}
                   </div>
                   {n.note_kind === "llamada" ? (
                     <Badge tone="brand" glyph={false}>
