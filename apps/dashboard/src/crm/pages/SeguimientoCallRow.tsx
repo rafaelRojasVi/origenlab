@@ -52,21 +52,29 @@ const OUTCOME_BY_LABEL = new Map(CALL_OUTCOMES.map((o) => [CALL_OUTCOME_LABEL[o]
 const NEXT_BY_LABEL = new Map(NEXTS.map((n) => [n.label, n]));
 const WHEN_BY_LABEL = new Map(WHENS.map((w) => [w.label, w.key]));
 
-export function SeguimientoCallRow({
-  row,
-  colSpan,
-  clock = () => new Date(),
-  onSaved,
-  onCancel,
-}: {
+interface CallFormProps {
   row: SegRow;
-  colSpan: number;
   /** The real time at save (the page's «now» is as of its last read, maybe hours ago). */
   clock?: () => Date;
   /** The call and its reminder were recorded; gets the next contact as said in the toast. */
   onSaved: (nextSaid: string) => void;
   onCancel: () => void;
-}) {
+}
+
+/** The call row under a sheet row: the form, pinned to the left edge of the visible sheet. */
+export function SeguimientoCallRow({ colSpan, ...props }: CallFormProps & { colSpan: number }) {
+  return (
+    <tr data-testid={`seg-call-${props.row.card.opportunity_id}`}>
+      <td colSpan={colSpan} className="border-b border-brand-100 bg-brand-50 px-4 py-3.5">
+        {/* Sticky to the left edge, and narrower than the visible sheet, so it stays in view while the sheet is scrolled sideways. */}
+        <CallForm {...props} className="sticky left-4 w-max max-w-[min(48rem,calc(100vw-6rem))]" />
+      </td>
+    </tr>
+  );
+}
+
+/** «Llamé» as a form of its own (Agenda, Por encargado and the phone layout put it in a card). */
+export function CallForm({ row, clock = () => new Date(), onSaved, onCancel, className = "" }: CallFormProps & { className?: string }) {
   const card = row.card;
   const noteId = useId();
   const [outcome, setOutcome] = useState<CallOutcome>("contesto");
@@ -142,95 +150,90 @@ export function SeguimientoCallRow({
 
   const fieldLabel = "text-[11px] font-bold text-ink-muted";
   return (
-    <tr data-testid={`seg-call-${card.opportunity_id}`}>
-      <td colSpan={colSpan} className="border-b border-brand-100 bg-brand-50 px-4 py-3.5">
-        {/* Sticky to the left edge, and narrower than the visible sheet, so it stays in view while the sheet is scrolled sideways. */}
-        <form onSubmit={save} className="sticky left-4 flex w-max max-w-[min(48rem,calc(100vw-6rem))] flex-wrap items-end gap-x-7 gap-y-4 motion-safe:animate-fade-in-up">
-          <div className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>¿Cuándo fue?</span>
-            <div className="flex flex-wrap items-center gap-2">
-              <ChoiceChips
-                label="¿Cuándo fue?"
-                options={WHENS.map((w) => w.label)}
-                value={WHENS.find((w) => w.key === when)!.label}
-                onChange={(v) => {
-                  setWhen(WHEN_BY_LABEL.get(v)!);
-                  setError(null);
-                }}
-              />
-              {when === "other" ? (
-                <input
-                  type="date"
-                  aria-label="Día de la llamada"
-                  min={addDays(today, -BACKDATE_DAYS)}
-                  max={today}
-                  value={otherDay}
-                  onChange={(e) => setOtherDay(e.target.value)}
-                  disabled={busy}
-                  className={DATE_TIME_INPUT}
-                />
-              ) : null}
-              {when !== "now" ? (
-                <input
-                  type="time"
-                  aria-label="Hora de la llamada"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                  disabled={busy}
-                  className={DATE_TIME_INPUT}
-                />
-              ) : null}
-            </div>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>¿Cómo terminó la llamada a {who}?</span>
-            <ChoiceChips
-              label="Resultado de la llamada"
-              options={CALL_OUTCOMES.map((o) => CALL_OUTCOME_LABEL[o])}
-              value={CALL_OUTCOME_LABEL[outcome]}
-              onChange={(v) => pickOutcome(OUTCOME_BY_LABEL.get(v)!)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <span className={fieldLabel}>Próximo contacto</span>
-            <ChoiceChips
-              label="Próximo contacto"
-              options={NEXTS.map((n) => n.label)}
-              value={NEXTS.find((n) => n.key === next)!.label}
-              onChange={(v) => setNext(NEXT_BY_LABEL.get(v)!.key)}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={noteId} className={fieldLabel}>
-              Nota (opcional)
-            </label>
+    <form onSubmit={save} className={`flex flex-wrap items-end gap-x-7 gap-y-4 motion-safe:animate-fade-in-up ${className}`}>
+      <div className="flex flex-col gap-1.5">
+        <span className={fieldLabel}>¿Cuándo fue?</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <ChoiceChips
+            label="¿Cuándo fue?"
+            options={WHENS.map((w) => w.label)}
+            value={WHENS.find((w) => w.key === when)!.label}
+            onChange={(v) => {
+              setWhen(WHEN_BY_LABEL.get(v)!);
+              setError(null);
+            }}
+          />
+          {when === "other" ? (
             <input
-              id={noteId}
-              name="nota"
-              autoComplete="off"
-              value={text}
-              maxLength={8000}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Ej.: la orden de compra sale el viernes…"
+              type="date"
+              aria-label="Día de la llamada"
+              min={addDays(today, -BACKDATE_DAYS)}
+              max={today}
+              value={otherDay}
+              onChange={(e) => setOtherDay(e.target.value)}
               disabled={busy}
-              className="h-9 min-w-60 rounded-md border border-line-strong bg-canvas-raised px-2.5 text-[13px] text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
+              className={DATE_TIME_INPUT}
             />
-          </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={onCancel} disabled={busy}>
-              Cancelar
-            </Button>
-            <Button type="submit" variant="primary" busy={busy} busyLabel="Guardando…">
-              Guardar llamada
-            </Button>
-          </div>
-          {error ? (
-            <p role="alert" className="basis-full text-[12.5px] font-medium text-bad">
-              {error}
-            </p>
           ) : null}
-        </form>
-      </td>
-    </tr>
+          {when !== "now" ? (
+            <input
+              type="time"
+              aria-label="Hora de la llamada"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              disabled={busy}
+              className={DATE_TIME_INPUT}
+            />
+          ) : null}
+        </div>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <span className={fieldLabel}>¿Cómo terminó la llamada a {who}?</span>
+        <ChoiceChips
+          label="Resultado de la llamada"
+          options={CALL_OUTCOMES.map((o) => CALL_OUTCOME_LABEL[o])}
+          value={CALL_OUTCOME_LABEL[outcome]}
+          onChange={(v) => pickOutcome(OUTCOME_BY_LABEL.get(v)!)}
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <span className={fieldLabel}>Próximo contacto</span>
+        <ChoiceChips
+          label="Próximo contacto"
+          options={NEXTS.map((n) => n.label)}
+          value={NEXTS.find((n) => n.key === next)!.label}
+          onChange={(v) => setNext(NEXT_BY_LABEL.get(v)!.key)}
+        />
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={noteId} className={fieldLabel}>
+          Nota (opcional)
+        </label>
+        <input
+          id={noteId}
+          name="nota"
+          autoComplete="off"
+          value={text}
+          maxLength={8000}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Ej.: la orden de compra sale el viernes…"
+          disabled={busy}
+          className="h-9 min-w-60 rounded-md border border-line-strong bg-canvas-raised px-2.5 text-[13px] text-ink placeholder:text-ink-faint focus:border-brand-600 focus:outline-none focus:ring-1 focus:ring-brand-600"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Button onClick={onCancel} disabled={busy}>
+          Cancelar
+        </Button>
+        <Button type="submit" variant="primary" busy={busy} busyLabel="Guardando…">
+          Guardar llamada
+        </Button>
+      </div>
+      {error ? (
+        <p role="alert" className="basis-full text-[12.5px] font-medium text-bad">
+          {error}
+        </p>
+      ) : null}
+    </form>
   );
 }

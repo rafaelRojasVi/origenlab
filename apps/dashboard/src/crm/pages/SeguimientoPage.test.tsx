@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
@@ -124,7 +124,10 @@ function json(body: unknown, status = 200) {
 }
 
 /** Pipeline reads count the call notes posted so far, as the API would. */
-function stubApi(pipeline: (notes: number) => PipelineResponse = fixture): Call[] {
+function stubApi(
+  pipeline: (notes: number, calls: Call[]) => PipelineResponse = fixture,
+  extra: (call: Call) => Response | null = () => null,
+): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
@@ -137,8 +140,10 @@ function stubApi(pipeline: (notes: number) => PipelineResponse = fixture): Call[
       if (path.endsWith("/auth/profiles")) return Promise.resolve(json({ profiles: PROFILES }));
       if (path.endsWith("/v2/workspace/pipeline")) {
         const notes = calls.filter((c) => c.path.endsWith("/add-note")).length;
-        return Promise.resolve(json(pipeline(notes)));
+        return Promise.resolve(json(pipeline(notes, calls)));
       }
+      const answer = extra(calls[calls.length - 1]);
+      if (answer) return Promise.resolve(answer);
       if (path.endsWith("/add-note")) return Promise.resolve(json({ ok: true, note_id: "n1", version: 1 }));
       if (path.endsWith("/create-task")) {
         return Promise.resolve(json({ command: "create_task", opportunity_id: A, opportunity_version: 9, command_receipt_id: "r", idempotency_key: "k", replayed: false }));
@@ -161,7 +166,13 @@ function renderPage(props: { initialOpportunityId?: string | null; now?: Date; c
 }
 
 const row = (id: string) => screen.getByTestId(`seg-row-${id}`);
-const shownIds = () => screen.queryAllByTestId(/^seg-row-/).map((r) => r.getAttribute("data-testid")!.slice("seg-row-".length));
+/** The rows on screen, leaving ones (fading out) not counted. */
+const shownIds = () =>
+  screen
+    .queryAllByTestId(/^seg-row-/)
+    .filter((r) => !r.hasAttribute("data-leaving"))
+    .map((r) => r.getAttribute("data-testid")!.slice("seg-row-".length));
+const showing = async (ids: string[]) => waitFor(() => expect(shownIds().sort()).toEqual([...ids].sort()));
 /** «Llamé» waits for any reread to finish, so a call replaces the reminder the case really has. */
 async function openCall(id: string) {
   await waitFor(() => expect(within(row(id)).getByRole("button", { name: "Llamé" })).toBeEnabled());
@@ -171,6 +182,7 @@ const filters = () => within(screen.getByRole("group", { name: "Encargado" }));
 
 beforeEach(() => {
   window.location.hash = "#/ventas/seguimiento";
+  localStorage.clear();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -183,20 +195,26 @@ describe("SeguimientoPage", () => {
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     expect(shownIds().sort()).toEqual([A, B, C].sort());
-    expect(filters().getByRole("button", { name: /^Todos/ })).toHaveAttribute("aria-pressed", "true");
-    // C has no encargado yet: Karla is its suggestion, so it is in her list and in «Sin asignar».
-    expect(filters().getByRole("button", { name: /^Karla/ })).toHaveTextContent("2");
+    // C has no encargado yet: Karla is its suggestion, so it is in her list and in «Sin confirmar».
+    await waitFor(() => expect(filters().getByRole("button", { name: /^Karla/ })).toHaveTextContent("2"));
 
     fireEvent.click(filters().getByRole("button", { name: /^Karla/ }));
-    expect(shownIds().sort()).toEqual([B, C].sort());
+    await showing([B, C]);
     expect(window.location.hash).toContain("encargado=karla");
 
+    // OR inside the group: Karla or mine.
     fireEvent.click(filters().getByRole("button", { name: /^Mis casos/ }));
-    expect(shownIds()).toEqual([A]);
-    expect(window.location.hash).toContain("encargado=mios");
+    await showing([A, B, C]);
+    expect(window.location.hash).toContain("encargado=karla%2Cmios");
 
-    fireEvent.click(filters().getByRole("button", { name: /^Sin asignar/ }));
-    expect(shownIds()).toEqual([C]);
+    fireEvent.click(filters().getByRole("button", { name: /^Karla/ }));
+    await showing([A]);
+    fireEvent.click(filters().getByRole("button", { name: /^Mis casos/ }));
+    fireEvent.click(filters().getByRole("button", { name: /^Sin confirmar/ }));
+    await showing([C]);
+    expect(screen.getByTestId("seg-showing")).toHaveTextContent("Mostrando 1 de 3");
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar" }));
+    await showing([A, B, C]);
   });
 
   it("keeps the filter from the hash", async () => {
@@ -214,7 +232,7 @@ describe("SeguimientoPage", () => {
     await screen.findByTestId(`seg-row-${A}`);
     await waitFor(() => expect(filters().getByRole("button", { name: /^Karla/ })).toBeInTheDocument());
     expect(shownIds().sort()).toEqual([A, B, C].sort());
-    expect(filters().getByRole("button", { name: /^Todos/ })).toHaveAttribute("aria-pressed", "true");
+    expect(filters().queryAllByRole("button", { pressed: true })).toHaveLength(0);
   });
 
   it("searches client, contact and quote N°", async () => {
@@ -223,20 +241,20 @@ describe("SeguimientoPage", () => {
     await screen.findByTestId(`seg-row-${A}`);
     const search = screen.getByRole("searchbox", { name: "Buscar" });
     fireEvent.change(search, { target: { value: "CN09877" } });
-    expect(shownIds()).toEqual([C]);
+    await showing([C]);
     fireEvent.change(search, { target: { value: "persona dos" } });
-    expect(shownIds()).toEqual([B]);
+    await showing([B]);
     fireEvent.change(search, { target: { value: "laboratorio" } });
-    expect(shownIds()).toEqual([B]);
+    await showing([B]);
   });
 
-  it("Solo atrasados hides touched rows", async () => {
+  it("«Atrasado» hides touched rows", async () => {
     stubApi();
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
-    fireEvent.click(screen.getByRole("button", { name: "Solo atrasados" }));
+    fireEvent.click(within(screen.getByRole("group", { name: "Estado" })).getByRole("button", { name: /^Atrasado/ }));
     // B was called today and C was sent yesterday: only A is three days or more without a touch.
-    expect(shownIds()).toEqual([A]);
+    await showing([A]);
   });
 
   it("shows the KPI strip from the pipeline read", async () => {
@@ -379,5 +397,141 @@ describe("SeguimientoPage", () => {
     stubApi(() => ({ items: [], total: 0, drive_configured: false }));
     renderPage();
     expect(await screen.findByText("No hay cotizaciones enviadas esperando respuesta.")).toBeInTheDocument();
+  });
+
+  it("«Ya no sigue» closes the case with the drawer's reasons and the row leaves", async () => {
+    const calls = stubApi(
+      // Once closed, the next read no longer has the case.
+      (notes, all) => {
+        const data = fixture(notes);
+        return all.some((c) => c.path.endsWith("/advance-case-stage")) ? { ...data, items: data.items.filter((c) => c.opportunity_id !== A) } : data;
+      },
+      (call) =>
+        call.path.endsWith("/advance-case-stage")
+          ? json({ command: "advance_case_stage", opportunity_id: A, opportunity_version: 4, stage: call.body.stage, command_receipt_id: "r-close", idempotency_key: "k", replayed: false })
+          : null,
+    );
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Ya no sigue" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "Sin respuesta" }));
+    fireEvent.click(dialog.getByRole("button", { name: "Marcar perdida" }));
+    await screen.findByText("Caso cerrado: sale del seguimiento.");
+    const close = calls.find((c) => c.path.endsWith("/advance-case-stage"))!;
+    expect(close.body).toMatchObject({ opportunity_id: A, opportunity_version: 3, stage: "abandoned", close_reason: "Sin respuesta" });
+    await showing([B, C]);
+    // The leaving row fades out, then goes.
+    await waitFor(() => expect(screen.queryByTestId(`seg-row-${A}`)).not.toBeInTheDocument());
+  });
+
+  it("«Pausar…» uses the drawer's pause form", async () => {
+    stubApi();
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Más acciones para Instituto Ficticio" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pausar…" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Pausar el seguimiento" }));
+    expect(dialog.getByLabelText(/Retomar el/)).toBeInTheDocument();
+    expect(dialog.getByRole("group", { name: "Motivo de la pausa" })).toBeInTheDocument();
+  });
+
+  it("the case name opens the case drawer", async () => {
+    stubApi();
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.click(within(row(A)).getByRole("button", { name: "Instituto Ficticio" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Instituto Ficticio");
+    expect(screen.queryByRole("link", { name: "Ver en Seguimiento" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the view in the hash and in this browser", async () => {
+    window.location.hash = "#/ventas/seguimiento?vista=agenda&caso=" + B;
+    stubApi();
+    renderPage();
+    const agenda = await screen.findByTestId("seg-agenda");
+    // A and B have no reminder; C neither: all «Sin fecha».
+    expect(within(agenda).getByRole("heading", { name: /Sin fecha/ })).toHaveTextContent("3");
+    fireEvent.click(within(screen.getByRole("group", { name: "Vista" })).getByRole("button", { name: "Por encargado" }));
+    await screen.findByTestId("seg-board");
+    expect(window.location.hash).toContain("vista=encargado");
+    expect(window.location.hash).toContain(`caso=${B}`);
+    expect(localStorage.getItem("seguimiento.vista")).toBe("encargado");
+  });
+
+  it("follows a link to another view while open", async () => {
+    stubApi();
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    act(() => {
+      window.location.hash = "#/ventas/seguimiento?vista=encargado&canal=correo";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await screen.findByTestId("seg-board");
+    expect(within(screen.getByRole("group", { name: "Canal" })).getByRole("button", { name: /^Correo/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("orders by the chosen order and writes it in the hash", async () => {
+    stubApi();
+    renderPage();
+    await screen.findByTestId(`seg-row-${A}`);
+    fireEvent.change(screen.getByRole("combobox", { name: /Orden/ }), { target: { value: "monto" } });
+    // C has the biggest amount.
+    await waitFor(() => expect(shownIds()[0]).toBe(C));
+    expect(window.location.hash).toContain("orden=monto");
+  });
+
+  it("on a phone the sheet is stacked cards", async () => {
+    vi.stubGlobal("matchMedia", (q: string) => ({ matches: q === "(max-width: 639px)", media: q, addEventListener: () => undefined, removeEventListener: () => undefined }));
+    stubApi();
+    renderPage();
+    const cards = await screen.findByTestId("seg-cards");
+    expect(screen.queryByTestId("seg-sheet")).not.toBeInTheDocument();
+    expect(within(cards).getAllByRole("article")).toHaveLength(3);
+    expect(within(screen.getByTestId(`seg-card-${A}`)).getByRole("button", { name: "Llamé" })).toBeInTheDocument();
+  });
+
+  describe("Por encargado", () => {
+    beforeEach(() => {
+      window.location.hash = "#/ventas/seguimiento?vista=encargado";
+    });
+    const col = (key: string) => screen.getByTestId(`seg-col-${key}`);
+    const cardIn = (key: string, id: string) => within(col(key)).queryByTestId(`seg-card-${id}`);
+    const drag = (id: string, to: string) => {
+      const dataTransfer = { data: "", setData(_t: string, v: string) { this.data = v; }, getData() { return this.data; }, dropEffect: "", effectAllowed: "" };
+      fireEvent.dragStart(screen.getByTestId(`seg-card-${id}`), { dataTransfer });
+      fireEvent.dragOver(col(to), { dataTransfer });
+      fireEvent.drop(col(to), { dataTransfer });
+    };
+
+    it("a card dropped on another person sets the encargado, keeping the channel", async () => {
+      const calls = stubApi(fixture, (call) =>
+        call.path.endsWith("/set-case-follow-up")
+          ? json({ command: "set_case_follow_up", opportunity_id: B, opportunity_version: 4, operator_id: call.body.follow_up_operator_id, channel: call.body.channel, command_receipt_id: "r", idempotency_key: "k", replayed: false })
+          : null,
+      );
+      renderPage();
+      await screen.findByTestId("seg-board");
+      await waitFor(() => expect(cardIn("op-karla", B)).toBeInTheDocument());
+      drag(B, "op-rafa");
+      await waitFor(() => expect(cardIn("op-rafa", B)).toBeInTheDocument());
+      const post = calls.find((c) => c.path.endsWith("/set-case-follow-up"))!;
+      expect(post.body).toEqual({ opportunity_id: B, opportunity_version: 3, follow_up_operator_id: "op-rafa", channel: "correo" });
+      expect(await screen.findByText("Laboratorio Ejemplo: ahora con Rafa.")).toBeInTheDocument();
+    });
+
+    it("a refused move puts the card back and rereads", async () => {
+      const calls = stubApi(fixture, (call) => (call.path.endsWith("/set-case-follow-up") ? json({ detail: { code: "case_version_conflict" } }, 409) : null));
+      renderPage();
+      await screen.findByTestId("seg-board");
+      await waitFor(() => expect(cardIn("op-karla", B)).toBeInTheDocument());
+      const reads = pipelineReads(calls);
+      drag(B, "sin");
+      await waitFor(() => expect(cardIn("sin", B)).toBeInTheDocument());
+      await waitFor(() => expect(cardIn("op-karla", B)).toBeInTheDocument());
+      await waitFor(() => expect(cardIn("sin", B)).not.toBeInTheDocument());
+      await waitFor(() => expect(pipelineReads(calls)).toBeGreaterThan(reads));
+    });
   });
 });

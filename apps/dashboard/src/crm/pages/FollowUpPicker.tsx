@@ -86,7 +86,7 @@ export function FollowUpPicker({
   }
 
   const ownerOptions = [
-    { value: "", label: "Sin asignar" },
+    { value: "", label: "Sin confirmar" },
     ...profiles.map((p) => ({ value: p.id, label: p.id === suggested ? `${p.displayName} (sugerido)` : p.displayName })),
   ];
   const channelOptions = channelsFor(shownOwner, profiles).map((c) => ({ value: c, label: CHANNEL_LABEL[c] }));

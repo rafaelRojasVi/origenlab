@@ -1,75 +1,55 @@
 /**
  * «Ventas › Seguimiento» as a sheet: one row per open case with a sent quote, one fact per column, a
- * fixed header, a frozen first column (Encargado), sortable by Monto and Sin respuesta, and a totals
- * row. «Llamé» opens the inline call form under its row.
+ * fixed header, a frozen first column (Encargado), Monto and Sin respuesta as orders, and a totals
+ * row. The case name opens the case; «Llamé» opens the inline call form under its row; «⋯» holds
+ * «Pausar…» and «Ya no sigue». Rows that leave fade out, rows that move glide (`motion.ts`).
  */
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ProfileCard } from "../../api/authClient";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { useMayRunCaseCommands, type CaseCommandReceipt } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
-import { dateSantiago } from "../goals";
 import { formatMoney } from "../money";
-import { isMaskedPhone } from "../redaction";
-import { quoteNumberOf, touchedToday, type SegRow } from "../seguimiento";
-import { isFollowUpTask } from "../today";
+import { useFlip, usePresence } from "../motion";
+import { quoteNumberOf, type SegRow } from "../seguimiento";
+import type { SegOrder } from "../seguimientoView";
 import { Button, initials } from "../ui";
 import { caseGmailUrl } from "./CaseQuotes";
 import { FollowUpPicker } from "./FollowUpPicker";
 import { cardMoney, shortDate } from "./PipelineBoard";
 import { SeguimientoCallRow } from "./SeguimientoCallRow";
+import {
+  DaysPill,
+  ICON_BUTTON,
+  Icon,
+  LastTouch,
+  MAIL_ICON,
+  NextDate,
+  PhoneLink,
+  RowMenu,
+  SCRIPT_ICON,
+  SORT_ICON,
+  nextReminder,
+  type RowAction,
+} from "./SegParts";
 
-type SortKey = "monto" | "dias";
-type DaysTone = "ok" | "warn" | "bad";
+export { daysTone } from "./SegParts";
 
 const COLUMNS = 11;
 
-const DAYS_PILL: Record<DaysTone, string> = {
-  ok: "bg-good-bg text-good",
-  warn: "bg-warn-bg text-warn",
-  bad: "bg-bad-bg text-bad",
-};
+const rowKey = (r: SegRow) => r.card.opportunity_id;
 
-/** «Sin respuesta»: under 3 days fine, 3 to 6 a warning, a week or more bad; fine once touched today. */
-export function daysTone(row: SegRow, now: Date): DaysTone {
-  if (touchedToday(row, now)) return "ok";
-  return row.daysSinceSent >= 7 ? "bad" : row.daysSinceSent >= 3 ? "warn" : "ok";
+export interface SheetHandlers {
+  onSelect: (id: string) => void;
+  /** Open the case (the same drawer as Pipeline and Hoy). */
+  onOpen: (id: string) => void;
+  onAction: (id: string, action: RowAction) => void;
+  onGuion: (id: string) => void;
+  /** A call was saved on the row: gets the next contact as said in the toast. */
+  onCallSaved: (id: string, nextSaid: string) => void;
+  onReceipt: (receipt: CaseCommandReceipt) => void;
+  onConflict: () => void;
 }
-
-const santiagoTime = (iso: string) =>
-  new Date(iso).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Santiago" });
-
-/** «hoy 10:12» on today's Santiago day, else «13 nov». */
-function whenText(iso: string, now: Date): string {
-  return dateSantiago(new Date(iso)) === dateSantiago(now) ? `hoy ${santiagoTime(iso)}` : shortDate(iso, now);
-}
-
-/** The next follow-up reminder (the open «Seguimiento …» task due first), or null. */
-function nextReminder(row: SegRow): string | null {
-  const due = (row.card.open_tasks ?? [])
-    .filter(isFollowUpTask)
-    .map((t) => t.due_at)
-    .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
-  return due ?? null;
-}
-
-const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;
-
-const ICON_BUTTON =
-  "inline-grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line-strong bg-canvas-raised text-ink-muted transition-colors hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600";
-
-function Icon({ d }: { d: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={d} />
-    </svg>
-  );
-}
-
-const PHONE_ICON = "M3 2.5h2.5l1.2 3-1.6 1a8 8 0 0 0 4.4 4.4l1-1.6 3 1.2V13a1 1 0 0 1-1 1A11 11 0 0 1 2 3.5a1 1 0 0 1 1-1z";
-const MAIL_ICON = "M2 3.5h12v9H2zM2.5 4.5l5.5 4 5.5-4";
-const SCRIPT_ICON = "M3 2.5h7l3 3v8H3zM10 2.5v3h3M5.5 8h5M5.5 10.5h5";
-const SORT_ICON = "m4 6 4-4 4 4M4 10l4 4 4-4";
 
 export function SeguimientoSheet({
   rows,
@@ -77,13 +57,11 @@ export function SeguimientoSheet({
   now,
   selectedId,
   scrollToId = null,
-  onSelect,
-  onGuion,
-  onCallSaved,
-  onReceipt,
-  onConflict,
+  order = "prioridad",
+  onOrder,
   callsPaused = false,
   clock,
+  ...on
 }: {
   rows: SegRow[];
   profiles: ProfileCard[];
@@ -91,29 +69,23 @@ export function SeguimientoSheet({
   selectedId: string | null;
   /** Bring this row into view once it is on screen (`?caso=`). */
   scrollToId?: string | null;
-  onSelect: (id: string) => void;
-  onGuion: (id: string) => void;
-  /** A call was saved on the row: gets the next contact as said in the toast. */
-  onCallSaved: (id: string, nextSaid: string) => void;
-  onReceipt: (receipt: CaseCommandReceipt) => void;
-  onConflict: () => void;
+  order?: SegOrder;
+  /** Monto and Sin respuesta in the header choose the page's order. */
+  onOrder?: (order: SegOrder) => void;
   /** The cases are being read again: a call now would replace a reminder that is already gone. */
   callsPaused?: boolean;
   /** The real time when a call is saved; the sheet's `now` is only for what it shows. */
   clock?: () => Date;
-}) {
-  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 } | null>(null);
+} & Partial<SheetHandlers> & Pick<SheetHandlers, "onSelect" | "onGuion" | "onCallSaved" | "onReceipt" | "onConflict">) {
   const [callOpen, setCallOpen] = useState<string | null>(null);
   const mayCommand = useMayRunCaseCommands();
   // A call is a note (CRM authoring) plus its reminder (a case command).
   const mayCall = useMayAuthorCrm() && mayCommand;
-  const sorted = useMemo(() => {
-    if (!sort) return rows;
-    const value = (r: SegRow) => (sort.key === "monto" ? r.amountClp ?? -1 : r.daysSinceSent);
-    return [...rows].sort((a, b) => (value(a) - value(b)) * sort.dir);
-  }, [rows, sort]);
+  const shown = usePresence(rows, rowKey);
   const total = rows.reduce((sum, r) => sum + (r.amountClp ?? 0), 0);
   const callsToday = rows.reduce((sum, r) => sum + r.callsToday, 0);
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
+  useFlip(bodyRef, rows.map(rowKey).join("|"));
 
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const scrolled = useRef<string | null>(null);
@@ -123,25 +95,25 @@ export function SeguimientoSheet({
     if (!el) return;
     scrolled.current = scrollToId;
     el.scrollIntoView?.({ block: "center" });
-  }, [scrollToId, sorted]);
+  }, [scrollToId, rows]);
 
   const nameOf = (id: string | null) => profiles.find((p) => p.id === id)?.displayName ?? null;
 
-  const sortButton = (key: SortKey, label: string, right = false) => {
-    const on = sort?.key === key;
+  const sortButton = (key: SegOrder, label: string, right = false) => {
+    const active = order === key;
     return (
       <th
         scope="col"
-        aria-sort={on ? (sort!.dir === 1 ? "ascending" : "descending") : "none"}
+        aria-sort={active ? "descending" : "none"}
         className={`sticky top-0 z-10 border-b border-line bg-canvas-sunken p-0 ${right ? "text-right" : "text-left"}`}
       >
         <button
           type="button"
-          onClick={() => setSort(on ? { key, dir: sort!.dir === 1 ? -1 : 1 } : { key, dir: -1 })}
-          className={`inline-flex h-9 w-full items-center gap-1 whitespace-nowrap px-3 text-[11px] font-bold hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600 ${right ? "justify-end" : ""} ${on ? "text-ink" : "text-ink-muted"}`}
+          onClick={() => onOrder?.(active ? "prioridad" : key)}
+          className={`inline-flex h-9 w-full items-center gap-1 whitespace-nowrap px-3 text-[11px] font-bold hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600 ${right ? "justify-end" : ""} ${active ? "text-ink" : "text-ink-muted"}`}
         >
           {label}
-          <span className={on ? "text-ink" : "text-ink-faint"}>
+          <span className={active ? "text-ink" : "text-ink-faint"}>
             <Icon d={SORT_ICON} />
           </span>
         </button>
@@ -157,8 +129,9 @@ export function SeguimientoSheet({
 
   return (
     <div className="overflow-hidden rounded-xl border border-line bg-canvas-raised" data-testid="seg-sheet">
-      <div className="max-h-[calc(100vh-17rem)] min-h-64 overflow-auto">
-        <table className="w-full min-w-[74rem] border-separate border-spacing-0 text-[13px] tabular-nums">
+      {/* `relative`: the screen-reader-only labels inside (absolute) are clipped here, not by the page. */}
+      <div className="relative max-h-[calc(100vh-17rem)] min-h-64 overflow-auto">
+        <table className="w-full min-w-[76rem] border-separate border-spacing-0 text-[13px] tabular-nums">
           <thead>
             <tr>
               {th("Encargado", "left-0 !z-20 w-44 min-w-44 shadow-[1px_0_0] shadow-line")}
@@ -174,9 +147,8 @@ export function SeguimientoSheet({
               {th(<span className="sr-only">Acciones</span>)}
             </tr>
           </thead>
-          <tbody>
-            {sorted.map((r) => {
-              const id = r.card.opportunity_id;
+          <tbody ref={bodyRef}>
+            {shown.map(({ item: r, key: id, leaving }) => {
               const selected = id === selectedId;
               return (
                 <Fragment key={id}>
@@ -185,9 +157,11 @@ export function SeguimientoSheet({
                       if (el) rowRefs.current.set(id, el);
                       else rowRefs.current.delete(id);
                     }}
+                    data-flip={leaving ? undefined : id}
+                    data-leaving={leaving || undefined}
                     aria-current={selected ? "true" : undefined}
-                    onClick={() => onSelect(id)}
-                    className={`transition-colors ${selected ? "bg-brand-50" : "bg-canvas-raised hover:bg-canvas-sunken"}`}
+                    onClick={() => on.onSelect(id)}
+                    className={`transition-colors ${leaving ? "crm-row-out" : ""} ${selected ? "bg-brand-50" : "bg-canvas-raised hover:bg-canvas-sunken"}`}
                     data-testid={`seg-row-${id}`}
                   >
                     <td className={`${td} sticky left-0 z-[1] bg-inherit shadow-[1px_0_0] shadow-line`}>
@@ -200,44 +174,19 @@ export function SeguimientoSheet({
                         </span>
                         <div className="min-w-0 flex-1">
                           {mayCommand ? (
-                            <FollowUpPicker card={r.card} profiles={profiles} onChanged={onReceipt} onConflict={onConflict} compact only="owner" />
+                            <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="owner" />
                           ) : (
-                            <span className="text-[12.5px] text-ink">{nameOf(r.ownerId) ?? "Sin asignar"}</span>
+                            <span className="text-[12.5px] text-ink">{nameOf(r.ownerId) ?? "Sin confirmar"}</span>
                           )}
                         </div>
                       </div>
                     </td>
                     <td className={td}>
-                      <div className="max-w-[15rem] truncate font-bold leading-tight text-ink" title={displayName(r.card).name}>
-                        {displayName(r.card).name}
-                      </div>
+                      <CaseName row={r} onOpen={on.onOpen} />
                       <div className="max-w-[15rem] truncate text-[12px] text-ink-muted">{contactLine(r.card) ?? "Sin contacto"}</div>
                     </td>
                     <td className={`${td} whitespace-nowrap`}>
-                      {r.phone ? (
-                        <>
-                          {isMaskedPhone(r.phone) ? (
-                            <span className="inline-flex min-h-9 items-center gap-1.5 text-ink-muted" data-testid="phone-masked">
-                              <Icon d={PHONE_ICON} />
-                              {r.phone}
-                            </span>
-                          ) : (
-                          <a
-                            href={telHref(r.phone)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="inline-flex min-h-9 items-center gap-1.5 font-semibold text-accent hover:underline hover:underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
-                          >
-                            <Icon d={PHONE_ICON} />
-                            {r.phone}
-                          </a>
-                          )}
-                          {!r.phoneConfirmed ? (
-                            <span className="ml-1 rounded-full bg-warn-bg px-1.5 py-px text-[10px] font-bold text-warn">por confirmar</span>
-                          ) : null}
-                        </>
-                      ) : (
-                        <span className="text-[12px] text-ink-faint">Sin fono · pedir por correo</span>
-                      )}
+                      <PhoneLink row={r} />
                     </td>
                     <td className={td}>
                       <span className="whitespace-nowrap font-mono text-[12px]">
@@ -251,25 +200,10 @@ export function SeguimientoSheet({
                     <td className={`${td} whitespace-nowrap text-right font-bold text-ink`}>{cardMoney(r.card).text || <span className="text-ink-faint">Sin monto</span>}</td>
                     <td className={`${td} whitespace-nowrap text-[12px] text-ink-muted`}>{r.sentAt ? shortDate(r.sentAt, now) : "Sin fecha"}</td>
                     <td className={td}>
-                      <span
-                        data-testid="seg-days"
-                        data-tone={daysTone(r, now)}
-                        className={`inline-flex h-6 min-w-11 items-center justify-center rounded-full px-2 text-[12px] font-bold ${DAYS_PILL[daysTone(r, now)]}`}
-                      >
-                        {r.daysSinceSent} d
-                      </span>
+                      <DaysPill row={r} now={now} />
                     </td>
                     <td className={`${td} text-[12px] leading-snug text-ink-muted`}>
-                      {r.lastTouch ? (
-                        <>
-                          <b className="block whitespace-nowrap font-semibold text-ink">{r.lastTouch.label}</b>
-                          <span className="whitespace-nowrap">
-                            {whenText(r.lastTouch.at, now)} · {r.lastTouch.kind === "email" ? "automático" : r.card.last_call_any?.author_name ?? "equipo"}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-ink-faint">Sin toque</span>
-                      )}
+                      <LastTouch row={r} now={now} />
                     </td>
                     <td className={`${td} whitespace-nowrap text-right`}>
                       <span data-testid="seg-calls" className="font-bold">
@@ -279,15 +213,23 @@ export function SeguimientoSheet({
                     </td>
                     <td className={`${td} min-w-[9.5rem]`}>
                       {mayCommand ? (
-                        <FollowUpPicker card={r.card} profiles={profiles} onChanged={onReceipt} onConflict={onConflict} compact only="channel" />
+                        <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="channel" />
                       ) : null}
                       <NextDate due={nextReminder(r)} now={now} />
                     </td>
                     <td className={`${td} text-right`}>
-                      <Actions row={r} open={callOpen === id} onGuion={() => onGuion(id)} onToggle={() => setCallOpen(callOpen === id ? null : id)} mayCall={mayCall} paused={callsPaused} />
+                      <Actions
+                        row={r}
+                        open={callOpen === id}
+                        onGuion={() => on.onGuion(id)}
+                        onToggle={() => setCallOpen(callOpen === id ? null : id)}
+                        onAction={mayCommand && on.onAction ? (a) => on.onAction!(id, a) : undefined}
+                        mayCall={mayCall}
+                        paused={callsPaused}
+                      />
                     </td>
                   </tr>
-                  {callOpen === id ? (
+                  {callOpen === id && !leaving ? (
                     <SeguimientoCallRow
                       row={r}
                       colSpan={COLUMNS}
@@ -295,7 +237,7 @@ export function SeguimientoSheet({
                       onCancel={() => setCallOpen(null)}
                       onSaved={(said) => {
                         setCallOpen(null);
-                        onCallSaved(id, said);
+                        on.onCallSaved(id, said);
                       }}
                     />
                   ) : null}
@@ -323,31 +265,42 @@ export function SeguimientoSheet({
   );
 }
 
-/** The next follow-up reminder's day, under the channel; red once it is past. */
-function NextDate({ due, now }: { due: string | null; now: Date }) {
-  if (!due) return <div className="mt-1 text-[12px] text-ink-faint">Sin fecha</div>;
-  const late = Date.parse(due) < now.getTime() && dateSantiago(new Date(due)) !== dateSantiago(now);
+/** The case's name: a button that opens it, or plain text where no drawer is offered. */
+export function CaseName({ row, onOpen }: { row: SegRow; onOpen?: (id: string) => void }) {
+  const name = displayName(row.card).name;
+  const cls = "block max-w-[15rem] truncate text-left font-bold leading-tight text-ink";
+  if (!onOpen) return <div className={cls} title={name}>{name}</div>;
   return (
-    <div className={`mt-1 whitespace-nowrap text-[12px] ${late ? "font-semibold text-bad" : "text-ink-muted"}`}>
-      {late ? `Vencido · ${shortDate(due, now)}` : whenText(due, now)}
-    </div>
+    <button
+      type="button"
+      title={`Abrir el caso de ${name}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(row.card.opportunity_id);
+      }}
+      className={`${cls} rounded-sm hover:text-accent hover:underline hover:underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600`}
+    >
+      {name}
+    </button>
   );
 }
 
-function Actions({
+export function Actions({
   row,
   open,
   mayCall,
   paused,
   onGuion,
   onToggle,
+  onAction,
 }: {
   row: SegRow;
   open: boolean;
   mayCall: boolean;
   paused: boolean;
-  onGuion: () => void;
+  onGuion?: () => void;
   onToggle: () => void;
+  onAction?: (action: RowAction) => void;
 }) {
   const client = displayName(row.card).name;
   const gmail = caseGmailUrl(row.card);
@@ -368,14 +321,17 @@ function Actions({
       ) : (
         <span className="w-9" aria-hidden="true" />
       )}
-      <button type="button" aria-label={`Ver guion para ${client}`} title="Guion de llamada" onClick={onGuion} className={ICON_BUTTON}>
-        <Icon d={SCRIPT_ICON} />
-      </button>
+      {onGuion ? (
+        <button type="button" aria-label={`Ver guion para ${client}`} title="Guion de llamada" onClick={onGuion} className={ICON_BUTTON}>
+          <Icon d={SCRIPT_ICON} />
+        </button>
+      ) : null}
       {mayCall ? (
         <Button variant="primary" aria-expanded={open} disabled={paused && !open} onClick={onToggle} className="h-9">
           Llamé
         </Button>
       ) : null}
+      {onAction ? <RowMenu client={client} onAction={onAction} /> : null}
     </div>
   );
 }

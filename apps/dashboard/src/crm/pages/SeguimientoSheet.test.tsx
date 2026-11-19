@@ -5,6 +5,7 @@ import type { AuthSessionState, ProfileCard } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData } from "../crmTypes";
 import { seguimientoRows } from "../seguimiento";
+import { sortRows, type SegOrder } from "../seguimientoView";
 import { SeguimientoSheet } from "./SeguimientoSheet";
 
 // Every value below is invented; the repository is public.
@@ -30,13 +31,14 @@ function card(id: string, amount: string, sentAt: string, over: Partial<Opportun
   } as OpportunityCardData;
 }
 
-function renderSheet(cards: OpportunityCardData[]) {
-  const rows = seguimientoRows(cards, PROFILES, NOW);
+function renderSheet(cards: OpportunityCardData[], order: SegOrder = "prioridad", onOrder = vi.fn(), onOpen = vi.fn()) {
+  const rows = sortRows(seguimientoRows(cards, PROFILES, NOW), order);
   render(
     <AuthSessionContext.Provider value={{ session, signOut: async () => true }}>
-      <SeguimientoSheet rows={rows} profiles={PROFILES} now={NOW} selectedId={null} onSelect={vi.fn()} onGuion={vi.fn()} onCallSaved={vi.fn()} onReceipt={vi.fn()} onConflict={vi.fn()} />
+      <SeguimientoSheet rows={rows} profiles={PROFILES} now={NOW} selectedId={null} order={order} onOrder={onOrder} onOpen={onOpen} onSelect={vi.fn()} onGuion={vi.fn()} onCallSaved={vi.fn()} onReceipt={vi.fn()} onConflict={vi.fn()} />
     </AuthSessionContext.Provider>,
   );
+  return { onOrder, onOpen };
 }
 
 const order = () => screen.getAllByTestId(/^seg-row-/).map((r) => r.getAttribute("data-testid"));
@@ -48,14 +50,15 @@ describe("SeguimientoSheet", () => {
     card("1003", "2000000", "2026-11-01T15:00:00Z"),
   ];
 
-  it("sorts by Monto and by Sin respuesta, and totals the rows", () => {
-    renderSheet(cards);
-    fireEvent.click(screen.getByRole("button", { name: /Monto/ }));
+  it("asks for the Monto and Sin respuesta orders, shows the rows as ordered, and totals them", () => {
+    const { onOrder } = renderSheet(cards, "monto");
     expect(order()).toEqual(["seg-row-1002", "seg-row-1003", "seg-row-1001"]);
+    expect(screen.getByRole("columnheader", { name: /Monto/ })).toHaveAttribute("aria-sort", "descending");
+    // A second click on the active order goes back to «Prioridad».
     fireEvent.click(screen.getByRole("button", { name: /Monto/ }));
-    expect(order()).toEqual(["seg-row-1001", "seg-row-1003", "seg-row-1002"]);
+    expect(onOrder).toHaveBeenLastCalledWith("prioridad");
     fireEvent.click(screen.getByRole("button", { name: /Sin respuesta/ }));
-    expect(order()).toEqual(["seg-row-1003", "seg-row-1002", "seg-row-1001"]);
+    expect(onOrder).toHaveBeenLastCalledWith("dias");
     const foot = within(screen.getByTestId("seg-total"));
     expect(foot.getByText("3 casos")).toBeInTheDocument();
     expect(screen.getByTestId("seg-total-money")).toHaveTextContent("11.500.000");
@@ -78,5 +81,11 @@ describe("SeguimientoSheet", () => {
     const r = within(screen.getByTestId("seg-row-1005"));
     expect(r.getByTestId("phone-masked")).toHaveTextContent("***");
     expect(r.queryByRole("link", { name: /\*\*\*/ })).toBeNull();
+  });
+
+  it("the case name opens the case", () => {
+    const { onOpen } = renderSheet(cards);
+    fireEvent.click(screen.getByRole("button", { name: "Cliente 1002" }));
+    expect(onOpen).toHaveBeenCalledWith("1002");
   });
 });
