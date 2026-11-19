@@ -8,7 +8,7 @@ import { urgencyByCase, urgencyText } from "./urgency";
 import { nextContactAt } from "./seguimientoView";
 
 // Every value below is invented; the repository is public.
-const NOW = new Date(2026, 10, 18, 12, 0); // Wednesday 18 Nov, local noon
+const NOW = new Date("2026-11-18T15:00:00Z"); // Wednesday 18 Nov, noon in Santiago (UTC-3), whatever the machine zone
 
 function task(over: Partial<OpenTask> & { due_at: string }): OpenTask {
   return { task_id: `t-${over.due_at}`, title: "Seguimiento de CN09876", version: 1, owner: null, created_at: null, ...over };
@@ -26,7 +26,9 @@ function card(over: Partial<OpportunityCardData> = {}): OpportunityCardData {
   } as unknown as OpportunityCardData;
 }
 
-const local = (d: number, h = 9) => new Date(2026, 10, d, h, 0).toISOString();
+/** A Santiago wall-clock time in November 2026 (UTC-3), whatever the machine zone. */
+const santiago = (d: number, h = 9, m = 0) => new Date(Date.UTC(2026, 10, d, h + 3, m));
+const local = (d: number, h = 9) => santiago(d, h).toISOString();
 
 describe("nextContact: one rule", () => {
   it("the earliest follow-up reminder wins over an earlier other task", () => {
@@ -46,8 +48,8 @@ describe("nextContact: one rule", () => {
   it("a reminder set after a call is not met by that call", () => {
     // «Llamé · no contestó» at 11:00, reminder «otra vez hoy (en 2 h)» created right after.
     const c = card({
-      last_call: { at: new Date(2026, 10, 18, 11, 0).toISOString(), outcome: "contesto" },
-      open_tasks: [task({ due_at: new Date(2026, 10, 18, 13, 0).toISOString(), created_at: new Date(2026, 10, 18, 11, 0, 5).toISOString() })],
+      last_call: { at: santiago(18, 11, 0).toISOString(), outcome: "contesto" },
+      open_tasks: [task({ due_at: santiago(18, 13, 0).toISOString(), created_at: new Date(santiago(18, 11, 0).getTime() + 5000).toISOString() })],
     });
     expect(nextContact(c, NOW)?.source).toBe("followup");
   });
@@ -94,8 +96,8 @@ describe("Hoy and Seguimiento agree on one case (QA 2026-11-19)", () => {
   const voicemailCase = () => card({
     latest_revision: { revision_id: "r1", revision_no: 1, status: "sent", origin: null, sent_at: "2026-10-28T15:00:00Z", superseded_by_revision_no: null, is_active: true, document: null, gmail: null, drive: null, quote_number: "CN09876", candidates: [] } as unknown as OpportunityCardData["latest_revision"],
     contact: { name: "Ana Ficticia", address: "ana@ejemplo.invalid", phone: "+56 9 1111 2222", phone_confirmed: true } as unknown as OpportunityCardData["contact"],
-    last_call_any: { at: new Date(2026, 10, 17, 13, 0).toISOString(), outcome: "buzon", author_name: "Tati" },
-    open_tasks: [task({ due_at: new Date(2026, 10, 18, 15, 6).toISOString(), created_at: new Date(2026, 10, 17, 13, 1).toISOString() })],
+    last_call_any: { at: santiago(17, 13, 0).toISOString(), outcome: "buzon", author_name: "Tati" },
+    open_tasks: [task({ due_at: santiago(18, 15, 6).toISOString(), created_at: santiago(17, 13, 1).toISOString() })],
   });
 
   it("the channel is the one Seguimiento shows: the chosen one, else a call with a phone, else email", () => {
