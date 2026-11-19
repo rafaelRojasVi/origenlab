@@ -97,7 +97,7 @@ describe("SeguimientoCallRow", () => {
       expect(note(posts)).not.toHaveProperty("occurred_at");
     });
 
-    it("«Ayer» at 15:00 is that Santiago time, and the reminder still counts from the save", async () => {
+    it("«Ayer» at 15:00 is that Santiago time, defaults the next contact to Mañana, counted from the save", async () => {
       const posts = stubOk();
       const onSaved = renderRow();
       fireEvent.click(screen.getByRole("button", { name: "Ayer" }));
@@ -105,12 +105,72 @@ describe("SeguimientoCallRow", () => {
       expect(screen.getByLabelText("Hora de la llamada")).toHaveValue("12:00");
       fireEvent.change(screen.getByLabelText("Hora de la llamada"), { target: { value: "15:00" } });
       fireEvent.click(screen.getByRole("button", { name: "No contestó" }));
+      // A call made yesterday never proposes «otra vez hoy (en 2 h)».
+      expect(screen.queryByRole("button", { name: "Otra vez hoy (en 2 h)" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mañana" })).toHaveAttribute("aria-pressed", "true");
       fireEvent.click(screen.getByRole("button", { name: "Guardar llamada" }));
-      await waitFor(() => expect(onSaved).toHaveBeenCalledWith("Hoy en 2 h"));
+      await waitFor(() => expect(onSaved).toHaveBeenCalledWith("Mañana"));
       // 17 Nov 15:00 in Santiago (UTC-3).
       expect(note(posts).occurred_at).toBe("2026-11-17T18:00:00.000Z");
       const task = posts.find((p) => p.path.endsWith("/create-task"))!.body;
-      expect(task.due_at).toBe(new Date(NOW.getTime() + 2 * 3_600_000).toISOString());
+      expect(Date.parse(String(task.due_at))).toBeGreaterThan(NOW.getTime() + 12 * 3_600_000);
+    });
+
+    it("«Otra vez hoy» chosen before «Ayer» falls back to Mañana", () => {
+      stubOk();
+      renderRow();
+      fireEvent.click(screen.getByRole("button", { name: "No contestó" }));
+      expect(screen.getByRole("button", { name: "Otra vez hoy (en 2 h)" })).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Otro día" }));
+      expect(screen.getByRole("button", { name: "Mañana" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("«Otro día» with no date blocks the save with a message", () => {
+      const posts = stubOk();
+      const onSaved = renderRow();
+      fireEvent.click(screen.getByRole("button", { name: "Otro día" }));
+      fireEvent.change(screen.getByLabelText("Día de la llamada"), { target: { value: "" } });
+      expect(screen.getByRole("alert")).toHaveTextContent("Elige el día de la llamada.");
+      expect(screen.getByRole("button", { name: "Guardar llamada" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Guardar llamada" }));
+      expect(posts).toHaveLength(0);
+      expect(onSaved).not.toHaveBeenCalled();
+    });
+
+    it("a day more than 60 days back, or in the future, says why and blocks the save", () => {
+      stubOk();
+      renderRow();
+      fireEvent.click(screen.getByRole("button", { name: "Otro día" }));
+      fireEvent.change(screen.getByLabelText("Día de la llamada"), { target: { value: "2026-09-18" } });
+      expect(screen.getByRole("alert")).toHaveTextContent("Solo se registran llamadas de los últimos 60 días");
+      expect(screen.getByRole("button", { name: "Guardar llamada" })).toBeDisabled();
+      fireEvent.change(screen.getByLabelText("Día de la llamada"), { target: { value: "2026-11-19" } });
+      expect(screen.getByRole("alert")).toHaveTextContent("Esa hora todavía no llega");
+      fireEvent.change(screen.getByLabelText("Día de la llamada"), { target: { value: "2026-09-20" } });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Guardar llamada" })).toBeEnabled();
+    });
+
+    it("«Otro día…» as the next contact schedules that day", async () => {
+      const posts = stubOk();
+      const onSaved = renderRow();
+      fireEvent.click(screen.getByRole("button", { name: "Otro día…" }));
+      fireEvent.change(screen.getByLabelText("Día del próximo contacto"), { target: { value: "2026-11-27" } });
+      fireEvent.click(screen.getByRole("button", { name: "Guardar llamada" }));
+      await waitFor(() => expect(onSaved).toHaveBeenCalled());
+      const task = posts.find((p) => p.path.endsWith("/create-task"))!.body;
+      expect(task.due_at).toBe(new Date(2026, 10, 27, 9, 0).toISOString());
+    });
+
+    it("says «al contacto» when the case has no contact name", () => {
+      render(
+        <table>
+          <tbody>
+            <SeguimientoCallRow row={{ card: { ...card, contact: null } } as SegRow} colSpan={8} clock={() => NOW} onSaved={vi.fn()} onCancel={vi.fn()} />
+          </tbody>
+        </table>,
+      );
+      expect(screen.getByText("¿Cómo terminó la llamada al contacto?")).toBeInTheDocument();
     });
 
     it("blocks a time that has not come yet", () => {
