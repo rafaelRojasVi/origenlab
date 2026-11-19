@@ -10,6 +10,7 @@ import { useMayRunCaseCommands, type CaseCommandReceipt } from "../caseCommands"
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
 import { dateSantiago } from "../goals";
 import { formatMoney } from "../money";
+import { isMaskedPhone } from "../redaction";
 import { quoteNumberOf, touchedToday, type SegRow } from "../seguimiento";
 import { isFollowUpTask } from "../today";
 import { Button, initials } from "../ui";
@@ -215,6 +216,12 @@ export function SeguimientoSheet({
                     <td className={`${td} whitespace-nowrap`}>
                       {r.phone ? (
                         <>
+                          {isMaskedPhone(r.phone) ? (
+                            <span className="inline-flex min-h-9 items-center gap-1.5 text-ink-muted" data-testid="phone-masked">
+                              <Icon d={PHONE_ICON} />
+                              {r.phone}
+                            </span>
+                          ) : (
                           <a
                             href={telHref(r.phone)}
                             onClick={(e) => e.stopPropagation()}
@@ -223,6 +230,7 @@ export function SeguimientoSheet({
                             <Icon d={PHONE_ICON} />
                             {r.phone}
                           </a>
+                          )}
                           {!r.phoneConfirmed ? (
                             <span className="ml-1 rounded-full bg-warn-bg px-1.5 py-px text-[10px] font-bold text-warn">por confirmar</span>
                           ) : null}

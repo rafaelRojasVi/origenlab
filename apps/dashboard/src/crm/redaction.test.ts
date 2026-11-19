@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuthSessionState } from "../api/authClient";
-import { contactAddressesRedacted, isMaskedAddress } from "./redaction";
+import { contactAddressesRedacted, isMaskedAddress, isMaskedPhone } from "./redaction";
 
 function signedIn(role: string): AuthSessionState {
   return {
@@ -38,5 +38,13 @@ describe("isMaskedAddress", () => {
     expect(isMaskedAddress("persona@ejemplo.invalid")).toBe(false);
     expect(isMaskedAddress("")).toBe(false);
     expect(isMaskedAddress(null)).toBe(false);
+  });
+});
+
+describe("isMaskedPhone", () => {
+  it("is true only for the API mask", () => {
+    expect(isMaskedPhone("***")).toBe(true);
+    expect(isMaskedPhone("+56 9 1234 5678")).toBe(false);
+    expect(isMaskedPhone(null)).toBe(false);
   });
 });

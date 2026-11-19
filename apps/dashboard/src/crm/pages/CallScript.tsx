@@ -6,13 +6,14 @@ import { personLabel, quoteProduct } from "../caseDisplay";
 import { quoteNumberOf, type SegRow } from "../seguimiento";
 import { shortDate } from "./PipelineBoard";
 
-export function CallScript({ row, me, now, onClose }: { row: SegRow; me: string; now: Date; onClose: () => void }) {
+export function CallScript({ row, me, now, technicalName, onClose }: { row: SegRow; me: string; now: Date; technicalName?: string | null; onClose: () => void }) {
   const card = row.card;
   const contact = personLabel(card.contact?.name);
   const quote = quoteNumberOf(card);
   const product = quoteProduct(card) ?? "los equipos";
   const sent = row.sentAt ? shortDate(row.sentAt, now) : null;
   const client = card.organization?.name ?? "Sin institución";
+  const tech = technicalName || "el equipo técnico";
   const b = "font-semibold text-accent";
   return (
     <aside
@@ -64,8 +65,8 @@ export function CallScript({ row, me, now, onClose }: { row: SegRow; me: string;
       <h3 className="text-[12px] font-bold text-ink-muted">Si dice…</h3>
       <ul className="flex list-disc flex-col gap-1.5 pl-[18px] text-[12.5px] text-ink-muted">
         <li><b className="text-ink">«Todavía no»</b>: ¿cuándo le acomoda que lo llame? Anota la fecha en Próximo.</li>
-        <li><b className="text-ink">«Está caro»</b>: pregunta contra qué compara y ofrece revisar opciones con Tatiana.</li>
-        <li><b className="text-ink">Pregunta técnica</b>: tómala y di que Tatiana le responde hoy por correo.</li>
+        <li><b className="text-ink">«Está caro»</b>: pregunta contra qué compara y ofrece revisar opciones con {tech}.</li>
+        <li><b className="text-ink">Pregunta técnica</b>: tómala y di que {tech} le responde hoy por correo.</li>
         <li><b className="text-ink">«Venció»</b>: le mandamos una actualizada hoy mismo.</li>
       </ul>
       <h3 className="text-[12px] font-bold text-ink-muted">Si no contesta</h3>

@@ -293,7 +293,7 @@ function CaseDrawerBody({
       {stepper}
       {embedded && profiles.length > 0 ? (
         <section className="space-y-1.5" aria-label="Seguimiento" data-testid="case-inline-follow-up">
-          <FollowUpPicker card={card} profiles={profiles} onChanged={() => onChanged()} />
+          <FollowUpPicker card={card} profiles={profiles} onChanged={() => onChanged()} onConflict={() => onChanged()} />
           <a href={`#/ventas/seguimiento?caso=${card.opportunity_id}`} className="text-[12.5px] font-medium text-accent hover:underline">
             Ver en Seguimiento
           </a>

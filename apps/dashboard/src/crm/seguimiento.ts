@@ -10,6 +10,7 @@ import { isDelivered, quoteProduct } from "./caseDisplay";
 import type { OpportunityCardData, PipelineResponse } from "./crmTypes";
 import { PILOT_CALLS_PER_DAY, dateSantiago } from "./goals";
 import { caseAmountClp } from "./nextSteps";
+import { isMaskedPhone } from "./redaction";
 import { isOpenCase } from "./today";
 
 /** Profile keys allowed to use WhatsApp; the owner confirms the real key during the local test. */
@@ -64,7 +65,10 @@ function isTatiCase(card: OpportunityCardData): boolean {
   return (caseAmountClp(card) ?? 0) >= TATI_MONEY_CLP || TATI_RULE.test(caseText(card));
 }
 
-const phoneOf = (card: OpportunityCardData): string | null => card.contact?.phone || null;
+const phoneOf = (card: OpportunityCardData): string | null => {
+  const phone = card.contact?.phone || null;
+  return isMaskedPhone(phone) ? null : phone;
+};
 
 /** Tati for big or sonicator cases, else Rafa when there is a phone, else Karla; null when the profile is missing. */
 export function suggestOwner(card: OpportunityCardData, profiles: ProfileCard[]): string | null {
@@ -164,7 +168,7 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
     lastTouch,
     callsToday: card.call_counts?.today ?? 0,
     callsTotal: card.call_counts?.total ?? 0,
-    phone,
+    phone: card.contact?.phone || null,
     phoneConfirmed: card.contact?.phone_confirmed === true,
     score: scoreCase(card),
     late: daysSinceTouch >= LATE_AFTER_DAYS,

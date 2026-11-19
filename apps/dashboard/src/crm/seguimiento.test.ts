@@ -169,6 +169,13 @@ describe("channels", () => {
   });
 });
 
+describe("masked phone (viewer role)", () => {
+  it("counts as no phone: no Rafa suggestion, no +2 score", () => {
+    expect(suggestOwner(card({ phone: "***" }), profiles)).toBe("op-karla");
+    expect(scoreCase(card({ title: "Balanza OHAUS", clp: "500000", phone: "***" }))).toBe(scoreCase(card({ title: "Balanza OHAUS", clp: "500000", phone: null })));
+  });
+});
+
 describe("scoreCase", () => {
   it("score values for a cheap balanza with phone", () => {
     // monto 1 + facilidad 5 + interes 2 + phone 2

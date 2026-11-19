@@ -13,7 +13,7 @@ import { contactLine, displayName } from "../caseDisplay";
 import { fetchPipeline } from "../crmApi";
 import type { PipelineResponse } from "../crmTypes";
 import { formatMoney } from "../money";
-import { seguimientoKpis, seguimientoRows, type SegRow } from "../seguimiento";
+import { WHATSAPP_PROFILE_KEYS, seguimientoKpis, seguimientoRows, type SegRow } from "../seguimiento";
 import { EmptyState, PageHeader, ResourceGate, SearchInput, Skeleton, initials, toast } from "../ui";
 import { useResource } from "../useResource";
 import { CallScript } from "./CallScript";
@@ -268,7 +268,7 @@ function Seguimiento({
                 clock={clock}
               />
             )}
-            {guionOpen && guionRow ? <CallScript row={guionRow} me={myName} now={now} onClose={() => setGuionOpen(false)} /> : null}
+            {guionOpen && guionRow ? <CallScript row={guionRow} me={myName} now={now} technicalName={profiles.find((p) => WHATSAPP_PROFILE_KEYS.includes(p.key.toLowerCase()))?.displayName ?? null} onClose={() => setGuionOpen(false)} /> : null}
           </div>
         </>
       )}

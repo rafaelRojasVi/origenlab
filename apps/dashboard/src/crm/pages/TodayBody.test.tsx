@@ -1023,4 +1023,24 @@ describe("Hoy: encargado y próximo contacto", () => {
       `#/ventas/seguimiento?caso=${c.opportunity_id}`,
     );
   });
+
+  it("a 409 from set-case-follow-up in Hoy refetches the queue", async () => {
+    const c = card();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (path === "/v2/commands/set-case-follow-up") {
+        return Promise.resolve(new Response(JSON.stringify({ error: { code: "conflict", details: { code: "stale_version" } } }), { status: 409 }));
+      }
+      const body = path === "/auth/profiles"
+        ? { profiles: [{ id: "op-rafa", display_name: "Rafa", role_label: "Ventas", key: "rafael" }, { id: "op-karla", display_name: "Karla", role_label: "Ventas", key: "karla" }] }
+        : { items: [], total: 0 };
+      const status = init?.body === undefined && /^\/v2\/(workspace|cockpit)\/opportunities\//.test(path) ? 404 : 200;
+      return Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+    }));
+    const onChanged = renderToday([c]);
+    const owner = (await screen.findByLabelText("Encargado")) as HTMLSelectElement;
+    fireEvent.change(owner, { target: { value: "op-karla" } });
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
 });

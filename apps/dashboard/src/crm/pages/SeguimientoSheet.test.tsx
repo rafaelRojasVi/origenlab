@@ -72,4 +72,11 @@ describe("SeguimientoSheet", () => {
     expect(tone("1003")).toBe("bad");
     expect(tone("1004")).toBe("ok");
   });
+
+  it("shows a masked phone as plain text, not a tel: link", () => {
+    renderSheet([card("1005", "1", "2026-11-01T15:00:00Z", { contact: { source: "crm_participant", name: "Persona", address: null, others: 0, phone: "***", phone_confirmed: null } as OpportunityCardData["contact"] })]);
+    const r = within(screen.getByTestId("seg-row-1005"));
+    expect(r.getByTestId("phone-masked")).toHaveTextContent("***");
+    expect(r.queryByRole("link", { name: /\*\*\*/ })).toBeNull();
+  });
 });

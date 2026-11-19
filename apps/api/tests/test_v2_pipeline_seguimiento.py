@@ -170,3 +170,43 @@ def test_contact_phone_via_email_address(disposable_database, world) -> None:
     card, _ = _card(dsn, case_id)
     assert card["contact"]["source"] == "gmail_recipient"
     assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1234 5678", True)
+
+
+@needs_db
+def test_pipeline_masks_contact_phone_for_viewer(disposable_database, world) -> None:
+    """The route keeps ContactRedactingRoute: a viewer reads the card but the phone comes back «***»."""
+    import uuid
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from origenlab_api.v2.contact_redaction import REDACTION_HEADER
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+    from origenlab_api.v2.identity import IdentityPort, OperatorIdentity
+
+    class _ViewerPort(IdentityPort):
+        def resolve(self, headers: dict[str, str]) -> OperatorIdentity:
+            return OperatorIdentity(
+                operator_id="00000000-0000-4000-8000-000000000001",
+                email_norm="viewer@example.invalid",
+                display_name="Viewer",
+                role="viewer",
+                status="active",
+            )
+
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso con fono para viewer")
+    number = f"+56 9 {uuid.uuid4().int % 10**4:04d} {uuid.uuid4().int % 10**4:04d}"
+    _phone(disposable_database, case_id, number, "confirmed")
+    card, _ = _card(disposable_database, case_id)
+    assert card["contact"]["phone"] == number, "the phone must exist unmasked, or this test checks nothing"
+
+    app = FastAPI()
+    app.state.v2_identity = _ViewerPort()
+    app.state.crm_workspace = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
+    app.include_router(workspace_router)
+    response = TestClient(app).get("/v2/workspace/pipeline")
+    assert response.status_code == 200
+    assert response.headers[REDACTION_HEADER] == "contact-addresses"
+    [masked] = [c for c in response.json()["items"] if c["opportunity_id"] == case_id]
+    assert masked["contact"]["phone"] == "***"
+    assert number not in response.text

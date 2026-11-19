@@ -38,4 +38,14 @@ describe("CallScript", () => {
     render(<CallScript row={row({ contact: null })} me="Rafa" now={NOW} onClose={() => undefined} />);
     expect(screen.getByTestId("guion-say")).toHaveTextContent("Hola, ¿con quién hablo?");
   });
+
+  it("names the technical contact from the profile, else the team", () => {
+    const { unmount } = render(<CallScript row={row({})} me="Rafa" now={NOW} technicalName="Persona Técnica" onClose={() => undefined} />);
+    expect(screen.getByText(/revisar opciones con Persona Técnica\./)).toBeInTheDocument();
+    expect(screen.getByText(/Persona Técnica le responde hoy/)).toBeInTheDocument();
+    unmount();
+    render(<CallScript row={row({})} me="Rafa" now={NOW} onClose={() => undefined} />);
+    expect(screen.getByText(/con el equipo técnico\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Tatiana/)).toBeNull();
+  });
 });

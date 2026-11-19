@@ -21,4 +21,9 @@ export function isMaskedAddress(value: string | null | undefined): boolean {
   return value === "***" || /(^|[\s<])\*\*\*@/.test(value);
 }
 
+/** Whether a phone is the API's masked form (`***`) for roles that do not see contact data. */
+export function isMaskedPhone(value: string | null | undefined): boolean {
+  return value === "***";
+}
+
 export const REDACTION_NOTICE = "Direcciones de contacto ocultas para tu rol";
