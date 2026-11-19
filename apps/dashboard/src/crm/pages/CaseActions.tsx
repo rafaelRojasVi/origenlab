@@ -39,7 +39,8 @@ import type { OpportunityCardData } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
 import { BOARD_COLUMNS, STAGE_LABEL, boardColumnOf, pausedUntil } from "../stage";
-import { COLUMN_LABEL, CaseMoveForm, NotRequestConfirm, type MoveTarget } from "./CaseMove";
+import { toastWithUndo, type UndoableAction } from "../caseUndo";
+import { COLUMN_LABEL, CaseMoveForm, NotRequestConfirm, type MoveOutcome, type MoveTarget } from "./CaseMove";
 import { AssignInstitution } from "./AssignInstitution";
 import { FollowUpReminder } from "./FollowUpReminder";
 import { LogCallForm } from "./LogCallForm";
@@ -65,10 +66,7 @@ export type Mode = null | "stage" | "won" | "resolve" | "quotation" | "revision"
 /** «Cambiar estado» offers these, minus the one the case is in. */
 const MOVE_TARGETS: MoveTarget[] = ["solicitada", "enviada", "conversacion", "pausa", "perdida"];
 
-interface Outcome {
-  tone: "good" | "bad" | "warn";
-  lines: string[];
-}
+type Outcome = MoveOutcome;
 
 /**
  * What the case drawer's header and footer offer instead of this block (`hoisted`): each one only
@@ -192,11 +190,16 @@ export function CaseActions({
   }
 
   /** Show what happened; close the form unless it was refused; refetch when anything moved. */
-  function finished(next: Outcome, refetch: boolean) {
+  function finished(next: Outcome, refetch: boolean, undoable: UndoableAction | null = null) {
     setOutcome(next);
     if (next.tone !== "bad") {
       setMode(null);
-      toast(next.tone === "good" ? "Cambio registrado." : "Registrado en parte: revisa el detalle en el caso.", next.tone);
+      const text = next.tone === "good" ? "Cambio registrado." : "Registrado en parte: revisa el detalle en el caso.";
+      // A pause or a close takes the case off the lists: offer «Deshacer», as Seguimiento's «⋯» does.
+      if (undoable) {
+        const said = next.tone === "good" ? (undoable === "pausa" ? "Caso en pausa: vuelve ese día." : "Caso cerrado.") : text;
+        toastWithUndo(said, undoable, card, next.receipts, onChanged, next.tone, "el caso");
+      } else toast(text, next.tone);
     }
     if (refetch) onChanged();
   }
@@ -385,7 +388,7 @@ export function CaseActions({
               }}
               onDone={(o, refetch) => {
                 if (o.tone !== "bad") setTarget(null);
-                finished(o, refetch);
+                finished(o, refetch, target === "pausa" || target === "perdida" ? target : null);
               }}
             />
           ) : (
@@ -985,7 +988,7 @@ function FormHead({
         <p className="text-[14px] font-semibold text-ink">{head.title}</p>
         <p className="text-[12.5px] text-ink-muted">{head.text}</p>
       </div>
-      <button type="button" onClick={onClose} aria-label="Cerrar" className="-mr-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink">✕</button>
+      <button type="button" onClick={onClose} aria-label="Cerrar" className="tap-44 -mr-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken hover:text-ink">✕</button>
     </div>
   );
 }

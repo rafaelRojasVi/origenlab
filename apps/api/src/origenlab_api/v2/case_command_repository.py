@@ -75,6 +75,7 @@ from origenlab_api.v2.case_commands import (
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     SET_CASE_ORIGIN,
+    SET_CASE_FOLLOW_UP,
     SET_CASE_PAUSE,
     STAGES_REQUIRING_A_REQUESTING_INSTITUTION,
     SUPPLIER_RELATIONSHIP_ROLES,
@@ -87,6 +88,7 @@ from origenlab_api.v2.case_kind import refuse_tender
 from origenlab_api.v2.case_quotation import record_case_quotation
 from origenlab_api.v2.case_sent_quote import complete_case_from_sent_quote
 from origenlab_api.v2.forwarded_requests import create_request_from_forward, dismiss_forwarded_request
+from origenlab_api.v2.case_follow_up import set_case_follow_up
 from origenlab_api.v2.case_pause import retire_on_close, set_case_pause
 from origenlab_api.v2.case_won import record_case_won
 from origenlab_api.v2.command_core import CommandTransaction
@@ -1489,6 +1491,8 @@ class V2CaseCommandRepository(CommandTransaction):
         SET_CASE_ORIGIN: _set_case_origin,
         # «En pausa hasta…» as a state, with the legacy task retired in its own module (`case_pause.py`).
         SET_CASE_PAUSE: set_case_pause,
+        # Encargado + next channel of a case's follow-up, in its own module (`case_follow_up.py`).
+        SET_CASE_FOLLOW_UP: set_case_follow_up,
         # The one writer of a win, shared with the email → cases rules (`case_won.py`).
         RECORD_CASE_WON: record_case_won,
         # The quote acts, each in the module that owns the quote SQL (`current_revision.py`,

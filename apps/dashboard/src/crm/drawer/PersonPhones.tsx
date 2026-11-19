@@ -6,13 +6,22 @@
 import { useCallback } from "react";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { fetchPersonAuthoring } from "../authoring/crmAuthoringApi";
+import { chileanMobile } from "../company";
 import { contactAddressesRedacted } from "../redaction";
 import { useResource } from "../useResource";
 
-/** `https://wa.me/` takes the number as digits only, country code first (Chile's 56 stays). */
+/**
+ * `https://wa.me/` takes the number as digits only, country code first (Chile's 56 stays). A Chilean
+ * number must be a mobile (`chileanMobile`): a landline has no WhatsApp. A foreign number written
+ * with its country code is passed as it is.
+ */
 export function whatsAppUrl(phone: string): string | null {
-  const digits = phone.replace(/\D/g, "");
-  return digits.length >= 8 ? `https://wa.me/${digits}` : null;
+  const digits = phone.replace(/\D/g, "").replace(/^00/, "");
+  if (digits.startsWith("56") || digits.length <= 10) {
+    const mobile = chileanMobile(phone);
+    return mobile ? `https://wa.me/${mobile}` : null;
+  }
+  return `https://wa.me/${digits}`;
 }
 
 const LINK =

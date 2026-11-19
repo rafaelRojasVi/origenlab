@@ -11,6 +11,7 @@
 | `POST /v2/commands/record-case-won` | the case was won, against this sent, current quote revision |
 | `POST /v2/commands/resolve-current-revision` | of this quote's current revisions, this one is the current one |
 | `POST /v2/commands/record-case-quotation` | this quote was already sent on this case, by this Gmail message |
+| `POST /v2/commands/set-case-follow-up` | The case's encargado (an operator or none) and next channel (`llamada`, `correo`, `whatsapp` or none) |
 | `POST /v2/commands/set-case-pause` | «En pausa hasta…» (a day and a reason) or its end (both null); cancels the case's legacy «Retomar» task |
 | `POST /v2/commands/set-case-origin` | the channel this case came from, set or corrected (null clears it) |
 
@@ -61,6 +62,7 @@ from origenlab_api.v2.case_commands import (
     RESOLVE_CURRENT_REVISION,
     SET_CASE_ORGANIZATION_ROLE,
     SET_CASE_ORIGIN,
+    SET_CASE_FOLLOW_UP,
     SET_CASE_PAUSE,
     AddCaseOrganizationBody,
     AdvanceCaseStageBody,
@@ -75,6 +77,7 @@ from origenlab_api.v2.case_commands import (
     ResolveCurrentRevisionBody,
     SetCaseOrganizationRoleBody,
     SetCaseOriginBody,
+    SetCaseFollowUpBody,
     SetCasePauseBody,
     validated_case,
 )
@@ -395,6 +398,27 @@ def set_case_pause(
     """
     return _run(
         command_name=SET_CASE_PAUSE,
+        body=body,
+        repo=repo,
+        operator=operator,
+        idempotency_key=idempotency_key,
+    )
+
+
+@case_command_router.post("/set-case-follow-up")
+def set_case_follow_up(
+    body: SetCaseFollowUpBody,
+    operator: Deciding,
+    repo: V2CaseCommandRepository = Depends(get_case_command_repository),
+    idempotency_key: IdempotencyKey = None,
+) -> dict[str, Any]:
+    """Set the case's encargado (`follow_up_operator_id`, null = sin asignar) and next channel (`channel`, null =
+    not chosen) together. The case version shown must be current (409 `case_version_conflict`), the
+    case must exist and be open (404 / 409) and the operator must exist (422
+    `follow_up_operator_not_found`). Writes one `opportunity.follow_up_set` event.
+    """
+    return _run(
+        command_name=SET_CASE_FOLLOW_UP,
         body=body,
         repo=repo,
         operator=operator,

@@ -93,6 +93,8 @@ export interface NoteRow {
   call_outcome?: string | null;
   /** What was agreed next; only on a call, and optional there. */
   call_next_step?: string | null;
+  /** A call logged after the fact: when it happened; null when it was logged as it happened. */
+  occurred_at?: string | null;
 }
 
 export interface ContactPointRow {
@@ -691,6 +693,8 @@ export function addNote(
     note_kind?: "llamada";
     call_outcome?: CallOutcome;
     call_next_step?: string;
+    /** Only on a call: when it happened, if earlier (at most 60 days back, never in the future). */
+    occurred_at?: string;
   },
   idempotencyKey: string = newIdempotencyKey(),
 ): Promise<CommandReceipt> {

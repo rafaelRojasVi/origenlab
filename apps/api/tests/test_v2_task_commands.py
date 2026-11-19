@@ -151,6 +151,18 @@ def test_the_card_names_its_earliest_open_task_as_the_next_action() -> None:
     assert task_next_action([]) is None
 
 
+def test_a_follow_up_reminder_is_the_next_action_before_an_earlier_task() -> None:
+    """One rule with the dashboard's `nextContact`: the «Seguimiento …» reminder first."""
+    tasks = [
+        {"title": "Retomar: fondos", "due_at": "2026-11-02T12:00:00Z"},
+        {"title": "Seguimiento de CN09876", "due_at": "2026-11-20T12:00:00Z"},
+        {"title": "seguimiento de CN09877", "due_at": "2026-11-25T12:00:00Z"},
+    ]
+    assert task_next_action(tasks) == {
+        "text": "Seguimiento de CN09876", "source": "task", "due_at": "2026-11-20T12:00:00Z"}
+    assert task_next_action(tasks[:1])["text"] == "Retomar: fondos"
+
+
 # ------------------------------------------------------------------ against PostgreSQL
 
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn  # noqa: E402
@@ -266,3 +278,15 @@ def test_a_closed_case_takes_no_task_and_a_replay_writes_one(world) -> None:
         _run(world, CREATE_TASK, CreateTaskBody(
             opportunity_id=str(uuid.uuid4()), title="Otra", due_at=DUE, note="x"))
     assert missing.value.code == "case_not_found"
+
+
+def test_recent_notes_are_newest_first_and_at_most_three() -> None:
+    """Pure: whatever the rows' order, a card keeps its three newest notes."""
+    opp = {"opportunity_id": "o1", "title": "Caso", "stage": "quoting", "version": 3}
+    rows = [{"opportunity_id": "o1", "at": f"2026-11-1{d}T12:00:00Z", "body": f"Nota {d}", "kind": None,
+             "outcome": None, "author_display_name": "Ventas"} for d in (2, 5, 1, 4)]
+    [card] = compose_pipeline([opp], [], [], [], {}, [], {}, recent_notes=rows)
+    assert [n["body"] for n in card["recent_notes"]] == ["Nota 5", "Nota 4", "Nota 2"]
+    assert card["recent_notes"][0] == {"at": "2026-11-15T12:00:00Z", "body": "Nota 5", "kind": None,
+                                       "outcome": None, "author": "Ventas"}
+    assert compose_pipeline([opp], [], [], [], {}, [], {})[0]["recent_notes"] == []

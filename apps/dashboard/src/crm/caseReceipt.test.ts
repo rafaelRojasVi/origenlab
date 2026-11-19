@@ -85,4 +85,13 @@ describe("applyCaseReceipt", () => {
     const [other] = applyCaseReceipt([card({ origin: "web" })], receipt({ command: "create-task" }), NOW);
     expect(other.origin).toBe("web");
   });
+
+  it("shows a new encargado and channel at once", () => {
+    const [out] = applyCaseReceipt(
+      [card({ follow_up: { operator_id: "a", operator_name: "A", channel: "llamada" } })],
+      receipt({ command: "set_case_follow_up", operator_id: "b", channel: "correo" }),
+    );
+    expect(out.follow_up).toEqual({ operator_id: "b", operator_name: null, channel: "correo" });
+    expect(out.version).toBe(4);
+  });
 });

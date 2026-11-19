@@ -95,8 +95,8 @@ describe("parsing the shared sign-in answers", () => {
 
   it("keeps only well-formed profile cards", () => {
     expect(
-      parseProfilesResponse(200, { profiles: [{ id: "a", display_name: "A", role_label: "Ventas" }, { id: "b" }, 7] }),
-    ).toEqual({ kind: "ok", principalEmail: null, profiles: [{ id: "a", displayName: "A", roleLabel: "Ventas" }] });
+      parseProfilesResponse(200, { profiles: [{ id: "a", display_name: "A", role_label: "Ventas", key: "ana" }, { id: "b" }, 7] }),
+    ).toEqual({ kind: "ok", principalEmail: null, profiles: [{ id: "a", displayName: "A", roleLabel: "Ventas", key: "ana" }] });
     expect(parseProfilesResponse(401, {}).kind).toBe("signed_out");
     expect(parseProfilesResponse(500, {}).kind).toBe("error");
   });

@@ -53,14 +53,17 @@ export async function scheduleFollowUp({
   note,
   now,
   keys,
+  at,
 }: {
   card: OpportunityCardData;
   day: string;
   note: string;
   now: Date;
   keys: FollowUpKeys;
+  /** An exact instant instead of the day's (Seguimiento's «Otra vez hoy (en 2 h)»). */
+  at?: Date;
 }): Promise<Date> {
-  const due = reminderDue(day, now);
+  const due = at ?? reminderDue(day, now);
   const quote = card.latest_revision?.quote_number ?? card.quote_numbers[0] ?? "";
   await createTask(
     { opportunity_id: card.opportunity_id, title: `Seguimiento de ${quote}`.trim(), due_at: due.toISOString(), note },

@@ -1,0 +1,266 @@
+"""The pipeline read for «Ventas › Seguimiento»: encargado, phone, call counts, calls per operator.
+
+Database tests, as the unprivileged `origenlab_api` role in a disposable `origenlab_test_<hex>`.
+Every value is fictitious.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+import psycopg
+
+from origenlab_api.v2.case_commands import SET_CASE_FOLLOW_UP, SetCaseFollowUpBody
+from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
+from v2_command_harness import needs_db, runtime_dsn
+
+from test_v2_case_command_boundary import (  # noqa: F401 - fixtures and helpers of the case boundary
+    _open_case,
+    _repo,
+    _run,
+    disposable_database,
+    world,
+)
+
+SANTIAGO = timezone(timedelta(hours=-3))
+NOW = datetime(2026, 11, 18, 9, 0, tzinfo=SANTIAGO)
+
+
+def _owner(dsn, sql, params=()):
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("set role origenlab_owner")
+        cur.execute(sql, params)
+        return cur.fetchall() if cur.description else None
+
+
+def _card(dsn, case_id, now=NOW):
+    payload = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(dsn)).pipeline(now=now)
+    [card] = [c for c in payload["items"] if c["opportunity_id"] == case_id]
+    return card, payload
+
+
+def _call(dsn, case_id, author, at, outcome="no_contesto"):
+    _owner(dsn, "insert into crm.note (subject_kind, subject_id, body, author_operator_id, note_kind, "
+                "call_outcome, created_at) values ('opportunity', %s, 'Llamada ficticia.', %s, 'llamada', %s, %s)",
+           (case_id, author, outcome, at))
+
+
+def _phone(dsn, case_id, number, confirmation):
+    """A person on the case with a phone point; returns nothing."""
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Ficticia', "
+                         "'machine_proposed') returning id")[0][0]
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, person_id, role, is_primary, "
+                "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, "
+                "'machine_proposed')", (case_id, person))
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('phone', %s, %s, %s, 'personal', %s)", (number.replace(" ", ""), number, person, confirmation))
+
+
+@needs_db
+def test_card_follow_up_defaults_null(disposable_database, world) -> None:
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso sin encargado")
+    card, _ = _card(disposable_database, case_id)
+    assert card["follow_up"] == {"operator_id": None, "operator_name": None, "channel": None}
+    assert card["call_counts"] == {"total": 0, "today": 0}
+    assert card["last_call_any"] is None
+
+
+@needs_db
+def test_card_follow_up_after_command(disposable_database, world) -> None:
+    repo = _repo(disposable_database)
+    case_id, version = _open_case(repo, world, "Caso con encargado")
+    _run(repo, SET_CASE_FOLLOW_UP, SetCaseFollowUpBody(
+        opportunity_id=case_id, opportunity_version=version,
+        follow_up_operator_id=world["other_operator_id"], channel="correo"), world)
+    card, _ = _card(disposable_database, case_id)
+    assert card["follow_up"] == {"operator_id": world["other_operator_id"],
+                                 "operator_name": "Pytest Operator", "channel": "correo"}
+
+
+@needs_db
+def test_contact_phone_prefers_confirmed(disposable_database, world) -> None:
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso con teléfono")
+    _phone(disposable_database, case_id, "+56 9 1234 5678", "machine_proposed")
+    card, _ = _card(disposable_database, case_id)
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1234 5678", False)
+    person = _owner(disposable_database, "select person_id from crm.opportunity_participant "
+                                         "where opportunity_id = %s", (case_id,))[0][0]
+    _owner(disposable_database, "insert into crm.contact_point (kind, value_norm, value_display, person_id, "
+                                "usage, confirmation, created_at) values ('phone', '+56911110000', "
+                                "'+56 9 1111 0000', %s, 'personal', 'confirmed', now() - interval '3 days')", (person,))
+    card, _ = _card(disposable_database, case_id)
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1111 0000", True)
+
+
+@needs_db
+def test_contact_without_phone_has_nulls(disposable_database, world) -> None:
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso sin teléfono")
+    person = _owner(disposable_database, "insert into crm.person (display_name, confirmation) values "
+                                         "('Persona Ficticia', 'machine_proposed') returning id")[0][0]
+    _owner(disposable_database, "insert into crm.opportunity_participant (opportunity_id, person_id, role, "
+                                "is_primary, valid_from, confirmation) values (%s, %s, 'quote_recipient', true, "
+                                "current_date, 'machine_proposed')", (case_id, person))
+    card, _ = _card(disposable_database, case_id)
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == (None, None)
+
+
+@needs_db
+def test_call_counts_several_today(disposable_database, world) -> None:
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso con llamadas")
+    op = world["operator_id"]
+    for minutes in (5, 60, 120):
+        _call(disposable_database, case_id, op, NOW - timedelta(minutes=minutes))
+    _call(disposable_database, case_id, op, NOW - timedelta(days=1, hours=2), "contesto")
+    card, _ = _card(disposable_database, case_id)
+    assert card["call_counts"] == {"total": 4, "today": 3}
+    assert card["last_call_any"]["outcome"] == "no_contesto"
+    assert card["last_call_any"]["author_name"] == "Pytest Operator"
+    assert card["last_call_any"]["at"].endswith("Z")
+    assert card["last_call"] is None or card["last_call"]["outcome"] == "contesto"
+
+
+@needs_db
+def test_call_today_uses_santiago_day(disposable_database, world) -> None:
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso a medianoche")
+    # 23:30 on the 17th in Santiago is already the 18th in UTC.
+    _call(disposable_database, case_id, world["operator_id"], datetime(2026, 11, 17, 23, 30, tzinfo=SANTIAGO))
+    card, payload = _card(disposable_database, case_id)
+    assert card["call_counts"] == {"total": 1, "today": 0}
+    assert all(r["operator_id"] != world["operator_id"] or r["today"] == 0
+               for r in payload["calls_by_operator"])
+
+
+@needs_db
+def test_calls_by_operator_today(disposable_database, world) -> None:
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso de dos autores")
+    for _ in range(2):
+        _call(disposable_database, case_id, world["operator_id"], NOW - timedelta(hours=1))
+    _call(disposable_database, case_id, world["other_operator_id"], NOW - timedelta(hours=2))
+    _, payload = _card(disposable_database, case_id)
+    by_op = {r["operator_id"]: r for r in payload["calls_by_operator"]}
+    assert by_op[world["operator_id"]]["today"] == 2
+    assert by_op[world["other_operator_id"]]["today"] == 1
+    assert by_op[world["operator_id"]]["operator_name"] == "Pytest Operator"
+
+
+@needs_db
+def test_contact_phone_via_email_address(disposable_database, world) -> None:
+    """A case contact known only as the address we quoted to still gets the phone of its owner."""
+    import json
+    import uuid
+
+    dsn = disposable_database
+    case_id, _ = _open_case(_repo(dsn), world, "Caso por correo")
+    tag = uuid.uuid4().hex[:8]
+    address = f"persona-{tag}@ejemplo.invalid"
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Ficticia', "
+                         "'machine_proposed') returning id")[0][0]
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('email', %s, %s, %s, 'personal', 'confirmed')", (address, address, person))
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('phone', %s, '+56 9 1234 5678', %s, 'personal', 'confirmed')", (f"+569{uuid.uuid4().int % 10**8:08d}", person))
+    record = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload) values ('gmail_message', "
+                         "%s, %s::jsonb) returning id", (f"via-email-{tag}", json.dumps(
+                             {"recipients": f"Persona Ficticia <{address.upper()}>"})))[0][0]
+    quote = _owner(dsn, "insert into crm.quote (opportunity_id, quote_number, number_origin) values (%s, %s, "
+                        "'printed_historical') returning id", (case_id, f"H{tag}"))[0][0]
+    _owner(dsn, "insert into crm.quote_revision (quote_id, revision_no, status, origin, pdf_sha256, sent_at, "
+                "origin_source_record_id) values (%s, 1, 'sent', 'historical_import', %s, now(), %s)",
+           (quote, tag * 8, record))
+    card, _ = _card(dsn, case_id)
+    assert card["contact"]["source"] == "gmail_recipient"
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1234 5678", True)
+
+
+@needs_db
+def test_email_only_participant_resolves_to_the_person_who_later_owns_the_address(disposable_database, world) -> None:
+    """A participant created from an address alone (no person) shows that address's later owner,
+    with their name and phone, once a person claims the email point."""
+    import uuid
+
+    dsn = disposable_database
+    case_id, _ = _open_case(_repo(dsn), world, "Caso con participante por correo")
+    tag = uuid.uuid4().hex[:8]
+    address = f"solo-correo-{tag}@ejemplo.invalid"
+    point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) "
+                        "values ('email', %s, %s, 'unattributed', 'machine_proposed') returning id",
+                   (address, address))[0][0]
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, contact_point_id, role, is_primary, "
+                "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, "
+                "'machine_proposed')", (case_id, point))
+    card, _ = _card(dsn, case_id)
+    assert card["contact"] is None or card["contact"]["source"] != "crm_participant", "no person yet: not a CRM contact"
+
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Tardía', "
+                         "'machine_proposed') returning id")[0][0]
+    _owner(dsn, "update crm.contact_point set person_id = %s, usage = 'personal' where id = %s", (person, point))
+    number = f"+56 9 {uuid.uuid4().int % 10**4:04d} {uuid.uuid4().int % 10**4:04d}"
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('phone', %s, %s, %s, 'personal', 'confirmed')", (number.replace(" ", ""), number, person))
+    card, _ = _card(dsn, case_id)
+    assert card["contact"]["source"] == "crm_participant"
+    assert card["contact"]["name"] == "Persona Tardía"
+    assert card["contact"]["person_id"] == str(person)
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == (number, True)
+
+
+@needs_db
+def test_pipeline_masks_contact_phone_for_viewer(disposable_database, world) -> None:
+    """The route keeps ContactRedactingRoute: a viewer reads the card but the phone comes back «***»."""
+    import uuid
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from origenlab_api.v2.contact_redaction import REDACTION_HEADER
+    from origenlab_api.v2.crm_workspace_routes import workspace_router
+    from origenlab_api.v2.identity import IdentityPort, OperatorIdentity
+
+    class _ViewerPort(IdentityPort):
+        def resolve(self, headers: dict[str, str]) -> OperatorIdentity:
+            return OperatorIdentity(
+                operator_id="00000000-0000-4000-8000-000000000001",
+                email_norm="viewer@example.invalid",
+                display_name="Viewer",
+                role="viewer",
+                status="active",
+            )
+
+    case_id, _ = _open_case(_repo(disposable_database), world, "Caso con fono para viewer")
+    number = f"+56 9 {uuid.uuid4().int % 10**4:04d} {uuid.uuid4().int % 10**4:04d}"
+    _phone(disposable_database, case_id, number, "confirmed")
+    card, _ = _card(disposable_database, case_id)
+    assert card["contact"]["phone"] == number, "the phone must exist unmasked, or this test checks nothing"
+
+    app = FastAPI()
+    app.state.v2_identity = _ViewerPort()
+    app.state.crm_workspace = CrmWorkspaceRepository(psycopg.connect, runtime_dsn(disposable_database))
+    app.include_router(workspace_router)
+    response = TestClient(app).get("/v2/workspace/pipeline")
+    assert response.status_code == 200
+    assert response.headers[REDACTION_HEADER] == "contact-addresses"
+    [masked] = [c for c in response.json()["items"] if c["opportunity_id"] == case_id]
+    assert masked["contact"]["phone"] == "***"
+    assert number not in response.text
+
+
+@needs_db
+def test_card_carries_the_three_newest_notes_and_calls(disposable_database, world) -> None:
+    """«Seguimiento»'s notes on the row: the three newest live notes and calls, newest first, in one read."""
+    dsn = disposable_database
+    case_id, _ = _open_case(_repo(dsn), world, "Caso con notas")
+    op = world["operator_id"]
+    _owner(dsn, "insert into crm.note (subject_kind, subject_id, body, author_operator_id, created_at) values "
+                "('opportunity', %s, 'Nota más antigua.', %s, %s)", (case_id, op, NOW - timedelta(days=3)))
+    _call(dsn, case_id, op, NOW - timedelta(days=2), "contesto")
+    _owner(dsn, "insert into crm.note (subject_kind, subject_id, body, author_operator_id, created_at) values "
+                "('opportunity', %s, 'Pide la ficha técnica del equipo ficticio.', %s, %s)",
+           (case_id, op, NOW - timedelta(hours=5)))
+    _call(dsn, case_id, op, NOW - timedelta(hours=1))
+    card, _ = _card(dsn, case_id)
+    notes = card["recent_notes"]
+    assert [(n["kind"], n["outcome"]) for n in notes] == [("llamada", "no_contesto"), (None, None), ("llamada", "contesto")]
+    assert notes[1]["body"] == "Pide la ficha técnica del equipo ficticio."
+    assert notes[0]["author"] == "Pytest Operator" and notes[0]["at"].endswith("Z")
+    other, _ = _card(dsn, _open_case(_repo(dsn), world, "Caso sin notas")[0])
+    assert other["recent_notes"] == []

@@ -416,6 +416,8 @@ export const CASE_COMMAND_POST_PATHS: readonly RegExp[] = [
   /^\/v2\/commands\/set-case-origin$/,
   // «En pausa hasta…» as a state of the case, or its end (2026-11-13).
   /^\/v2\/commands\/set-case-pause$/,
+  // The encargado and next channel of a case's follow-up, as a pair («Ventas › Seguimiento», 2026-11-18).
+  /^\/v2\/commands\/set-case-follow-up$/,
   // «Finanzas» commands (`apps/api` v2/finance/routes.py): expenses, supplier orders, monthly target,
   // and partner rule. `upsert-expense` and `upsert-supplier-order` insert or update; `set-monthly-target`
   // upserts one row per calendar month; `set-partner-rule` appends a new rule (admin-only upstream).

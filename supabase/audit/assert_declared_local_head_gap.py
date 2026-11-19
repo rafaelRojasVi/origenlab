@@ -395,6 +395,9 @@ POST_COMMERCIAL_CASE_FOREIGN_KEYS = {
     "crm.supplier_order.supplier_order_created_by_operator_id_fkey",
     "crm.monthly_target.monthly_target_set_by_operator_id_fkey",
     "crm.partner_rule.partner_rule_set_by_operator_id_fkey",
+    # 20261118100000_slice8_opportunity_follow_up.sql — the Seguimiento encargado, covered by the
+    # partial index opportunity_follow_up_operator_idx (WHERE ... IS NOT NULL).
+    "crm.opportunity.opportunity_follow_up_operator_id_fkey",
 }
 
 EXPECTED_FOREIGN_KEY_COUNT = COMMERCIAL_CASE_FOREIGN_KEY_COUNT + len(

@@ -2,6 +2,7 @@
 export type CrmSection =
   | "resumen"
   | "oportunidades"
+  | "seguimiento"
   | "organizaciones"
   | "personas"
   | "catalogo"
@@ -44,6 +45,7 @@ export interface CrmNavItem {
 export const CRM_NAV: CrmNavItem[] = [
   { id: "resumen", label: "Hoy" },
   { id: "oportunidades", label: "Pipeline" },
+  { id: "seguimiento", label: "Seguimiento" },
   { id: "cotizador", label: "Cotizaciones", quoting: true },
   { id: "organizaciones", label: "Organizaciones" },
   { id: "personas", label: "Personas" },
@@ -82,6 +84,7 @@ export type AreaKey = "hoy" | "ventas" | "finanzas" | "catalogo" | "ajustes";
 export const SECTION_PATH: Record<CrmSection, string> = {
   resumen: "hoy",
   oportunidades: "ventas/pipeline",
+  seguimiento: "ventas/seguimiento",
   cotizador: "ventas/cotizaciones",
   organizaciones: "ventas/clientes",
   personas: "ventas/clientes/personas",

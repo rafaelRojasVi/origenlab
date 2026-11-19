@@ -276,6 +276,9 @@ export interface OpportunityCardData {
     person_id?: string | null;
     /** Fingerprint of the bare address; joins the card to its equipment interests when masked. */
     address_ref?: string | null;
+    /** «Ventas › Seguimiento»: the person's phone (a confirmed one first); null when the CRM has none. Absent from an older API. */
+    phone?: string | null;
+    phone_confirmed?: boolean | null;
   } | null;
   quotes: QuoteCard[];
   quote_numbers: string[];
@@ -307,6 +310,14 @@ export interface OpportunityCardData {
    * call was first logged. Absent from an older API; then only emails count.
    */
   last_call?: { at: string; outcome: string } | null;
+  /** «Ventas › Seguimiento»: the encargado (an operator) and the next channel; nulls when unset. Absent from an older API. */
+  follow_up?: { operator_id: string | null; operator_name: string | null; channel: "llamada" | "correo" | "whatsapp" | null };
+  /** Calls on the case: all of them, and today's (Santiago day). Absent from an older API. */
+  call_counts?: { total: number; today: number };
+  /** The newest call whatever its outcome; `last_call` only keeps those that reached the client. */
+  last_call_any?: { at: string; outcome: string; author_name: string | null } | null;
+  /** «Seguimiento»: the three newest live notes and calls, newest first (`kind` "llamada" for a call). */
+  recent_notes?: { at: string; body: string; kind: string | null; outcome: string | null; author: string | null }[];
   /** The earliest open task (`source: "task"`), or a deterministic suggestion. */
   next_action: { text: string; source: "suggested" | "task"; due_at: string | null };
 }
@@ -332,6 +343,8 @@ export interface PipelineResponse {
   tenders_closing?: { id: string; code: string | null; title: string; closes_at: string | null }[];
   /** The team's live calls per Santiago day and outcome, the last 35 days (Hoy's «Alcance»); absent from an older API. */
   calls?: CallDay[];
+  /** Today's calls (Santiago day) per operator, for «Ventas › Seguimiento»; absent from an older API. */
+  calls_by_operator?: { operator_id: string; operator_name: string; today: number }[];
 }
 
 /** One day's calls with one outcome: `day` is `YYYY-MM-DD` in Santiago. */

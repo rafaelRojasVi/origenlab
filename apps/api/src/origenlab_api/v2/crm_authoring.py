@@ -147,7 +147,7 @@ def _live_note(
                revision_of_note_id::text as revision_of_note_id,
                revision_no, status, version,
                archived_at, archived_by_operator_id::text as archived_by_operator_id,
-               archive_reason, note_kind, call_outcome, call_next_step
+               archive_reason, note_kind, call_outcome, call_next_step, occurred_at
           from crm.note
          where id = %s
            for update
@@ -2387,16 +2387,18 @@ def _handle_add_note(
     note_kind = fields.get("note_kind")
     call_outcome = fields.get("call_outcome")
     call_next_step = fields.get("call_next_step")
+    # A call logged after the fact carries when it happened (`check_call_time` bounded it).
+    occurred_at = fields.get("occurred_at")
     cur.execute(
         """
         insert into crm.note
             (subject_kind, subject_id, body, author_operator_id,
-             revision_no, status, note_kind, call_outcome, call_next_step)
-        values (%s, %s::uuid, %s, %s::uuid, 1, 'active', %s, %s, %s)
+             revision_no, status, note_kind, call_outcome, call_next_step, occurred_at)
+        values (%s, %s::uuid, %s, %s::uuid, 1, 'active', %s, %s, %s, %s)
         returning id::text as id, version
         """,
         (subject_kind, subject_id, body, operator.operator_id,
-         note_kind, call_outcome, call_next_step),
+         note_kind, call_outcome, call_next_step, occurred_at),
     )
     note = _one(cur)
     note_id = note["id"]
@@ -2407,6 +2409,8 @@ def _handle_add_note(
         payload["call_outcome"] = call_outcome
         if call_next_step is not None:
             payload["call_next_step"] = call_next_step
+        if occurred_at is not None:
+            payload["occurred_at"] = occurred_at.isoformat()
 
     self._append_event(
         cur,
@@ -2444,10 +2448,10 @@ def _handle_revise_note(
         insert into crm.note
             (subject_kind, subject_id, body, author_operator_id,
              root_note_id, revision_of_note_id,
-             revision_no, status, note_kind, call_outcome, call_next_step)
+             revision_no, status, note_kind, call_outcome, call_next_step, occurred_at)
         values (%s, %s::uuid, %s, %s::uuid,
                 %s::uuid, %s::uuid,
-                %s, 'active', %s, %s, %s)
+                %s, 'active', %s, %s, %s, %s)
         returning id::text as id, version
         """,
         (
@@ -2463,6 +2467,7 @@ def _handle_revise_note(
             old_note["note_kind"],
             old_note["call_outcome"],
             old_note["call_next_step"],
+            old_note["occurred_at"],
         ),
     )
     new_note = _one(cur)

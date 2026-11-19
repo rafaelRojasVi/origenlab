@@ -13,6 +13,7 @@ Python so a bad request is a 422 before it reaches the database.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Literal, get_args
 
 NoteKind = Literal["llamada"]
@@ -33,3 +34,25 @@ def check_call_shape(note_kind: str | None, call_outcome: str | None, call_next_
         return
     if call_outcome is not None or call_next_step is not None:
         raise ValueError("call_outcome and call_next_step are only allowed when note_kind is 'llamada'")
+
+
+#: How far back a call logged after the fact may be dated (the request rule; the table only
+#: refuses the future: migration `20261119100000_slice8_note_call_occurred_at.sql`).
+CALL_BACKDATE_MAX = timedelta(days=60)
+#: Clock slack for «now» between the browser and the API (`note_occurred_at_not_future`).
+CALL_CLOCK_SLACK = timedelta(minutes=5)
+
+
+def check_call_time(note_kind: str | None, occurred_at: datetime | None, now: datetime | None = None) -> None:
+    """Raise `ValueError` unless `occurred_at` is absent, or a call's time within the last 60 days."""
+    if occurred_at is None:
+        return
+    if note_kind != NOTE_KIND_LLAMADA:
+        raise ValueError("occurred_at is only allowed when note_kind is 'llamada'")
+    if occurred_at.tzinfo is None:
+        raise ValueError("occurred_at must carry a time zone")
+    now = now or datetime.now(UTC)
+    if occurred_at > now + CALL_CLOCK_SLACK:
+        raise ValueError("occurred_at must not be in the future")
+    if occurred_at < now - CALL_BACKDATE_MAX:
+        raise ValueError("occurred_at must be within the last 60 days")

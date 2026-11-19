@@ -232,6 +232,8 @@ export interface ProfileCard {
   id: string;
   displayName: string;
   roleLabel: string;
+  /** The profile's stable key (`tatiana`, `rafael`…); empty from an older API. */
+  key: string;
 }
 
 export type ProfileListResult =
@@ -253,7 +255,7 @@ export function parseProfilesResponse(status: number, body: unknown): ProfileLis
     const id = asString(row.id);
     const displayName = asString(row.display_name);
     if (id && displayName) {
-      profiles.push({ id, displayName, roleLabel: asString(row.role_label) ?? "" });
+      profiles.push({ id, displayName, roleLabel: asString(row.role_label) ?? "", key: asString(row.key) ?? "" });
     }
   }
   const principal = (data.principal && typeof data.principal === "object" ? data.principal : {}) as Record<

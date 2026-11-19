@@ -96,8 +96,9 @@ describe("Cotizador route", () => {
 
   it("is Ventas' second tab, «Cotizaciones», for sales and admin", () => {
     const ventas = AREAS.find((a) => a.key === "ventas")!;
-    expect(ventas.tabs.map((t) => t.label)).toEqual(["Pipeline", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
-    expect(ventas.tabs[1]).toMatchObject({ sections: ["cotizador"], quoting: true });
+    expect(ventas.tabs.map((t) => t.label)).toEqual(["Pipeline", "Seguimiento", "Cotizaciones", "Clientes", "Listas y llamadas", "Licitaciones"]);
+    expect(ventas.tabs[1]).toMatchObject({ sections: ["seguimiento"] });
+    expect(ventas.tabs[2]).toMatchObject({ sections: ["cotizador"], quoting: true });
     expect(sectionTitle("cotizador")).toBe("Cotizaciones");
     expect(CRM_NAV.find((n) => n.id === "cotizador")?.quoting).toBe(true);
   });

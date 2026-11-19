@@ -37,12 +37,14 @@ export interface CallNoteBody {
   note_kind: "llamada";
   call_outcome: CallOutcome;
   call_next_step?: string;
+  /** A call logged after the fact: when it happened (ISO 8601 with zone). Absent = now. */
+  occurred_at?: string;
 }
 
 /** The `add-note` body for one call: trimmed, a blank next step left out, a default body. */
 export function buildCallNote(
   opportunityId: string,
-  call: { outcome: CallOutcome; nextStep: string; text: string },
+  call: { outcome: CallOutcome; nextStep: string; text: string; occurredAt?: string | null },
 ): CallNoteBody {
   const nextStep = call.nextStep.trim();
   return {
@@ -52,5 +54,6 @@ export function buildCallNote(
     note_kind: "llamada",
     call_outcome: call.outcome,
     ...(nextStep ? { call_next_step: nextStep } : {}),
+    ...(call.occurredAt ? { occurred_at: call.occurredAt } : {}),
   };
 }

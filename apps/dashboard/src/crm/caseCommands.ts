@@ -41,6 +41,7 @@ export const CASE_COMMAND_PATHS = {
   removeAutomaticAction: "/v2/commands/remove-automatic-action",
   setCaseOrigin: "/v2/commands/set-case-origin",
   setCasePause: "/v2/commands/set-case-pause",
+  setCaseFollowUp: "/v2/commands/set-case-follow-up",
 } as const;
 
 /** `case_commands.py` STAGE_TRANSITIONS (WORKFLOWS.md §1.1). The API refuses any other move. */
@@ -166,6 +167,7 @@ export function applyCaseReceipt(
     const closing = TERMINAL_RECEIPT_STAGES.has(stage) && !TERMINAL_RECEIPT_STAGES.has(card.stage);
     // A corrected origin shows at once; `null` is a cleared one, so presence decides, not truthiness.
     const originSet = receipt.command === "set_case_origin" && "origin" in receipt;
+    const followUpSet = receipt.command === "set_case_follow_up" && "operator_id" in receipt;
     return {
       ...card,
       stage,
@@ -173,6 +175,17 @@ export function applyCaseReceipt(
       updated_at: now.toISOString(),
       closed_at: closing ? now.toISOString() : card.closed_at,
       ...(originSet ? { origin: (receipt.origin as string | null) ?? null } : {}),
+      ...(followUpSet
+        ? {
+            follow_up: {
+              operator_id: (receipt.operator_id as string | null) ?? null,
+              // The name arrives with the next read; a person kept keeps the name we had.
+              operator_name:
+                card.follow_up?.operator_id === ((receipt.operator_id as string | null) ?? null) ? card.follow_up?.operator_name ?? null : null,
+              channel: (receipt.channel as "llamada" | "correo" | "whatsapp" | null) ?? null,
+            },
+          }
+        : {}),
     };
   });
 }
@@ -500,6 +513,18 @@ export interface SetCasePauseBody {
 
 export const setCasePause = (body: SetCasePauseBody, idempotencyKey: string = newCaseCommandKey()) =>
   postCaseCommand(CASE_COMMAND_PATHS.setCasePause, body, idempotencyKey);
+
+/** «Ventas › Seguimiento»: who follows the case and by which channel; nulls clear them. */
+export interface SetCaseFollowUpBody {
+  opportunity_id: string;
+  opportunity_version: number;
+  follow_up_operator_id: string | null;
+  channel: "llamada" | "correo" | "whatsapp" | null;
+  note?: string;
+}
+
+export const setCaseFollowUp = (body: SetCaseFollowUpBody, idempotencyKey: string = newCaseCommandKey()) =>
+  postCaseCommand(CASE_COMMAND_PATHS.setCaseFollowUp, body, idempotencyKey);
 
 /** «En pausa hasta <día>» for a reason: one command, one receipt. */
 export async function pauseCase(

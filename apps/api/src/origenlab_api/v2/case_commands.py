@@ -16,6 +16,7 @@ sign.
 | `record_case_won` | the case was won, against this sent, current quote revision |
 | `resolve_current_revision` | of this quote's current revisions, this one is the current one |
 | `record_case_quotation` | this quote, printing this number, was already sent on this case, by this message |
+| `set_case_follow_up` | The encargado (an operator, or none) and the next channel (`llamada`, `correo`, `whatsapp`, or none) of a case's follow-up, as a pair |
 | `set_case_pause` | «En pausa hasta…» as a state of the case: a day and a reason, or both null to resume (owner decision 2026-11-10) |
 | `set_case_origin` | an operator says which channel this case came from, or corrects it (null clears) |
 
@@ -85,10 +86,13 @@ DISMISS_FORWARDED_REQUEST = "dismiss_forwarded_request"
 #: An operator sets or corrects the channel a case came from (`case_origin.py`); null clears it.
 SET_CASE_ORIGIN = "set_case_origin"
 SET_CASE_PAUSE = "set_case_pause"
+#: «Ventas › Seguimiento»: who follows a case with a delivered quote up, and by which channel (`case_follow_up.py`).
+SET_CASE_FOLLOW_UP = "set_case_follow_up"
 
 CASE_COMMAND_NAMES: tuple[str, ...] = (
     OPEN_COMMERCIAL_CASE,
     SET_CASE_PAUSE,
+    SET_CASE_FOLLOW_UP,
     LINK_CASE_EVIDENCE,
     ADD_CASE_ORGANIZATION,
     SET_CASE_ORGANIZATION_ROLE,
@@ -600,6 +604,26 @@ class SetCasePauseBody(_CaseBody):
         return self
 
 
+FollowUpChannel = Literal["llamada", "correo", "whatsapp"]
+
+
+class SetCaseFollowUpBody(_CaseBody):
+    """Set who follows a case up and by which channel — `crm.opportunity.follow_up_operator_id` and
+    `follow_up_channel` («Ventas › Seguimiento»).
+
+    The client always sends the full pair, and both are set: `follow_up_operator_id` null is «Sin asignar» and
+    `channel` null is «not chosen». Neither has a default, so a request that leaves one out is a 422.
+    The operator must exist in `platform.operator` (422 `follow_up_operator_not_found`). A closed case
+    has no follow-up. It moves nothing else on the case.
+
+    `note` is optional here, unlike every other decision: picking an encargado has no reason to give.
+    """
+
+    note: Annotated[str, Field(min_length=1, max_length=2000)] = "Encargado o próximo contacto del seguimiento"
+    follow_up_operator_id: str | None
+    channel: FollowUpChannel | None
+
+
 CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     OPEN_COMMERCIAL_CASE: OpenCommercialCaseBody,
     LINK_CASE_EVIDENCE: LinkCaseEvidenceBody,
@@ -615,6 +639,7 @@ CASE_BODY_BY_COMMAND: dict[str, type[DecisionBody]] = {
     DISMISS_FORWARDED_REQUEST: DismissForwardedRequestBody,
     SET_CASE_ORIGIN: SetCaseOriginBody,
     SET_CASE_PAUSE: SetCasePauseBody,
+    SET_CASE_FOLLOW_UP: SetCaseFollowUpBody,
 }
 
 
@@ -733,6 +758,10 @@ def validated_case(command_name: str, body: DecisionBody) -> dict[str, Any]:
         fields.update(validated_stage(body))
     elif isinstance(body, SetCaseOriginBody):
         fields["origin"] = body.origin
+    elif isinstance(body, SetCaseFollowUpBody):
+        fields["operator_id"] = (
+            as_uuid(body.follow_up_operator_id, "follow_up_operator_id") if body.follow_up_operator_id else None)
+        fields["channel"] = body.channel
     elif isinstance(body, SetCasePauseBody):
         fields["paused_until"] = body.paused_until
         fields["pause_reason"] = body.reason.strip() if body.reason else None

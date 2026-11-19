@@ -11,6 +11,7 @@ import { OriginSelect } from "../authoring/OriginSelect";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { isReopenable, mayCarryAQuote, useMayRunCaseCommands, winnableRevisions } from "../caseCommands";
 import { quoteProduct, systemNotes } from "../caseDisplay";
+import { fetchProfiles, type ProfileCard } from "../../api/authClient";
 import { fetchCaseNotes } from "../crmApi";
 import { crmHash } from "../crmRoute";
 import type { OpportunityCardData } from "../crmTypes";
@@ -22,10 +23,12 @@ import { CaseMemory } from "../pages/CaseMemory";
 import type { MoveTarget } from "../pages/CaseMove";
 import { CaseLinkIcons, CaseMoneySummary, QuoteList } from "../pages/CaseQuotes";
 import { CaseThreads } from "../pages/CaseThreads";
+import { FollowUpPicker } from "../pages/FollowUpPicker";
 import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { isMaskedAddress } from "../redaction";
-import { STATUS_LABEL } from "../stage";
+import { STATUS_LABEL, pauseDayIso, pausedUntil } from "../stage";
+import { nextContact } from "../nextContact";
 import { endOfDay, followUpStep, followUpsDue, pendingFollowUpTasks } from "../today";
 import { Badge, Button, Drawer, Section, fmtDate } from "../ui";
 import { useResource } from "../useResource";
@@ -147,6 +150,12 @@ function CaseDrawerBody({
   const mayAuthor = useMayAuthorCrm();
   const mayQuote = useMayRunCaseCommands();
   const mayOpenCotizador = useMayOpenCotizador();
+  // Hoy's pane names the encargado and next channel; the drawer does not (Seguimiento does).
+  const [profileState] = useResource<ProfileCard[]>(
+    async () => (embedded ? ((r) => (r.kind === "ok" ? r.profiles : []))(await fetchProfiles()) : []),
+    [embedded],
+  );
+  const profiles = profileState.kind === "ready" ? profileState.data : [];
   const lifted = hoistedActions(card, mayQuote, mayAuthor);
   const [tab, setTab] = useState<DrawerTab>("resumen");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -175,12 +184,9 @@ function CaseDrawerBody({
   if (tab === "contacto" && !contactSeen) setContactSeen(true);
   const reply = replyUrl(card);
   // The same reminder the chip reads: a pending one only (one our later email already met is done).
-  const reminder = pendingFollowUpTasks(card)[0] ?? null;
-  const nextStep = reminder
-    ? `${reminder.title} · ${shortDay(reminder.due_at)}`
-    : card.next_action.source === "task" && card.next_action.due_at
-      ? `${card.next_action.text} · ${shortDay(card.next_action.due_at)}`
-      : card.next_action.text;
+  // The one próximo contacto every screen shows (`nextContact`), else the API's suggestion.
+  const next = nextContact(card);
+  const nextStep = next ? `${next.label} · ${next.source === "rhythm" ? "hoy" : shortDay(next.at)}` : card.next_action.text;
 
   const decide: { key: string; label: string; icon: IconName; on: boolean; go: () => void }[] = [
     { key: "call", label: "Llamada", icon: "phone", on: lifted.call, go: () => ask("call") },
@@ -254,7 +260,12 @@ function CaseDrawerBody({
           </span>
         ) : null}
         {lostState ? <span className="font-semibold text-bad">{lostState}{card.close_reason ? ` · ${card.close_reason}` : ""}</span> : null}
-        {pausedDay ? <span className="font-semibold text-warn">En pausa hasta {shortDay(pausedDay)}{card.pause_reason ? ` · ${card.pause_reason}` : ""}</span> : null}
+        {pausedDay ? (
+          // A pause whose day is past is not «hasta» a future day any more.
+          <span className="font-semibold text-warn" data-testid="case-drawer-pause">
+            {pausedUntil(card) !== null ? "En pausa hasta" : "Volvió de pausa el"} {shortDay(pauseDayIso(pausedDay))}{card.pause_reason ? ` · ${card.pause_reason}` : ""}
+          </span>
+        ) : null}
         {net ? <span className="font-semibold tabular-nums text-ink">{net} <span className="font-normal text-ink-muted">neto</span></span> : null}
         <span className="min-w-0 text-ink-muted">Siguiente: <strong className="font-semibold text-ink">{nextStep}</strong></span>
       </div>
@@ -283,6 +294,14 @@ function CaseDrawerBody({
         </div>
       ) : null}
       {stepper}
+      {embedded && profiles.length > 0 ? (
+        <section className="space-y-1.5" aria-label="Seguimiento" data-testid="case-inline-follow-up">
+          <FollowUpPicker card={card} profiles={profiles} onChanged={() => onChanged()} onConflict={() => onChanged()} />
+          <a href={`#/ventas/seguimiento?caso=${card.opportunity_id}`} className="text-[12.5px] font-medium text-accent hover:underline">
+            Ver en Seguimiento
+          </a>
+        </section>
+      ) : null}
       {iconStrip}
       {moreOpen ? (
         <ul className="grid gap-1 rounded-lg border border-line p-1.5" data-testid="case-inline-more">
@@ -409,8 +428,9 @@ function TabPanel({ base, tab, current, children }: { base: string; tab: DrawerT
 
 /** The case's follow-up reminder («Recordarme…») when it has one, else its next task or suggestion. */
 function NextStepLine({ card, inFooter }: { card: OpportunityCardData; inFooter: boolean }) {
-  // The same pending reminder the chip and footer read: one our later email or call already met is done.
-  const reminder = pendingFollowUpTasks(card)[0] ?? null;
+  // The same próximo contacto the footer, Seguimiento, Hoy and the Pipeline read (`nextContact`).
+  const next = nextContact(card);
+  const reminder = next?.source === "followup" ? next.task : null;
   const reminderNote = reminder ? (card.last_note?.body?.trim() ?? null) : null;
   // Due today or earlier: the case is on today's list now.
   const reminderDue = reminder ? Date.parse(reminder.due_at) <= endOfDay(new Date()).getTime() : false;
@@ -430,16 +450,33 @@ function NextStepLine({ card, inFooter }: { card: OpportunityCardData; inFooter:
       </p>
     );
   }
-  if (card.next_action.source === "task") {
+  if (next?.source === "task" && next.task) {
+    const more = (card.open_tasks?.length ?? 0) - 1;
     return (
       <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink">
         <span className="text-ink-faint">Próxima tarea: </span>
-        {card.next_action.text}
+        {next.task.title}
         <span className="block text-[11px] text-ink-faint">
-          Para el {fmtDate(card.next_action.due_at)}
-          {card.open_tasks?.[0]?.owner ? `, ${card.open_tasks[0].owner}` : ""}
-          {(card.open_tasks?.length ?? 0) > 1 ? ` (${(card.open_tasks?.length ?? 0) - 1} más)` : ""}
+          Para el {fmtDate(next.task.due_at)}
+          {next.task.owner ? `, ${next.task.owner}` : ""}
+          {more > 0 ? ` (${more} más)` : ""}
         </span>
+      </p>
+    );
+  }
+  if (next?.source === "rhythm") {
+    return (
+      <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-next-rhythm">
+        <span className="text-ink-faint">Próximo contacto: </span>
+        {next.label} · hoy
+      </p>
+    );
+  }
+  if (next?.source === "pause") {
+    return (
+      <p className="rounded-md bg-canvas-sunken/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-next-pause">
+        <span className="text-ink-faint">Próximo contacto: </span>
+        {next.label} · {fmtDate(next.at)}
       </p>
     );
   }

@@ -18,6 +18,7 @@ import { useTheme, type ThemeChoice } from "../lib/theme";
  * chunk, fetched the first time it is opened (the browser keeps it after that).
  */
 const PipelinePage = lazyPage(() => import("./pages/PipelinePage").then((m) => m.PipelinePage));
+const SeguimientoPage = lazyPage(() => import("./pages/SeguimientoPage").then((m) => m.SeguimientoPage));
 const OrganizationsPage = lazyPage(() => import("./pages/OrganizationsPage").then((m) => m.OrganizationsPage));
 const PeoplePage = lazyPage(() => import("./pages/PeoplePage").then((m) => m.PeoplePage));
 const CatalogPage = lazyPage(() => import("./pages/CatalogPage").then((m) => m.CatalogPage));
@@ -69,7 +70,7 @@ export function CrmApp({ route }: { route: ShellRoute }) {
   }, []);
   const title = sectionTitle(route.section);
   // The Tablero, Cotizador, and Hoy use the whole screen; reading pages keep a comfortable line length.
-  const wide = route.section === "oportunidades" || route.section === "cotizador" || route.section === "resumen";
+  const wide = route.section === "oportunidades" || route.section === "seguimiento" || route.section === "cotizador" || route.section === "resumen";
   // A «Datos» tab is part of the address: a link to another tab remounts the page on it.
   const routeKey = route.tab ? `${route.section}/${route.tab}` : route.section;
 
@@ -142,6 +143,8 @@ function Section({
   switch (section) {
     case "oportunidades":
       return <PipelinePage key={id ?? "all"} initialOpportunityId={id} />;
+    case "seguimiento":
+      return <SeguimientoPage initialOpportunityId={id} />;
     case "organizaciones":
       return <OrganizationsPage key={id ?? "all"} navigate={navigate} initialId={id} />;
     case "personas":
@@ -196,7 +199,7 @@ function QuickLinks() {
           rel="noopener noreferrer"
           title={l.title}
           aria-label={l.label}
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-line bg-canvas-raised px-1.5 text-[12px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 sm:px-2"
+          className="tap-44 inline-flex h-7 items-center justify-center gap-1 rounded-md border border-line bg-canvas-raised px-1.5 max-sm:min-w-11 text-[12px] font-medium text-ink-muted transition-colors hover:border-line-strong hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 sm:px-2"
         >
           {/* Phones get the short word and no arrow, so the sign-out button stays on screen. */}
           <span className="sm:hidden">{l.short}</span>
@@ -221,7 +224,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
           aria-expanded={menuOpen}
           aria-controls="crm-sidenav"
           aria-label="Menú"
-          className="-ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
+          className="tap-44 -ml-1 h-8 w-8 shrink-0 rounded-md text-ink-muted hover:bg-canvas-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 lg:hidden"
         >
           ☰
         </button>
@@ -271,7 +274,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
                   <button
                     type="button"
                     onClick={() => void switchProfile?.()}
-                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink max-sm:min-h-11 max-sm:px-1.5 max-sm:text-[12px]"
                     title="Vuelve a la pantalla de perfiles. La sesión de Google sigue abierta."
                     aria-label="Cambiar perfil"
                     data-testid="crm-switch-profile"
@@ -282,7 +285,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
                   <button
                     type="button"
                     onClick={() => void signOut()}
-                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink max-sm:min-h-11 max-sm:px-1.5 max-sm:text-[12px]"
                     aria-label="Cerrar sesión"
                     data-testid="crm-sign-out"
                   >
@@ -306,7 +309,7 @@ export function TopBar({ onMenu, menuOpen, wide = false }: { onMenu: () => void;
                   <button
                     type="button"
                     onClick={() => void signOut()}
-                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink"
+                    className="whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium hover:bg-canvas-sunken hover:text-ink max-sm:min-h-11 max-sm:px-1.5 max-sm:text-[12px]"
                     data-testid="crm-sign-out"
                   >
                     Cerrar sesión
@@ -353,7 +356,7 @@ function ThemeToggle() {
       title={`Tema: ${THEME_LABEL[choice]} · cambiar a ${THEME_LABEL[next]}`}
       aria-label={`Tema: ${THEME_LABEL[choice]}. Cambiar a ${THEME_LABEL[next]}`}
       data-testid="crm-theme-toggle"
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+      className="tap-44 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-canvas-sunken hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
     >
       <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d={THEME_ICON[choice]} />

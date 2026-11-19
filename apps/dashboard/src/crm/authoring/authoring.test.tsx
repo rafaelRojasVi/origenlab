@@ -630,6 +630,26 @@ describe("NoteList call notes", () => {
     expect(screen.getByText("Una nota común")).toBeInTheDocument();
   });
 
+  it("a call logged later shows when it happened, and when it was written down on hover", async () => {
+    const { NoteList } = await import("./NoteList");
+    const { fmtDateTime } = await import("../ui");
+    render(
+      withRole(
+        "sales",
+        <NoteList
+          notes={[note({ note_kind: "llamada", call_outcome: "contesto", created_at: "2026-10-02T15:00:00Z", occurred_at: "2026-10-01T18:00:00Z" }) as never]}
+          subjectKind="opportunity"
+          subjectId="00000000-0000-4000-8000-000000000001"
+          mayAuthor
+          onRefresh={() => undefined}
+        />,
+      ),
+    );
+    const time = screen.getByTestId("note-time");
+    expect(time).toHaveTextContent(fmtDateTime("2026-10-01T18:00:00Z"));
+    expect(time).toHaveAttribute("title", `Registrada el ${fmtDateTime("2026-10-02T15:00:00Z")}`);
+  });
+
   it("a call from an outcome this build does not know still reads as a call, in words", async () => {
     const { NoteList } = await import("./NoteList");
     render(

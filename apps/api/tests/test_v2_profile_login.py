@@ -249,9 +249,9 @@ def test_the_profile_list_is_the_principals_usable_profiles_only(monkeypatch, db
     body = api.client.get("/auth/profiles").json()
     assert body["principal"] == {"email": SHARED}
     assert body["profiles"] == [
-        {"id": ids["ana"], "display_name": "Ana", "role_label": "Administración"},
-        {"id": ids["bruno"], "display_name": "Bruno", "role_label": "Administración"},
-        {"id": ids["carla"], "display_name": "Carla", "role_label": "Ventas"},
+        {"id": ids["ana"], "display_name": "Ana", "role_label": "Administración", "key": "ana"},
+        {"id": ids["bruno"], "display_name": "Bruno", "role_label": "Administración", "key": "bruno"},
+        {"id": ids["carla"], "display_name": "Carla", "role_label": "Ventas", "key": "carla"},
     ]
     assert ids["franco"] not in json.dumps(body) and ids["elena"] not in json.dumps(body)
 
@@ -1281,3 +1281,13 @@ def test_an_individual_session_has_no_profile_home_filter(monkeypatch, db, ids) 
     api = Api(monkeypatch, db)
     api.google(INDIVIDUAL)
     assert api.client.get("/auth/session").json()["profile"] is None
+
+
+def test_profiles_list_has_key(monkeypatch, db, ids) -> None:
+    """The dashboard reads each profile's `profile_key` (not secret) to decide who may use WhatsApp."""
+    api = Api(monkeypatch, db)
+    api.google()
+    profiles = api.client.get("/auth/profiles").json()["profiles"]
+    assert {p["id"]: p["key"] for p in profiles} == {ids[k]: k for k in ("ana", "bruno", "carla")}
+    # Selecting a profile still answers with the card alone.
+    assert "key" not in api.select("carla", PINS["carla"], ids).json()["profile"]

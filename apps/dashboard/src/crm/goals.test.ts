@@ -203,3 +203,13 @@ describe("format", () => {
     expect(formatWait(36 * HOUR)).toBe("1,5 días");
   });
 });
+
+describe("santiagoInstant", () => {
+  it("reads a Santiago wall time in summer (UTC-3) and winter (UTC-4)", async () => {
+    const { santiagoInstant, santiagoHour } = await import("./goals");
+    expect(santiagoInstant("2026-11-17", "15:00")).toBe("2026-11-17T18:00:00.000Z");
+    expect(santiagoInstant("2026-06-10", "15:00")).toBe("2026-06-10T19:00:00.000Z");
+    expect(santiagoInstant("2026-11-17", "23:30")).toBe("2026-11-18T02:30:00.000Z");
+    expect(santiagoHour(new Date("2026-11-18T15:47:00Z"))).toBe("12:00");
+  });
+});

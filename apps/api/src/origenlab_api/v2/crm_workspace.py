@@ -48,6 +48,7 @@ from origenlab_api.v2.campaign_state import (  # noqa: F401 - re-exported from h
 )
 from origenlab_api.v2.case_kind import SALE_CASES, TENDER_CASES, sale_cases
 from origenlab_api.v2.case_won import quote_outcome
+from origenlab_api.v2.commands import normalize_email
 from origenlab_api.v2.drive_ledgers import (  # noqa: F401 - DriveLink, load_drive_ledgers: this module's API
     DRIVE_FILE_URL,
     DRIVE_FOLDER_URL,
@@ -80,7 +81,7 @@ from origenlab_api.v2.quote_documents import (  # noqa: F401 - IVA_RATE, quote_c
 )
 from origenlab_api.v2.unsubscribe_replies import REVIEW_SHA256_SQL
 from origenlab_api.v2.web_quote_form import SUBJECT_PREFIX as WEB_FORM_SUBJECT_PREFIX
-from origenlab_api.v2.tenders.reads import TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
+from origenlab_api.v2.tenders.reads import SANTIAGO, TENDERS_CLOSING_SQL, closing_rows, tomorrow_in_santiago
 
 
 def _cross_thread_quote_code(title: str) -> str | None:
@@ -273,6 +274,9 @@ _SQL_PIPELINE_OPPS = f"""
            o.confirmation as organization_confirmation, o.version as organization_version,
            op.created_at::text, op.updated_at::text, op.closed_at::text, op.close_reason,
            op.won_quote_id::text as won_quote_id, op.won_revision_no,
+           -- «Ventas › Seguimiento»: the encargado (an operator) and the next channel, both or either null.
+           op.follow_up_operator_id::text as follow_up_operator_id, fo.display_name as follow_up_operator_name,
+           op.follow_up_channel as follow_up_channel,
            -- A case opened from a forwarded request (Solicitudes): who asked, as the worker read it.
            -- Its emails come from Labdelivery or our own mailbox, so «Asignar institución» suggests
            -- from these when no client email on the case does.
@@ -287,6 +291,7 @@ _SQL_PIPELINE_OPPS = f"""
                       then (osr.payload->>'sent_at')::timestamptz else osr.acquired_at end)::text as requested_at
       from crm.opportunity op
       left join crm.organization o on o.id = op.organization_id
+      left join platform.operator fo on fo.id = op.follow_up_operator_id
       left join evidence.source_record fr
         on fr.id = op.origin_source_record_id and fr.kind = 'forwarded_request'
       left join evidence.source_record osr on osr.id = op.origin_source_record_id
@@ -382,13 +387,13 @@ _SQL_PIPELINE_NOTES = """
 # institution or a case) per Santiago day and outcome, the last 35 days. An edited call is a new
 # row: only the newest revision counts, on the day of the root (when the call was first logged).
 _SQL_PIPELINE_CALLS = """
-    select to_char(coalesce(r.created_at, n.created_at) at time zone 'America/Santiago', 'YYYY-MM-DD') as day,
+    select to_char(coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) at time zone 'America/Santiago', 'YYYY-MM-DD') as day,
            n.call_outcome as outcome, count(*)::int as count
       from crm.note n
       left join crm.note r on r.id = n.root_note_id
      where n.note_kind = 'llamada' and n.status = 'active'
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
-       and coalesce(r.created_at, n.created_at) >= now() - interval '35 days'
+       and coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) >= now() - interval '35 days'
      group by 1, 2
      order by 1, 2
 """
@@ -398,7 +403,7 @@ _SQL_PIPELINE_CALLS = """
 _SQL_PIPELINE_LAST_CALLS = """
     select distinct on (n.subject_id)
            n.subject_id::text as opportunity_id,
-           to_char(coalesce(r.created_at, n.created_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+           to_char(coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
            n.call_outcome as outcome
       from crm.note n
       left join crm.note r on r.id = n.root_note_id
@@ -407,7 +412,93 @@ _SQL_PIPELINE_LAST_CALLS = """
        and (op.closed_at is null or op.stage = 'won')
        and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion')
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
-     order by n.subject_id, coalesce(r.created_at, n.created_at) desc, n.id desc
+     order by n.subject_id, coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) desc, n.id desc
+"""
+# «Ventas › Seguimiento»: the person's phone on each case (the case contact's `crm.contact_point`,
+# kind phone): a confirmed one first, then the newest. Keyed `person:<id>` or `email:<value_norm>`,
+# so a case whose contact is only an address finds the person who owns it.
+_SQL_PIPELINE_PHONES = """
+    with best as (
+        select distinct on (cp.person_id)
+               cp.person_id, cp.value_display as phone, (cp.confirmation = 'confirmed') as confirmed
+          from crm.contact_point cp
+         where cp.kind = 'phone' and cp.status = 'active' and cp.person_id is not null
+         order by cp.person_id, (cp.confirmation = 'confirmed') desc, cp.created_at desc, cp.id
+    )
+    select 'person:' || b.person_id::text as key, b.phone, b.confirmed from best b
+    union all
+    -- A contact known only by the address we wrote to: the person who owns that email point.
+    select 'email:' || e.value_norm, b.phone, b.confirmed
+      from best b
+      join crm.contact_point e on e.person_id = b.person_id and e.kind = 'email' and e.status = 'active'
+"""
+# Every live call (`crm.note`, note_kind 'llamada'), one row each: an edit is a new row, so only the
+# newest revision counts, on the day of the root (when the call was first logged) and under the
+# root's author. The three «Seguimiento» call reads below share it.
+_LIVE_CALLS_CTE = """
+    with live_calls as (
+        select n.subject_kind, n.subject_id, n.id, n.call_outcome,
+               coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) as logged_at,
+               coalesce(r.author_operator_id, n.author_operator_id) as author_operator_id
+          from crm.note n
+          left join crm.note r on r.id = n.root_note_id
+         where n.note_kind = 'llamada' and n.status = 'active'
+           and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
+    )
+"""
+# Calls per case: all of them, and those of today (`%(today)s`, the America/Santiago day).
+_SQL_PIPELINE_CALL_COUNTS = _LIVE_CALLS_CTE + """
+    select c.subject_id::text as opportunity_id, count(*)::int as total,
+           (count(*) filter (where (c.logged_at at time zone 'America/Santiago')::date = %(today)s::date))::int as today
+      from live_calls c
+     where c.subject_kind = 'opportunity'
+     group by c.subject_id
+"""
+# The newest call on each case, whatever its outcome (`_SQL_PIPELINE_LAST_CALLS` keeps only answered ones).
+_SQL_PIPELINE_LAST_CALL_ANY = _LIVE_CALLS_CTE + """
+    select distinct on (c.subject_id)
+           c.subject_id::text as opportunity_id,
+           to_char(c.logged_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+           c.call_outcome as outcome, o.display_name as author_display_name
+      from live_calls c
+      join platform.operator o on o.id = c.author_operator_id
+     where c.subject_kind = 'opportunity'
+     order by c.subject_id, c.logged_at desc, c.id desc
+"""
+# «Seguimiento»'s notes on the row: the three newest live notes and calls of each live case (open,
+# or won), newest first, in one read (no per-case query). A call's time and author are its root's
+# (when it happened, `occurred_at`), like the other call reads; an edited note shows its newest text.
+_SQL_PIPELINE_RECENT_NOTES = """
+    select opportunity_id, at, body, kind, outcome, author_display_name
+      from (
+        select n.subject_id::text as opportunity_id,
+               to_char(coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) at time zone 'UTC',
+                       'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+               left(n.body, 160) as body, n.note_kind as kind, n.call_outcome as outcome,
+               o.display_name as author_display_name,
+               row_number() over (
+                 partition by n.subject_id
+                 order by coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) desc, n.id desc
+               ) as rn
+          from crm.note n
+          left join crm.note r on r.id = n.root_note_id
+          join platform.operator o on o.id = coalesce(r.author_operator_id, n.author_operator_id)
+          join crm.opportunity op on op.id = n.subject_id
+         where n.subject_kind = 'opportunity' and n.status = 'active'
+           and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
+           and (op.closed_at is null or op.stage = 'won')
+      ) recent
+     where rn <= 3
+     order by opportunity_id, rn
+"""
+# Today's calls per operator, on a person, an institution or a case (the sheet's KPI per person).
+_SQL_PIPELINE_CALLS_BY_OPERATOR = _LIVE_CALLS_CTE + """
+    select c.author_operator_id::text as operator_id, o.display_name as operator_name, count(*)::int as today
+      from live_calls c
+      join platform.operator o on o.id = c.author_operator_id
+     where (c.logged_at at time zone 'America/Santiago')::date = %(today)s::date
+     group by c.author_operator_id, o.display_name
+     order by 3 desc, 2, 1
 """
 _SQL_PIPELINE_SOURCES = """
     select sr.id::text as source_record_id,
@@ -497,12 +588,18 @@ _SQL_CASE_THREADS = """
                        and sr.payload->>'gmail_thread_id' is not null
                 )
 """
+# The case's people. A participant created from an email address alone (contact_point only,
+# `person_id` null) is shown as the CRM contact once a person claims that address: the person is
+# resolved through the contact point (`coalesce(p.person_id, cp.person_id)`), so its name and phone
+# follow (owner, 2026-10-22; phone-load fix 2026-11-19). Until then it is found by
+# client_open_cases but not shown here.
 _SQL_PIPELINE_PARTICIPANTS = """
-    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, p.person_id::text as person_id
+    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, pe.id::text as person_id
       from crm.opportunity_participant p
-      join crm.person pe on pe.id = p.person_id  -- a contact_point-only participant is found by
-     where p.valid_to is null                     -- client_open_cases but not shown as the CRM contact
-     order by p.is_primary desc                   -- until a person claims the address (owner, 2026-10-22)
+      left join crm.contact_point cp on cp.id = p.contact_point_id
+      join crm.person pe on pe.id = coalesce(p.person_id, cp.person_id)
+     where p.valid_to is null
+     order by p.is_primary desc
 """
 
 # Codes that stop a case from moving until an operator decides something. Everything else in a
@@ -970,6 +1067,10 @@ def compose_pipeline(
     notes: list[Mapping[str, Any]] | None = None,
     documents: list[Mapping[str, Any]] | None = None,
     last_calls: list[Mapping[str, Any]] | None = None,
+    phones: Mapping[str, Mapping[str, Any]] | None = None,
+    call_counts: Mapping[str, Mapping[str, Any]] | None = None,
+    last_calls_any: list[Mapping[str, Any]] | None = None,
+    recent_notes: list[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -1018,6 +1119,22 @@ def compose_pipeline(
         current = call_by_opp.get(row["opportunity_id"])
         if current is None or str(row["at"]) > str(current["at"]):
             call_by_opp[row["opportunity_id"]] = {"at": row["at"], "outcome": row["outcome"]}
+
+    # The newest call on each case, whatever its outcome (`_SQL_PIPELINE_LAST_CALL_ANY`).
+    call_any_by_opp: dict[str, dict[str, Any]] = {}
+    for row in last_calls_any or []:
+        current = call_any_by_opp.get(row["opportunity_id"])
+        if current is None or str(row["at"]) > str(current["at"]):
+            call_any_by_opp[row["opportunity_id"]] = {
+                "at": row["at"], "outcome": row["outcome"], "author_name": row.get("author_display_name")}
+
+    # The three newest notes and calls per case (`_SQL_PIPELINE_RECENT_NOTES`), newest first.
+    recent_by_opp: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in sorted(recent_notes or [], key=lambda r: str(r["at"]), reverse=True):
+        kept = recent_by_opp[row["opportunity_id"]]
+        if len(kept) < 3:
+            kept.append({"at": row["at"], "body": row["body"], "kind": row.get("kind"),
+                         "outcome": row.get("outcome"), "author": row.get("author_display_name")})
 
     cards: list[dict[str, Any]] = []
     for opp in opportunities:
@@ -1151,6 +1268,17 @@ def compose_pipeline(
                 }
             attention.append("no_crm_contact")
 
+        # «Ventas › Seguimiento»: the contact person's phone (confirmed first), when the CRM has one.
+        phone = None
+        if contact is not None:
+            phone = (phones or {}).get("person:" + str(contact.get("person_id") or ""))
+            if phone is None and contact.get("address"):
+                bare = addresses_in(contact["address"])
+                phone = (phones or {}).get("email:" + normalize_email(bare[0])) if bare else None
+        if contact is not None:
+            contact["phone"] = phone["phone"] if phone else None
+            contact["phone_confirmed"] = bool(phone["confirmed"]) if phone else None
+
         drive_folder = None
         for rc in sorted(all_revs, key=_sort_key_sent, reverse=True):
             if rc["drive"] and rc["drive"]["folder_id"]:
@@ -1260,6 +1388,19 @@ def compose_pipeline(
                 # The newest call the client answered (contestó · reunión), or null: a follow-up
                 # touch on «Hoy», like an email we sent.
                 "last_call": call_by_opp.get(oid),
+                # «Ventas › Seguimiento»: who follows the case and by which channel (nulls when unset), how
+                # many calls it has had (all, and today in Santiago), and the newest call of any outcome.
+                "follow_up": {
+                    "operator_id": opp.get("follow_up_operator_id"),
+                    "operator_name": opp.get("follow_up_operator_name"),
+                    "channel": opp.get("follow_up_channel"),
+                },
+                "call_counts": {
+                    "total": int((call_counts or {}).get(oid, {}).get("total", 0)),
+                    "today": int((call_counts or {}).get(oid, {}).get("today", 0)),
+                },
+                "last_call_any": call_any_by_opp.get(oid),
+                "recent_notes": recent_by_opp.get(oid, []),
                 "next_action": task_next_action(tasks_by_opp.get(oid, []))
                 or suggest_next_action(opp, blocked, live_latest, last_contact=(contacts or {}).get(oid)),
             }
@@ -1267,11 +1408,17 @@ def compose_pipeline(
     return cards
 
 
+_FOLLOW_UP_TITLE = re.compile(r"^\s*seguimiento\b", re.IGNORECASE)
+
+
 def task_next_action(open_tasks: list[Mapping[str, Any]]) -> dict[str, Any] | None:
-    """The earliest open task, when the case has one: a stored next action beats a suggestion."""
+    """The case's próximo contacto, when it has an open task: the earliest «Seguimiento …» reminder,
+    else the earliest other task (the dashboard's `nextContact`, one rule on every screen). A stored
+    next action beats a suggestion. `open_tasks` arrive sorted by due date."""
     if not open_tasks:
         return None
-    first = open_tasks[0]
+    follow_ups = [t for t in open_tasks if _FOLLOW_UP_TITLE.match(str(t["title"] or ""))]
+    first = (follow_ups or open_tasks)[0]
     return {"text": first["title"], "source": "task", "due_at": first["due_at"]}
 
 
@@ -1544,7 +1691,9 @@ class CrmWorkspaceRepository:
 
     # -- pipeline
 
-    def pipeline(self) -> dict[str, Any]:
+    def pipeline(self, now: datetime | None = None) -> dict[str, Any]:
+        # «Today» is the America/Santiago day of this one instant, for every call count in the read.
+        today = (now or datetime.now(UTC)).astimezone(SANTIAGO).date()
         with self._connect(self._dsn, autocommit=False) as conn:
             # Setup: 2 statements in 1 RTT.
             setup = conn.cursor()
@@ -1552,7 +1701,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 13 data queries in 1 RTT via psycopg pipeline mode.
+            # 18 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1566,6 +1715,11 @@ class CrmWorkspaceRepository:
             cur_tenders = conn.cursor()
             cur_calls = conn.cursor()
             cur_last_calls = conn.cursor()
+            cur_phones = conn.cursor()
+            cur_call_counts = conn.cursor()
+            cur_last_call_any = conn.cursor()
+            cur_calls_by_operator = conn.cursor()
+            cur_recent_notes = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1582,6 +1736,11 @@ class CrmWorkspaceRepository:
                 # Hoy's «Alcance» and the follow-up touch a call makes.
                 cur_calls.execute(_SQL_PIPELINE_CALLS)
                 cur_last_calls.execute(_SQL_PIPELINE_LAST_CALLS)
+                cur_phones.execute(_SQL_PIPELINE_PHONES)
+                cur_call_counts.execute(_SQL_PIPELINE_CALL_COUNTS, {"today": today})
+                cur_last_call_any.execute(_SQL_PIPELINE_LAST_CALL_ANY)
+                cur_calls_by_operator.execute(_SQL_PIPELINE_CALLS_BY_OPERATOR, {"today": today})
+                cur_recent_notes.execute(_SQL_PIPELINE_RECENT_NOTES)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1606,11 +1765,17 @@ class CrmWorkspaceRepository:
             calls = [{"day": r["day"], "outcome": r["outcome"], "count": int(r["count"])}
                      for r in self._rows(cur_calls)]
             last_calls = self._rows(cur_last_calls)
+            phones = {r["key"]: r for r in self._rows(cur_phones)}
+            call_counts = {r["opportunity_id"]: r for r in self._rows(cur_call_counts)}
+            last_calls_any = self._rows(cur_last_call_any)
+            calls_by_operator = self._rows(cur_calls_by_operator)
+            recent_notes = self._rows(cur_recent_notes)
             conn.rollback()
         drive = drive_links_from_records(revisions, self._drive)
         cards = compose_pipeline(
             opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes,
-            documents=documents, last_calls=last_calls,
+            documents=documents, last_calls=last_calls, phones=phones, call_counts=call_counts,
+            last_calls_any=last_calls_any, recent_notes=recent_notes,
         )
         return {
             "items": cards,
@@ -1619,6 +1784,8 @@ class CrmWorkspaceRepository:
             "tenders_closing": tenders_closing,
             # The team's calls per Santiago day and outcome, the last 35 days (Hoy's «Alcance»).
             "calls": calls,
+            # Today's calls per operator (Santiago day), for the sheet's per-person goal.
+            "calls_by_operator": calls_by_operator,
         }
 
     # -- providers
@@ -2310,7 +2477,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step, n.occurred_at::text,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2496,7 +2663,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step, n.occurred_at::text,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2598,7 +2765,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step, n.occurred_at::text,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
