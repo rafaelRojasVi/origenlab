@@ -6,7 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { dateSantiago } from "../goals";
 import { isMaskedPhone } from "../redaction";
 import { touchedToday, type SegRow } from "../seguimiento";
-import { isFollowUpTask } from "../today";
+import { nextContactAt } from "../seguimientoView";
 import { shortDate } from "./PipelineBoard";
 
 export type DaysTone = "ok" | "warn" | "bad";
@@ -31,13 +31,9 @@ export function whenText(iso: string, now: Date): string {
   return dateSantiago(new Date(iso)) === dateSantiago(now) ? `hoy ${santiagoTime(iso)}` : shortDate(iso, now);
 }
 
-/** The next follow-up reminder (the open «Seguimiento …» task due first), or null. */
-export function nextReminder(row: SegRow): string | null {
-  const due = (row.card.open_tasks ?? [])
-    .filter(isFollowUpTask)
-    .map((t) => t.due_at)
-    .sort((a, b) => Date.parse(a) - Date.parse(b))[0];
-  return due ?? null;
+/** The case's próximo contacto (`nextContact`, the one rule Hoy, the Pipeline and the case panel read). */
+export function nextReminder(row: SegRow, now: Date = new Date()): string | null {
+  return nextContactAt(row.card, now);
 }
 
 export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;

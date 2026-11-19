@@ -173,6 +173,38 @@ def test_contact_phone_via_email_address(disposable_database, world) -> None:
 
 
 @needs_db
+def test_email_only_participant_resolves_to_the_person_who_later_owns_the_address(disposable_database, world) -> None:
+    """A participant created from an address alone (no person) shows that address's later owner,
+    with their name and phone, once a person claims the email point."""
+    import uuid
+
+    dsn = disposable_database
+    case_id, _ = _open_case(_repo(dsn), world, "Caso con participante por correo")
+    tag = uuid.uuid4().hex[:8]
+    address = f"solo-correo-{tag}@ejemplo.invalid"
+    point = _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, usage, confirmation) "
+                        "values ('email', %s, %s, 'unattributed', 'machine_proposed') returning id",
+                   (address, address))[0][0]
+    _owner(dsn, "insert into crm.opportunity_participant (opportunity_id, contact_point_id, role, is_primary, "
+                "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, "
+                "'machine_proposed')", (case_id, point))
+    card, _ = _card(dsn, case_id)
+    assert card["contact"] is None or card["contact"]["source"] != "crm_participant", "no person yet: not a CRM contact"
+
+    person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Tardía', "
+                         "'machine_proposed') returning id")[0][0]
+    _owner(dsn, "update crm.contact_point set person_id = %s, usage = 'personal' where id = %s", (person, point))
+    number = f"+56 9 {uuid.uuid4().int % 10**4:04d} {uuid.uuid4().int % 10**4:04d}"
+    _owner(dsn, "insert into crm.contact_point (kind, value_norm, value_display, person_id, usage, confirmation) "
+                "values ('phone', %s, %s, %s, 'personal', 'confirmed')", (number.replace(" ", ""), number, person))
+    card, _ = _card(dsn, case_id)
+    assert card["contact"]["source"] == "crm_participant"
+    assert card["contact"]["name"] == "Persona Tardía"
+    assert card["contact"]["person_id"] == str(person)
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == (number, True)
+
+
+@needs_db
 def test_pipeline_masks_contact_phone_for_viewer(disposable_database, world) -> None:
     """The route keeps ContactRedactingRoute: a viewer reads the card but the phone comes back «***»."""
     import uuid

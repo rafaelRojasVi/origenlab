@@ -47,12 +47,17 @@ const TONE: Record<IconName, string> = {
   bell: "bg-warn-bg text-warn",
 };
 
+const CHANNEL_ICON: Record<"llamada" | "correo" | "whatsapp", IconName> = { llamada: "phone", correo: "mail", whatsapp: "chat" };
+
 /** The channel the step asks for: a reply is an email, a follow-up's step picks call/WhatsApp/email. */
 export function stepIcon(step: NextStep): IconName {
   if (step.kind === "responder") return "reply";
   if (step.kind === "cotizar") return "doc";
   if (step.kind === "pausa") return "clock";
   if (step.kind === "tarea") return "check";
+  // The channel chosen in Seguimiento («Próximo contacto») wins over the rhythm's suggestion.
+  const chosen = step.card.follow_up?.channel;
+  if (chosen) return CHANNEL_ICON[chosen];
   if (step.item?.kind === "followup") {
     const n = followUpStep(step.item.followUp);
     return n === 2 ? "phone" : n === 3 ? "chat" : "mail";
@@ -84,19 +89,39 @@ export function stepAction(step: NextStep): string {
   return ch ? `${base} · ${ch}` : base;
 }
 
-/** The age badge: overdue days in red, a wait today, or the day ahead. */
-export function stepAge(step: NextStep): { text: string; tone: "bad" | "warn" | "neutral" } {
-  if (step.dueDays < 0) return { text: `${-step.dueDays} d`, tone: "bad" };
+/** What a wait today counts, per kind of step: the badge says it, so «3 d» is never ambiguous. */
+const WAIT_WORD: Record<NextStep["kind"], { short: string; long: string }> = {
+  responder: { short: "esperando", long: "desde que el cliente escribió" },
+  cotizar: { short: "esperando", long: "desde que llegó la solicitud" },
+  seguimiento: { short: "sin toque", long: "desde nuestro último toque (correo o llamada)" },
+  pausa: { short: "atrasado", long: "desde el día en que volvía de pausa" },
+  tarea: { short: "atrasado", long: "desde la fecha de la tarea" },
+};
+
+/**
+ * The age badge, labelled for what it measures (owner QA 2026-11-19): «3 d atrasado» counts from
+ * the próximo contacto's day, «5 d sin toque» from our last touch, «2 d esperando» from the
+ * client's email; or the day ahead. `title` says it in full.
+ */
+export function stepAge(step: NextStep): { text: string; tone: "bad" | "warn" | "neutral"; title: string } {
+  const day = (n: number) => `${n} ${n === 1 ? "día" : "días"}`;
+  if (step.dueDays < 0) {
+    return { text: `${-step.dueDays} d atrasado`, tone: "bad", title: `${day(-step.dueDays)} desde la fecha del próximo contacto` };
+  }
   if (step.dueDays === 0) {
     const ms = step.item && "waitMs" in step.item ? (step.item as { waitMs: number }).waitMs : null;
-    if (ms === null || ms === undefined) return { text: "hoy", tone: "neutral" };
+    if (ms === null || ms === undefined) return { text: "hoy", tone: "neutral", title: "Toca hoy" };
     const days = Math.floor(ms / 86_400_000);
-    const text = days >= 1 ? `${days} d` : `${Math.max(0, Math.floor(ms / 3_600_000))} h`;
-    return { text, tone: days >= 3 ? "warn" : "neutral" };
+    const word = WAIT_WORD[step.kind];
+    if (days < 1) {
+      const hours = Math.max(0, Math.floor(ms / 3_600_000));
+      return { text: `${hours} h`, tone: "neutral", title: `${hours} h ${word.long}` };
+    }
+    return { text: `${days} d ${word.short}`, tone: days >= 3 ? "warn" : "neutral", title: `${day(days)} ${word.long}` };
   }
-  if (step.dueDays === 1) return { text: "mañana", tone: "neutral" };
+  if (step.dueDays === 1) return { text: "mañana", tone: "neutral", title: "Próximo contacto mañana" };
   const d = new Intl.DateTimeFormat("es-CL", { weekday: "short", day: "numeric" }).format(step.due).replace(".", "");
-  return { text: d, tone: "neutral" };
+  return { text: d, tone: "neutral", title: `Próximo contacto el ${d}` };
 }
 
 const AGE_TONE = { bad: "bg-bad-bg text-bad", warn: "bg-warn-bg text-warn", neutral: "bg-canvas-sunken text-ink-muted" };
@@ -122,7 +147,7 @@ export function QueueListRow({
           <span className="block truncate text-[13px] font-semibold text-ink">{name}</span>
           <span className="block truncate text-[12px] text-ink-muted">{stepAction(step)}{quoteProduct(step.card) ? ` · ${quoteProduct(step.card)}` : ""}</span>
         </span>
-        <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${AGE_TONE[age.tone]}`}>{age.text}</span>
+        <span title={age.title} className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${AGE_TONE[age.tone]}`}>{age.text}</span>
       </button>
     </li>
   );

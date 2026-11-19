@@ -250,9 +250,16 @@ export function ourLastTouch(card: OpportunityCardData): string | null {
   return later(touch.by === "us" ? touch.at : null, callTouch(card));
 }
 
-/** A «Seguimiento …» task is met once OrigenLab touched the case on or after its day. */
+/**
+ * A «Seguimiento …» task is met once OrigenLab touched the case on or after its day — and after the
+ * reminder was set: the call logged with «Llamé» that sets «otra vez hoy (en 2 h)» is the reason for
+ * the reminder, not the touch that meets it.
+ */
 function followUpMet(task: OpenTask, touch: string | null): boolean {
-  return touch !== null && Date.parse(touch) >= startOfLocalDay(Date.parse(task.due_at));
+  if (touch === null) return false;
+  const at = Date.parse(touch);
+  if (task.created_at && at <= Date.parse(task.created_at)) return false;
+  return at >= startOfLocalDay(Date.parse(task.due_at));
 }
 
 /** The case's «Seguimiento …» reminders still pending, earliest first: one already met is done. */

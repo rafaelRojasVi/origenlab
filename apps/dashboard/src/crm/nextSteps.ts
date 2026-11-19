@@ -12,6 +12,7 @@
  * Phase 2 moves this to the API (`/v2/workspace/next-steps`) with pause as a state.
  */
 import type { OpportunityCardData } from "./crmTypes";
+import { nextContact } from "./nextContact";
 import { pauseReturned } from "./stage";
 import { RHYTHM, buildParaTiQueue, followUpsDue, isFollowUpDueToday, retakeHint, type QueueItem } from "./today";
 
@@ -133,6 +134,8 @@ function returnedPauses(items: OpportunityCardData[], now: Date, taken: Set<stri
   for (const card of items) {
     const back = pauseReturned(card, now);
     if (!back || taken.has(card.opportunity_id)) continue;
+    // A reminder or task set since wins over the pause (`nextContact`): the case is due then.
+    if (nextContact(card, now)?.source !== "pause") continue;
     const due = localDay(back.until);
     const dueDays = dayDiff(now, due);
     const amountClp = caseAmountClp(card);
@@ -210,30 +213,27 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
     });
     taken.add(id);
   }
+  // The rest: the case's one próximo contacto (`nextContact`: a reminder, else a task, else the
+  // pause's day), when it falls in the coming days.
   for (const card of items) {
     if (card.closed_at || taken.has(card.opportunity_id)) continue;
-    if (card.paused_until && !card.closed_at) {
-      const due = localDay(card.paused_until);
-      const ahead = dayDiff(now, due);
-      if (ahead > 0 && ahead <= horizonDays) {
-        const amountClp = caseAmountClp(card);
-        const reason = card.pause_reason ?? "Sin motivo";
-        out.push({
-          id: `${card.opportunity_id}:pausa`, kind: "pausa", group: groupFor(ahead), card, due, dueDays: ahead, amountClp,
-          owner: null, score: scoreFor("pausa", amountClp, 0), item: null,
-          pause: { reason, hint: retakeHint(`Retomar: ${reason}`) }, state: null, actionable: false,
-          label: `Vuelve de pausa · ${reason}`,
-        });
-        taken.add(card.opportunity_id);
-      }
-      continue;
-    }
-    for (const t of card.open_tasks ?? []) {
-      const due = new Date(t.due_at);
-      const ahead = dayDiff(now, due);
-      if (ahead <= 0 || ahead > horizonDays) continue;
+    const next = nextContact(card, now);
+    if (!next) continue;
+    const t = next.task;
+    const due = t ? new Date(t.due_at) : localDay(card.paused_until as string);
+    const ahead = dayDiff(now, due);
+    if (ahead <= 0 || ahead > horizonDays) continue;
+    const amountClp = caseAmountClp(card);
+    if (!t) {
+      const reason = card.pause_reason ?? "Sin motivo";
+      out.push({
+        id: `${card.opportunity_id}:pausa`, kind: "pausa", group: groupFor(ahead), card, due, dueDays: ahead, amountClp,
+        owner: null, score: scoreFor("pausa", amountClp, 0), item: null,
+        pause: { reason, hint: retakeHint(`Retomar: ${reason}`) }, state: null, actionable: false,
+        label: `Vuelve de pausa · ${reason}`,
+      });
+    } else {
       const paused = isPauseTask(t.title);
-      const amountClp = caseAmountClp(card);
       out.push({
         id: `${card.opportunity_id}:${t.task_id}`, kind: paused ? "pausa" : "tarea", group: groupFor(ahead), card, due,
         dueDays: ahead, amountClp, owner: t.owner ?? null, score: scoreFor(paused ? "pausa" : "tarea", amountClp, 0),
@@ -241,9 +241,8 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
         state: null, actionable: false,
         label: paused ? `Vuelve de pausa · ${pauseReason(t.title)}` : t.title,
       });
-      taken.add(card.opportunity_id);
-      break;
     }
+    taken.add(card.opportunity_id);
   }
   return out;
 }

@@ -52,6 +52,8 @@ function card(s: Spec): OpportunityCardData {
     quotes: [{ quote_id: `q-${s.id}`, quote_number: `CN0${s.id}`, revisions: [rev] }], quote_numbers: [`CN0${s.id}`], revision_count: 1,
     money: s.amount === null ? [] : [{ currency: "CLP", net_total: s.amount ?? "500000" }], latest_revision: rev, drive_folder: null, attention: [], status: "ok",
     next_action: s.due ? { text: "Seguimiento", source: "task", due_at: s.due } : { text: "", source: "suggested", due_at: null },
+    // The API's next action comes from the open tasks; the shared rule reads them (`nextContact`).
+    open_tasks: s.due ? [{ task_id: `t-${s.id}`, title: `Seguimiento de CN0${s.id}`, due_at: s.due, version: 1, owner: null }] : [],
     follow_up: { operator_id: s.owner ?? null, operator_name: null, channel: s.channel ?? null },
     call_counts: { total: s.total ?? 0, today: s.today ?? 0 },
     last_call_any: s.lastCallToday ? { at: "2026-11-18T14:00:00Z", outcome: "no_contesto", author_name: null } : null,

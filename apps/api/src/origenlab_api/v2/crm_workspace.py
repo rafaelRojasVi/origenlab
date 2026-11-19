@@ -562,12 +562,18 @@ _SQL_CASE_THREADS = """
                        and sr.payload->>'gmail_thread_id' is not null
                 )
 """
+# The case's people. A participant created from an email address alone (contact_point only,
+# `person_id` null) is shown as the CRM contact once a person claims that address: the person is
+# resolved through the contact point (`coalesce(p.person_id, cp.person_id)`), so its name and phone
+# follow (owner, 2026-10-22; phone-load fix 2026-11-19). Until then it is found by
+# client_open_cases but not shown here.
 _SQL_PIPELINE_PARTICIPANTS = """
-    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, p.person_id::text as person_id
+    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, pe.id::text as person_id
       from crm.opportunity_participant p
-      join crm.person pe on pe.id = p.person_id  -- a contact_point-only participant is found by
-     where p.valid_to is null                     -- client_open_cases but not shown as the CRM contact
-     order by p.is_primary desc                   -- until a person claims the address (owner, 2026-10-22)
+      left join crm.contact_point cp on cp.id = p.contact_point_id
+      join crm.person pe on pe.id = coalesce(p.person_id, cp.person_id)
+     where p.valid_to is null
+     order by p.is_primary desc
 """
 
 # Codes that stop a case from moving until an operator decides something. Everything else in a
@@ -1366,11 +1372,17 @@ def compose_pipeline(
     return cards
 
 
+_FOLLOW_UP_TITLE = re.compile(r"^\s*seguimiento\b", re.IGNORECASE)
+
+
 def task_next_action(open_tasks: list[Mapping[str, Any]]) -> dict[str, Any] | None:
-    """The earliest open task, when the case has one: a stored next action beats a suggestion."""
+    """The case's próximo contacto, when it has an open task: the earliest «Seguimiento …» reminder,
+    else the earliest other task (the dashboard's `nextContact`, one rule on every screen). A stored
+    next action beats a suggestion. `open_tasks` arrive sorted by due date."""
     if not open_tasks:
         return None
-    first = open_tasks[0]
+    follow_ups = [t for t in open_tasks if _FOLLOW_UP_TITLE.match(str(t["title"] or ""))]
+    first = (follow_ups or open_tasks)[0]
     return {"text": first["title"], "source": "task", "due_at": first["due_at"]}
 
 

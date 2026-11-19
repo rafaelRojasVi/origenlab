@@ -13,7 +13,7 @@ import type { OpportunityCardData } from "./crmTypes";
 import { dateSantiago } from "./goals";
 import { channelsFor, type FollowUpChannel, type SegRow } from "./seguimiento";
 import { STAGE_LABEL } from "./stage";
-import { isFollowUpTask } from "./today";
+import { nextContact } from "./nextContact";
 
 /* ── state in the address ─────────────────────────────────────────────── */
 
@@ -75,20 +75,9 @@ export const activeFilterCount = (f: SegFilters): number => GROUP_KEYS.reduce((n
 
 /* ── the next contact ─────────────────────────────────────────────────── */
 
-/** When the case is to be contacted next: the open reminder's due time, else null. */
-/**
- * When the case is next due: its open «Seguimiento …» reminder due first (what the sheet's «Próximo»
- * shows), else the earliest open task, else null («Sin fecha»).
- */
-export function nextContactAt(card: OpportunityCardData): string | null {
-  const tasks = (card.open_tasks ?? []).filter((t) => !!t.due_at);
-  const earliest = (list: typeof tasks) =>
-    list.map((t) => t.due_at).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
-  return (
-    earliest(tasks.filter(isFollowUpTask)) ??
-    earliest(tasks) ??
-    (card.next_action?.source === "task" ? card.next_action.due_at : null)
-  );
+/** When the case is next due (`nextContact`: the one rule every screen shows), or null («Sin fecha»). */
+export function nextContactAt(card: OpportunityCardData, now: Date = new Date()): string | null {
+  return nextContact(card, now)?.at ?? null;
 }
 
 /** A `YYYY-MM-DD` day plus `days`. */
@@ -139,7 +128,7 @@ function amountBand(r: SegRow): string {
 
 /** «Toca hoy»: the next contact is due today or earlier (Santiago days). */
 export function dueByToday(r: SegRow, now: Date): boolean {
-  const at = nextContactAt(r.card);
+  const at = nextContactAt(r.card, now);
   return !!at && dateSantiago(new Date(at)) <= dateSantiago(now);
 }
 
@@ -296,7 +285,7 @@ const AGENDA_ORDER: AgendaKey[] = ["atrasados", "hoy", "manana", "semana", "desp
 
 /** Which Agenda group a row falls in, by the Santiago day of its next contact. */
 export function agendaKey(r: SegRow, now: Date): AgendaKey {
-  const at = nextContactAt(r.card);
+  const at = nextContactAt(r.card, now);
   if (!at) return "sin";
   const day = dateSantiago(new Date(at));
   const today = dateSantiago(now);

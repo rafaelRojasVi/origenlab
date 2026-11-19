@@ -151,6 +151,18 @@ def test_the_card_names_its_earliest_open_task_as_the_next_action() -> None:
     assert task_next_action([]) is None
 
 
+def test_a_follow_up_reminder_is_the_next_action_before_an_earlier_task() -> None:
+    """One rule with the dashboard's `nextContact`: the «Seguimiento …» reminder first."""
+    tasks = [
+        {"title": "Retomar: fondos", "due_at": "2026-11-02T12:00:00Z"},
+        {"title": "Seguimiento de CN09876", "due_at": "2026-11-20T12:00:00Z"},
+        {"title": "seguimiento de CN09877", "due_at": "2026-11-25T12:00:00Z"},
+    ]
+    assert task_next_action(tasks) == {
+        "text": "Seguimiento de CN09876", "source": "task", "due_at": "2026-11-20T12:00:00Z"}
+    assert task_next_action(tasks[:1])["text"] == "Retomar: fondos"
+
+
 # ------------------------------------------------------------------ against PostgreSQL
 
 from v2_command_harness import build_disposable_database, needs_db, runtime_dsn  # noqa: E402
