@@ -13,6 +13,7 @@ import type { OpportunityCardData } from "./crmTypes";
 import { dateSantiago } from "./goals";
 import { channelsFor, type FollowUpChannel, type SegRow } from "./seguimiento";
 import { STAGE_LABEL } from "./stage";
+import { isFollowUpTask } from "./today";
 
 /* ── state in the address ─────────────────────────────────────────────── */
 
@@ -75,8 +76,19 @@ export const activeFilterCount = (f: SegFilters): number => GROUP_KEYS.reduce((n
 /* ── the next contact ─────────────────────────────────────────────────── */
 
 /** When the case is to be contacted next: the open reminder's due time, else null. */
+/**
+ * When the case is next due: its open «Seguimiento …» reminder due first (what the sheet's «Próximo»
+ * shows), else the earliest open task, else null («Sin fecha»).
+ */
 export function nextContactAt(card: OpportunityCardData): string | null {
-  return card.next_action?.source === "task" ? card.next_action.due_at : null;
+  const tasks = (card.open_tasks ?? []).filter((t) => !!t.due_at);
+  const earliest = (list: typeof tasks) =>
+    list.map((t) => t.due_at).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+  return (
+    earliest(tasks.filter(isFollowUpTask)) ??
+    earliest(tasks) ??
+    (card.next_action?.source === "task" ? card.next_action.due_at : null)
+  );
 }
 
 /** A `YYYY-MM-DD` day plus `days`. */

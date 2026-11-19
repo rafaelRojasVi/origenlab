@@ -175,6 +175,17 @@ describe("agenda", () => {
     row.card.next_action = { text: "x", source: "suggested", due_at: "2026-11-18T12:00:00Z" };
     expect(agendaKey(row, NOW)).toBe("sin");
   });
+
+  it("reads the open «Seguimiento» reminder first, like the sheet's «Próximo»", () => {
+    const [row] = rowsOf([{ id: "r" }]);
+    row.card.open_tasks = [
+      { task_id: "t1", title: "Enviar ficha", due_at: "2026-11-18T13:00:00Z", version: 1, owner: null },
+      { task_id: "t2", title: "Seguimiento · llamar", due_at: "2026-11-19T15:00:00Z", version: 1, owner: null },
+    ];
+    expect(agendaKey(row, NOW)).toBe("manana");
+    row.card.open_tasks = [{ task_id: "t1", title: "Enviar ficha", due_at: "2026-11-18T13:00:00Z", version: 1, owner: null }];
+    expect(agendaKey(row, NOW)).toBe("hoy");
+  });
 });
 
 describe("Por encargado", () => {
