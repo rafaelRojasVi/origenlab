@@ -53,9 +53,11 @@ export function SeguimientoCallRow({
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // One set of keys per distinct request: a retry of the same call replays, an edited one is new.
-  const keys = useRef<{ sig: string; note: string; follow: ReturnType<typeof newFollowUpKeys> }>({
+  // One set of keys per distinct request, with the time it was first sent: a retry of the same call
+  // replays the very same bodies (same due date), an edited one is a new request at a new time.
+  const keys = useRef<{ sig: string; at: Date; note: string; follow: ReturnType<typeof newFollowUpKeys> }>({
     sig: "",
+    at: new Date(0),
     note: newCaseCommandKey(),
     follow: newFollowUpKeys(),
   });
@@ -72,8 +74,8 @@ export function SeguimientoCallRow({
     const choice = NEXTS.find((n) => n.key === next)!;
     const body = buildCallNote(card.opportunity_id, { outcome, nextStep: "", text });
     const sig = JSON.stringify([body, next]);
-    if (keys.current.sig !== sig) keys.current = { sig, note: newCaseCommandKey(), follow: newFollowUpKeys() };
-    const now = clock();
+    if (keys.current.sig !== sig) keys.current = { sig, at: clock(), note: newCaseCommandKey(), follow: newFollowUpKeys() };
+    const now = keys.current.at;
     setBusy(true);
     setError(null);
     try {

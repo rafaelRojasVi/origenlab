@@ -17,11 +17,11 @@ const card = {
 } as unknown as OpportunityCardData;
 const row = { card } as SegRow;
 
-function renderRow(onSaved = vi.fn()) {
+function renderRow(onSaved = vi.fn(), clock: () => Date = () => NOW) {
   render(
     <table>
       <tbody>
-        <SeguimientoCallRow row={row} colSpan={11} clock={() => NOW} onSaved={onSaved} onCancel={vi.fn()} />
+        <SeguimientoCallRow row={row} colSpan={11} clock={clock} onSaved={onSaved} onCancel={vi.fn()} />
       </tbody>
     </table>,
   );
@@ -31,28 +31,36 @@ function renderRow(onSaved = vi.fn()) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("SeguimientoCallRow", () => {
-  it("retries a failed save with the same keys, and replaces the earlier reminder", async () => {
-    let n = 0;
-    const posts: { path: string; key: string | null }[] = [];
+  it("retries a failed save with the same keys and the same bodies, even as time passes", async () => {
+    const posts: { path: string; key: string | null; body: Record<string, unknown> }[] = [];
+    let taskTries = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const path = new URL(String(input), "http://localhost").pathname;
-        posts.push({ path, key: new Headers(init?.headers).get("Idempotency-Key") });
-        n += 1;
-        if (n === 1) return Promise.resolve(new Response("{}", { status: 500 }));
+        posts.push({ path, key: new Headers(init?.headers).get("Idempotency-Key"), body: JSON.parse(String(init?.body ?? "{}")) });
+        // The first reminder fails after the call note was recorded.
+        if (path.endsWith("/create-task") && ++taskTries === 1) return Promise.resolve(new Response("{}", { status: 500 }));
         return Promise.resolve(new Response(JSON.stringify({ ok: true, opportunity_id: "o1", opportunity_version: 2 }), { status: 200, headers: { "Content-Type": "application/json" } }));
       }),
     );
-    const onSaved = renderRow();
+    // Ten minutes pass between the two clicks.
+    let clockAt = NOW;
+    const onSaved = renderRow(vi.fn(), () => clockAt);
+    fireEvent.click(screen.getByRole("button", { name: "No contestó" }));
     fireEvent.click(screen.getByRole("button", { name: "Guardar llamada" }));
     expect(await screen.findByRole("alert")).toBeInTheDocument();
+    clockAt = new Date(NOW.getTime() + 10 * 60_000);
     fireEvent.click(screen.getByRole("button", { name: "Guardar llamada" }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith("Mañana"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith("Hoy en 2 h"));
+    expect(posts.map((p) => p.path.split("/").pop())).toEqual(["add-note", "create-task", "add-note", "create-task", "cancel-task"]);
     const notes = posts.filter((p) => p.path.endsWith("/add-note"));
-    expect(notes).toHaveLength(2);
     expect(notes[1].key).toBe(notes[0].key);
-    expect(posts.map((p) => p.path.split("/").pop())).toEqual(["add-note", "add-note", "create-task", "cancel-task"]);
+    expect(notes[1].body).toEqual(notes[0].body);
+    const tasks = posts.filter((p) => p.path.endsWith("/create-task"));
+    expect(tasks[1].key).toBe(tasks[0].key);
+    expect(tasks[1].body).toEqual(tasks[0].body);
+    expect(tasks[1].body.due_at).toBe(new Date(NOW.getTime() + 2 * 3_600_000).toISOString());
   });
 
   it("defaults to Contestó and Mañana, and no contestó proposes otra vez hoy", () => {
