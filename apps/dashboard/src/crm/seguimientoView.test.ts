@@ -197,13 +197,13 @@ describe("Por encargado", () => {
     { id: "3", owner: null },
   ]);
 
-  it("puts Karla, Rafa and Tati first and «Sin confirmar» last", () => {
+  it("puts «Sin confirmar» first, then Karla, Rafa and Tati", () => {
     const cols = boardColumns(rows, PROFILES);
     expect(cols.map((c) => [c.label, c.rows.map((r) => r.card.opportunity_id)])).toEqual([
+      ["Sin confirmar", ["3"]],
       ["Karla", ["1"]],
       ["Rafa", []],
       ["Tati", ["2"]],
-      ["Sin confirmar", ["3"]],
     ]);
   });
 

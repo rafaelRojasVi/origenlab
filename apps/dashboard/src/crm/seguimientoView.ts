@@ -8,7 +8,7 @@
  */
 import type { ProfileCard } from "../api/authClient";
 import type { SetCaseFollowUpBody } from "./caseCommands";
-import { contactLine, displayName } from "./caseDisplay";
+import { contactLine, displayName, quoteProduct } from "./caseDisplay";
 import type { OpportunityCardData } from "./crmTypes";
 import { dateSantiago } from "./goals";
 import { channelsFor, type FollowUpChannel, type SegRow } from "./seguimiento";
@@ -226,14 +226,32 @@ function matchesGroup(group: GroupKey, chosen: string[], r: SegRow, ctx: FilterC
   return chosen.length === 0 || chosen.some((v) => matchesOption(group, v, r, ctx));
 }
 
+/** Lower case without accents or tildes («Católica» → «catolica»): Chileans often type without them. */
+export function foldText(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es");
+}
+
+/** Every word of `q` is somewhere in the client, institution, contact, quote N° or product. */
 export function matchesSearch(r: SegRow, q: string): boolean {
-  const needle = q.trim().toLocaleLowerCase("es");
-  if (!needle) return true;
-  const hay = [displayName(r.card).name, r.card.organization?.name, contactLine(r.card), ...r.card.quote_numbers, r.card.latest_revision?.quote_number]
-    .filter(Boolean)
-    .join(" ")
-    .toLocaleLowerCase("es");
-  return hay.includes(needle);
+  const words = foldText(q).split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const card = r.card;
+  const hay = foldText(
+    [
+      displayName(card).name,
+      card.organization?.name,
+      card.contact?.name,
+      contactLine(card),
+      card.title,
+      quoteProduct(card),
+      ...card.quote_numbers,
+      card.latest_revision?.quote_number,
+      ...(card.money ?? []).map((m) => m.quote_number),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  return words.every((w) => hay.includes(w));
 }
 
 /** Rows that pass every group (but `except`, for faceted counts) and the search. */
@@ -313,7 +331,10 @@ export interface BoardColumn {
   rows: SegRow[];
 }
 
-/** One column per profile (Karla · Rafa · Tati first) and «Sin confirmar»; a row sits under its confirmed encargado. */
+/**
+ * «Sin confirmar» first (where the work is: confirm or reassign), then one column per profile
+ * (Karla · Rafa · Tati first); a row sits under its confirmed encargado.
+ */
 export function boardColumns(rows: SegRow[], profiles: ProfileCard[]): BoardColumn[] {
   const rank = (p: ProfileCard) => {
     const i = BOARD_KEY_ORDER.indexOf(p.key.toLowerCase());
@@ -322,8 +343,8 @@ export function boardColumns(rows: SegRow[], profiles: ProfileCard[]): BoardColu
   const people = [...profiles].sort((a, b) => rank(a) - rank(b));
   const known = new Set(people.map((p) => p.id));
   return [
-    ...people.map((p) => ({ ownerId: p.id, label: p.displayName, rows: rows.filter((r) => r.ownerId === p.id) })),
     { ownerId: null, label: "Sin confirmar", rows: rows.filter((r) => r.ownerId === null || !known.has(r.ownerId)) },
+    ...people.map((p) => ({ ownerId: p.id, label: p.displayName, rows: rows.filter((r) => r.ownerId === p.id) })),
   ];
 }
 
@@ -336,4 +357,60 @@ export function boardMoveBody(card: OpportunityCardData, ownerId: string | null,
   const allowed = channelsFor(ownerId, profiles);
   const channel = current && !allowed.includes(current) ? allowed[0] : current;
   return { opportunity_id: card.opportunity_id, opportunity_version: card.version ?? 0, follow_up_operator_id: ownerId, channel };
+}
+
+/* ── a stable place on screen ─────────────────────────────────────────── */
+
+/**
+ * `rows` in the order `prev` (the ids as last shown) had them; rows new to the list follow in
+ * their own order. A save, a receipt or a refetch never moves a row away from under the pointer
+ * (a re-sort mid-click opened another case's panel, QA 2026-11-19): the order changes only when
+ * the person changes the order, a filter or the search.
+ */
+export function keepOrder(rows: SegRow[], prev: readonly string[]): SegRow[] {
+  if (prev.length === 0) return rows;
+  const at = new Map(prev.map((id, i) => [id, i]));
+  const known = rows.filter((r) => at.has(r.card.opportunity_id));
+  const fresh = rows.filter((r) => !at.has(r.card.opportunity_id));
+  known.sort((a, b) => at.get(a.card.opportunity_id)! - at.get(b.card.opportunity_id)!);
+  return [...known, ...fresh];
+}
+
+/* ── «Modo llamadas» ──────────────────────────────────────────────────── */
+
+/**
+ * A case to call now: not called today, and its próximo contacto is today or past — or, with no
+ * date at all, it is late by the 3-day rhythm (nobody set a date, so it is due).
+ */
+export function dueForCall(r: SegRow, now: Date): boolean {
+  if (r.callsToday > 0) return false;
+  return dueByToday(r, now) || (nextContactAt(r.card, now) === null && r.late);
+}
+
+/* ── bulk assign ──────────────────────────────────────────────────────── */
+
+export type BulkAction = { kind: "confirm" } | { kind: "owner"; ownerId: string | null } | { kind: "channel"; channel: FollowUpChannel };
+
+/**
+ * The `set-case-follow-up` body for each selected row, and how many rows the action does not apply
+ * to («Confirmar sugerido» on a confirmed row, WhatsApp for an encargado who may not use it).
+ */
+export function bulkBodies(rows: SegRow[], action: BulkAction, profiles: ProfileCard[]): { bodies: SetCaseFollowUpBody[]; skipped: number } {
+  const bodies: SetCaseFollowUpBody[] = [];
+  let skipped = 0;
+  for (const r of rows) {
+    const base = { opportunity_id: r.card.opportunity_id, opportunity_version: r.card.version ?? 0 };
+    if (action.kind === "confirm") {
+      if (!r.isSuggested) skipped += 1;
+      else bodies.push({ ...base, follow_up_operator_id: r.suggestedOwnerId, channel: r.channel });
+    } else if (action.kind === "owner") {
+      bodies.push(boardMoveBody(r.card, action.ownerId, profiles));
+    } else if (!channelsFor(r.ownerId ?? r.suggestedOwnerId, profiles).includes(action.channel)) {
+      skipped += 1;
+    } else {
+      // A channel set on a suggested case confirms the suggestion too: one command, the full pair.
+      bodies.push({ ...base, follow_up_operator_id: r.ownerId ?? r.suggestedOwnerId, channel: action.channel });
+    }
+  }
+  return { bodies, skipped };
 }

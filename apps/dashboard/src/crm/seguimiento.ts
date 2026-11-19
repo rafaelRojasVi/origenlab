@@ -145,7 +145,9 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
   if (call && (!outbound || Date.parse(call.at) >= Date.parse(outbound))) {
     lastTouch = { kind: "call", at: call.at, label: CALL_LABEL[call.outcome] ?? "Llamada" };
   } else if (outbound) {
-    lastTouch = { kind: "email", at: outbound, label: "Correo enviado" };
+    // The quote's own email, or a later one of ours: two different events, said apart (QA 2026-11-19).
+    const isQuote = !!sentAt && Math.abs(Date.parse(outbound) - Date.parse(sentAt)) < 3_600_000;
+    lastTouch = { kind: "email", at: outbound, label: isQuote ? "Cotización enviada" : "Correo de seguimiento" };
   }
   const touchAt = [lastTouch?.at ?? null, sentAt ?? card.created_at].reduce<string | null>(
     (best, at) => (at && (!best || Date.parse(at) > Date.parse(best)) ? at : best),
