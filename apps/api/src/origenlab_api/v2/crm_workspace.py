@@ -387,13 +387,13 @@ _SQL_PIPELINE_NOTES = """
 # institution or a case) per Santiago day and outcome, the last 35 days. An edited call is a new
 # row: only the newest revision counts, on the day of the root (when the call was first logged).
 _SQL_PIPELINE_CALLS = """
-    select to_char(coalesce(r.created_at, n.created_at) at time zone 'America/Santiago', 'YYYY-MM-DD') as day,
+    select to_char(coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) at time zone 'America/Santiago', 'YYYY-MM-DD') as day,
            n.call_outcome as outcome, count(*)::int as count
       from crm.note n
       left join crm.note r on r.id = n.root_note_id
      where n.note_kind = 'llamada' and n.status = 'active'
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
-       and coalesce(r.created_at, n.created_at) >= now() - interval '35 days'
+       and coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) >= now() - interval '35 days'
      group by 1, 2
      order by 1, 2
 """
@@ -403,7 +403,7 @@ _SQL_PIPELINE_CALLS = """
 _SQL_PIPELINE_LAST_CALLS = """
     select distinct on (n.subject_id)
            n.subject_id::text as opportunity_id,
-           to_char(coalesce(r.created_at, n.created_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
+           to_char(coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at,
            n.call_outcome as outcome
       from crm.note n
       left join crm.note r on r.id = n.root_note_id
@@ -412,7 +412,7 @@ _SQL_PIPELINE_LAST_CALLS = """
        and (op.closed_at is null or op.stage = 'won')
        and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion')
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
-     order by n.subject_id, coalesce(r.created_at, n.created_at) desc, n.id desc
+     order by n.subject_id, coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) desc, n.id desc
 """
 # «Ventas › Seguimiento»: the person's phone on each case (the case contact's `crm.contact_point`,
 # kind phone): a confirmed one first, then the newest. Keyed `person:<id>` or `email:<value_norm>`,
@@ -438,7 +438,7 @@ _SQL_PIPELINE_PHONES = """
 _LIVE_CALLS_CTE = """
     with live_calls as (
         select n.subject_kind, n.subject_id, n.id, n.call_outcome,
-               coalesce(r.created_at, n.created_at) as logged_at,
+               coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) as logged_at,
                coalesce(r.author_operator_id, n.author_operator_id) as author_operator_id
           from crm.note n
           left join crm.note r on r.id = n.root_note_id
@@ -2426,7 +2426,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step, n.occurred_at::text,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2612,7 +2612,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step, n.occurred_at::text,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest
@@ -2714,7 +2714,7 @@ class CrmWorkspaceRepository:
                 select n.id::text, n.root_note_id::text, n.revision_no, n.body,
                        n.author_operator_id::text, op.display_name as author_name,
                        n.created_at::text, n.status, n.archived_at::text, n.archive_reason,
-                       n.version, n.note_kind, n.call_outcome, n.call_next_step,
+                       n.version, n.note_kind, n.call_outcome, n.call_next_step, n.occurred_at::text,
                        not exists (
                          select 1 from crm.note n2 where n2.revision_of_note_id = n.id
                        ) as is_latest

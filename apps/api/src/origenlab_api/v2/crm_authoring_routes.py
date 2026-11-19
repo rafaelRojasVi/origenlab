@@ -22,13 +22,20 @@ or the body's `idempotency_key`.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from origenlab_api.v2.call_outcome import CALL_NEXT_STEP_MAX, CallOutcome, NoteKind, check_call_shape
+from origenlab_api.v2.call_outcome import (
+    CALL_NEXT_STEP_MAX,
+    CallOutcome,
+    NoteKind,
+    check_call_shape,
+    check_call_time,
+)
 from origenlab_api.v2.crm_authoring import V2CrmAuthoringRepository
 from origenlab_api.v2.command_routes import Deciding, IdempotencyKey, _detail
 from origenlab_api.v2.commands import (
@@ -324,6 +331,8 @@ class AddNoteBody(BaseModel):
     note_kind: NoteKind | None = None
     call_outcome: CallOutcome | None = None
     call_next_step: Annotated[str | None, Field(max_length=CALL_NEXT_STEP_MAX)] = None
+    # A call logged after the fact: when it happened (null = now). Only on a «Llamada».
+    occurred_at: datetime | None = None
 
     @field_validator("call_next_step")
     @classmethod
@@ -333,6 +342,7 @@ class AddNoteBody(BaseModel):
     @model_validator(mode="after")
     def _llamada_shape(self) -> "AddNoteBody":
         check_call_shape(self.note_kind, self.call_outcome, self.call_next_step)
+        check_call_time(self.note_kind, self.occurred_at)
         return self
 
     @field_validator("body")
