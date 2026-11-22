@@ -49,8 +49,9 @@ def test_only_safe_intake_and_link_rules_are_automatic() -> None:
     # R17 (a client's reply → «Conversación») owner-approved 2026-10-26.
     # R18 (a closing reply needs no answer) and R19 (the client's «no», read in the body → lost) 2026-10-29.
     # R21 (who writes on an open case is one of its people) 2026-11-11.
+    # R23 (the request beside a Cotizador case closes as a duplicate) 2026-11-22.
     assert AUTOMATIC_RULES == {"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15", "R16",
-                               "R17", "R18", "R19", "R21", "R22"}
+                               "R17", "R18", "R19", "R21", "R22", "R23"}
 
 
 def test_a_kill_flag_keeps_its_rule_out_of_the_pass() -> None:

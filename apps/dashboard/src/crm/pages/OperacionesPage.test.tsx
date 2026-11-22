@@ -106,9 +106,10 @@ describe("Operaciones", () => {
     respond();
     renderOps();
     fireEvent.click(await screen.findByRole("button", { name: "Reglas" }));
-    expect(screen.getAllByTestId(/^rule-R\d+$/)).toHaveLength(21);
+    expect(screen.getAllByTestId(/^rule-R\d+$/)).toHaveLength(22);
     expect(screen.getByTestId("rule-R1")).toHaveTextContent("Automática");
     expect(screen.getByTestId("rule-R19")).toHaveTextContent("Automática");
+    expect(screen.getByTestId("rule-R23")).toHaveTextContent("Automática");
     expect(screen.getByTestId("rule-R5")).toHaveTextContent("Con «Aplicar»");
     expect(screen.getByTestId("rule-R1")).toHaveTextContent("hoy: 1");
   });

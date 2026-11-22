@@ -29,7 +29,7 @@ def planned(*evidence: MailEvidence, cases=None, since: str | None = SINCE, **kw
 
 
 def test_r22_is_a_rule() -> None:
-    assert RULE_IDS[-1] == "R22"
+    assert RULE_IDS[-2:] == ("R22", "R23")
 
 
 def test_r22_pauses_the_case_until_the_day_the_email_names() -> None:
