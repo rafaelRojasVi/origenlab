@@ -22,8 +22,11 @@ from origenlab_api.v2.finance.reads import (
     _POR_COBRAR_AGING_SQL,
     _RESUMEN_MES_SQL,
     _SUPPLIER_ORDERS_SQL,
+    _WON_LINES_SQL,
+    _WON_REVISIONS_SQL,
     FinanceReadRepository,
 )
+from origenlab_api.v2.quotes.inputs import PARAMETERS_SQL
 
 MES_ROW = {
     "mes": "2026-11-01", "today": "2026-11-09",
@@ -48,8 +51,6 @@ RESUMEN_MES_ROW = {
 INDICADORES_ROW = {
     "dpc_avg": Decimal("28.5"),
     "dpc_count": 4,
-    "margen_costo": Decimal("600000"),
-    "margen_subtotal": Decimal("1050000"),
     "clientes_lentos": [{"org": "Inst. Ficticio", "days": 45, "n": 2}],
 }
 
@@ -123,6 +124,8 @@ class FakeCursor:
         elif sql == _PEDIDOS_ESTIMADOS_SQL:
             self.description = [SimpleNamespace(name=k) for k in FAKE_PEDIDO_ROW]
             self._rows = [tuple(FAKE_PEDIDO_ROW.values())]
+        elif sql in (_WON_REVISIONS_SQL, _WON_LINES_SQL, PARAMETERS_SQL):
+            self._rows = []  # no won case this month: the margin is unknown
         elif sql == _EXPENSES_SQL:
             self.description = [SimpleNamespace(name=k) for k in FAKE_EXPENSE_ROW]
             self._rows = [tuple(FAKE_EXPENSE_ROW.values())]
@@ -155,7 +158,7 @@ class FakeConn:
 
 
 def test_mes_handles_decimal_amounts() -> None:
-    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn").mes()
+    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn", clock=lambda: date(2026, 11, 9)).mes()
 
     stages = out["pipeline"]["by_stage"]
     assert stages["quoting"]["total_clp"] == 4_700_000
@@ -171,7 +174,7 @@ def test_mes_amounts_leave_as_json_numbers() -> None:
     «pct.toFixed is not a function» then blanked the whole dashboard."""
     from pydantic import TypeAdapter
 
-    mes = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn").mes()
+    mes = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn", clock=lambda: date(2026, 11, 9)).mes()
     out = TypeAdapter(dict[str, Any]).dump_python(mes, mode="json")
 
     for path in (("vendido", "net"), ("vendido", "meta_net"), ("vendido", "pct_meta"), ("por_cobrar", "total"),
@@ -182,7 +185,7 @@ def test_mes_amounts_leave_as_json_numbers() -> None:
 
 def test_resumen_decimal_amounts_are_int() -> None:
     """resumen() must return int amounts, not Decimal strings — same bug vector as mes()."""
-    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn").resumen()
+    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn", clock=lambda: date(2026, 11, 9)).resumen()
 
     # caja horizons
     assert len(out["caja"]) == 3
@@ -213,7 +216,7 @@ def test_resumen_amounts_leave_as_json_numbers() -> None:
     """Pydantic serialises Decimal as a string — resumen amounts must remain numbers at JSON output."""
     from pydantic import TypeAdapter
 
-    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn").resumen()
+    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn", clock=lambda: date(2026, 11, 9)).resumen()
     serialised = TypeAdapter(dict[str, Any]).dump_python(out, mode="json")
 
     # caja
@@ -244,7 +247,7 @@ def test_resumen_caja_sale_includes_pedidos_and_expenses() -> None:
     and no in-flight supplier orders, sale_confirmado = 0, sale_estimado = 650,000,
     sale = 650,000 for all three horizons.
     """
-    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn").resumen()
+    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn", clock=lambda: date(2026, 11, 9)).resumen()
 
     for h in out["caja"]:
         assert h["sale_confirmado"] == 0, f"sale_confirmado should be 0 at {h['horizon']}d"
@@ -253,22 +256,12 @@ def test_resumen_caja_sale_includes_pedidos_and_expenses() -> None:
         assert h["neto"] == h["entra"] - 650_000, f"neto = entra - sale at {h['horizon']}d"
 
 
-def test_indicadores_sql_uses_lateral_for_cost() -> None:
-    """Bug 1 fix: margen_this_month CTE must use LATERAL to prevent tax_base inflation.
-
-    If the query has a direct LEFT JOIN to crm.quote_line in the margen_this_month CTE,
-    tax_base gets summed once per LINE rather than once per revision — inflating the
-    margin subtotal 3× for a 3-line quote. The fix aggregates lines inside a LATERAL so
-    tax_base joins exactly once per won case.
-    """
-    sql_lower = _INDICADORES_SQL.lower()
-    assert "left join lateral" in sql_lower, (
-        "margen_this_month CTE must use LEFT JOIN LATERAL to aggregate item lines once per revision"
-    )
-    # The join to quote_line must be inside the lateral subquery, not at the main FROM level
-    assert "rev_cost" in sql_lower, (
-        "LATERAL result alias 'rev_cost' expected in margen_this_month CTE"
-    )
+def test_the_month_margin_is_not_a_sql_sum_of_quote_lines() -> None:
+    """«Margen del mes» comes from the engine's economics (`quotes/economics.py`), which counts the
+    logistics lines and refuses a figure when a line has no cost: no SQL cost sum is left."""
+    assert "quote_line" not in _INDICADORES_SQL.lower()
+    out = FinanceReadRepository(lambda dsn, autocommit=False: FakeConn(), "dsn", clock=lambda: date(2026, 11, 9)).resumen()
+    assert out["indicadores"]["margen_mes_known"] is False
 
 
 def test_pedidos_estimados_sql_excludes_invoiced_cases() -> None:
