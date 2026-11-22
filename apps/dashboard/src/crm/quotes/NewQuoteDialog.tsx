@@ -583,6 +583,7 @@ function focusTabWhenShown(quoteId: string) {
   const selector = `[role="tab"][data-quote-id="${quoteId.toLowerCase()}"]`;
   let tries = 0;
   const step = () => {
+    if (typeof document === "undefined") return; // the page (or a test's DOM) went away meanwhile
     const tab = document.querySelector<HTMLElement>(selector);
     if (tab && tab.getAttribute("aria-selected") === "true") {
       const here = document.activeElement as HTMLElement | null;
