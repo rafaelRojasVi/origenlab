@@ -44,6 +44,16 @@ def _run(command: str, env: Mapping[str, str], started: float) -> int:
         from origenlab_worker.mail_worker import run_mail_worker
         return run_mail_worker(env)
     except ConfigRefused as exc:
+        if command == "capture-worker":
+            # Logged, then idle, like the triage and tender children: an exit makes the supervisor
+            # stop every child. A capture that is not running is caught by the release check
+            # (`capture_recent`), not by a restart loop. Imported only on this path: the scheduler
+            # stays light while it runs.
+            _emit_line({"event": "capture_worker", "mode": "config_refused", "exit": 0,
+                        "error": exc.code}, started)
+            from origenlab_worker.triage_cli import _idle_until_terminated
+            _idle_until_terminated("capture_worker")
+            return 0
         return _emit_line({"event": "mail_worker", "exit": 3, "error": exc.code}, started)
     except Exception as exc:
         return _emit_line({"event": "mail_worker", "exit": 1, "error": type(exc).__name__}, started)

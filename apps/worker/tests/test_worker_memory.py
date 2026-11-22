@@ -77,6 +77,34 @@ def test_a_refused_supervisor_setting_is_one_json_line(monkeypatch, capsys) -> N
     assert (line["event"], line["exit"], line["error"]) == ("mail_worker", 3, "capture_target_missing")
 
 
+def test_a_refused_capture_setting_idles_instead_of_stopping_the_service(monkeypatch, capsys) -> None:
+    """An exit makes the supervisor stop every child: a capture config error must not stop triage."""
+    from origenlab_worker import capture_queue
+    from origenlab_worker.errors import ConfigRefused
+
+    def refuse(env):
+        raise ConfigRefused("requires_existing_gmail_flag")
+
+    idled = []
+    monkeypatch.setattr(capture_queue, "run_capture_worker", refuse)
+    monkeypatch.setattr(triage_cli, "_idle_until_terminated", lambda event="triage_worker": idled.append(event))
+    assert entry.main(["capture-worker"], {}) == 0
+    line = json.loads(capsys.readouterr().out)
+    assert (line["event"], line["mode"], line["error"]) == ("capture_worker", "config_refused",
+                                                           "requires_existing_gmail_flag")
+    assert idled == ["capture_worker"]
+
+
+def test_a_refused_triage_setting_idles_instead_of_stopping_the_service(monkeypatch, capsys) -> None:
+    """A triage config error (here: no database) is logged; the child idles so capture keeps running."""
+    idled = []
+    monkeypatch.setattr(triage_cli, "_idle_until_terminated", lambda event="triage_worker": idled.append(event))
+    assert triage_cli.run_triage_worker({"ORIGENLAB_WORKER_TRIAGE_ENABLED": "true"}, 0.0) == 0
+    line = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert (line["event"], line["mode"]) == ("triage_worker", "config_refused") and line["error"]
+    assert idled == ["triage_worker"]
+
+
 def _done(stdout: str, code: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(args=[], returncode=code, stdout=stdout)
 

@@ -7,7 +7,8 @@ runs is logged and the child idles (`triage_cli.run_tender_worker`), so a tender
 stop triage and capture.
 
 If either child exits unexpectedly, stop both and fail the service so Render can
-restart it. A live triage child must not hide a dead capture scheduler. SIGTERM
+restart it. A refused setting is not an exit: every child logs it and idles
+(`triage_cli._idle_until_terminated`), so a bad triage setting cannot stop capture. A live triage child must not hide a dead capture scheduler. SIGTERM
 propagates to process groups; bounded shutdown kills descendants and frees locks.
 """
 from __future__ import annotations

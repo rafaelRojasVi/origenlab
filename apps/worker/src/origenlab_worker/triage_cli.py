@@ -601,7 +601,9 @@ def _idle_until_terminated(event: str = "triage_worker") -> None:
         print(json.dumps({"event": event, "mode": "paused"}), flush=True)
 
 
-def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma: no cover - needs a database
+def run_triage_worker(env: Mapping[str, str], started: float) -> int:
+    """The triage child. A refused setting is logged and the child idles (see the tender child);
+    the queue itself needs a database, so the serving path is exercised only on Render."""
     from origenlab_worker import task_queue
 
     line: dict[str, Any] = {"event": "triage_worker", "mode": "start", "exit": EXIT_OK, "error": None}
@@ -640,7 +642,12 @@ def run_triage_worker(env: Mapping[str, str], started: float) -> int:  # pragma:
         asyncio.run(serve())
         line["mode"] = "stopped"
     except ConfigRefused as exc:
-        line.update(mode="config_refused", exit=EXIT_CONFIG, error=exc.code)
+        # Logged, then idle — as the tender child does. An exit here made the supervisor stop
+        # every child, so one bad triage setting took Gmail capture down with it.
+        line.update(mode="config_refused", error=exc.code)
+        _emit(line, started)
+        _idle_until_terminated()
+        return EXIT_OK
     except Exception as exc:  # noqa: BLE001 — the class, never the text
         line.update(mode="failed", exit=EXIT_FAILED, error=type(exc).__name__)
     return _emit(line, started)
