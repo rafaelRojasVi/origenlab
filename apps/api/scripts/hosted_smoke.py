@@ -302,7 +302,9 @@ def database_checks() -> Verdict:
             v.failures.append("could not read the production migration ledger")
             return v
         v.failures += pending_migration_failures(set(out.stdout.split()), MIGRATIONS)
-        v.failures += worker_failures(worker_conditions(env))
+        # require_capture: a revoked Gmail consent (or a capture child that stopped) otherwise
+        # passes every other condition while no mail is captured at all.
+        v.failures += worker_failures(worker_conditions(env, require_capture=True))
     return v
 
 
@@ -310,7 +312,10 @@ WORKER_CONDITION_FAILURES = {
     "heartbeat": "workers: no worker heartbeat in the last 3 minutes",
     "sweep_scheduled": "workers: the triage sweep was not scheduled in the last 5 minutes",
     "triage_caught_up": "workers: captured mail older than 15 minutes is waiting for triage",
-    "capture_recent": "workers: no mail capture cycle in the last 15 minutes",
+    # It measures that the sync ran (the mailbox's last_synced_at), not that mail arrived: a
+    # quiet hour passes. It fails when the capture cycle stopped or the consent was revoked.
+    "capture_recent": ("workers: Gmail capture has not synced in the last 20 minutes "
+                       "(no capture cycle, or the mailbox is no longer authorized: revoked consent?)"),
 }
 
 

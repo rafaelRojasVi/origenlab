@@ -11,6 +11,7 @@ import {
   suggestOwner,
   WHATSAPP_PROFILE_KEYS,
 } from "./seguimiento";
+import { followUpsDue } from "./today";
 
 const NOW = new Date("2026-11-18T15:00:00Z"); // 12:00 in Santiago (UTC-3)
 
@@ -88,27 +89,29 @@ describe("seguimientoRows", () => {
   });
 
   it("sorts late first then score", () => {
+    // Late: the reminder's day went by (`SegRow.next`).
+    const overdue = [{ task_id: "t-late", title: "Seguimiento de CN09876", due_at: "2026-11-16T13:00:00Z", version: 1, owner: null }];
     const fresh = card({ title: "fresh", last_contact: { outbound: { at: "2026-11-17T15:00:00Z", subject: null, url: null }, inbound: null } });
-    const lateLow = card({ title: "late low", clp: "500000" });
-    const lateHigh = card({ title: "late high", clp: "50000000" });
+    const lateLow = card({ title: "late low", clp: "500000", open_tasks: overdue });
+    const lateHigh = card({ title: "late high", clp: "50000000", open_tasks: overdue });
     const rows = seguimientoRows([fresh, lateLow, lateHigh], profiles, NOW);
     expect(rows.map((r) => r.card.title)).toEqual(["late high", "late low", "fresh"]);
     expect(rows[0].late).toBe(true);
     expect(rows[2].late).toBe(false);
   });
 
-  it("late uses Santiago days", () => {
-    // 23:30 Santiago on the 15th is 02:30Z on the 16th: still 3 Santiago days before the 18th.
-    const edge = card({ revs: [rev({ sent_at: "2026-11-16T02:30:00Z" })] });
-    // 00:30 Santiago on the 16th is 03:30Z: only 2 days.
-    const young = card({ revs: [rev({ sent_at: "2026-11-16T03:30:00Z" })] });
-    const [a, b] = seguimientoRows([edge, young], profiles, NOW);
+  it("late counts calendar days, not hours", () => {
+    // Local wall-clock times, so the rows read the same in every zone. 23:30 on the 15th is
+    // 3 days before noon on the 18th (60.5 hours, but three calendar days)…
+    const now = new Date(2026, 10, 18, 12);
+    const edge = card({ revs: [rev({ sent_at: new Date(2026, 10, 15, 23, 30).toISOString() })] });
+    // …and 00:30 on the 16th only 2.
+    const young = card({ revs: [rev({ sent_at: new Date(2026, 10, 16, 0, 30).toISOString() })] });
+    const [a, b] = seguimientoRows([edge, young], profiles, now);
     const byEdge = [a, b].find((r) => r.card === edge)!;
     const byYoung = [a, b].find((r) => r.card === young)!;
     expect(byEdge.daysSinceTouch).toBe(3);
-    expect(byEdge.late).toBe(true);
     expect(byYoung.daysSinceTouch).toBe(2);
-    expect(byYoung.late).toBe(false);
   });
 
   it("uses the newest touch among email, call and sent date", () => {
@@ -201,7 +204,8 @@ describe("seguimientoKpis", () => {
       [
         card({ call_counts: { total: 3, today: 3 }, last_call_any: { at: "2026-11-18T14:00:00Z", outcome: "no_contesto", author_name: "Persona Uno" } }),
         card({ last_contact: { outbound: { at: "2026-11-18T14:00:00Z", subject: null, url: null }, inbound: null } }),
-        card(),
+        // Late: its reminder was due on Monday.
+        card({ open_tasks: [{ task_id: "t-late", title: "Seguimiento de CN09876", due_at: "2026-11-16T13:00:00Z", version: 1, owner: null }] }),
       ],
       profiles,
       NOW,
@@ -220,5 +224,45 @@ describe("seguimientoKpis", () => {
     expect(k.touchedToday).toBe(2);
     expect(k.late).toBe(1);
     expect(k.moneyClp).toBe(1_500_000);
+  });
+});
+
+describe("Hoy's rhythm and Seguimiento count the same calendar days (audit 2026-11-22)", () => {
+  it("a quote sent at 20:00 three days ago is day 3 in both, at 10:00", () => {
+    const sentAt = new Date(2026, 10, 19, 20).toISOString();
+    const now = new Date(2026, 10, 22, 10);
+    const c = card({ revs: [rev({ sent_at: sentAt })], last_contact: { inbound: null, outbound: { at: sentAt, subject: "Cotización", url: null } } });
+    const f = followUpsDue([c], now)[0];
+    expect(f?.days).toBe(3);
+    expect(f?.touchDays).toBe(3);
+    expect(seguimientoRows([c], profiles, now)[0].daysSinceTouch).toBe(3);
+  });
+});
+
+describe("«Atrasado» is the próximo contacto's clock (audit 2026-11-22)", () => {
+  const now = new Date(2026, 10, 18, 12);
+  const at = (d: number, h = 12) => new Date(2026, 10, d, h).toISOString();
+  const reminder = (due: string) => ({ task_id: `t-${due}`, title: "Seguimiento de CN09876", due_at: due, version: 1, owner: null, created_at: at(10) });
+
+  it("untouched for 8 days but set for tomorrow: not late, and the row carries that próximo contacto", () => {
+    const c = card({ revs: [rev({ sent_at: at(10) })], open_tasks: [reminder(at(19, 10))] });
+    const row = seguimientoRows([c], profiles, now)[0];
+    expect(row.daysSinceTouch).toBe(8);
+    expect(row.next?.source).toBe("followup");
+    expect(row.late).toBe(false);
+  });
+
+  it("touched two days ago but its reminder was due yesterday: late", () => {
+    const c = card({ revs: [rev({ sent_at: at(16) })], open_tasks: [reminder(at(17, 10))] });
+    const row = seguimientoRows([c], profiles, now)[0];
+    expect(row.daysSinceTouch).toBe(2);
+    expect(row.late).toBe(true);
+  });
+
+  it("a case paused until December is not late, whatever the days without a touch", () => {
+    const c = card({ revs: [rev({ sent_at: at(1) })], paused_until: "2026-12-15", pause_reason: "Esperando fondos o proyecto" });
+    const row = seguimientoRows([c], profiles, now)[0];
+    expect(row.next?.source).toBe("pause");
+    expect(row.late).toBe(false);
   });
 });

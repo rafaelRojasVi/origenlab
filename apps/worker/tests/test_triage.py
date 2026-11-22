@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,26 @@ class FakeDb:
         self.people_recorded: list[tuple[str, dict]] = []
         self.intents: list[tuple[str, dict]] = []
 
+    lock_held_elsewhere = False
+    loads = 0
+    #: `model_budget.paid_call`: a cap to raise `BudgetReached`, and every check and record in order.
+    budget_left = None
+
+    def spend_check(self, feature, worst_usd):
+        self.spend_log = getattr(self, "spend_log", [])
+        self.spend_log.append(("check", feature))
+        if self.budget_left is not None and worst_usd > self.budget_left:
+            from origenlab_worker.model_budget import BudgetReached
+            raise BudgetReached(spent=0, cap=self.budget_left)
+
+    def spend_record(self, feature, step, model, message):
+        self.spend_log = getattr(self, "spend_log", [])
+        self.spend_log.append(("record", feature, step, model, getattr(message, "usage", None) is not None))
+
+    @contextmanager
+    def message_lock(self, sid):
+        yield not self.lock_held_elsewhere
+
     def message_people(self, message_id):
         return self.people
 
@@ -60,6 +81,7 @@ class FakeDb:
         self.intents.append((sid, value))
 
     def load(self, sid):
+        self.loads += 1
         if sid != "sr-1":
             return None
         return (self.msg, self.done, self.done_class if self.done else None, self.delivery_done,
@@ -145,6 +167,15 @@ READING = {"intent": "quote_request", "stage": "lead", "urgency": "high",
 CAND = ProductCandidate("p-1", "UP200Ht", "UP200HT", "Homogeneizador", "model_key", "UP200HT")
 
 
+
+def test_a_message_another_job_is_triaging_is_left_to_it() -> None:
+    """Procrastinate's queueing lock covers only waiting jobs: a second job for a message still
+    being triaged must not read it (or pay the model) again."""
+    db = FakeDb()
+    db.lock_held_elsewhere = True
+    result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "locked" and db.loads == 0 and db.recorded == []
+
 def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -> None:
     db, reader = FakeDb(candidates=[CAND]), Reader(READING)
     result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
@@ -157,6 +188,33 @@ def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -
                                      "brand": None, "model": "UP200Ht", "quantity": 1, "catalog_product_id": "p-1"})]
     # The reading, then the case pick (no case is sure); this reader's answer is not a pick, so it is refused.
     assert len(reader.requests) == 2 and db.case_matches[0][1]["pick_state"] == "closed_value_unknown"
+
+
+def test_the_reading_and_the_case_pick_each_pass_their_own_cap_and_are_recorded_before_parsing() -> None:
+    db, reader = FakeDb(candidates=[CAND]), Reader(READING)
+    triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert db.spend_log == [("check", "triage"), ("record", "triage", "read", DEFAULT_MODEL, False),
+                            ("check", "case_pick"), ("record", "case_pick", "match", DEFAULT_MODEL, False)]
+
+
+def test_an_answer_that_fails_to_parse_is_still_recorded() -> None:
+    db = FakeDb()
+    garbage = SimpleNamespace(stop_reason="end_turn", usage=SimpleNamespace(input_tokens=900, output_tokens=40),
+                              content=[SimpleNamespace(type="text", text="not json")])
+    result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(lambda r: garbage, DEFAULT_MODEL))
+    assert result.model != "ran"
+    assert ("record", "triage", "read", DEFAULT_MODEL, True) in db.spend_log
+
+
+def test_over_the_monthly_cap_the_rules_are_recorded_and_the_model_is_not_asked() -> None:
+    from decimal import Decimal
+
+    db, reader = FakeDb(candidates=[CAND]), Reader(READING)
+    db.budget_left = Decimal("0")
+    result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(reader, DEFAULT_MODEL))
+    assert (result.outcome, result.model) == ("recorded", "budget_reached")
+    assert reader.requests == [] and db.recorded[0][1]["class"] == "quote_request"
+    assert db.case_matches[0][1]["pick_state"] == "budget_reached"
 
 
 def test_the_eml_key_is_the_storage_path_without_the_bucket() -> None:

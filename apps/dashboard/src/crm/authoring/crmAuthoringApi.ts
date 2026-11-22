@@ -7,6 +7,8 @@
 
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import { refusalOfError } from "../../api/refusalEnvelope";
+// One key helper for every command (`caseCommands.newCaseCommandKey`).
+import { newCaseCommandKey as newIdempotencyKey } from "../caseCommands";
 import type { CallOutcome } from "../callOutcome";
 import type { PersonGuess } from "../crmTypes";
 
@@ -322,12 +324,6 @@ export interface MergePreviewResponse {
 }
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
-
-function newIdempotencyKey(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `crm-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 async function postCommand<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
   const res = await fetch(operatorApiUrl(path), {

@@ -269,9 +269,11 @@ export function planNextSteps(
   visible.sort((a, b) => mine(b) - mine(a) || KIND_RANK[a.kind] - KIND_RANK[b.kind] || b.score - a.score);
   const byGroup: Record<StepGroup, NextStep[]> = { atrasado: [], hoy: [], manana: [], semana: [] };
   for (const s of visible) byGroup[s.group].push(s);
+  // Calendar days, not 24-hour steps: the April DST change makes one Saturday 25 hours long.
+  const start = startOfDay(now);
   const days = Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(startOfDay(now).getTime() + i * DAY_MS);
-    return { day, count: visible.filter((s) => s.dueDays === i).length };
+    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    return { day, count: visible.filter((s) => s.dueDays === dayDiff(now, day)).length };
   });
   return { steps: visible, byGroup, days, overdue: byGroup.atrasado.length };
 }

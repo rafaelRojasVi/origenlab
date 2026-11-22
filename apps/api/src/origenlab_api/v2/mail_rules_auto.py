@@ -14,6 +14,7 @@ applies, and **which** rules may apply without a person pressing «Aplicar»:
 | R14 | yes | a sent quote on an email already on its one open case, under R1's gates (owner 2026-10-19) |
 | R15 | yes | an institution a rule created «por confirmar», once a quote to it stood 3 days (owner 2026-10-19) |
 | R16 | yes | contacto@ sent the PDF of a Cotizador quote already approved on that email's case: sent + «Enviada» (owner 2026-10-21) |
+| R23 | yes | that quote went out from a case the Cotizador opened beside the recipient's open request: the request closes as a duplicate («Quitar» reopens it; owner 2026-11-22) |
 | R5, R6, R10 | no | terminal win/loss actions and a PDF-named new institution still wait for an admin |
 
 **Kill flags.** R14 and R15 each have their own deploy setting
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 #: client's «no» in the body; «Quitar» reopens the case); R18 changes nothing in the CRM. R21 adds who writes on an open
 #: case as one of its people (owner 2026-11-11); «Quitar» ends that participant.
 AUTOMATIC_RULES: frozenset[str] = frozenset({"R1", "R2", "R3", "R4", "R7", "R9", "R11", "R12", "R13", "R14", "R15",
-                                             "R16", "R17", "R18", "R19", "R21", "R22"})
+                                             "R16", "R17", "R18", "R19", "R21", "R22", "R23"})
 #: Rules with their own kill flag in settings (`v2_auto_rule_<id>_enabled`).
 FLAGGED_RULES: tuple[str, ...] = ("R14", "R15")
 SWITCH_COMMAND = "set_auto_mail_rules"

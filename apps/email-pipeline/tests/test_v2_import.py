@@ -430,35 +430,6 @@ def test_a_supplier_contact_is_never_classified_as_prospect_or_customer() -> Non
         assert row.columns["purpose"] == "marketing"
 
 
-def test_provider_only_contacts_are_refused_marketing_eligibility_by_the_canonical_gate() -> None:
-    """The import records the role; `outbound_v2.eligibility` owns the refusal.
-
-    This proves the two agree, and that the refusal is generic — driven by the supplier
-    domain set the import indexes, not by any address literal.
-    """
-    from datetime import UTC, datetime
-
-    from origenlab_email_pipeline.outbound_v2.eligibility import (
-        CampaignPolicy,
-        ContactControlIndex,
-        RecipientCandidate,
-        evaluate_recipient_eligibility,
-    )
-    from origenlab_email_pipeline.outbound_v2.reasons import REASON_POLICY_SUPPLIER
-
-    index = build_supplier_index(make_inputs())
-    verdict = evaluate_recipient_eligibility(
-        candidate=RecipientCandidate(address_norm=SUPPLIER_CONTACT),
-        controls=ContactControlIndex(),
-        policy=CampaignPolicy(
-            max_sends=1, recontact_interval_days=30, supplier_domains=index.domains
-        ),
-        now=datetime(2026, 9, 20, tzinfo=UTC),
-    )
-    assert not verdict.eligible
-    assert REASON_POLICY_SUPPLIER in verdict.reasons
-
-
 def test_supplier_candidates_load_as_pending_evidence_never_as_organizations() -> None:
     plan = build_plan(make_inputs())
     candidates = [

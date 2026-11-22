@@ -373,6 +373,8 @@ QUOTE_READ_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     ("evidence.source_record", "SELECT"), ("evidence.source_record", "INSERT"),
     ("evidence.document_line", "SELECT"), ("evidence.document_line", "INSERT"),
     ("evidence.assertion", "SELECT"), ("evidence.assertion", "INSERT"),
+    # The monthly model cap and usage record (`model_budget.py`).
+    ("platform.model_usage", "SELECT"), ("platform.model_usage", "INSERT"),
 )
 QUOTE_READ_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset({
     ("crm", "quote_revision", "origenlab_worker_select"), ("crm", "quote", "origenlab_worker_select"),
@@ -380,8 +382,11 @@ QUOTE_READ_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset({
     ("evidence", "source_record", "origenlab_worker_select"), ("evidence", "source_record", "origenlab_worker_insert"),
     ("evidence", "document_line", "origenlab_worker_select"), ("evidence", "document_line", "origenlab_worker_insert"),
     ("evidence", "assertion", "origenlab_worker_select"), ("evidence", "assertion", "origenlab_worker_insert"),
+    ("platform", "model_usage", "origenlab_worker_select"), ("platform", "model_usage", "origenlab_worker_insert"),
 })
-DEFAULT_LIMIT = 10
+#: PDFs per run. The capture cycle kills the `quote-read` stage at `capture_queue.STAGE_TIMEOUT`
+#: (300 s); each call may take up to its 120 s timeout, so 10 a run were cut mid-call (and paid).
+DEFAULT_LIMIT = 3
 LOCK_NAME = "origenlab-quote-read"
 
 #: Registered revisions with a PDF, no `quote_document` for it, and no refusal of this reader

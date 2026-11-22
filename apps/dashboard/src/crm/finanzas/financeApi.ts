@@ -15,6 +15,14 @@ export const FINANCE_NOTE = "Desde «Finanzas».";
 
 export const financeRefusal = refusalOfError;
 
+/** What an edit refused as `stale_version` says: the row changed since it was read, and the page reloads. */
+export const STALE_FINANCE_TEXT = "Alguien cambió este registro; se recargó";
+
+/** The API refused an edit because the row changed since it was read (409 `stale_version`). */
+export function isStaleFinanceEdit(err: unknown): boolean {
+  return refusalOfError(err)?.code === "stale_version";
+}
+
 // ── types ─────────────────────────────────────────────────────────────────────
 
 export interface PipelineStage {
@@ -39,6 +47,8 @@ export interface MesData {
 
 export interface Expense {
   expense_id: string;
+  /** The row's version: an edit sends it back as `expected_version`. */
+  version: number;
   month: string;
   category: string;
   amount_clp: number;
@@ -59,6 +69,8 @@ export interface ExpenseList {
 
 export interface SupplierOrder {
   order_id: string;
+  /** The row's version: an edit sends it back as `expected_version`. */
+  version: number;
   supplier_name: string;
   ordered_on: string;
   paid_on: string | null;
@@ -205,7 +217,9 @@ async function post(path: string, body: Record<string, unknown>, idempotencyKey:
 }
 
 export interface UpsertExpenseArgs {
+  /** With `expense_id` (an edit) the API requires `expected_version`: the version the form was read at. */
   expense_id?: string;
+  expected_version?: number;
   month: string;    // "2026-11-01"
   category: string;
   amount_clp: number;
@@ -213,12 +227,21 @@ export interface UpsertExpenseArgs {
   expense_notes?: string;
 }
 
-export async function upsertExpense(args: UpsertExpenseArgs, idempotencyKey = newCaseCommandKey()) {
-  return post("/v2/commands/upsert-expense", args as unknown as Record<string, unknown>, idempotencyKey);
+export interface ExpenseReceipt {
+  expense_id: string;
+  /** The row's version after the save. */
+  version: number;
+  [key: string]: unknown;
+}
+
+export async function upsertExpense(args: UpsertExpenseArgs, idempotencyKey = newCaseCommandKey()): Promise<ExpenseReceipt> {
+  return (await post("/v2/commands/upsert-expense", args as unknown as Record<string, unknown>, idempotencyKey)) as ExpenseReceipt;
 }
 
 export interface UpsertSupplierOrderArgs {
+  /** With `order_id` (an edit) the API requires `expected_version`: the version the form was read at. */
   order_id?: string;
+  expected_version?: number;
   opportunity_id?: string;
   quote_id?: string;
   supplier_name: string;
@@ -232,8 +255,15 @@ export interface UpsertSupplierOrderArgs {
   order_notes?: string;
 }
 
-export async function upsertSupplierOrder(args: UpsertSupplierOrderArgs, idempotencyKey = newCaseCommandKey()) {
-  return post("/v2/commands/upsert-supplier-order", args as unknown as Record<string, unknown>, idempotencyKey);
+export interface SupplierOrderReceipt {
+  order_id: string;
+  /** The row's version after the save. */
+  version: number;
+  [key: string]: unknown;
+}
+
+export async function upsertSupplierOrder(args: UpsertSupplierOrderArgs, idempotencyKey = newCaseCommandKey()): Promise<SupplierOrderReceipt> {
+  return (await post("/v2/commands/upsert-supplier-order", args as unknown as Record<string, unknown>, idempotencyKey)) as SupplierOrderReceipt;
 }
 
 export interface SetMonthlyTargetArgs {

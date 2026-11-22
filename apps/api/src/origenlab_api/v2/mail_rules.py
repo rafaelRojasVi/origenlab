@@ -28,6 +28,7 @@ clock, no network: the same snapshot always plans the same actions, in evidence-
 | R18 | inbound from the client (not ours, a supplier, a bounce or an automatic reply) on exactly one open **or won** case (linked, or on its thread when not linked), sent in the last `REPLY_WINDOW_DAYS`, whose triage reading says `needs_reply: false` and not `stage: lost` | auto: a receipt only — no CRM write; the card marks that email `no_reply` and Hoy leaves it out of «Responder». Reads an email another rule acted on, once |
 | R19 | inbound from the client, the newest one on exactly one open case not «En pausa», whose triage reading says `stage: lost` (the body, which R6 never reads) | auto: the case → «Perdida» (`READ_LOST_CLOSE_REASON`); R6's sender gate, else a proposal; waits a pass while R17 moves the case. Reads an email another rule acted on, once |
 | R22 | outbound from contacto@, sent in the last `REPLY_WINDOW_DAYS`, on exactly one open case not «En pausa» (linked, or on its thread), whose worker reading (`outbound_intent:v1`) says our own email closes the follow-up («lo dejo en pausa», «quedo atenta para cuando…»), and the client has not written since | auto: the case «En pausa» until the day the email names, else 30 days after it (owner 2026-11-16); «Quitar» resumes it |
+| R23 | outbound from contacto@ that R16 already acted on, from a case the Cotizador opened for one of its quotes (`create-quote` with a client) whose quote is now sent; the recipient is one of the people of exactly one other open request (`lead`/`qualifying`/`qualified`, not «En pausa») with no approved or sent quote, not on the email, naming the same institution, none, or the case's institution being the name typed in that `create-quote` | auto: that request is closed as a duplicate («Duplicado: … se lleva en el caso …»); the email is not linked there, and a draft it holds stays on it. «Quitar» reopens it where it was. Reads an email another rule acted on, once |
 
 **Order.** R5 and R6 are evaluated before R1: both require a linked thread, so R1 would
 otherwise shadow them on every email that could trigger them. Each of them also links the
@@ -77,7 +78,7 @@ from zoneinfo import ZoneInfo
 from origenlab_api.v2.case_origin import ORIGIN_CORREO, ORIGIN_WEB
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
-                             "R14", "R15", "R16", "R17", "R18", "R19", "R21", "R22")
+                             "R14", "R15", "R16", "R17", "R18", "R19", "R21", "R22", "R23")
 AUTO, PROPOSAL, NONE = "auto", "proposal", "none"
 
 #: The header value that marks a self-sent web-quote-form message. The triage worker imports
@@ -240,6 +241,11 @@ class CaseState:
     paused_until: str | None = None
     #: Lower-case addresses of the case's current participants (R21 adds the ones still missing).
     participants: tuple[str, ...] = ()
+    #: The quote whose `create-quote` opened this case — «Nueva cotización» for a client (R23).
+    opened_with_quote_id: str | None = None
+    #: The case's institution was registered by that same `create-quote`: a name typed in the
+    #: Cotizador, not an institution the CRM knew (R23).
+    organization_typed: bool = False
 
 
 @dataclass(frozen=True)
@@ -833,6 +839,12 @@ def plan(snapshot: Snapshot) -> list[PlannedAction]:
             sent = _authored_sent_rule(e, index)
             if sent is not None:
                 out.append(sent)
+        # R23 reads the email once R16 recorded its quote sent, on a later pass.
+        if ((action is None or action.mode != AUTO) and (e.id, "R16") in snapshot.applied_pairs
+                and (e.id, "R23") not in snapshot.applied_pairs):
+            duplicate = _duplicate_request_rule(e, index)
+            if duplicate is not None:
+                out.append(duplicate)
         # R17 likewise: the reply R1 links on one pass moves its case on the next.
         reply = None
         if (action is None or action.mode != AUTO) and (e.id, "R17") not in snapshot.applied_pairs:
@@ -1713,6 +1725,65 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                          organization_id=main.organization_id, quote_number=labels[0], commands=tuple(steps),
                          candidates=tuple(c.id for c in order) if len(order) > 1 else (),
                          context={"case": first.id, "case_version": first.version, "from_stage": first.stage})
+
+
+#: R23's close reason starts so, as a person's «Duplicado: …» does; «Quitar» reopens only such a close.
+DUPLICATE_CLOSE_PREFIX = "Duplicado:"
+#: A request still waiting for its first quote to go out.
+_WAITING_STAGES = ("lead", "qualifying", "qualified")
+
+
+def _duplicate_request_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R23 (owner 2026-11-22): the Cotizador opened a case for a client the CRM already had a request
+    from — a name typed in «Nueva cotización» beside a forwarded request — and its quote just went
+    out (R16 recorded it). The client's request, still waiting for that quote, is the same purchase:
+    it is closed as a duplicate of the case the quote went out from (the email is not linked there).
+
+    Only when: the email is on exactly one case the Cotizador opened (`opened_with_quote_id`), whose
+    opening quote is now sent; one of the email's recipients is one of the people of exactly one other
+    open request (`_WAITING_STAGES`, not «En pausa», not on this email) holding no approved or sent
+    quote (a draft or a voided one may stay on it); and the two name the same institution, or one of
+    them none, or the Cotizador case's is the name typed when it was opened (`organization_typed`).
+    Two such requests, a closed one, a quote of its own already out, or another institution → nothing.
+    The case the quote went out from is never touched."""
+    if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
+        return None
+    opened = [c for cid in e.linked_case_ids if (c := ix.cases.get(cid)) is not None and not c.closed
+              and c.opened_with_quote_id is not None]
+    if len(opened) != 1:
+        return None
+    sending = opened[0]
+    opening = next((q for q in sending.quotes if q.id == sending.opened_with_quote_id), None)
+    if opening is None or not any(r.status == "sent" for r in opening.revisions):
+        return None
+    # The capture joins several recipients with «; », which `addresses` (RFC 5322 commas) reads as
+    # none: split them first.
+    recipients = {a for a in addresses(part for v in e.recipients for part in (v or "").split(";"))
+                  if domain_of(a) not in OWN_DOMAINS}
+    found = [c for c in ix.cases.values()
+             if c.id not in e.linked_case_ids and not c.closed and c.stage in _WAITING_STAGES
+             and c.paused_until is None and recipients & set(c.people)
+             and not any(r.status in ("approved", "sent") for q in c.quotes for r in q.revisions)]
+    if len(found) != 1:
+        return None
+    request = found[0]
+    if not (request.organization_id in (None, sending.organization_id) or sending.organization_id is None
+            or sending.organization_typed):
+        return None  # two institutions: two clients, whatever the address says
+    label = _revision_label(opening.quote_number, max(r.revision_no for r in opening.revisions if r.status == "sent"))
+    reasons = [f"la cotización {label} salió del caso «{sending.title}», que el Cotizador abrió para ese cliente",
+               f"«{request.title}» es la solicitud abierta del mismo destinatario, sin cotización enviada: "
+               "queda cerrada como duplicada"]
+    note = _note("R23", reasons)
+    close_reason = (f"{DUPLICATE_CLOSE_PREFIX} la cotización {label} a este destinatario se lleva en el caso "
+                    f"{sending.id[:8]} «{sending.title}»")[:500]
+    # The email is not linked there: the request would join the thread, and a closed case on it
+    # makes the next reply's case ambiguous (R18, R22). The close reason names where it went.
+    steps = (_advance_step("abandoned", note, close_reason=close_reason),)
+    return PlannedAction(e.id, "R23", AUTO, tuple(reasons), case_id=request.id, case_title=request.title,
+                         organization_id=request.organization_id, quote_number=label, commands=steps,
+                         candidates=(sending.id,),
+                         context={"case": request.id, "case_version": request.version, "from_stage": request.stage})
 
 
 def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:

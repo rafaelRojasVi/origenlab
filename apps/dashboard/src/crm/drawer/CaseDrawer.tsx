@@ -29,7 +29,7 @@ import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quote
 import { isMaskedAddress } from "../redaction";
 import { STATUS_LABEL, isPaused, pauseDayIso, pausedUntil } from "../stage";
 import { nextContact } from "../nextContact";
-import { endOfDay, followUpStep, followUpsDue, pendingFollowUpTasks } from "../today";
+import { endOfDay, followUpStep, followUpsDue } from "../today";
 import { Badge, Button, Drawer, Section, fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { CaseTimeline } from "./CaseTimeline";
@@ -69,23 +69,14 @@ function weekdayDay(iso: string): string {
 }
 
 /**
- * «Seguimiento N de 3 · …» (steps 1–3) or «Último correo · …» (step 4) for the header: with a
- * «Seguimiento …» reminder still pending (one an email of ours already met is done:
- * `pendingFollowUpTasks`), its step and its day — «hoy» when it is due today or overdue, else its
- * weekday; the step is the one the rhythm will be on that day, read from `followUpsDue` as of
- * then. Otherwise, when the case is due today by the rhythm alone, «hoy». Null when neither.
+ * The rhythm step a «Seguimiento …» reminder due at `due` lands on: the step the case is on today
+ * when it is due now, else the one `followUpsDue` reads on the reminder's day; 1 when neither.
+ * Display only — whether the chip shows at all is the próximo contacto's call (`nextContact`).
  */
-function followUpChip(card: OpportunityCardData, now: Date): { step: 1 | 2 | 3 | 4; day: string } | null {
-  const reminder = pendingFollowUpTasks(card)[0] ?? null;
-  const dueNow = followUpsDue([card], now)[0] ?? null;
-  if (reminder) {
-    const due = Date.parse(reminder.due_at);
-    const at = Math.max(now.getTime(), due);
-    const onItsDay = dueNow ?? followUpsDue([card], new Date(Number.isNaN(at) ? now.getTime() : at))[0] ?? null;
-    const today = !Number.isNaN(due) && due <= endOfDay(now).getTime();
-    return { step: onItsDay ? followUpStep(onItsDay) : 1, day: today ? "hoy" : weekdayDay(reminder.due_at) };
-  }
-  return dueNow ? { step: followUpStep(dueNow), day: "hoy" } : null;
+function reminderStep(card: OpportunityCardData, due: number, now: Date): 1 | 2 | 3 | 4 {
+  const at = Number.isNaN(due) ? now.getTime() : Math.max(now.getTime(), due);
+  const onItsDay = followUpsDue([card], now)[0] ?? followUpsDue([card], new Date(at))[0] ?? null;
+  return onItsDay ? followUpStep(onItsDay) : 1;
 }
 
 /** «Ana Ficticia <ana@…>» → «Ana Ficticia»; a bare address stays as it is. */
@@ -183,15 +174,24 @@ function CaseDrawerBody({
   const product = quoteProduct(card);
   const money = card.money?.[0];
   const net = money && money.currency !== "unread" ? formatMoney(money.net_total, money.currency) : null;
-  const followUp = followUpChip(card, new Date());
   // The Contacto tab reads the person's phones only once it has been opened, then keeps them.
   const [contactSeen, setContactSeen] = useState(false);
   if (tab === "contacto" && !contactSeen) setContactSeen(true);
   const reply = replyUrl(card);
-  // The same reminder the chip reads: a pending one only (one our later email already met is done).
   // The one próximo contacto every screen shows (`nextContact`), else the API's suggestion.
-  const next = nextContact(card);
+  const now = new Date();
+  const next = nextContact(card, now);
   const nextStep = next ? `${next.label} · ${next.source === "rhythm" && onToday(next.at) ? "hoy" : shortDay(next.at)}` : card.next_action.text;
+  // «Seguimiento N de 3 · …» / «Último correo · …»: only when the próximo contacto is a follow-up
+  // (a pending reminder or the rhythm), so the chip and «Siguiente» never contradict each other —
+  // a case paused until December shows no «· hoy» from an October reminder (audit 2026-11-22).
+  // «hoy» when it is due today or overdue, else its weekday.
+  const followUp = next && (next.source === "followup" || next.source === "rhythm")
+    ? {
+        step: next.source === "rhythm" && next.step ? next.step : reminderStep(card, Date.parse(next.at), now),
+        day: Date.parse(next.at) <= endOfDay(now).getTime() ? "hoy" : weekdayDay(next.at),
+      }
+    : null;
 
   const decide: { key: string; label: string; icon: IconName; on: boolean; go: () => void }[] = [
     { key: "call", label: "Llamada", icon: "phone", on: lifted.call, go: () => ask("call") },

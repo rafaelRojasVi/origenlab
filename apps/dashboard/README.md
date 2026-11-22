@@ -65,8 +65,8 @@ App.tsx → pages/DashboardApp.tsx → components/auth/AuthGate.tsx (one Google 
   `/auth/session`: `todo`, `llamadas` or `cotizar`), with «Mi cola» / «Todo el equipo» in the
   header and the «Franja de metas» (goals strip) above the list.
 - **Pipeline.** Board columns with «Silenciosas» (an Enviada case 21 days without an answer, «Seguimiento N de 3»,
-  «¿Marcar perdida?»); Ganadas always shown; a lost case leaves the board 7 days after closing
-  and moves to «Cerradas», one table per month with its lost neto and reasons.
+  «¿Marcar perdida?»); closed cases (Ganada, Perdida) show with «Ver cerradas», and a lost case
+  leaves the board 7 days after closing.
 - **One case drawer** (640 px) for every case, wherever it is opened: Resumen · Cotización ·
   Contacto · Notas y llamadas · Correos, its history read from
   `GET /v2/cockpit/opportunities/<uuid>/timeline`.

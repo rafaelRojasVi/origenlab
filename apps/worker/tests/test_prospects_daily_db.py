@@ -214,7 +214,7 @@ def test_run_adds_visible_findings_to_fill_queue(dsn, tmp_path, monkeypatch):
     enrich_result, epmc_sess = _fake_epmc("aficticia@ficticio.invalid")
 
     fit_calls: list[int] = []
-    def _patched_fit(conn: Any, context: str, model: str, search_run_id: str | None) -> FitResult:
+    def _patched_fit(conn: Any, context: str, model: str, search_run_id: str | None, **_kw: Any) -> FitResult:
         # First call → low-fit; remaining → high-fit
         score = 10 if len(fit_calls) == 0 else 80
         fit_calls.append(score)
@@ -261,7 +261,7 @@ def test_low_fit_findings_stored_hidden(dsn, tmp_path, monkeypatch):
     enrich_result, epmc_sess = _fake_epmc("bficticia@ficticio.invalid")
 
     monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit",
-                        lambda conn, ctx, mdl, search_run_id: _fake_fit(15))
+                        lambda conn, ctx, mdl, search_run_id, **_kw: _fake_fit(15))
     monkeypatch.setattr("origenlab_worker.prospects.daily.search_epmc",
                         lambda sess, variants, inst, **kw: enrich_result)
 
@@ -293,7 +293,7 @@ def test_second_run_on_full_queue_adds_zero(dsn, tmp_path, monkeypatch):
     run_id = _insert_queued_run(dsn)
 
     monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit",
-                        lambda conn, ctx, mdl, search_run_id: _fake_fit(80))
+                        lambda conn, ctx, mdl, search_run_id, **_kw: _fake_fit(80))
 
     candidates = [_row(CODIGO_PROYECTO="FULL0001",
                        NOMBRE_RESPONSABLE="CFICTICIA FL LABORATORIO")]
@@ -320,7 +320,7 @@ def test_existing_codes_and_person_keys_are_skipped(dsn, tmp_path, monkeypatch):
 
     enrich_result, epmc_sess = _fake_epmc("dficticia@ficticio.invalid")
     monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit",
-                        lambda conn, ctx, mdl, search_run_id: _fake_fit(80))
+                        lambda conn, ctx, mdl, search_run_id, **_kw: _fake_fit(80))
     monkeypatch.setattr("origenlab_worker.prospects.daily.search_epmc",
                         lambda sess, variants, inst, **kw: enrich_result)
 
@@ -350,7 +350,7 @@ def test_budget_reached_ends_run_failed(dsn, tmp_path, monkeypatch):
 
     enrich_result, epmc_sess = _fake_epmc("eficticia@ficticio.invalid")
 
-    def _budget_fit(conn: Any, ctx: str, mdl: str, search_run_id: str | None) -> FitResult:
+    def _budget_fit(conn: Any, ctx: str, mdl: str, search_run_id: str | None, **_kw: Any) -> FitResult:
         from decimal import Decimal
         raise BudgetReached(Decimal("9.99"), Decimal("10.00"))
 
@@ -374,3 +374,56 @@ def test_budget_reached_ends_run_failed(dsn, tmp_path, monkeypatch):
         (run_id,))
     assert run_row[0][0] == "failed"
     assert run_row[0][1] == "budget"
+
+
+# ── test: a failed fit call stores nothing, so a later run scores the candidate ──
+
+def test_a_failed_fit_call_stores_nothing_and_the_next_run_scores_it(dsn, tmp_path, monkeypatch):
+    """A failed call is not a low fit: it was stored hidden with score 0 for good. Now nothing is
+    stored, and the next run picks the candidate again."""
+    enrich_result, epmc_sess = _fake_epmc("gficticia@ficticio.invalid")
+    monkeypatch.setattr("origenlab_worker.prospects.daily.search_epmc",
+                        lambda sess, variants, inst, **kw: enrich_result)
+    csv_path = tmp_path / "fail.csv"
+    csv_path.write_text(_csv([_row(CODIGO_PROYECTO="FAIL0001", NOMBRE_RESPONSABLE="GFICTICIA FA LABORATORIO")]),
+                        encoding="utf-8")
+
+    def _down(conn, ctx, mdl, search_run_id, **_kw):
+        raise RuntimeError("APIConnectionError")
+
+    monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit", _down)
+    with _conn(dsn) as conn:
+        counts = run_search(conn, _insert_queued_run(dsn), DEFAULT_MODEL, csv_path=str(csv_path),
+                            _epmc_session=epmc_sess)
+    assert counts["fit_failed"] == 1 and counts.get("low_fit", 0) == 0
+    stored = "select count(*) from evidence.source_record where payload->>'external_id' = 'FAIL0001'"
+    assert owner_rows(dsn, stored) == [(0,)]
+
+    monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit",
+                        lambda conn, ctx, mdl, search_run_id, **_kw: _fake_fit(80))
+    with _conn(dsn) as conn:
+        counts = run_search(conn, _insert_queued_run(dsn), DEFAULT_MODEL, csv_path=str(csv_path),
+                            _epmc_session=epmc_sess)
+    assert counts["added"] == 1 and owner_rows(dsn, stored) == [(1,)]
+
+
+def test_three_failed_fit_calls_in_a_row_end_the_run(dsn, tmp_path, monkeypatch):
+    enrich_result, epmc_sess = _fake_epmc("hficticia@ficticio.invalid")
+    monkeypatch.setattr("origenlab_worker.prospects.daily.search_epmc",
+                        lambda sess, variants, inst, **kw: enrich_result)
+    calls = []
+
+    def _down(conn, ctx, mdl, search_run_id, **_kw):
+        calls.append(1)
+        raise RuntimeError("APIConnectionError")
+
+    monkeypatch.setattr("origenlab_worker.prospects.daily.call_fit", _down)
+    rows = [_row(CODIGO_PROYECTO=f"DOWN{n:04d}", NOMBRE_RESPONSABLE=f"HFICTICIA{n} DW LABORATORIO") for n in range(5)]
+    csv_path = tmp_path / "down.csv"
+    csv_path.write_text(_csv(rows), encoding="utf-8")
+    run_id = _insert_queued_run(dsn)
+    with _conn(dsn) as conn:
+        counts = run_search(conn, run_id, DEFAULT_MODEL, csv_path=str(csv_path), _epmc_session=epmc_sess)
+    assert len(calls) == 3 and counts["error"] == "fit_failed"
+    assert owner_rows(dsn, "select status, error from evidence.prospect_search_run where id = %s::uuid",
+                      (run_id,)) == [("failed", "fit_failed")]

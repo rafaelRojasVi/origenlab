@@ -409,8 +409,13 @@ def usage_tokens(message: Any) -> tuple[int, int]:
     return int(getattr(usage, "input_tokens", 0) or 0), int(getattr(usage, "output_tokens", 0) or 0)
 
 
-def anthropic_reader(api_key: str, *, timeout_s: float = 60.0, max_retries: int = 2) -> ModelReader:
-    """The production reader: the official SDK, `client.beta.messages.create(**request)`."""
+def anthropic_reader(api_key: str, *, timeout_s: float = 60.0, max_retries: int = 0) -> ModelReader:
+    """The production reader: the official SDK, `client.beta.messages.create(**request)`.
+
+    No SDK retries (`max_retries=0`): the triage queue already retries a passing failure
+    (`task_queue.RETRY`, 6 attempts), the capture cycle reruns quote reading, and a memory update
+    waits for the next email. The SDK's own 2 retries multiplied every queue attempt by 3 — each
+    attempt a paid call when the answer was cut after it started."""
     import anthropic
 
     client = anthropic.Anthropic(api_key=api_key, timeout=timeout_s, max_retries=max_retries)

@@ -84,9 +84,13 @@ def _update_one(
         subject_kind=subject_kind, model=model,
         stage=stage, quote_numbers=quote_numbers, institution_name=institution_name,
     )
+    from origenlab_worker.model_budget import FEATURE_SUBJECT_MEMORY, STEP_READ, paid_call
+
     try:
-        message = reader(request)
-    except Exception as exc:  # noqa: BLE001 - network/rate-limit: skip this update, retry next email
+        # Cap checked first, usage recorded before parsing (`model_budget`); over the cap the
+        # update is skipped like any failed call.
+        message = paid_call(db, FEATURE_SUBJECT_MEMORY, STEP_READ, reader, request)
+    except Exception as exc:  # noqa: BLE001 - network/rate-limit/budget: skip this update, retry next email
         logger.warning("memory model call failed (%s): %s", subject_kind, type(exc).__name__)
         return False
     try:

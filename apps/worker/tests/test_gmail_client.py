@@ -140,8 +140,16 @@ def test_a_network_failure_is_named_as_such() -> None:
 
 def test_a_resync_lists_every_page_oldest_first() -> None:
     s = _Script(token(), ("q=after%3A1791201600", 200, {"messages": [{"id": "n3"}, {"id": "n2"}], "nextPageToken": "p2"}),
-                ("pageToken=p2", 200, {"messages": [{"id": "n1"}]}))
+                ("pageToken=p2", 200, {"messages": [{"id": "n1"}]}),
+                ("includeSpamTrash=true", 200, {}))
     assert reader(s).messages_after(1791201600) == ["n1", "n2", "n3"]
+
+
+def test_a_resync_also_lists_the_baja_replies_gmail_filed_as_spam() -> None:
+    s = _Script(token(), ("q=after%3A1791201600", 200, {"messages": [{"id": "n2"}, {"id": "n1"}]}),
+                ("q=in%3Aspam+after%3A1791201600", 200, {"messages": [{"id": "s1"}, {"id": "n1"}]}))
+    assert reader(s).messages_after(1791201600) == ["n1", "n2", "s1"]
+    assert "includeSpamTrash=true" in s.calls[-1][1] and "subject%3Abaja" in s.calls[-1][1]
 
 
 def test_metadata_carries_labels_size_date_and_folded_header_names() -> None:

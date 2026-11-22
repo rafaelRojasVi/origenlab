@@ -2,7 +2,7 @@ import { useAuthSession } from "../../context/AuthSessionContext";
 import { ROLES_THAT_DECIDE_CASES } from "../caseCommands";
 import type { CrmSection } from "../crmRoute";
 import { crmHash } from "../crmRoute";
-import type { CallDay, OpportunityCardData } from "../crmTypes";
+import type { CallDay } from "../crmTypes";
 import {
   MONTHLY_TARGET_CLP,
   PILOT_CONVERSATIONS_30D,
@@ -17,7 +17,7 @@ import {
 import { formatMoney } from "../money";
 import { fetchFinanceSettings } from "../finanzas/financeApi";
 import { fetchInvoices } from "../pagos/invoiceApi";
-import { buildParaTiQueue } from "../today";
+import type { StepPlan } from "../nextSteps";
 import { useResource } from "../useResource";
 
 type Navigate = (section: CrmSection, id?: string | null) => void;
@@ -31,18 +31,23 @@ const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", 
  * «Franja de metas» v3 — compact horizontal strip of 4 numbers.
  * Meta del mes · Seguimientos pendientes · Por cotizar · Alcance de la semana.
  *
- * Seguimientos and Por cotizar are buttons that filter the queue; counts are derived
- * from `buildParaTiQueue` so the strip tile number always equals the rows it filters.
+ * Seguimientos and Por cotizar are buttons that filter the queue; their counts are today's steps
+ * of the page's own plan (the one «Para hoy» lists, «Mi cola» or «Todo el equipo»), so a tile's
+ * number always equals the rows it filters.
  */
 export function GoalStrip({
-  items,
+  plan,
+  now,
   calls,
   navigate,
   activeFilter,
   onFilterChange,
   layout = "strip",
 }: {
-  items: OpportunityCardData[];
+  /** Hoy's plan (`planNextSteps`), as the page renders it. */
+  plan: StepPlan;
+  /** The page's clock. */
+  now: Date;
   calls: CallDay[];
   navigate: Navigate;
   activeFilter: StripFilter;
@@ -52,15 +57,14 @@ export function GoalStrip({
 }) {
   const { session } = useAuthSession();
   const seesMoney = session.kind === "signed_in" && ROLES_THAT_DECIDE_CASES.has(session.operator.role);
-  const now = new Date();
   const today = dateSantiago(now);
 
-  // Queue-derived counts (whole team — me=null).
-  const fullQueue = buildParaTiQueue(items, now, null);
-  const seguimientosCount = fullQueue.filter((q) => q.kind === "followup").length;
-  const cotizarItems = fullQueue.filter((q) => q.kind === "cotizar");
-  const cotizarCount = cotizarItems.length;
-  const cotizarOldestMs = cotizarCount > 0 ? Math.max(...cotizarItems.map((q) => q.waitMs)) : null;
+  // What can be done today, as the list's chips count it (projections are not).
+  const actionable = plan.steps.filter((s) => s.actionable);
+  const seguimientosCount = actionable.filter((s) => s.kind === "seguimiento").length;
+  const cotizarSteps = actionable.filter((s) => s.kind === "cotizar");
+  const cotizarCount = cotizarSteps.length;
+  const cotizarOldestMs = cotizarCount > 0 ? Math.max(0, ...cotizarSteps.map((s) => s.item?.waitMs ?? 0)) : null;
 
   const r = reach(calls, today);
 

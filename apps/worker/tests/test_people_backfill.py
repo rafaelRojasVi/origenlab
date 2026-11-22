@@ -68,6 +68,12 @@ class FakeDb:
     def record_people(self, sid, value):
         self.recorded.append((sid, value))
 
+    def spend_check(self, feature, worst_usd):
+        pass
+
+    def spend_record(self, feature, step, model, message):
+        pass
+
 
 class Reader:
     def __init__(self, sender=SENDER, *, error: Exception | None = None) -> None:

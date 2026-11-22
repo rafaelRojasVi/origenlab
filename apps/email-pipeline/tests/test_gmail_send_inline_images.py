@@ -73,3 +73,11 @@ def test_build_gmail_message_rejects_empty_to(tmp_path: Path) -> None:
             html_dir=tmp_path,
         )
 
+
+
+def test_campaign_message_carries_list_unsubscribe(tmp_path: Path) -> None:
+    msg, _ = build_gmail_message_with_inline_images(
+        sender_email="OrigenLab <contacto@origenlab.cl>", to_emails="ana@cliente.invalid",
+        subject="Novedades", html="<p>Hola</p>", html_dir=tmp_path,
+    )
+    assert msg["List-Unsubscribe"] == "<mailto:contacto@origenlab.cl?subject=baja>"

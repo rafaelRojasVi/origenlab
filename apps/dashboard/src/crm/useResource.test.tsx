@@ -168,6 +168,43 @@ describe("useResource refreshing", () => {
     await act(async () => loader.pending.resolve("rows of b"));
     expect(screen.getByTestId("probe")).toHaveTextContent("ready:rows of b");
   });
+
+  it("a superseded read that answers late never overwrites the page memory", async () => {
+    // Each call gets its own answer, so the first read can finish after the second.
+    const calls: ReturnType<typeof deferred<string>>[] = [];
+    const load = () => {
+      const d = deferred<string>();
+      calls.push(d);
+      return d.promise;
+    };
+    const first = render(withSession(signedIn("op-a"), <ReloadProbe load={load} deps={["a"]} />));
+    await act(async () => screen.getByRole("button", { name: "reload" }).click());
+    expect(calls).toHaveLength(2);
+    await act(async () => calls[1].resolve("new"));
+    await act(async () => calls[0].resolve("old"));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:new");
+    first.unmount();
+
+    render(withSession(signedIn("op-a"), <ReloadProbe load={load} deps={["a"]} />));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:new");
+  });
+
+  it("a superseded read that fails late does not drop the newer answer", async () => {
+    const calls: ReturnType<typeof deferred<string>>[] = [];
+    const load = () => {
+      const d = deferred<string>();
+      calls.push(d);
+      return d.promise;
+    };
+    const first = render(withSession(signedIn("op-a"), <ReloadProbe load={load} deps={["a"]} />));
+    await act(async () => screen.getByRole("button", { name: "reload" }).click());
+    await act(async () => calls[1].resolve("new"));
+    await act(async () => calls[0].reject(new Error("connection dropped")));
+    first.unmount();
+
+    render(withSession(signedIn("op-a"), <ReloadProbe load={load} deps={["a"]} />));
+    expect(screen.getByTestId("probe")).toHaveTextContent("ready:new");
+  });
 });
 
 describe("classifyError with quote refusals", () => {

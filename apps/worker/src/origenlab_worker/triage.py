@@ -49,6 +49,15 @@ from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, is_forward_subject, read_forward
 from origenlab_worker.people_reading import NO_PEOPLE_CLASSES, PEOPLE_VALUE_NORM, is_own_address, people_value
 from origenlab_worker.mail_text import MailText, parse_mail
+from origenlab_worker.model_budget import (
+    FEATURE_CASE_PICK,
+    FEATURE_TRIAGE,
+    STEP_MATCH,
+    STEP_READ,
+    BudgetReached,
+    UnpricedModel,
+    paid_call,
+)
 from origenlab_worker.outbound_intent import OUTBOUND_INTENT_VALUE_NORM, read_outbound_intent
 from origenlab_worker.quote_reader import pdf_text
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
@@ -388,6 +397,36 @@ class TriageDb:
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(f"set local statement_timeout = {self._timeout}")
             yield cur
+
+    def spend_check(self, feature: str, worst_usd: Any) -> None:
+        """The monthly cap (`model_budget.paid_call`); raises `BudgetReached`."""
+        from origenlab_worker.model_budget import ConnectionSpend
+
+        ConnectionSpend(self._conn).spend_check(feature, worst_usd)
+
+    def spend_record(self, feature: str, step: str, model: str, message: Any) -> None:
+        """One paid call's `platform.model_usage` rows, before its answer is parsed."""
+        from origenlab_worker.model_budget import ConnectionSpend
+
+        ConnectionSpend(self._conn).spend_record(feature, step, model, message)
+
+    @contextmanager
+    def message_lock(self, source_record_id: str) -> Iterator[bool]:
+        """A session advisory lock on `triage:<source_record_id>`: True when this connection took it.
+        Released in `finally`; a broken connection has already released it with its session."""
+        key = f"triage:{source_record_id}"
+        with self._conn.cursor() as cur:
+            cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (key,))
+            held = bool(cur.fetchone()[0])
+        try:
+            yield held
+        finally:
+            if held:
+                try:
+                    with self._conn.cursor() as cur:
+                        cur.execute("select pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+                except Exception:  # noqa: BLE001 - the session (and its lock) is gone with the connection
+                    pass
 
     def pending(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
@@ -754,10 +793,13 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
         return result, value
     offered = {c.opportunity_id for c in offered_cases(result, cards)}
     try:
-        answer = settings.reader(build_pick_request(inp, result, cards, db.past_decisions(mail.sender),
-                                                    model=settings.model))
+        answer = paid_call(db, FEATURE_CASE_PICK, STEP_MATCH, settings.reader,
+                           build_pick_request(inp, result, cards, db.past_decisions(mail.sender),
+                                              model=settings.model))
         value["pick"] = parse_pick(answer, offered=offered, model=settings.model)
         value["pick_state"] = "ran"
+    except BudgetReached:
+        value["pick_state"] = "budget_reached"
     except ModelRefused as exc:
         value["pick_state"] = str(exc)
     except Exception:  # noqa: BLE001 - a suggestion is never worth blocking the triage; reported by state only
@@ -893,6 +935,18 @@ def _unreadable(db: TriageDb, source_record_id: str, reason: str, *, done: bool,
 
 def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: ModelSettings, *,
                clock: Callable[[], float] = time.monotonic) -> TriageResult:
+    """Triage one message, alone. Procrastinate's queueing lock covers only waiting ('todo') jobs:
+    a slow job still running when the sweep defers the same message again ran twice and paid the
+    model twice. A per-message advisory lock on the job's own connection closes that gap; a second
+    job finding it held answers `locked` and leaves the message to the job that holds it."""
+    with db.message_lock(source_record_id) as held:
+        if not held:
+            return TriageResult("locked")
+        return _triage_one(db, store, source_record_id, settings, clock=clock)
+
+
+def _triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: ModelSettings, *,
+                clock: Callable[[], float]) -> TriageResult:
     started = clock()
     loaded = db.load(source_record_id)
     if loaded is None:
@@ -946,7 +1000,13 @@ def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: M
     else:
         request = build_request(mail, verdict, candidates, model=settings.model, cases=cases)
         try:
-            answer = settings.reader(request)
+            answer = paid_call(db, FEATURE_TRIAGE, STEP_READ, settings.reader, request)
+        except BudgetReached:
+            # The month's cap: the rules' reading is recorded, the model is not asked (not retried —
+            # retrying every minute until the month ends would only re-check the cap).
+            answer, state = None, "budget_reached"
+        except UnpricedModel:
+            answer, state = None, "model_unpriced"
         except Exception as exc:  # noqa: BLE001 - reported by class and status only, never message text
             if not is_permanent_api_error(exc):
                 raise ModelUnavailable(type(exc).__name__) from None
@@ -1078,7 +1138,7 @@ def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source
             assert reader is not None
             counts["model_calls"] += 1
             try:
-                answer = reader(build_people_request(mail, model=model))
+                answer = paid_call(db, FEATURE_TRIAGE, STEP_READ, reader, build_people_request(mail, model=model))
             except Exception as exc:  # noqa: BLE001 - reported by class only, never message text
                 if not is_permanent_api_error(exc):
                     counts["model_calls"] -= 1

@@ -45,6 +45,8 @@ from origenlab_worker.prospects.store import PROSPECTS_REQUIRED_PRIVILEGES, stor
 _log = logging.getLogger(__name__)
 
 QUEUE_TARGET = 25   # keep this many unreviewed visible prospects in the queue
+#: Consecutive failed fit calls that end the run (`fit_failed`): the API or the key is down.
+MAX_FIT_FAILURES_IN_A_ROW = 3
 
 SEARCH_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     *PROSPECTS_REQUIRED_PRIVILEGES,
@@ -161,6 +163,7 @@ def _candidate_to_finding_dict(c: AnidCandidate, enrich: dict[str, Any] | None,
 
 def run_search(conn: Any, run_id: str, model: str, *,
                dry_run: bool = False, csv_path: str | None = None,
+               api_key: str | None = None,
                _fetch_logo: Callable = fetch_logo,
                _epmc_session: Any = None,
                _csv_session: Any = None) -> dict[str, Any]:
@@ -210,6 +213,7 @@ def run_search(conn: Any, run_id: str, model: str, *,
     epmc_session = _epmc_session or requests.Session()
 
     added = 0
+    failures_in_a_row = 0
     for candidate in pool:
         if added >= need:
             break
@@ -237,19 +241,27 @@ def run_search(conn: Any, run_id: str, model: str, *,
                     monto_label=candidate.amount_label,
                     fund_label=candidate.fund_label,
                 )
-                fit_result = call_fit(conn, context, model, search_run_id=run_id)
+                fit_result = call_fit(conn, context, model, search_run_id=run_id, api_key=api_key)
                 if fit_result.fit < FIT_THRESHOLD:
                     hidden = True
                     counts["low_fit"] = counts.get("low_fit", 0) + 1
+                failures_in_a_row = 0
             except BudgetReached:
                 counts["error"] = "budget"
                 _finish(conn, run_id, "failed", counts, "budget")
                 return counts
             except Exception as exc:  # noqa: BLE001
                 _log.error("prospect fit error for %s: %s", candidate.codigo, type(exc).__name__)
-                # No fit: store with score=0, hidden
-                hidden = True
-                counts["low_fit"] = counts.get("low_fit", 0) + 1
+                # No fit is not a low fit: nothing is stored, so the candidate stays in the pool and
+                # a later run scores it. (Before, it was stored hidden with score 0, for good.)
+                counts["fit_failed"] = counts.get("fit_failed", 0) + 1
+                failures_in_a_row += 1
+                if failures_in_a_row >= MAX_FIT_FAILURES_IN_A_ROW:
+                    # The API (or the key) is down: stop rather than fail the whole pool.
+                    counts["error"] = "fit_failed"
+                    _finish(conn, run_id, "failed", counts, "fit_failed")
+                    return counts
+                continue
 
         # Build and write finding
         raw = _candidate_to_finding_dict(candidate, enrich_result, fit_result, hidden)

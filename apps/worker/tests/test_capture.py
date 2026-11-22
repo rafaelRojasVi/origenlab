@@ -121,6 +121,23 @@ def test_a_delivery_report_in_the_trash_or_spam_is_still_captured(sender, reason
     assert intake_skip_reason(("DRAFT",), sender) == "draft"
 
 
+@pytest.mark.parametrize("subject,reason", [
+    ("BAJA", None), ("Remover.", None), ("baja!", None), ("unsubscribe", None),
+    ("Oferta BAJA de precio", "spam"), ("Ganaste un premio", "spam"), (None, "spam"),
+])
+def test_a_baja_in_spam_is_captured_and_the_rest_of_spam_is_not(subject, reason) -> None:
+    """Gmail files some «BAJA» replies as spam (2026-11-22): the person must still be removed."""
+    assert intake_skip_reason(("SPAM", "UNREAD"), "Ana <ana@cliente.invalid>", subject) == reason
+    # Only Spam: a «BAJA» someone deleted, or a draft, stays skipped.
+    assert intake_skip_reason(("TRASH",), "Ana <ana@cliente.invalid>", subject) == "trash"
+    assert intake_skip_reason(("DRAFT",), "Ana <ana@cliente.invalid>", subject) == "draft"
+
+
+def test_a_captured_baja_from_spam_passes_the_evidence_check() -> None:
+    c = capture(make_raw(subject="BAJA"), labels=("SPAM",))
+    assert c.payload["gmail_labels"] == ["SPAM"]
+
+
 def test_an_outbound_campaign_send_is_a_bulk_send_and_a_newsletter_is_not() -> None:
     sent = capture(make_raw(frm=f"OrigenLab <{MAILBOX}>", to="x@cliente.invalid", list_unsubscribe=True), labels=("SENT",))
     received = capture(make_raw(list_unsubscribe=True), labels=("INBOX",))

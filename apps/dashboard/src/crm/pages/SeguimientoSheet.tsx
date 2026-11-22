@@ -228,7 +228,7 @@ export function SeguimientoSheet({
                     </div>
                     <div className="mt-1 flex items-center gap-1.5">
                       <span className="text-ink-faint">Próximo:</span>
-                      <NextDate due={nextReminder(r, now)} now={now} />
+                      <NextDate due={nextReminder(r)} now={now} />
                     </div>
                     {mayCommand ? (
                       <div className="mt-1">

@@ -18,6 +18,8 @@
  *   API's may have run: the next click with the same request repeats the same command.
  * - A «+ Cliente nuevo» the API resolved to an institution it already had is said once the tab
  *   opens: «Se usó la institución existente «X»» (and «y su caso abierto» when it used that case).
+ *   One whose address is already one of an open case's people quotes on that case (the API's
+ *   `_address_case_client`), and the toast says so.
  * - **Institución** (a person, or an address, the CRM knows no institution of): optional — an
  *   institution held (searched with the same suggestions) or «+ Nueva institución «texto»» with its
  *   kind, sent as `client.institution`. The API connects the person to it (an affiliation) and
@@ -190,9 +192,14 @@ function reusedText(client: Client, made: CreatedQuote, chose: boolean, institut
   if (institution?.kind === "new" && made.institution_connected && made.organization_created === false && made.organization_id) {
     return `Se usó la institución existente «${made.organization_name || institution.name}».`;
   }
-  if (client.kind !== "new" || made.organization_created !== false || !made.organization_id) return null;
-  const name = made.organization_name || client.name;
-  return `Se usó la institución existente «${name}»${made.case_created === false && !chose ? " y su caso abierto" : ""}.`;
+  if (client.kind !== "new") return null;
+  if (made.organization_created === false && made.organization_id) {
+    const name = made.organization_name || client.name;
+    return `Se usó la institución existente «${name}»${made.case_created === false && !chose ? " y su caso abierto" : ""}.`;
+  }
+  // Its address was already one of an open case's people (2026-11-22): that case, not a second one.
+  if (made.case_created === false && !chose) return "Esa dirección ya tenía un caso abierto: la cotización quedó en ese caso.";
+  return null;
 }
 
 export function NewQuoteDialog({
@@ -576,6 +583,7 @@ function focusTabWhenShown(quoteId: string) {
   const selector = `[role="tab"][data-quote-id="${quoteId.toLowerCase()}"]`;
   let tries = 0;
   const step = () => {
+    if (typeof document === "undefined") return; // the page (or a test's DOM) went away meanwhile
     const tab = document.querySelector<HTMLElement>(selector);
     if (tab && tab.getAttribute("aria-selected") === "true") {
       const here = document.activeElement as HTMLElement | null;

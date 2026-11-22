@@ -53,6 +53,17 @@ def test_automatic_replies_are_noise_even_when_they_quote_a_request(m: MailText)
     assert cls(m) == "auto_reply"
 
 
+@pytest.mark.parametrize("headers", [
+    {"auto-submitted": "auto-generated"},
+    {"auto-submitted": "auto-replied", "precedence": "auto_reply"},
+])
+def test_the_unsubscribe_mail_gmail_sends_for_list_unsubscribe_is_a_baja(headers: dict[str, str]) -> None:
+    """Gmail's «Anular suscripción» mails the List-Unsubscribe mailto, subject «baja»."""
+    m = mail(subject="baja", body="", sender="ana@cliente.invalid", headers=headers)
+    v = classify(TriageInput("inbound", ("INBOX",), m))
+    assert (v.triage_class, v.reasons) == ("unsubscribe", ("subject:baja_word",))
+
+
 def test_auto_submitted_no_is_a_person() -> None:
     assert cls(mail(headers={"auto-submitted": "no"}, body="Necesito cotizar un pHmetro")) == "quote_request"
 

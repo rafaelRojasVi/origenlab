@@ -7,6 +7,8 @@
  * by (email, rule), so a second press applies nothing new.
  */
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../api/operatorClient";
+// One key helper for every command (`caseCommands.newCaseCommandKey`).
+import { newCaseCommandKey as newIdempotencyKey } from "./caseCommands";
 
 export const MAIL_RULES_PATHS = {
   preview: "/v2/workspace/mail-rules/preview",
@@ -122,12 +124,6 @@ export const RULE_LABEL: Record<string, string> = {
 };
 
 export const fetchMailRulesPreview = () => fetchJsonGet<MailRulesPreview>(operatorApiUrl(MAIL_RULES_PATHS.preview));
-
-function newIdempotencyKey(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `mail-rules-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(operatorApiUrl(path), {

@@ -43,7 +43,10 @@ def worker_conditions(env: dict[str, str], since: str | None = None, *,
     heartbeat: a worker beat in the last 3 minutes; sweep_scheduled: the triage sweep was
     deferred in the last 5 minutes; triage_caught_up: no captured mail between 15 minutes and
     14 days old is left untriaged; capture_recent (with require_capture): a capture cycle in the
-    last 15 minutes and an authorized mailbox synced in the last 20.
+    last 15 minutes and an authorized mailbox synced in the last 20. "Synced" is the run, not the
+    mail: every successful sync stamps `last_synced_at` (`advance_cursor`), with or without new
+    messages, so a quiet hour passes; a revoked consent (`authorization_state` leaves
+    'authorized') or a stopped capture child fails it.
     """
     # Do not read message bodies, queue arguments, contacts, or email addresses.
     norms = evidence_value_norms()

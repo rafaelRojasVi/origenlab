@@ -6,7 +6,8 @@
  * 2026-10-15: «that's so much»). Emails filed on one case by one rule are one row («3 correos
  * archivados»); five rows show, the rest behind «Ver N más». Each row says why, opens the case, and
  * «Quitar» undoes it — every email of a grouped row (sales or admin), except a Cotizador quote marked
- * sent (R16), which is final: a wrong one is voided in the Cotizador. Nothing renders when there is
+ * sent (R16), which is final: a wrong one is voided in the Cotizador. A request closed as the
+ * duplicate of a Cotizador case (R23) says so; «Quitar» reopens it. Nothing renders when there is
  * no news.
  */
 import { useCallback, useState } from "react";
@@ -128,6 +129,8 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
   const person = item.kind === "person";
   const many = items.length > 1;
   const sent = item.rule_id === "R16";
+  // R23 closed the client's request as a duplicate of the case its quote went out from.
+  const duplicate = item.rule_id === "R23";
 
   async function remove() {
     setBusy(true);
@@ -135,7 +138,8 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
       for (const it of items) {
         await removeAutomaticAction({ receipt_id: it.receipt_id }, keys.get(it.receipt_id) ?? newCaseCommandKey());
       }
-      toast(person ? "Cambio en el contacto quitado." : opened ? "Solicitud quitada." : many ? "Correos quitados del caso." : "Correo quitado del caso.");
+      toast(person ? "Cambio en el contacto quitado." : opened ? "Solicitud quitada." : duplicate ? "Solicitud reabierta."
+        : many ? "Correos quitados del caso." : "Correo quitado del caso.");
       onRemoved();
     } catch (err) {
       toast(caseRefusalText(err), "bad");
@@ -144,7 +148,8 @@ function AutomaticRow({ items, mayDecide, navigate, onRemoved }: {
     }
   }
 
-  const label = sent ? "Cotización enviada" : item.rule_id === "R17" ? "Pasó a Conversación" : person ? "Contacto actualizado" : opened ? "Solicitud abierta"
+  const label = sent ? "Cotización enviada" : duplicate ? "Solicitud duplicada cerrada" : item.rule_id === "R17" ? "Pasó a Conversación"
+    : person ? "Contacto actualizado" : opened ? "Solicitud abierta"
     : many ? `${items.length} correos archivados` : "Archivado en el caso";
   return (
     <div data-testid="automatic-row" className="flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-2.5">

@@ -2,8 +2,8 @@
  * The Pipeline «Tablero»: one column per state (Solicitada, Enviada, Silenciosas,
  * Conversación, En pausa, Ganada, Perdida).
  *
- * - Every card is shown except a loss closed more than `LOST_ON_BOARD_DAYS` ago (`isOnBoard`; it
- *   lives under «Cerradas»); a won case always stays. Every column scrolls on its own, so a long
+ * - Every card is shown except a loss closed more than `LOST_ON_BOARD_DAYS` ago (`isOnBoard`);
+ *   a won case always stays. Every column scrolls on its own, so a long
  *   column never stretches the page. `sort` orders them (newest quote, oldest, «respondieron
  *   primero», institution); by date, a thin divider marks each age band without hiding a card —
  *   «Enviada» by the follow-up rhythm («0–7 días», «8–21 días»: `enviadaBand`), the others by the

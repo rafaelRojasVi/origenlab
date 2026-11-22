@@ -6,10 +6,11 @@ import { ResourceGate } from "../ui";
 import { useResource, type ResourceState } from "../useResource";
 import { PendientesPanel } from "../todos/PendientesPanel";
 import { SANTIAGO, todayInSantiago } from "../marketing/calendar";
-import { TodayBody, type QueueKindFilter } from "./TodayBody";
+import { TodayBody, type QueueKindFilter, type TodayScope } from "./TodayBody";
 import { GoalStrip, type StripFilter } from "./GoalStrip";
 import { HOME_FILTER_KINDS, useHomeFilter } from "../today";
-import { planNextSteps, queueKindOf, type StepPlan } from "../nextSteps";
+import { dayDiff, planNextSteps, queueKindOf, type StepPlan } from "../nextSteps";
+import { useTodayClock } from "../useTodayClock";
 import { useAuthSession } from "../../context/AuthSessionContext";
 import { WebStatsCard } from "../web/WebStatsCard";
 import { fetchQuoteNumbering } from "../quotes/quoteApi";
@@ -20,12 +21,12 @@ type Navigate = (s: CrmSection, id?: string | null, tab?: DatosTab) => void;
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
 /** «Martes 10 de noviembre» in Santiago, without the time. */
-function todayLabel(): string {
+function todayLabel(now: Date): string {
   // Use "numeric" for month so formatToParts returns a number string ("3"), not a name ("marzo").
   const f = new Intl.DateTimeFormat("es-CL", {
     timeZone: SANTIAGO, weekday: "long", day: "numeric", month: "numeric",
   });
-  const p = Object.fromEntries(f.formatToParts(new Date()).map((x) => [x.type, x.value]));
+  const p = Object.fromEntries(f.formatToParts(now).map((x) => [x.type, x.value]));
   const weekday = p.weekday.charAt(0).toUpperCase() + p.weekday.slice(1);
   return `${weekday} ${Number(p.day)} de ${MONTHS[Number(p.month) - 1]}`;
 }
@@ -36,6 +37,28 @@ function todayLabel(): string {
  */
 export function OverviewPage({ navigate }: { navigate: Navigate }) {
   const [pipeline, reloadPipeline, refreshing] = useResource(fetchPipeline);
+  const items = pipeline.kind === "ready" ? pipeline.data.items : null;
+  // One clock for the header, the list and the strip: read again on each new answer and when the
+  // day turns while the tab sits open (audit 2026-11-22: Tuesday's tasks hid on Wednesday).
+  const now = useTodayClock(items);
+
+  const { session } = useAuthSession();
+  const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
+  const profileId = session.kind === "signed_in" ? (session.profile?.id ?? null) : null;
+
+  // «Mi cola» / «Todo el equipo», held here so the header, the list and the strip count one queue.
+  // Session-only, and per profile: another profile opens on its own queue.
+  const homeFilter = useHomeFilter();
+  const [scoped, setScoped] = useState<{ profileId: string | null; scope: TodayScope }>({ profileId: null, scope: "mine" });
+  const scope = scoped.profileId === profileId ? scoped.scope : "mine";
+  const setScope = useCallback((next: TodayScope) => setScoped({ profileId, scope: next }), [profileId]);
+  const view = scope === "team" ? "todo" : homeFilter;
+
+  // The one plan Hoy renders: «N cosas para hoy», the week, «Para hoy» and the strip read it.
+  const plan = useMemo<StepPlan | null>(
+    () => (items ? planNextSteps(items, now, me, 7, (st) => HOME_FILTER_KINDS[view].has(queueKindOf(st))) : null),
+    [items, now, me, view],
+  );
 
   // Queue filter shared between GoalStrip and TodayBody — null = show all.
   const [queueFilter, setQueueFilter] = useState<QueueKindFilter>(null);
@@ -48,12 +71,16 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
   return (
     <div className="space-y-5">
       {/* Quiet header: date + N cosas para hoy */}
-      <HoyMiniHeader pipeline={pipeline} />
+      <HoyMiniHeader plan={plan} now={now} />
 
       <ResourceGate state={pipeline} reload={reloadPipeline} skeleton={<FollowUpsSkeleton />}>
         {(p) => (
           <TodayBody
             items={p.items}
+            now={now}
+            plan={plan ?? undefined}
+            scope={scope}
+            onScopeChange={setScope}
             tendersClosing={p.tenders_closing}
             navigate={navigate}
             onChanged={reloadPipeline}
@@ -62,14 +89,17 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
             onQueueFilterChange={setQueueFilter}
             aside={
               <>
-                <GoalStrip
-                  items={p.items}
-                  calls={p.calls ?? []}
-                  navigate={navigate}
-                  activeFilter={queueFilter === "followup" || queueFilter === "cotizar" ? queueFilter : null}
-                  onFilterChange={handleStripFilter}
-                  layout="stack"
-                />
+                {plan ? (
+                  <GoalStrip
+                    plan={plan}
+                    now={now}
+                    calls={p.calls ?? []}
+                    navigate={navigate}
+                    activeFilter={queueFilter === "followup" || queueFilter === "cotizar" ? queueFilter : null}
+                    onFilterChange={handleStripFilter}
+                    layout="stack"
+                  />
+                ) : null}
                 <PendientesPanel cases={p.items} navigate={navigate} />
                 <HoyQuoteCard pipeline={pipeline} />
                 <LazyHoyFxCard />
@@ -88,22 +118,11 @@ export function OverviewPage({ navigate }: { navigate: Navigate }) {
 type PipelineState = ReturnType<typeof useResource<Awaited<ReturnType<typeof fetchPipeline>>>>[0];
 
 /**
- * One quiet line: date · «N cosas para hoy» + a contextual hint when items are waiting.
- * Replaces the dark HeroHeader for Hoy (HeroHeader is kept for other pages that use it).
+ * One quiet line: date · «N cosas para hoy» + a contextual hint when items are waiting. It reads
+ * the page's plan and clock, so the header, the week and the list never disagree.
  */
-function HoyMiniHeader({ pipeline }: { pipeline: PipelineState }) {
-  const { session } = useAuthSession();
-  const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
-  const [dateLabel] = useState(todayLabel);
-
-  const homeFilter = useHomeFilter();
-  // The same plan «Para hoy» renders, so the header and the week never disagree with the list.
-  const plan = useMemo<StepPlan | null>(
-    () => (pipeline.kind === "ready"
-      ? planNextSteps(pipeline.data.items, new Date(), me, 7, (st) => HOME_FILTER_KINDS[homeFilter].has(queueKindOf(st)))
-      : null),
-    [pipeline, me, homeFilter],
-  );
+function HoyMiniHeader({ plan, now }: { plan: StepPlan | null; now: Date }) {
+  const dateLabel = todayLabel(now);
   const totalHoy = plan ? plan.steps.filter((st) => st.actionable).length : null;
 
   const hintText = (() => {
@@ -125,15 +144,19 @@ function HoyMiniHeader({ pipeline }: { pipeline: PipelineState }) {
         </h1>
         {hintText ? <p className="text-[13px] text-ink-muted">{hintText}</p> : null}
       </div>
-      {plan ? <WeekStrip plan={plan} /> : null}
+      {plan ? <WeekStrip plan={plan} now={now} /> : null}
     </header>
   );
 }
 
 const DAY_SHORT = new Intl.DateTimeFormat("es-CL", { weekday: "short" });
 
-/** The week at a glance: overdue, today and the next days, each with how many steps fall on it. */
-function WeekStrip({ plan }: { plan: StepPlan }) {
+/**
+ * The week at a glance: overdue, today and the next weekdays, each with how many steps fall on it.
+ * Each day is named from its own date (`dayDiff`), not its place in the strip: on a Friday Monday
+ * is «lun», and on a Saturday no day is «hoy».
+ */
+function WeekStrip({ plan, now }: { plan: StepPlan; now: Date }) {
   const cell = "flex h-12 w-[3.4rem] flex-col items-center justify-center rounded-lg border text-[10.5px] leading-tight";
   return (
     <ol className="ml-auto flex gap-1" aria-label="Semana" data-testid="hoy-week">
@@ -141,12 +164,15 @@ function WeekStrip({ plan }: { plan: StepPlan }) {
         <span className="text-[15px] font-bold tabular-nums leading-none">{plan.overdue}</span>
         <span>atrasado</span>
       </li>
-      {plan.days.filter((d) => d.day.getDay() !== 0 && d.day.getDay() !== 6).slice(0, 5).map((d, i) => (
-        <li key={d.day.toISOString()} className={`${cell} ${i === 0 ? "border-ink bg-ink text-canvas" : "border-line bg-canvas-raised text-ink-muted"}`}>
-          <span className="text-[15px] font-bold tabular-nums leading-none">{d.count}</span>
-          <span>{i === 0 ? "hoy" : i === 1 ? "mañana" : DAY_SHORT.format(d.day).replace(".", "")}</span>
-        </li>
-      ))}
+      {plan.days.filter((d) => d.day.getDay() !== 0 && d.day.getDay() !== 6).slice(0, 5).map((d) => {
+        const ahead = dayDiff(now, d.day);
+        return (
+          <li key={d.day.toISOString()} className={`${cell} ${ahead === 0 ? "border-ink bg-ink text-canvas" : "border-line bg-canvas-raised text-ink-muted"}`}>
+            <span className="text-[15px] font-bold tabular-nums leading-none">{d.count}</span>
+            <span>{ahead === 0 ? "hoy" : ahead === 1 ? "mañana" : DAY_SHORT.format(d.day).replace(".", "")}</span>
+          </li>
+        );
+      })}
     </ol>
   );
 }

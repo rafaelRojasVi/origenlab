@@ -182,6 +182,21 @@ def test_a_previous_quote_request_gets_requester_identity_backfilled_without_ret
     ) == [("matched", org_id, org_name)]
 
 
+def test_a_message_being_triaged_on_another_connection_is_locked(dsn, target, mailbox_id) -> None:
+    """The per-message advisory lock works as the real worker login, and is released after."""
+    store = Store()
+    gid = capture(target, mailbox_id, store, f"tr-{uuid.uuid4().hex[:8]}", make_raw(subject="Hola"))
+    sid = source_record(dsn, gid)
+    with triage_conn(target) as first, triage_conn(target) as second:
+        with TriageDb(first).message_lock(sid) as held:
+            assert held
+            assert triage_one(TriageDb(second), store, sid, ModelSettings(None, DEFAULT_MODEL)).outcome == "locked"
+        result = triage_one(TriageDb(second), store, sid, ModelSettings(None, DEFAULT_MODEL))
+        assert result.outcome == "recorded"
+        with TriageDb(first).message_lock(sid) as held_again:
+            assert held_again  # the second connection released it
+
+
 def test_a_clear_no_such_user_bounce_becomes_a_global_block(dsn, target, mailbox_id) -> None:
     address = f"dead-{uuid.uuid4().hex[:8]}@cliente.invalid"
     store = Store()
