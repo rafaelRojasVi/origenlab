@@ -107,7 +107,8 @@ export function createShowroom(canvas: HTMLCanvasElement, initial: BuiltModel, o
   renderer.setPixelRatio(pixelRatio());
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // three r186 dropped PCFSoftShadowMap (it fell back to PCF anyway, with a console warning).
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
   const pmrem = new THREE.PMREMGenerator(renderer);
