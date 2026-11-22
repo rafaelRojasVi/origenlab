@@ -69,7 +69,8 @@ function localDay(iso: string): Date {
 /**
  * «En pausa hasta…» is a state of the case (`paused_until` + `pause_reason`, set-case-pause,
  * 2026-11-13): the pause holds while its day is still ahead. The day itself and after, the case
- * «vuelve de pausa» (`pauseReturned`): due in Hoy, still paused until a person resumes it.
+ * «vuelve de pausa» (`pauseReturned`): due in Hoy, still paused until a person resumes it or
+ * OrigenLab touches the case (an email, a call that reached the client).
  * A reminder task is not a pause any more.
  */
 export function pausedUntil(card: OpportunityCardData, now: Date = new Date()): string | null {
@@ -82,11 +83,24 @@ export function pauseDayIso(day: string): string {
   return `${day.slice(0, 10)}T12:00:00`;
 }
 
-/** The pause whose day came: the case is back in Hoy with its reason, waiting to be resumed. */
+/**
+ * The pause whose day came: the case is back in Hoy with its reason, waiting to be resumed — until
+ * OrigenLab touches the case on or after that day (owner 2026-11-22: «we contacted them and they're
+ * still there»). Our email or a call that reached the client then is the resumption: the case is a
+ * case again (its stage's column, the follow-up rhythm from that touch), as a reminder is met by
+ * the email the sync captures, with nobody pressing «Retomar ahora».
+ */
 export function pauseReturned(card: OpportunityCardData, now: Date = new Date()): { until: string; reason: string } | null {
   if (card.closed_at || TERMINAL.has(card.stage) || !card.paused_until) return null;
-  if (localDay(card.paused_until).getTime() > startOfLocalDay(now).getTime()) return null;
+  const day = localDay(card.paused_until).getTime();
+  if (day > startOfLocalDay(now).getTime()) return null;
+  if (touchedSince(card, day)) return null;
   return { until: card.paused_until, reason: card.pause_reason ?? "Sin motivo" };
+}
+
+/** OrigenLab emailed the case, or reached the client by phone, at or after the instant `from`. */
+function touchedSince(card: OpportunityCardData, from: number): boolean {
+  return [card.last_contact?.outbound?.at, callTouch(card)].some((at) => !!at && Date.parse(at) >= from);
 }
 
 /** The case holds a pause, ahead or come back: it is resumed by «Retomar ahora» or by a move. */
@@ -288,7 +302,10 @@ export function stageBasis(card: OpportunityCardData, now: Date = new Date()): S
     !card.closed_at &&
     card.stage === "quoting" &&
     !recent &&
-    // A task an operator wrote (a follow-up, a pause) is a decision about the case's present.
+    // A pause is an operator's decision about the case's present too (since 2026-11-13 it is a
+    // state of the case, no longer a «Retomar: …» task): never «sin decidir».
+    !card.paused_until &&
+    // A task an operator wrote (a follow-up, a legacy pause) is a decision about the case's present.
     (card.open_tasks ?? []).length === 0 &&
     revisions.length > 0 &&
     revisions.every((r) => r.origin === "historical_import")

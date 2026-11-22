@@ -14,7 +14,7 @@
 import type { OpportunityCardData } from "./crmTypes";
 import { nextContact } from "./nextContact";
 import { pauseReturned } from "./stage";
-import { RHYTHM, buildParaTiQueue, followUpsDue, isFollowUpDueToday, retakeHint, type QueueItem } from "./today";
+import { RHYTHM, buildParaTiQueue, retakeHint, rhythmNext, type QueueItem } from "./today";
 
 export type StepGroup = "atrasado" | "hoy" | "manana" | "semana";
 export type StepKind = "responder" | "cotizar" | "seguimiento" | "pausa" | "tarea";
@@ -150,12 +150,8 @@ function returnedPauses(items: OpportunityCardData[], now: Date, taken: Set<stri
   return out;
 }
 
-/** Nobody chases a client on the weekend: a step that would fall on Saturday or Sunday waits for Monday. */
-export function nextBusinessDay(d: Date): Date {
-  const out = new Date(d);
-  while (out.getDay() === 0 || out.getDay() === 6) out.setDate(out.getDate() + 1);
-  return out;
-}
+// `nextBusinessDay` lives in today.ts with the rhythm (`rhythmNext`); re-exported here.
+export { nextBusinessDay } from "./today";
 
 function followUpLabel(stepIndex: number, from: number): string {
   return stepIndex >= 3 ? `Último correo · día ${from}` : `Seguimiento ${stepIndex + 1} de 3 · día ${from}`;
@@ -196,20 +192,19 @@ function readyToSend(items: OpportunityCardData[], now: Date, taken: Set<string>
 function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, horizonDays: number): NextStep[] {
   const out: NextStep[] = [];
   // Young cases too: a quote sent or a follow-up written in the last two days has its next step on
-  // the rhythm's next day, never «no next step» (owner 2026-11-11).
-  for (const f of followUpsDue(items, now, { young: true })) {
-    const id = f.card.opportunity_id;
-    if (taken.has(id) || isFollowUpDueToday(f) || f.task) continue;
-    const nextIndex = RHYTHM.findIndex((r) => r.from > f.days);
-    if (nextIndex < 0) continue;
-    const due = nextBusinessDay(new Date(startOfDay(now).getTime() + (RHYTHM[nextIndex].from - f.days) * DAY_MS));
-    const ahead = dayDiff(now, due);
+  // the rhythm's next day, never «no next step» (owner 2026-11-11). The same day `nextContact` reads.
+  for (const card of items) {
+    const id = card.opportunity_id;
+    if (taken.has(id)) continue;
+    const r = rhythmNext(card, now);
+    if (!r || r.dueToday) continue;
+    const ahead = dayDiff(now, r.day);
     if (ahead > horizonDays) continue;
-    const amountClp = caseAmountClp(f.card);
+    const amountClp = caseAmountClp(card);
     out.push({
-      id, kind: "seguimiento", group: groupFor(ahead), card: f.card, due, dueDays: ahead, amountClp, owner: null,
-      score: scoreFor("seguimiento", amountClp, f.days), item: null, pause: null, state: null, actionable: false,
-      label: followUpLabel(nextIndex, RHYTHM[nextIndex].from),
+      id, kind: "seguimiento", group: groupFor(ahead), card, due: r.day, dueDays: ahead, amountClp, owner: null,
+      score: scoreFor("seguimiento", amountClp, r.days), item: null, pause: null, state: null, actionable: false,
+      label: followUpLabel(r.step - 1, RHYTHM[r.step - 1].from),
     });
     taken.add(id);
   }
@@ -218,7 +213,8 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
   for (const card of items) {
     if (card.closed_at || taken.has(card.opportunity_id)) continue;
     const next = nextContact(card, now);
-    if (!next) continue;
+    // The rhythm's day was placed above (or falls past the horizon).
+    if (!next || next.source === "rhythm") continue;
     const t = next.task;
     const due = t ? new Date(t.due_at) : next.source === "pause" ? localDay(card.paused_until as string) : new Date(next.at);
     const ahead = dayDiff(now, due);

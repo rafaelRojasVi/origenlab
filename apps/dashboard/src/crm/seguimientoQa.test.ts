@@ -19,7 +19,7 @@ const PROFILES: ProfileCard[] = [
 
 function row(id: string, over: Partial<SegRow> = {}, card: Partial<OpportunityCardData> = {}): SegRow {
   return {
-    card: { opportunity_id: id, version: 2, follow_up: { operator_id: null, operator_name: null, channel: null }, open_tasks: [], ...card } as OpportunityCardData,
+    card: { opportunity_id: id, version: 2, follow_up: { operator_id: null, operator_name: null, channel: null }, open_tasks: [], quotes: [], latest_revision: null, ...card } as OpportunityCardData,
     ownerId: null,
     suggestedOwnerId: "op-karla",
     isSuggested: true,

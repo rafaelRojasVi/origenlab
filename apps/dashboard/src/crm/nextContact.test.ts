@@ -36,13 +36,16 @@ describe("nextContact: one rule", () => {
     expect(nextContact(c, NOW)).toMatchObject({ source: "followup", at: local(20) });
   });
 
-  it("else the earliest other task, else the pause day, else none", () => {
+  it("else the earliest other task, else the pause day, else the rhythm, else none", () => {
     expect(nextContact(card({ open_tasks: [task({ title: "Enviar ficha", due_at: local(25) }), task({ title: "Llamar", due_at: local(22) })] }), NOW))
       .toMatchObject({ source: "task", at: local(22) });
     expect(nextContact(card({ paused_until: "2026-11-24", pause_reason: "Esperan fondos" }), NOW)).toMatchObject({
       source: "pause", label: "Vuelve de pausa · Esperan fondos",
     });
-    expect(nextContact(card(), NOW)).toBeNull();
+    // No task, no pause: the follow-up rhythm's day (the quote is 54 days old: «Último correo» today).
+    expect(nextContact(card(), NOW)).toMatchObject({ source: "rhythm", label: "Último correo" });
+    // Nothing sent yet: no rhythm, no date.
+    expect(nextContact(card({ stage: "lead", quotes: [], quote_numbers: [], latest_revision: null }), NOW)).toBeNull();
   });
 
   it("a reminder set after a call is not met by that call", () => {
@@ -157,5 +160,55 @@ describe("a pause still ahead hides reminders left over from before it (owner 20
   it("once the pause has come back, the case is due again (the rhythm, since our 9 Nov email met the old reminder)", () => {
     const c = { ...paused([october]), paused_until: "2026-11-10" };
     expect(nextContact(c, NOW)?.source).toBe("rhythm");
+  });
+});
+
+describe("Hoy audit 2026-11-22: what a case shows on every screen", () => {
+  const santiagoDay = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date(iso));
+  const emailed = (at: string) => ({ inbound: null, outbound: { at, url: null } }) as unknown as OpportunityCardData["last_contact"];
+
+  it("a pause that came back and that we answered by email after its day is over: no «Volvió de pausa», no lateness", () => {
+    // Paused until 9 Nov; we wrote on 16 Nov (two days before NOW, the 18th): the pause is resumed.
+    const c = card({ stage: "negotiating", paused_until: "2026-11-09", pause_reason: "Evaluando internamente", last_contact: emailed(santiago(16, 10).toISOString()) });
+    expect(nextContact(c, NOW)).toMatchObject({ source: "rhythm", label: "Seguimiento 1 de 3" });
+    // Day 3 from the 16th is Thursday the 19th — on Hoy's agenda, the Pipeline and Seguimiento alike.
+    expect(santiagoDay(nextContactAt(c, NOW) as string)).toBe("2026-11-19");
+    const steps = planNextSteps([c], NOW, null).steps;
+    expect(steps.map((s) => [s.kind, s.dueDays])).toEqual([["seguimiento", 1]]);
+    expect(urgencyByCase([c], NOW).get("case-1")?.level).toBe("pronto");
+  });
+
+  it("an email before the pause's day does not end it", () => {
+    // Paused until today (the 18th); our last email was yesterday: the case comes back today.
+    const c = card({ paused_until: "2026-11-18", pause_reason: "Evaluando internamente", last_contact: emailed(santiago(17, 10).toISOString()) });
+    expect(nextContact(c, NOW)).toMatchObject({ source: "pause", label: "Vuelve de pausa · Evaluando internamente" });
+    expect(planNextSteps([c], NOW, null).steps.map((s) => [s.kind, s.group])).toEqual([["pausa", "hoy"]]);
+  });
+
+  it("a call that reached the client on or after the pause's day ends it too", () => {
+    const c = card({ paused_until: "2026-11-09", pause_reason: "Evaluando internamente", last_call: { at: santiago(17, 10).toISOString(), outcome: "contesto" } });
+    expect(nextContact(c, NOW)?.source).not.toBe("pause");
+  });
+
+  it("with no reminder, Seguimiento's próximo contacto is the rhythm's next day Hoy shows, never «Sin fecha»", () => {
+    // Quote sent on Monday the 16th: day 3 is Thursday the 19th.
+    const rev = { revision_id: "r1", revision_no: 1, status: "sent", origin: null, sent_at: santiago(16, 10).toISOString(), superseded_by_revision_no: null, is_active: true, document: null, gmail: null, drive: null, quote_number: "CN09876", candidates: [] };
+    const c = card({ latest_revision: rev, quotes: [{ quote_id: "q1", quote_number: "CN09876", revisions: [rev] }] } as unknown as Partial<OpportunityCardData>);
+    const next = nextContact(c, NOW);
+    expect(next).toMatchObject({ source: "rhythm", label: "Seguimiento 1 de 3", task: null });
+    const step = planNextSteps([c], NOW, null).steps[0];
+    expect(santiagoDay(next!.at)).toBe("2026-11-19");
+    expect(step.dueDays).toBe(1);
+    expect(stepAction(step)).toBe("Seguimiento 1 de 3 · día 3");
+  });
+
+  it("a quote sent on Thursday: the rhythm's day 3 falls on Sunday and waits for Monday on every screen", () => {
+    const thu = santiago(12, 10).toISOString();
+    const rev = { revision_id: "r1", revision_no: 1, status: "sent", origin: null, sent_at: thu, superseded_by_revision_no: null, is_active: true, document: null, gmail: null, drive: null, quote_number: "CN09876", candidates: [] };
+    const c = card({ latest_revision: rev, quotes: [{ quote_id: "q1", quote_number: "CN09876", revisions: [rev] }] } as unknown as Partial<OpportunityCardData>);
+    // As of Friday the 13th the next step is day 3, Sunday the 15th → Monday the 16th.
+    const fri = santiago(13, 12);
+    expect(santiagoDay(nextContactAt(c, fri) as string)).toBe("2026-11-16");
+    expect(planNextSteps([c], fri, null).steps[0].dueDays).toBe(3);
   });
 });

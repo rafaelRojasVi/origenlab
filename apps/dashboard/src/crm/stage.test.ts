@@ -12,7 +12,9 @@ import {
   enviadaBand,
   isOnBoard,
   isSilent,
+  isPaused,
   monthKeySantiago,
+  pauseReturned,
   stageBasis,
   stageDisplay,
 } from "./stage";
@@ -278,5 +280,47 @@ describe("monthKeySantiago", () => {
     expect(monthKeySantiago("2026-11-01T02:30:00Z")).toBe("2026-10");
     expect(monthKeySantiago("2026-11-01T12:00:00Z")).toBe("2026-11");
     expect(monthKeySantiago("2026-01-01T02:00:00Z")).toBe("2025-12");
+  });
+});
+
+describe("a pause that came back ends with our touch on or after its day (owner 2026-11-22)", () => {
+  // Every value is invented. The pause day is 9 Nov; «now» is the 18th, noon in Santiago.
+  const NOW = new Date("2026-11-18T15:00:00Z");
+  const paused = (over: Partial<OpportunityCardData>) =>
+    card({ stage: "negotiating", paused_until: "2026-11-09", pause_reason: "Evaluando internamente", latest_revision: rev(null), ...over }, [null]);
+  const out = (at: string) => ({ last_contact: { inbound: null, outbound: { at, url: null } } }) as unknown as Partial<OpportunityCardData>;
+
+  it("stays «En pausa» (come back) until we touch the case", () => {
+    const c = paused(out("2026-11-08T13:00:00Z")); // the day before the pause's day
+    expect(pauseReturned(c, NOW)).toEqual({ until: "2026-11-09", reason: "Evaluando internamente" });
+    expect(boardColumnOf(c, NOW)).toBe("pausa");
+  });
+
+  it("our email that day or later resumes it: the case is in its stage's column again", () => {
+    const c = paused(out("2026-11-09T12:00:00Z")); // 09:00 on the 9th in Santiago
+    expect(pauseReturned(c, NOW)).toBeNull();
+    expect(isPaused(c, NOW)).toBe(false);
+    expect(boardColumnOf(c, NOW)).toBe("conversacion");
+  });
+
+  it("a call that reached the client resumes it; a voicemail does not", () => {
+    const reached = paused({ last_call: { at: "2026-11-12T14:00:00Z", outcome: "contesto" } } as Partial<OpportunityCardData>);
+    expect(isPaused(reached, NOW)).toBe(false);
+    const voicemail = paused({ last_call: { at: "2026-11-12T14:00:00Z", outcome: "no_contesto" } } as Partial<OpportunityCardData>);
+    expect(isPaused(voicemail, NOW)).toBe(true);
+  });
+
+  it("a pause still ahead holds whatever we wrote", () => {
+    const c = paused({ paused_until: "2026-12-09", ...out("2026-11-17T12:00:00Z") });
+    expect(isPaused(c, NOW)).toBe(true);
+    expect(boardColumnOf(c, NOW)).toBe("pausa");
+  });
+
+  it("a paused case is never «Enviada · sin decidir»: the pause is an operator's decision", () => {
+    const c = card({ paused_until: "2026-12-09", pause_reason: "Esperando fondos o proyecto" });
+    expect(stageBasis(c, NOW)).toBe("crm_record");
+    expect(stageDisplay(c, NOW).label).toBe("Enviada");
+    // The same case without the pause is still the import's trace.
+    expect(stageBasis(card({}), NOW)).toBe("historical_import");
   });
 });

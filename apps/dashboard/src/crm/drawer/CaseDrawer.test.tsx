@@ -313,12 +313,42 @@ describe("CaseDrawer", () => {
     });
   });
 
+  describe("a paused case reads «En pausa», not its stage (owner 2026-11-22)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("the stepper lights no stage as current while the pause holds", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-18T15:00:00Z"));
+      stub();
+      const dialog = renderDrawer("sales", card({ stage: "negotiating", paused_until: "2026-12-09", pause_reason: "Esperando fondos o proyecto" }));
+      const stepper = within(dialog).getByTestId("case-inline-state");
+      expect(within(stepper).queryByTitle("Estado actual")).not.toBeInTheDocument();
+      expect(within(stepper).getByTitle("Conversación · el caso está en pausa")).toBeInTheDocument();
+      expect(within(dialog).getByTestId("case-drawer-pause")).toHaveTextContent("En pausa hasta");
+    });
+
+    it("once we emailed after the pause's day, the case is in its stage again", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-18T15:00:00Z"));
+      stub();
+      const dialog = renderDrawer("sales", card({
+        stage: "negotiating", paused_until: "2026-11-09", pause_reason: "Esperando fondos o proyecto",
+        last_contact: { inbound: null, outbound: { at: "2026-11-16T13:00:00Z", subject: "Seguimiento", url: null } },
+      }));
+      const stepper = within(dialog).getByTestId("case-inline-state");
+      expect(within(stepper).getByTitle("Estado actual")).toHaveTextContent("Conversación");
+      expect(within(dialog).queryByTestId("case-drawer-pause")).not.toBeInTheDocument();
+    });
+  });
+
   describe("footer «Siguiente paso» · Task 8 follow-ups", () => {
     afterEach(() => {
       vi.useRealTimers();
     });
 
-    it("a reminder our later email already met is not the next step; the case's next action is", () => {
+    it("a reminder our later email already met is not the next step; the rhythm's next day is", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
       stub();
@@ -329,7 +359,8 @@ describe("CaseDrawer", () => {
       );
       // The stepper (case-inline-state) shows the next step.
       const stepper = within(dialog).getByTestId("case-inline-state");
-      expect(stepper).toHaveTextContent("Siguiente: Hacer seguimiento de 01318-26");
+      // Our email of 7 Nov met it; the rhythm's first follow-up is on day 3, Tuesday 10 (as in Hoy).
+      expect(stepper).toHaveTextContent(/Siguiente: Seguimiento 1 de 3 · mar,? 10/);
       expect(stepper).not.toHaveTextContent("Seguimiento 01318-26 ·");
     });
 

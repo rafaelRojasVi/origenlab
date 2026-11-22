@@ -365,6 +365,43 @@ export function isFollowUpDueToday(f: FollowUp): boolean {
   return f.days >= RHYTHM[0].from;
 }
 
+/** Nobody chases a client on the weekend: a step that would fall on Saturday or Sunday waits for Monday. */
+export function nextBusinessDay(d: Date): Date {
+  const out = new Date(d);
+  while (out.getDay() === 0 || out.getDay() === 6) out.setDate(out.getDate() + 1);
+  return out;
+}
+
+export interface RhythmNext {
+  /** The local day (00:00) of the follow-up: today when it is due, else the next step's day. */
+  day: Date;
+  /** The rhythm step on that day (1 from day 3 … 4 from day 15). */
+  step: 1 | 2 | 3 | 4;
+  /** Due today (Hoy lists it now), not a projection. */
+  dueToday: boolean;
+  /** Days since OrigenLab's last touch, as `FollowUp.days`. */
+  days: number;
+}
+
+/**
+ * The follow-up rhythm's next day for one case: today when `followUpsDue` has it due (Hoy's
+ * «Seguimientos»), else the day of the next step (3 · 7 · 10 · 15 days from our last touch; a
+ * weekend day waits for Monday). Null when the case has no rhythm (no quote out, a reply to
+ * answer, a pause ahead, another task planned) or is past the last step. Hoy's agenda and the
+ * próximo contacto (`nextContact`) both read it, so Seguimiento never says «Sin fecha» for a case
+ * Hoy and the Pipeline date (QA 2026-11-22).
+ */
+export function rhythmNext(card: OpportunityCardData, now: Date): RhythmNext | null {
+  const f = followUpsDue([card], now, { young: true })[0];
+  if (!f) return null;
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (isFollowUpDueToday(f)) return { day: startOfToday, step: followUpStep(f), dueToday: true, days: f.days };
+  const next = RHYTHM.findIndex((r) => r.from > f.days);
+  if (next < 0) return null;
+  const day = nextBusinessDay(new Date(startOfToday.getFullYear(), startOfToday.getMonth(), startOfToday.getDate() + RHYTHM[next].from - f.days));
+  return { day, step: (next + 1) as 1 | 2 | 3 | 4, dueToday: false, days: f.days };
+}
+
 /** A pre-quote open case with no sent quote: the operator must still write the quotation. */
 export interface CotizarQueueItem {
   kind: "cotizar";
