@@ -61,6 +61,7 @@ from origenlab_worker.gmail_sync import (
 
 #: `drive-file`: the Drive consent is revoked or wrong — the Gmail-auth code's twin.
 EXIT_DRIVE_AUTH = 2
+from origenlab_worker.quote_reader import DEFAULT_LIMIT as QUOTE_DEFAULT_LIMIT
 from origenlab_worker.quote_reader import LOCK_NAME as QUOTE_LOCK_NAME
 from origenlab_worker.quote_reader import (
     MODEL_OFF,
@@ -278,7 +279,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("mail-worker", help="supervise triage and gated periodic capture in one release")
     commands.add_parser("capture-worker", help="internal isolated periodic capture queue")
     quote = commands.add_parser("quote-read", help="read registered quote PDFs into document lines")
-    quote.add_argument("--limit", type=int, default=10, help="at most this many documents per run")
+    quote.add_argument("--limit", type=int, default=QUOTE_DEFAULT_LIMIT, help="at most this many documents per run")
     once = commands.add_parser("triage-once", help="triage pending messages once, without the queue")
     once.add_argument("--since-days", type=int, default=DEFAULT_SINCE_DAYS, help="look back this many days")
     once.add_argument("--limit", type=int, default=200, help="at most this many messages")
@@ -361,8 +362,13 @@ def run_quote_read(args: Any, env: Mapping[str, str], components: QuoteComponent
         if config.model != MODEL_OFF and config.api_key:
             from origenlab_worker.triage_model import anthropic_reader
 
-            reader = anthropic_reader(config.api_key, timeout_s=120.0)
+            # No SDK retries: a retry inside the stage's 300 s bound is what got it killed mid-call.
+            # The next capture cycle reads it again.
+            reader = anthropic_reader(config.api_key, timeout_s=120.0, max_retries=0)
         with components(config) as (conn, store):
+            from origenlab_worker.model_budget import FEATURE_QUOTE_READ, ConnectionSpend, metered
+
+            reader = metered(reader, ConnectionSpend(conn, env=env), FEATURE_QUOTE_READ)
             with conn.cursor() as cur:
                 cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (QUOTE_LOCK_NAME,))
                 if not cur.fetchone()[0]:

@@ -245,6 +245,8 @@ TRIAGE_REQUIRED_PRIVILEGES: tuple[tuple[str, str], ...] = (
     ("crm.opportunity_participant", "SELECT"), ("crm.contact_point", "SELECT"), ("crm.person", "SELECT"),
     # Models as printed (`catalog_match.py`, 20261016200000).
     ("catalog.product_model_alias", "SELECT"),
+    # The monthly model cap and usage record (`model_budget.py`).
+    ("platform.model_usage", "SELECT"), ("platform.model_usage", "INSERT"),
 )
 TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
     {
@@ -268,6 +270,8 @@ TRIAGE_REQUIRED_POLICIES: frozenset[tuple[str, str, str]] = frozenset(
         ("crm", "opportunity_participant", "origenlab_worker_select"),
         ("crm", "contact_point", "origenlab_worker_select"),
         ("crm", "person", "origenlab_worker_select"),
+        ("platform", "model_usage", "origenlab_worker_select"),
+        ("platform", "model_usage", "origenlab_worker_insert"),
     }
 )
 #: The Procrastinate queue (supabase/migrations/20261006180000): every table, every verb, and one

@@ -49,6 +49,15 @@ from origenlab_worker.drive_filing import storage_key
 from origenlab_worker.forwarded_request import FORWARDED_VALUE_NORM, is_candidate, is_forward_subject, read_forward
 from origenlab_worker.people_reading import NO_PEOPLE_CLASSES, PEOPLE_VALUE_NORM, is_own_address, people_value
 from origenlab_worker.mail_text import MailText, parse_mail
+from origenlab_worker.model_budget import (
+    FEATURE_CASE_PICK,
+    FEATURE_TRIAGE,
+    STEP_MATCH,
+    STEP_READ,
+    BudgetReached,
+    UnpricedModel,
+    paid_call,
+)
 from origenlab_worker.outbound_intent import OUTBOUND_INTENT_VALUE_NORM, read_outbound_intent
 from origenlab_worker.quote_reader import pdf_text
 from origenlab_worker.quote_refs import QUOTE_REFS_VALUE_NORM, read_quote_refs
@@ -388,6 +397,18 @@ class TriageDb:
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(f"set local statement_timeout = {self._timeout}")
             yield cur
+
+    def spend_check(self, feature: str, worst_usd: Any) -> None:
+        """The monthly cap (`model_budget.paid_call`); raises `BudgetReached`."""
+        from origenlab_worker.model_budget import ConnectionSpend
+
+        ConnectionSpend(self._conn).spend_check(feature, worst_usd)
+
+    def spend_record(self, feature: str, step: str, model: str, message: Any) -> None:
+        """One paid call's `platform.model_usage` rows, before its answer is parsed."""
+        from origenlab_worker.model_budget import ConnectionSpend
+
+        ConnectionSpend(self._conn).spend_record(feature, step, model, message)
 
     @contextmanager
     def message_lock(self, source_record_id: str) -> Iterator[bool]:
@@ -772,10 +793,13 @@ def match_message(db: Any, message: PendingMessage, mail: MailText,
         return result, value
     offered = {c.opportunity_id for c in offered_cases(result, cards)}
     try:
-        answer = settings.reader(build_pick_request(inp, result, cards, db.past_decisions(mail.sender),
-                                                    model=settings.model))
+        answer = paid_call(db, FEATURE_CASE_PICK, STEP_MATCH, settings.reader,
+                           build_pick_request(inp, result, cards, db.past_decisions(mail.sender),
+                                              model=settings.model))
         value["pick"] = parse_pick(answer, offered=offered, model=settings.model)
         value["pick_state"] = "ran"
+    except BudgetReached:
+        value["pick_state"] = "budget_reached"
     except ModelRefused as exc:
         value["pick_state"] = str(exc)
     except Exception:  # noqa: BLE001 - a suggestion is never worth blocking the triage; reported by state only
@@ -976,7 +1000,13 @@ def _triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: 
     else:
         request = build_request(mail, verdict, candidates, model=settings.model, cases=cases)
         try:
-            answer = settings.reader(request)
+            answer = paid_call(db, FEATURE_TRIAGE, STEP_READ, settings.reader, request)
+        except BudgetReached:
+            # The month's cap: the rules' reading is recorded, the model is not asked (not retried —
+            # retrying every minute until the month ends would only re-check the cap).
+            answer, state = None, "budget_reached"
+        except UnpricedModel:
+            answer, state = None, "model_unpriced"
         except Exception as exc:  # noqa: BLE001 - reported by class and status only, never message text
             if not is_permanent_api_error(exc):
                 raise ModelUnavailable(type(exc).__name__) from None
@@ -1108,7 +1138,7 @@ def backfill_people(db: Any, store: EmlStore, reader: ModelReader | None, source
             assert reader is not None
             counts["model_calls"] += 1
             try:
-                answer = reader(build_people_request(mail, model=model))
+                answer = paid_call(db, FEATURE_TRIAGE, STEP_READ, reader, build_people_request(mail, model=model))
             except Exception as exc:  # noqa: BLE001 - reported by class only, never message text
                 if not is_permanent_api_error(exc):
                     counts["model_calls"] -= 1

@@ -2116,8 +2116,38 @@ before an OC number reads as an order.
 | `model_state: model_refused`, `truncated`, `not_json`, `closed_value_unknown`, `summary_missing` | the answer was unusable; recorded, not retried |
 | `model_state: api_error_4xx` | a permanent API refusal (bad request, key revoked); recorded, not retried — check the key |
 | a job failing with `ModelUnavailable` | network, 429 or 5xx: retried 5 times over about 17 minutes, then re-enqueued by the sweep |
+| `model_state: budget_reached` | the month's triage cap (below) is reached: the rules' reading is recorded, the model is not asked; not retried |
+| `pick_state: budget_reached` | the same, for the case pick's own cap |
+| `outcome: locked` | another job is triaging this message right now (a per-message advisory lock); this one leaves it to that job |
 | `outcome: storage_error` | the `.eml` could not be read; nothing written, the next sweep retries |
 | `worker_*` refusal at start | the session is not exactly `origenlab_worker` with the queue and triage grants: fix the role, never widen it |
+
+#### Model spend caps (triage, case pick, case memory, quote reading)
+
+Every model call the mail worker makes is checked against a monthly cap first and recorded in
+`platform.model_usage` right after it returns — before its answer is parsed, so a paid answer that
+fails to parse still counts (`apps/worker/src/origenlab_worker/model_budget.py`; the tender worker
+and Prospectos keep their own caps, `model_spend.MONTHLY_CAP_USD`). The month is the calendar month
+in America/Santiago. Each feature has its own cap, set by an environment variable on the service
+that runs it (the triage worker for the first three, the `origenlab-gmail-sync` stage for quote
+reading); an unreadable or negative value falls back to the default, `0` stops that feature's model
+calls:
+
+| Feature (`platform.model_usage.feature`) | What calls the model | Variable | Default (US$/month) |
+|---|---|---|---|
+| `triage` | the triage's reading of a message, and the people backfill | `ORIGENLAB_WORKER_TRIAGE_CAP_USD` | 60 |
+| `case_pick` | the context matcher's pick when layer 1 is not sure | `ORIGENLAB_WORKER_CASE_PICK_CAP_USD` | 20 |
+| `subject_memory` | the case, institution and person memory (8.11b) | `ORIGENLAB_WORKER_SUBJECT_MEMORY_CAP_USD` | 10 |
+| `quote_read` | reading a quote PDF (8.12) | `ORIGENLAB_WORKER_QUOTE_READ_CAP_USD` | 20 |
+
+Over the cap the call is not made: the triage records the rules' reading with `model_state:
+budget_reached`, the pick `pick_state: budget_reached`, a memory update is skipped, a quote PDF is
+counted `error:BudgetReached` and read next run. The worst case checked is every input character at
+one token per two (a PDF block 20,000 tokens) plus every output token allowed. Triage runs two jobs
+at once, so a cap may be passed by at most one call. The Anthropic clients the worker builds have no
+SDK retries (`max_retries=0`): the queue retries, and SDK retries multiplied each attempt by three.
+Needs migration `20261122100000` (the feature check) applied before the worker is deployed: before
+it, the usage insert is refused and every model call fails.
 
 ### 8.11a Forwarded requests (who really asked)
 
@@ -2184,7 +2214,9 @@ no `quote_document` evidence yet is read — the PDF taken from the captured `.e
 are never called) — into the same evidence the 2026-10-06 quote-history import wrote: one
 `evidence.source_record` of kind `quote_document` (payload without client identity) and its
 `evidence.document_line` rows. The case panel, the Tablero's money and the catalog's price history
-read them with no other change. At most 10 per run (`--limit`, 1–50), one transaction each.
+read them with no other change. At most 3 per run by default (`--limit`, 1–50), one transaction
+each: the capture cycle stops the stage after 300 s, and each call may take up to 120 s (no SDK
+retries). Spend: the `quote_read` cap in 8.11.
 
 **How it reads.** Claude reads the PDF (a `document` block, untrusted framing, closed JSON schema);
 the Plantilla parser reads `pdftotext -layout` of the same PDF and every line total is cross-checked
