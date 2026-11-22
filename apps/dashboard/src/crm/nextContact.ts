@@ -10,7 +10,8 @@
  * 4. else none.
  *
  * A reminder always wins over the pause: a case paused until Monday that someone called and set
- * for Friday is due Friday, not «3 d atrasado · Vuelve de pausa».
+ * for Friday is due Friday, not «3 d atrasado · Vuelve de pausa». But while the pause is still
+ * ahead, an overdue task (left from before the pause) does not count (`livePauseFilter`).
  *
  * A pause whose day has come is not a future date (QA 2026-11-19): when the follow-up rhythm has the
  * case due today (Hoy lists it as «Seguimiento N de 3»), that is the próximo contacto
@@ -36,9 +37,13 @@ export interface NextContact {
 const byDue = (a: OpenTask, b: OpenTask) => Date.parse(a.due_at) - Date.parse(b.due_at);
 
 export function nextContact(card: OpportunityCardData, now: Date = new Date()): NextContact | null {
-  const followUp = pendingFollowUpTasks(card).filter((t) => !!t.due_at)[0];
+  // While a pause is still ahead, an overdue task is a leftover from before the pause (owner
+  // 2026-11-19: cases paused until December showed «Seguimiento · hoy» from an October reminder).
+  // A task due today or later — someone called and set Friday — still wins.
+  const live = livePauseFilter(card, now);
+  const followUp = pendingFollowUpTasks(card).filter((t) => !!t.due_at && live(t))[0];
   if (followUp) return { at: followUp.due_at, source: "followup", task: followUp, label: followUp.title };
-  const other = (card.open_tasks ?? []).filter((t) => !!t.due_at && !isFollowUpTask(t)).sort(byDue)[0];
+  const other = (card.open_tasks ?? []).filter((t) => !!t.due_at && !isFollowUpTask(t) && live(t)).sort(byDue)[0];
   if (other) return { at: other.due_at, source: "task", task: other, label: other.title };
   if (card.paused_until && isPaused(card, now)) {
     const reason = card.pause_reason ?? "Sin motivo";
@@ -56,6 +61,13 @@ export function nextContact(card: OpportunityCardData, now: Date = new Date()): 
     return { at, source: "pause", task: null, label: `${today ? "Vuelve" : "Volvió"} de pausa · ${reason}` };
   }
   return null;
+}
+
+/** Keeps every task, except an overdue one while the case's pause is still ahead. */
+export function livePauseFilter(card: OpportunityCardData, now: Date): (t: OpenTask) => boolean {
+  if (pausedUntil(card, now) === null) return () => true;
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return (t) => Date.parse(t.due_at) >= startOfToday;
 }
 
 function localIsoDay(d: Date): string {
