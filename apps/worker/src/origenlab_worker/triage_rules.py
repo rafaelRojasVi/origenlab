@@ -54,6 +54,7 @@ from origenlab_api.v2.mail_rules import (
 )
 from origenlab_api.v2.unsubscribe_replies import ACCEPTED_FORMS, classify_reply, reply_text
 from origenlab_worker.mail_text import MailText
+from origenlab_worker.v1_reuse import UNSUBSCRIBE_SUBJECTS
 
 #: Bumped whenever a rule changes what it decides. The proposal is stored per version
 #: (`value_norm = triage:v<N>`), so a new version re-triages every message beside the old reading.
@@ -99,7 +100,8 @@ _AUTO_REPLY_BODY_OPENINGS: tuple[str, ...] = (
 _AUTO_REPLY_BODY_CHARS = 300
 #: Absence notices start with the word; anywhere else «ausencia» can be a real subject.
 _AUTO_REPLY_PREFIXES: tuple[str, ...] = ("ausencia", "ausente", "estare fuera", "estoy fuera")
-_UNSUBSCRIBE_SUBJECTS: frozenset[str] = frozenset({"baja", "remover", "unsubscribe", "remove"})
+#: One set for triage and for capture's Spam exception (`capture.intake_skip_reason`).
+_UNSUBSCRIBE_SUBJECTS: frozenset[str] = UNSUBSCRIBE_SUBJECTS
 _TENDER_DOMAINS: frozenset[str] = frozenset({"wherex.com", "mercadopublico.cl", "chilecompra.cl"})
 _TENDER_SUBJECTS: tuple[str, ...] = ("nueva licitacion", "licitacion publicada", "nueva oportunidad de negocio")
 _NOTIFICATION_SENDERS = re.compile(

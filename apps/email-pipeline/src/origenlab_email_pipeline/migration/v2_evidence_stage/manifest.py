@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,6 +153,18 @@ def _normalize(kind: str, value: str) -> str:
 DELIVERY_REPORT_SENDER = re.compile(r"(?i)(?<![a-z0-9._%+-])(?:mailer-daemon|postmaster)@")
 
 
+#: A subject that is only an unsubscribe word («BAJA», «Remover.»). The worker's triage reads the
+#: same set (`triage_rules._UNSUBSCRIBE_SUBJECTS` is this object).
+UNSUBSCRIBE_SUBJECTS: frozenset[str] = frozenset({"baja", "remover", "unsubscribe", "remove"})
+
+
+def is_unsubscribe_subject(subject: str | None) -> bool:
+    """True when the subject, folded (lower-case, accent-free), is only an unsubscribe word."""
+    decomposed = unicodedata.normalize("NFKD", subject or "")
+    plain = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", plain.lower()).strip().strip(" .!") in UNSUBSCRIBE_SUBJECTS
+
+
 def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> None:
     """Refuse a Gmail record that intake rules exclude — whatever the manifest claims.
 
@@ -165,6 +178,10 @@ def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> Non
     spam, and the address must still reach the block list. Only a report's sender
     (`payload.sender`); a draft stays refused. A report from Spam blocks only an address we wrote
     to (the worker's `triage.spam_report_guard`).
+
+    A second exception, Spam only (2026-11-22): a «BAJA» whose whole subject is an unsubscribe
+    word (`is_unsubscribe_subject`). Gmail files some of these replies as spam, and a person
+    asking to be removed must still be removed. The rest of Spam stays refused.
     """
     declared = payload.get("intake_class")
     _require(
@@ -180,9 +197,14 @@ def _require_stageable_gmail_payload(payload: dict[str, Any], where: str) -> Non
         "that the declared intake_class is true, so it is required, not optional",
     )
     bounce = bool(DELIVERY_REPORT_SENDER.search(str(payload.get("sender") or "")))
+    # The worker's capture writes `subject_raw`; a staged manifest record carries `subject`.
+    subject = payload.get("subject_raw") or payload.get("subject")
+    unsubscribe = is_unsubscribe_subject(subject if isinstance(subject, str) else None)
     for label in labels:
         label_class = classify_intake_folder(label)
         if label_class in ("excluded_trash", "excluded_spam") and bounce:
+            continue
+        if label_class == "excluded_spam" and unsubscribe:
             continue
         _require(
             label_class not in ("metadata_only", "excluded_spam", "excluded_trash"),

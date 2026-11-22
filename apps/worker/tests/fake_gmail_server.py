@@ -99,8 +99,11 @@ class FakeGmailServer:
 
                     return self._page(rows, query, "history", render, {"historyId": str(state.history_id)})
                 if path == "messages":
-                    after = int(query["q"][0].removeprefix("after:"))
-                    rows = sorted((m for m, v in state.messages.items() if v["internal_ms"] // 1000 > after),
+                    terms = query["q"][0].split()
+                    after = int(next(t for t in terms if t.startswith("after:")).removeprefix("after:"))
+                    spam_only = "in:spam" in terms
+                    rows = sorted((m for m, v in state.messages.items() if v["internal_ms"] // 1000 > after
+                                   and (not spam_only or "SPAM" in v["labels"])),
                                   key=lambda m: state.messages[m]["internal_ms"], reverse=True)
                     return self._page(rows, query, "messages", lambda ids: [{"id": i} for i in ids], {})
                 if path.startswith("messages/"):

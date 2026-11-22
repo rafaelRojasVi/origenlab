@@ -44,6 +44,8 @@ METADATA_HEADERS = ("From", "Subject", "Message-ID", "Date")
 #: A message becomes capturable by arriving *or* by gaining one of these labels: a draft that is
 #: sent gets `SENT`, a message moved out of spam gets `INBOX`.
 CAPTURE_LABELS = frozenset({"SENT", "INBOX"})
+#: The resync's Spam search: a subject word of the «BAJA» set; capture keeps only an exact match.
+SPAM_UNSUBSCRIBE_QUERY = "{subject:baja subject:remover subject:unsubscribe subject:remove}"
 HISTORY_TYPES = ("messageAdded", "labelAdded")
 RETRYABLE = frozenset({429, 500, 502, 503, 504})
 _MALFORMED = (ValueError, TypeError, AttributeError, KeyError, binascii.Error)
@@ -300,15 +302,22 @@ class GmailReader:
         raise GmailUnavailable("too_many_pages")
 
     def messages_after(self, epoch_seconds: int) -> list[str]:
-        """The resync list: every message after `epoch_seconds`, oldest first, spam and trash excluded."""
-        return self.messages_matching(f"after:{int(epoch_seconds)}")
+        """The resync list: every message after `epoch_seconds`, oldest first, spam and trash excluded
+        — except the «BAJA» replies Gmail filed as spam, which capture keeps
+        (`capture.intake_skip_reason`); the history read sees those already."""
+        after = int(epoch_seconds)
+        ids = self.messages_matching(f"after:{after}")
+        spam = self.messages_matching(f"in:spam after:{after} {SPAM_UNSUBSCRIBE_QUERY}", include_spam_trash=True)
+        return list(dict.fromkeys([*ids, *spam]))
 
-    def messages_matching(self, query: str) -> list[str]:
-        """Every message a Gmail search finds, oldest first, spam and trash excluded."""
+    def messages_matching(self, query: str, *, include_spam_trash: bool = False) -> list[str]:
+        """Every message a Gmail search finds, oldest first, spam and trash excluded unless asked."""
         ids: list[str] = []
         token = None
         for _ in range(MAX_PAGES):
             params: dict[str, Any] = {"q": query, "maxResults": PAGE_SIZE}
+            if include_spam_trash:
+                params["includeSpamTrash"] = "true"
             if token:
                 params["pageToken"] = token
             data = self._get("messages", params)
