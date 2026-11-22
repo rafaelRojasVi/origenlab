@@ -197,13 +197,18 @@ assert(/const body = JSON\.stringify\(\{ name: 'visita', props: \{ origen: class
 const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 const widgetPages = pages.filter((file) => readFileSync(file, 'utf8').includes('class="cf-turnstile'));
 const csp = readFileSync(join(dist, '.htaccess'), 'utf8').match(/Content-Security-Policy "([^"]*)"/)?.[1] ?? '';
+// The CSP as directive → exact source tokens, so an origin is matched as a whole token, not as text.
+const cspSources = new Map(
+  csp.split(';').map((d) => d.trim().split(/\s+/)).filter((t) => t[0]).map(([name, ...sources]) => [name, sources]),
+);
+const cspAllows = (directive) => (cspSources.get(directive) ?? []).includes(TURNSTILE_ORIGIN);
 if (widgetPages.length > 0) {
   const privacy = readFileSync(join(dist, 'privacidad/index.html'), 'utf8');
   assert(privacy.includes('Turnstile'), 'con Turnstile encendido, /privacidad/ lo nombra');
-  assert(new RegExp(`script-src [^;]*${TURNSTILE_ORIGIN}`).test(csp), 'con Turnstile encendido, la CSP admite su script');
-  assert(new RegExp(`frame-src [^;]*${TURNSTILE_ORIGIN}`).test(csp), 'con Turnstile encendido, la CSP admite su iframe');
+  assert(cspAllows('script-src'), 'con Turnstile encendido, la CSP admite su script');
+  assert(cspAllows('frame-src'), 'con Turnstile encendido, la CSP admite su iframe');
 } else {
-  assert(!csp.includes(TURNSTILE_ORIGIN), 'sin Turnstile, la CSP no admite su origen');
+  assert(![...cspSources.values()].some((sources) => sources.includes(TURNSTILE_ORIGIN)), 'sin Turnstile, la CSP no admite su origen');
 }
 
 if (failed) {
