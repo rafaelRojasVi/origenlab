@@ -25,7 +25,7 @@ import type { HomeFilter } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { anyCallTouch, callTouch, conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
-import { pausedUntil, stageBasis } from "./stage";
+import { localDaysBetween, pausedUntil, stageBasis, startOfLocalDay } from "./stage";
 
 export type { HomeFilter } from "../api/authClient";
 
@@ -64,8 +64,7 @@ export function isFollowUpTask(task: OpenTask): boolean {
 function dueToday(task: OpenTask, now: Date): number | null {
   const due = Date.parse(task.due_at);
   if (Number.isNaN(due) || due > endOfDay(now).getTime()) return null;
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return Math.max(0, Math.ceil((startOfToday - due) / DAY_MS));
+  return Math.max(0, localDaysBetween(due, now));
 }
 
 /**
@@ -255,13 +254,14 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     if (!task && conversation(card, now).kind === "replied") continue;
     const byEmail = clock !== null;
     const touchAt = byEmail ? (clock as string) : sent;
-    const days = touchAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(touchAt)) / DAY_MS)) : 0;
+    // Local calendar days (`localDaysBetween`), as Seguimiento and the board count them.
+    const days = touchAt ? Math.max(0, localDaysBetween(Date.parse(touchAt), now)) : 0;
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.
     if (!task && days < RHYTHM[0].from && !young) continue;
     const rhythm = RHYTHM[stepForDays(days) - 1].key;
     const anyTouch = later(touchAt, anyCallTouch(card));
-    const touchDays = anyTouch ? Math.max(0, Math.floor((now.getTime() - Date.parse(anyTouch)) / DAY_MS)) : days;
+    const touchDays = anyTouch ? Math.max(0, localDaysBetween(Date.parse(anyTouch), now)) : days;
     out.push({ card, days, rhythm, byEmail, task, touchDays, touchAt: anyTouch });
   }
   return out.sort((a, b) => b.days - a.days);
@@ -291,7 +291,7 @@ function followUpMet(task: OpenTask, touch: string | null): boolean {
   if (touch === null) return false;
   const at = Date.parse(touch);
   if (task.created_at && at <= Date.parse(task.created_at)) return false;
-  return at >= startOfLocalDay(Date.parse(task.due_at));
+  return at >= startOfLocalDay(Date.parse(task.due_at)).getTime();
 }
 
 /** The case's «Seguimiento …» reminders still pending, earliest first: one already met is done. */
@@ -314,11 +314,6 @@ export function stepForDays(days: number): 1 | 2 | 3 | 4 {
 /** «Seguimiento N de 4»: the rhythm step a follow-up is on (1 from day 3, 2 from 7, 3 from 10, 4 from 15). */
 export function followUpStep(f: FollowUp): 1 | 2 | 3 | 4 {
   return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3 | 4;
-}
-
-function startOfLocalDay(t: number): number {
-  const d = new Date(t);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
 export interface OrgToConfirm {

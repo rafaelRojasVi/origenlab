@@ -11,6 +11,7 @@ import {
   suggestOwner,
   WHATSAPP_PROFILE_KEYS,
 } from "./seguimiento";
+import { followUpsDue } from "./today";
 
 const NOW = new Date("2026-11-18T15:00:00Z"); // 12:00 in Santiago (UTC-3)
 
@@ -97,12 +98,14 @@ describe("seguimientoRows", () => {
     expect(rows[2].late).toBe(false);
   });
 
-  it("late uses Santiago days", () => {
-    // 23:30 Santiago on the 15th is 02:30Z on the 16th: still 3 Santiago days before the 18th.
-    const edge = card({ revs: [rev({ sent_at: "2026-11-16T02:30:00Z" })] });
-    // 00:30 Santiago on the 16th is 03:30Z: only 2 days.
-    const young = card({ revs: [rev({ sent_at: "2026-11-16T03:30:00Z" })] });
-    const [a, b] = seguimientoRows([edge, young], profiles, NOW);
+  it("late counts calendar days, not hours", () => {
+    // Local wall-clock times, so the rows read the same in every zone. 23:30 on the 15th is
+    // 3 days before noon on the 18th (60.5 hours, but three calendar days)…
+    const now = new Date(2026, 10, 18, 12);
+    const edge = card({ revs: [rev({ sent_at: new Date(2026, 10, 15, 23, 30).toISOString() })] });
+    // …and 00:30 on the 16th only 2.
+    const young = card({ revs: [rev({ sent_at: new Date(2026, 10, 16, 0, 30).toISOString() })] });
+    const [a, b] = seguimientoRows([edge, young], profiles, now);
     const byEdge = [a, b].find((r) => r.card === edge)!;
     const byYoung = [a, b].find((r) => r.card === young)!;
     expect(byEdge.daysSinceTouch).toBe(3);
@@ -220,5 +223,17 @@ describe("seguimientoKpis", () => {
     expect(k.touchedToday).toBe(2);
     expect(k.late).toBe(1);
     expect(k.moneyClp).toBe(1_500_000);
+  });
+});
+
+describe("Hoy's rhythm and Seguimiento count the same calendar days (audit 2026-11-22)", () => {
+  it("a quote sent at 20:00 three days ago is day 3 in both, at 10:00", () => {
+    const sentAt = new Date(2026, 10, 19, 20).toISOString();
+    const now = new Date(2026, 10, 22, 10);
+    const c = card({ revs: [rev({ sent_at: sentAt })], last_contact: { inbound: null, outbound: { at: sentAt, subject: "Cotización", url: null } } });
+    const f = followUpsDue([c], now)[0];
+    expect(f?.days).toBe(3);
+    expect(f?.touchDays).toBe(3);
+    expect(seguimientoRows([c], profiles, now)[0].daysSinceTouch).toBe(3);
   });
 });

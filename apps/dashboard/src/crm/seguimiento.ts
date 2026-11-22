@@ -2,8 +2,8 @@
  * «Ventas › Seguimiento»: the sheet's rows, the suggested encargado, the case score and the KPI strip.
  *
  * Pure: everything is computed in the browser from the pipeline cards and the profiles; nothing is
- * stored. Rows are open sale cases with a delivered quote revision. «Today» and every day count are
- * America/Santiago calendar days (`dateSantiago`).
+ * stored. Rows are open sale cases with a delivered quote revision. «Today» is the America/Santiago
+ * day (`dateSantiago`); day counts are local calendar days, as Hoy counts them (`localDaysBetween`).
  */
 import type { ProfileCard } from "../api/authClient";
 import { isDelivered, quoteProduct } from "./caseDisplay";
@@ -11,6 +11,7 @@ import type { OpportunityCardData, PipelineResponse } from "./crmTypes";
 import { PILOT_CALLS_PER_DAY, dateSantiago } from "./goals";
 import { caseAmountClp } from "./nextSteps";
 import { isMaskedPhone } from "./redaction";
+import { localDaysBetween } from "./stage";
 import { isOpenCase } from "./today";
 
 /** Profile keys allowed to use WhatsApp; the owner confirms the real key during the local test. */
@@ -122,11 +123,9 @@ export function normalizeChannel(
   return hasPhone ? "llamada" : "correo";
 }
 
-/** Whole Santiago calendar days from `at` to `now`. */
-function santiagoDaysSince(at: string, now: Date): number {
-  const a = Date.parse(dateSantiago(new Date(at)) + "T00:00:00Z");
-  const b = Date.parse(dateSantiago(now) + "T00:00:00Z");
-  return Math.round((b - a) / 86_400_000);
+/** Local calendar days from `at` to `now`: the count Hoy's rhythm and the board use (`localDaysBetween`). */
+function daysSince(at: string, now: Date): number {
+  return localDaysBetween(Date.parse(at), now);
 }
 
 const onSantiagoDay = (at: string | null | undefined, now: Date): boolean =>
@@ -153,7 +152,7 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
     (best, at) => (at && (!best || Date.parse(at) > Date.parse(best)) ? at : best),
     null,
   );
-  const daysSinceTouch = touchAt ? santiagoDaysSince(touchAt, now) : 0;
+  const daysSinceTouch = touchAt ? daysSince(touchAt, now) : 0;
   const ownerId = card.follow_up?.operator_id ?? null;
   const suggestedOwnerId = suggestOwner(card, profiles);
   const phone = phoneOf(card);
@@ -165,7 +164,7 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
     channel: normalizeChannel(card.follow_up?.channel ?? null, ownerId ?? suggestedOwnerId, profiles, !!phone),
     amountClp: caseAmountClp(card),
     sentAt,
-    daysSinceSent: sentAt ? santiagoDaysSince(sentAt, now) : 0,
+    daysSinceSent: sentAt ? daysSince(sentAt, now) : 0,
     daysSinceTouch,
     lastTouch,
     callsToday: card.call_counts?.today ?? 0,

@@ -108,8 +108,19 @@ export function isPaused(card: OpportunityCardData, now: Date = new Date()): boo
   return pausedUntil(card, now) !== null || pauseReturned(card, now) !== null;
 }
 
-function startOfLocalDay(d: Date): Date {
+/** 00:00 of the local day an instant falls on. */
+export function startOfLocalDay(at: Date | number): Date {
+  const d = new Date(at);
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/**
+ * Local calendar days from the instant `at` to `now`: yesterday at 23:00 is one day ago at 08:00.
+ * Every day count on Hoy, the board and Seguimiento reads this, never 24-hour blocks, so a case
+ * is «día 3» everywhere on the same morning — and the 23- or 25-hour day of a DST change is one day.
+ */
+export function localDaysBetween(at: Date | number, now: Date): number {
+  return Math.round((startOfLocalDay(now).getTime() - startOfLocalDay(at).getTime()) / 86_400_000);
 }
 
 const TERMINAL: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
@@ -119,12 +130,10 @@ export const SILENT_AFTER_DAYS = 21;
 /** Owner ruling 2026-11-08: a lost case stays on the board this many days after closing, then only in «Cerradas». */
 export const LOST_ON_BOARD_DAYS = 7;
 
-const DAY_MS = 86_400_000;
-
-/** Whole days from `iso` to `now`, or null when `iso` is not a date. */
+/** Local calendar days from `iso` to `now` (`localDaysBetween`), or null when `iso` is not a date. */
 function wholeDaysSince(iso: string | null | undefined, now: Date): number | null {
   const t = iso ? Date.parse(iso) : Number.NaN;
-  return Number.isNaN(t) ? null : Math.floor((now.getTime() - t) / DAY_MS);
+  return Number.isNaN(t) ? null : localDaysBetween(t, now);
 }
 
 /**
