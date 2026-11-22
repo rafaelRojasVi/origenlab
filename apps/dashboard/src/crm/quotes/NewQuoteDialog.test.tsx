@@ -654,6 +654,12 @@ describe("a new client the CRM already had (M5)", () => {
     expect(await screen.findByText("Se usó la institución existente «Universidad Ejemplo 7».")).toBeInTheDocument();
   });
 
+  it("says the address's open case was used when the typed client is new (2026-11-22)", async () => {
+    stub({ create: answer({ organization_id: "i-9", organization_name: "Persona Ejemplo", organization_created: true, case_created: false }) });
+    await createNew("Persona Ejemplo");
+    expect(await screen.findByText("Esa dirección ya tenía un caso abierto: la cotización quedó en ese caso.")).toBeInTheDocument();
+  });
+
   it("says nothing when the institution is new", async () => {
     const onCreated = vi.fn();
     stub({ create: answer({ organization_id: "i-8", organization_name: "Laboratorio Nuevo", organization_created: true, case_created: true }) });

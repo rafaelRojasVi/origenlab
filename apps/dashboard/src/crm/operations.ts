@@ -286,6 +286,12 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     automatica: true,
     ejemplo: "«Entiendo, lo dejo en pausa hasta marzo» en el hilo de la cotización 09876 → el caso queda en pausa hasta el 1 de marzo.",
   },
+  R23: {
+    cuando: "Sale el PDF de una cotización hecha en el Cotizador como caso nuevo («+ Cliente nuevo») a alguien que ya tenía una solicitud abierta, sin cotización enviada ni aprobada: la misma persona y la misma institución, o una institución recién escrita en el Cotizador.",
+    hace: "Cierra esa solicitud como duplicada del caso desde el que salió la cotización; el caso de la cotización no se toca. Una cotización en borrador de la solicitud queda en ella. «Quitar» reabre la solicitud donde estaba.",
+    automatica: true,
+    ejemplo: "La solicitud reenviada de compras@hospital.cl espera; la cotización 09876 se hizo como caso nuevo y se le envió → la solicitud queda cerrada como «Duplicado».",
+  },
 };
 
 /** Why, in a few words, for each rule (the end of each sentence). */
@@ -310,6 +316,7 @@ const RULE_WHY: Record<string, string> = {
   R19: "el correo del cliente dice que no sigue",
   R21: "escribe en el caso",
   R22: "nuestro correo cierra el seguimiento",
+  R23: "la cotización salió de otro caso del mismo cliente",
 };
 
 /** One Spanish sentence for what the system did. */
@@ -337,6 +344,8 @@ export function actionSentence(a: OpsAction): string {
     verb = `No requiere respuesta el correo de${a.case_title ? `l caso «${a.case_title}»` : " un caso"}`;
   } else if (rule === "R19") {
     verb = `Marcó perdido ${target}`;
+  } else if (rule === "R23") {
+    verb = `Cerró como duplicada la solicitud ${a.case_title ? `«${a.case_title}»` : "de un cliente"}`;
   } else if (rule === "R22") {
     verb = `Dejó en pausa ${target}`;
   } else if (rule === "R21") {
