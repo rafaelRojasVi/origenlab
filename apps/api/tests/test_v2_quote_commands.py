@@ -996,6 +996,31 @@ def test_a_new_revision_copies_the_issued_one_and_supersedes_it_on_approval(worl
 
 
 @needs_db
+def test_voiding_the_approved_revision_gives_back_the_one_it_superseded(world) -> None:
+    # Rev 1 approved → rev 2 approved (rev 1 superseded by 2) → rev 2 voided: rev 1 is the quote the
+    # client holds, so it is current again — in the same transaction, with its own event.
+    dsn = world["dsn"]
+    created, saved = _approvable(world, terms={"warranty_terms_es": WARRANTY, "payment_terms": "30 días"})
+    _approve(world, created["revision_id"], saved["version"])
+    opened = _run(world, "create-quote-revision", {"quote_id": created["quote_id"]})
+    again = _save(world, {"revision_id": opened["revision_id"], "version": 1},
+                  {"items": [_catalog_item(world, quantity="2")], "terms": {"warranty_terms_es": WARRANTY}})
+    approved = _approve(world, opened["revision_id"], again["version"])
+    assert _revision(dsn, created["revision_id"])["superseded_by_revision_no"] == 2
+
+    out = _void(world, opened["revision_id"], approved["version"])
+    assert out["restored_revision_nos"] == [1]
+    rev1 = _revision(dsn, created["revision_id"])
+    assert (rev1["status"], rev1["superseded_by_revision_no"], rev1["superseded_at"]) == ("approved", None, None)
+    assert _events(dsn, "quote_revision", created["revision_id"])[-1] == ("quote_revision.supersession_cleared", {
+        "quote_id": created["quote_id"], "revision_no": 1, "voided_revision_no": 2})
+    # The case reads it as its current quote again.
+    [(current,)] = _owner(dsn, "select count(*) from crm.quote_revision where quote_id = %s and status <> 'void' "
+                               "and superseded_by_revision_no is null", (created["quote_id"],))
+    assert current == 1
+
+
+@needs_db
 def test_client_details_print_over_the_crm_and_carry_into_the_next_revision(world) -> None:
     dsn = world["dsn"]
     client = {"institution_name": "Instituto Ficticio S.A.", "rut": "76.543.210-K", "contact_name": "Ana Prueba",

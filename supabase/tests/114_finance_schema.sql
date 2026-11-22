@@ -86,9 +86,9 @@ select is(pg_temp.run_as('origenlab_api', $$ insert into crm.supplier_order
           '99000000-0000-4000-9900-000000001001') $$), 'ok',
   'the API inserts a supplier order in USD');
 select is(pg_temp.run_as('origenlab_api', $$ insert into crm.supplier_order
-    (id, supplier_name, ordered_on, amount_original, currency, created_by_operator_id)
+    (id, supplier_name, ordered_on, amount_original, currency, amount_clp, created_by_operator_id)
   values ('99000000-0000-4000-9900-000000001202', 'Proveedor Local Ltda', '2026-11-01',
-          1200000, 'CLP', '99000000-0000-4000-9900-000000001001') $$), 'ok',
+          1200000, 'CLP', 1200000, '99000000-0000-4000-9900-000000001001') $$), 'ok',
   'the API inserts a CLP supplier order without a case');
 
 -- ── supplier_order: constraints ──────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ select is(
 select is(pg_temp.run_as('origenlab_api', $$ insert into crm.partner_rule
     (valid_from, rule_name, arriendo_clp, arriendo_pct_empresa, split_pct, notes,
      set_by_operator_id)
-  values ('2027-01-01', 'opcion_b', 875000, 1.00, 0.5000, 'Arriendo completo como costo',
+  values ('2027-01-01', 'opcion_b', 400000, 1.00, 0.5000, 'Arriendo completo como costo',
           '99000000-0000-4000-9900-000000001001') $$), 'ok',
   'the API appends a new partner rule');
 
@@ -176,15 +176,15 @@ select is(left(pg_temp.run_as('origenlab_owner', $$ delete from crm.partner_rule
 -- ── partner_rule: constraints ────────────────────────────────────────────────────────────────
 select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.partner_rule
     (valid_from, rule_name, arriendo_clp, arriendo_pct_empresa, split_pct)
-  values ('2027-02-01', 'opcion_z', 875000, 0, 0.5) $$), 5), '23514',
+  values ('2027-02-01', 'opcion_z', 400000, 0, 0.5) $$), 5), '23514',
   'unknown rule_name is rejected');
 select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.partner_rule
     (valid_from, rule_name, arriendo_clp, arriendo_pct_empresa, split_pct)
-  values ('2027-02-01', 'opcion_a', 875000, 1.5, 0.5) $$), 5), '23514',
+  values ('2027-02-01', 'opcion_a', 400000, 1.5, 0.5) $$), 5), '23514',
   'arriendo_pct_empresa > 1 is rejected');
 select is(left(pg_temp.run_as('origenlab_api', $$ insert into crm.partner_rule
     (valid_from, rule_name, arriendo_clp, arriendo_pct_empresa, split_pct)
-  values ('2027-02-01', 'opcion_a', 875000, 0, 1.1) $$), 5), '23514',
+  values ('2027-02-01', 'opcion_a', 400000, 0, 1.1) $$), 5), '23514',
   'split_pct > 1 is rejected');
 
 -- ── partner_rule: worker denied ──────────────────────────────────────────────────────────────

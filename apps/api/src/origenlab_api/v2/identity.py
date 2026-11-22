@@ -1,18 +1,13 @@
-"""Operator identity for the V2 read boundary — one port, two adapters.
+"""Operator identity for the V2 read boundary — one port, its adapters.
 
-`docs/ARCHITECTURE.md` makes Supabase Auth and JWKS verification the operator identity for
-V2, and that is slice 1, which has not been built. The V2 read APIs are being built first,
-under the hosted freeze (`docs/OPERATIONS.md` §1.1), so they need an identity that is honest
-about which of those two facts applies today.
+`docs/ARCHITECTURE.md` names Supabase Auth and JWKS verification as the eventual V2 operator
+identity (slice 1, not built). Until it is, a deployed API signs operators in with Google
+Workspace; there is no JWKS adapter in the code (an unimplemented one that broke sign-in when its
+URL was set was removed on 2026-11-22), and `ORIGENLAB_V2_JWKS_URL` is no longer read.
 
-The answer is a port with two adapters:
-
-* :class:`JwksVerifier` is the target. It is present, it is the default whenever a JWKS URL
-  is configured, and it is **not configured anywhere** — no hosted credential is added while
-  the freeze is in force.
 * :class:`GoogleSessionIdentity` resolves an operator from the signed dashboard session
   cookie that Google Workspace sign-in sets (`auth_routes.py`). It is the only adapter a
-  deployed environment may use while JWKS is unconfigured.
+  deployed environment may use.
 * :class:`LocalDevIdentity` resolves an operator from a request header, and **refuses to
   load unless the V2 database target is loopback**. It is a development adapter that cannot
   be switched on against a hosted database by changing one environment variable, because the
@@ -21,9 +16,7 @@ The answer is a port with two adapters:
   outright when `ORIGENLAB_ENV=production`.
 
 That refusal is the whole point of the design. A "dev mode" that is one variable away from
-production is not a boundary; a dev mode that inspects the target and declines is. It also
-satisfies the portability requirement: nothing here hardcodes localhost in a way that blocks
-later hosted configuration — the hosted adapter is written, tested and simply unconfigured.
+production is not a boundary; a dev mode that inspects the target and declines is.
 """
 
 from __future__ import annotations
@@ -361,30 +354,6 @@ class ChainedIdentity(IdentityPort):
         raise IdentityAbsent("; ".join(absent))
 
 
-class JwksVerifier(IdentityPort):
-    """Verify a Supabase Auth JWT against the project's JWKS — the V2 target.
-
-    Present and unconfigured. Slice 1 wires it up; until then constructing it without a
-    JWKS URL raises at startup rather than silently degrading to something weaker.
-    """
-
-    def __init__(self, jwks_url: str | None, lookup: "OperatorLookup") -> None:
-        if not (jwks_url or "").strip():
-            raise IdentityMisconfigured(
-                "JWKS verification requires a JWKS URL. None is configured, and none is "
-                "added while the hosted phase is frozen (OPERATIONS.md 1.1)."
-            )
-        self._jwks_url = jwks_url
-        self._lookup = lookup
-
-    def resolve(self, headers: dict[str, str]) -> OperatorIdentity:  # pragma: no cover
-        raise IdentityMisconfigured(
-            "JWKS verification is not implemented yet: it arrives with Supabase Auth in "
-            "migration slice 1. This adapter exists so the boundary has a target to be "
-            "configured against, not so it can be used today."
-        )
-
-
 class OperatorLookup(ABC):
     """Read a `platform.operator` row. Implemented by the repository layer."""
 
@@ -395,7 +364,6 @@ class OperatorLookup(ABC):
 
 def build_identity_port(
     *,
-    jwks_url: str | None,
     database_url: str,
     lookup: OperatorLookup,
     google: "GoogleAuthConfig | None" = None,
@@ -408,14 +376,10 @@ def build_identity_port(
 ) -> IdentityPort:
     """Choose the adapter.
 
-    JWKS wins whenever it is configured, so a configured deployment can never fall back to
-    the development adapter by accident. Otherwise the Google session adapter is used when
-    Google sign-in is on, and the header adapter only when `dev_login_enabled` says so — it
+    The Google session adapter is used when Google sign-in is on, and the header adapter only when `dev_login_enabled` says so — it
     is never chosen by default, is refused in production, and then applies its own loopback
     test. Neither switched on is a startup failure, not an API that refuses every request.
     """
-    if (jwks_url or "").strip():
-        return JwksVerifier(jwks_url, lookup)
     if dev_login_enabled and production:
         raise IdentityMisconfigured(
             "ORIGENLAB_DEV_LOGIN_ENABLED is refused when ORIGENLAB_ENV=production: a "

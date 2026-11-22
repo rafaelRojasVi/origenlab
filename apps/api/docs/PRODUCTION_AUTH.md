@@ -203,9 +203,10 @@ re-derived at activation.
 
 **Relation to [`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md) §5.** That section names
 Supabase Auth (ES256 JWT, JWKS) as the V2 operator identity, and it is unchanged. This login
-is a separate adapter behind the same `IdentityPort` (`origenlab_api/v2/identity.py`), and
-`ORIGENLAB_V2_JWKS_URL` still wins whenever it is set. Whether it stands in until slice 1 or
-replaces Supabase Auth for the dashboard is an owner decision this document does not make.
+is a separate adapter behind the same `IdentityPort` (`origenlab_api/v2/identity.py`); no JWKS
+adapter exists in the code (the unimplemented placeholder was removed on 2026-11-22, and
+`ORIGENLAB_V2_JWKS_URL` is no longer read). Whether it stands in until slice 1 or replaces
+Supabase Auth for the dashboard is an owner decision this document does not make.
 
 ### Flow
 

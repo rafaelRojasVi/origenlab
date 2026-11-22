@@ -293,7 +293,7 @@ select is(left(pg_temp.run_as('origenlab_worker', $$ insert into platform.model_
   'token counts are never negative');
 select is(left(pg_temp.run_as('origenlab_worker', $$ insert into platform.model_usage
     (feature, model, step, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, usd_cost)
-  values ('triage', 'modelo-ejemplo', 'read', 0, 0, 0, 0, 0) $$), 5), '23514',
+  values ('desconocida', 'modelo-ejemplo', 'read', 0, 0, 0, 0, 0) $$), 5), '23514',
   'spend is recorded for a known feature');
 select is(left(pg_temp.run_as('origenlab_worker', $$ update platform.model_usage set usd_cost = 0 $$), 5), '42501',
   'the worker never rewrites spend');
