@@ -262,7 +262,10 @@ def _cmd_send(args: argparse.Namespace) -> int:
 
         access_token = None
         if args.live:
-            from origenlab_email_pipeline.gmail_workspace_oauth import load_credentials_for_gmail_imap
+            from origenlab_email_pipeline.gmail_workspace_oauth import (
+                load_credentials_for_gmail_imap,
+                refresh_gmail_credentials,
+            )
             client_json = os.environ.get("ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON")
             if not client_json:
                 print("Missing ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON env var.", file=sys.stderr)
@@ -276,6 +279,9 @@ def _cmd_send(args: argparse.Namespace) -> int:
                 token_json=token_json.expanduser().resolve(),
                 open_browser=bool(args.open_browser),
             )
+            # A still-valid token may be minutes from expiry; refresh once so the
+            # whole batch runs on a fresh one.
+            creds = refresh_gmail_credentials(creds, token_json=token_json.expanduser().resolve())
             access_token = creds.token
 
         batch_id = str(uuid.uuid4())

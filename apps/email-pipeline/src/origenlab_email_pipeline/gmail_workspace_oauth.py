@@ -55,3 +55,20 @@ def load_credentials_for_gmail_imap(
     token_json.parent.mkdir(parents=True, exist_ok=True)
     token_json.write_text(creds.to_json(), encoding="utf-8")
     return creds
+
+
+def refresh_gmail_credentials(creds: "object", *, token_json: Path) -> "object":
+    """Refresh once, now, so a batch starts on a full-lifetime access token.
+
+    ``load_credentials_for_gmail_imap`` returns a token that is merely still
+    valid -- possibly minutes from expiry, which a long send loop outlives.
+    Credentials without a refresh token are returned unchanged.
+    """
+    if not getattr(creds, "refresh_token", None):
+        return creds
+    from google.auth.transport.requests import Request
+
+    creds.refresh(Request())
+    token_json.parent.mkdir(parents=True, exist_ok=True)
+    token_json.write_text(creds.to_json(), encoding="utf-8")
+    return creds
