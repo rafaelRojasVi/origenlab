@@ -23,7 +23,7 @@
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { isMaskedPhone } from "./redaction";
 import { isPaused, pauseDayIso, pausedUntil } from "./stage";
-import { isFollowUpTask, pendingFollowUpTasks, rhythmNext } from "./today";
+import { isFollowUpTask, livePauseFilter, pendingFollowUpTasks, rhythmNext } from "./today";
 
 export type NextContactSource = "followup" | "task" | "pause" | "rhythm";
 
@@ -66,13 +66,6 @@ export function nextContact(card: OpportunityCardData, now: Date = new Date()): 
 function rhythmContact(r: { day: Date; step: number }): NextContact {
   const morning = new Date(r.day.getFullYear(), r.day.getMonth(), r.day.getDate(), 9, 0);
   return { at: morning.toISOString(), source: "rhythm", task: null, label: r.step < 4 ? `Seguimiento ${r.step} de 3` : "Último correo" };
-}
-
-/** Keeps every task, except an overdue one while the case's pause is still ahead. */
-export function livePauseFilter(card: OpportunityCardData, now: Date): (t: OpenTask) => boolean {
-  if (pausedUntil(card, now) === null) return () => true;
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return (t) => Date.parse(t.due_at) >= startOfToday;
 }
 
 function localIsoDay(d: Date): string {

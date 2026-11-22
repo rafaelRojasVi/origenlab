@@ -68,13 +68,30 @@ function dueToday(task: OpenTask, now: Date): number | null {
   return Math.max(0, Math.ceil((startOfToday - due) / DAY_MS));
 }
 
-/** Open tasks due by tonight that are not follow-ups — those live in «Seguimientos». */
+/**
+ * Keeps every task, except an overdue one while the case's pause is still ahead: a task left from
+ * before the pause is not due (owner 2026-11-19: cases paused until December showed «Seguimiento ·
+ * hoy» from an October reminder). A task due today or later — someone called and set Friday —
+ * still counts. The one pause rule for Hoy's lists (`tasksDue`, `overdueTasks`, `followUpsDue`)
+ * and the próximo contacto (`nextContact`).
+ */
+export function livePauseFilter(card: OpportunityCardData, now: Date): (t: OpenTask) => boolean {
+  if (pausedUntil(card, now) === null) return () => true;
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return (t) => Date.parse(t.due_at) >= startOfToday;
+}
+
+/**
+ * Open tasks due by tonight that are not follow-ups — those live in «Seguimientos». A paused case's
+ * tasks from before its pause are not due (`livePauseFilter`); `overdueTasks` reads this list.
+ */
 export function tasksDue(cards: OpportunityCardData[], now: Date): DueTask[] {
   const out: DueTask[] = [];
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
+    const live = livePauseFilter(card, now);
     for (const task of card.open_tasks ?? []) {
-      if (isFollowUpTask(task)) continue;
+      if (isFollowUpTask(task) || !live(task)) continue;
       const overdueDays = dueToday(task, now);
       if (overdueDays !== null) out.push({ card, task, overdueDays });
     }
@@ -218,8 +235,8 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     // to press «Hecho» — the email the sync captures is the proof.
     // While the pause is ahead, an overdue reminder from before it is not due (`livePauseFilter`).
     const pausedAhead = pausedUntil(card, now) !== null;
-    const stale = (t: OpenTask) => pausedAhead && (dueToday(t, now) ?? 0) > 0;
-    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)) && !stale(t));
+    const live = livePauseFilter(card, now);
+    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)) && live(t));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
     const decided = open.some(isFollowUpTask);
     let task: DueTask | null = null;
