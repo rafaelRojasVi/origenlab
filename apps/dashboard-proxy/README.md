@@ -192,7 +192,7 @@ paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
 ## Public stats route (`origenlab.cl/api/stats/*`)
 
 First-party analytics for the public site (`src/stats.ts`), a separate route family from the dashboard
-allowlist (like `/api/web/*`): no session, no operator identity, no CORS. Exactly two requests exist and
+allowlist (like `/api/web/*`): no session, no operator identity, no CORS. Exactly one request exists and
 everything else under the prefix is 404:
 
 - `POST /api/stats/event` — body `{name, props}`, at most 2 KB, `Origin: https://origenlab.cl`,
@@ -202,15 +202,8 @@ everything else under the prefix is 404:
   no `modelo`): `origen` is one of `google`, `perfil-google`, `linkedin`, `directo`, `whatsapp`, `otro`, `interno`
   (`interno`: a same-site navigation, from another origenlab.cl page; anything else is a 400) and `pagina` matches `^/[a-z0-9/-]{0,80}$` and contains no `//` (path only: no query, fragment, dot, `%` or
   uppercase). No cookies, no identifiers. Other props are dropped.
-- `GET /api/stats/script.js` — only when `STATS_ORIGIN` is set; 404 otherwise.
 
-`STATS_ORIGIN` (a `[vars]` entry) picks the mode. Set to `https://host`, the validated event and the script
-are proxied to that self-hosted analytics origin (`STATS_EVENT_PATH` and `STATS_SCRIPT_PATH` adapt the
-upstream paths; proxy mode needs a payload adapter — Plausible `domain`/`url`, Umami `type`/`payload.website` —
-that does not exist yet, so counter mode only for now) with a fresh header set: never the browser's cookies or
-`Authorization`, never the API key or Access credentials. Proxy mode forwards `{name, props}` as validated.
-
-Empty (counter mode), the Worker writes **one Workers Analytics Engine data point per event** to the
+The Worker writes **one Workers Analytics Engine data point per event** to the
 `STATS_AE` binding (dataset `origenlab_web_stats`), answers 204 and exposes nothing readable:
 
 | Field | Value |
@@ -243,7 +236,7 @@ ORDER BY total DESC
 The free-plan allowance (data points per day, queries, retention) is not recorded here: the owner
 confirms it in the Cloudflare dashboard before relying on it.
 
-A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
+Nothing is forwarded to any other origin. `STATS_RATELIMIT` allows 60 requests per IP per
 60 s. Nothing logs an IP, User-Agent or body.
 
 ## Dashboard web-stats read (`dashboard.origenlab.cl/api/stats/web-stats`)

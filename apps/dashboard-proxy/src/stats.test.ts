@@ -35,8 +35,8 @@ function tally(points: AnalyticsEngineDataPoint[]): Map<string, number> {
   return out;
 }
 
-function proxyEnv(extra: Record<string, unknown> = {}) {
-  return { ...BASE_ENV, STATS_ORIGIN: "https://stats.example.invalid", ...extra };
+function statsEnv(extra: Record<string, unknown> = {}) {
+  return { ...BASE_ENV, ...extra };
 }
 
 function eventRequest(
@@ -89,17 +89,20 @@ describe("stats paths and methods (fail closed)", () => {
     ["PATCH", EVENT_URL],
     ["OPTIONS", EVENT_URL],
     ["HEAD", SCRIPT_URL],
+    // The script route went with the unused proxy mode: there is no GET at all.
+    ["GET", SCRIPT_URL],
+    ["GET", `${SCRIPT_URL}?x=1`],
   ])("%s %s is 404 and never reaches upstream", async (method, url) => {
     const fetchMock = stubFetch();
     const { ae, write } = makeAe();
-    const resp = await handleStatsRequest(eventRequest(undefined, { method, url }), proxyEnv({ STATS_AE: ae }));
+    const resp = await handleStatsRequest(eventRequest(undefined, { method, url }), statsEnv({ STATS_AE: ae }));
     expect(resp.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
   });
 
   it("returns 404 with no body and no cookies", async () => {
-    const resp = await handleStatsRequest(eventRequest(undefined, { method: "DELETE" }), proxyEnv());
+    const resp = await handleStatsRequest(eventRequest(undefined, { method: "DELETE" }), statsEnv());
     expect(await resp.text()).toBe("");
     expect(resp.headers.get("Set-Cookie")).toBeNull();
   });
@@ -108,7 +111,7 @@ describe("stats paths and methods (fail closed)", () => {
 describe("stats event guards", () => {
   it("refuses a missing Origin with 403", async () => {
     const fetchMock = stubFetch();
-    const resp = await handleStatsRequest(eventRequest(undefined, { origin: null }), proxyEnv());
+    const resp = await handleStatsRequest(eventRequest(undefined, { origin: null }), statsEnv());
     expect(resp.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -117,7 +120,7 @@ describe("stats event guards", () => {
     "refuses Origin %s with 403",
     async (origin) => {
       const fetchMock = stubFetch();
-      const resp = await handleStatsRequest(eventRequest(undefined, { origin }), proxyEnv());
+      const resp = await handleStatsRequest(eventRequest(undefined, { origin }), statsEnv());
       expect(resp.status).toBe(403);
       expect(fetchMock).not.toHaveBeenCalled();
     },
@@ -126,7 +129,7 @@ describe("stats event guards", () => {
   it("refuses Sec-Fetch-Site: cross-site with 403", async () => {
     const resp = await handleStatsRequest(
       eventRequest(undefined, { headers: { "Sec-Fetch-Site": "cross-site" } }),
-      proxyEnv(),
+      statsEnv(),
     );
     expect(resp.status).toBe(403);
   });
@@ -134,23 +137,28 @@ describe("stats event guards", () => {
   it("refuses a form content type with 415", async () => {
     const resp = await handleStatsRequest(
       eventRequest(undefined, { contentType: "application/x-www-form-urlencoded", raw: "name=whatsapp_click" }),
-      proxyEnv(),
+      statsEnv(),
     );
     expect(resp.status).toBe(415);
   });
 
   it("accepts text/plain, which is what sendBeacon sends for a string", async () => {
-    const fetchMock = stubFetch(202);
-    const resp = await handleStatsRequest(eventRequest(undefined, { contentType: "text/plain;charset=UTF-8" }), proxyEnv());
-    expect(resp.status).toBe(202);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    const fetchMock = stubFetch();
+    const { ae, write } = makeAe();
+    const resp = await handleStatsRequest(
+      eventRequest(undefined, { contentType: "text/plain;charset=UTF-8" }),
+      statsEnv({ STATS_AE: ae }),
+    );
+    expect(resp.status).toBe(204);
+    expect(write).toHaveBeenCalledOnce();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses a declared Content-Length over the cap with 413", async () => {
     const fetchMock = stubFetch();
     const resp = await handleStatsRequest(
       eventRequest(undefined, { headers: { "Content-Length": String(STATS_BODY_LIMIT + 1) } }),
-      proxyEnv(),
+      statsEnv(),
     );
     expect(resp.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -159,18 +167,18 @@ describe("stats event guards", () => {
   it("refuses an actual body over the cap with 413", async () => {
     const fetchMock = stubFetch();
     const big = { name: "cotizacion_click", props: { modelo: "x" }, pad: "p".repeat(STATS_BODY_LIMIT) };
-    const resp = await handleStatsRequest(eventRequest(big), proxyEnv());
+    const resp = await handleStatsRequest(eventRequest(big), statsEnv());
     expect(resp.status).toBe(413);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("refuses invalid JSON with 400", async () => {
-    const resp = await handleStatsRequest(eventRequest(undefined, { raw: "{not json" }), proxyEnv());
+    const resp = await handleStatsRequest(eventRequest(undefined, { raw: "{not json" }), statsEnv());
     expect(resp.status).toBe(400);
   });
 
   it.each([null, [], "cotizacion_click", 7])("refuses a non-object body %j with 400", async (body) => {
-    const resp = await handleStatsRequest(eventRequest(body), proxyEnv());
+    const resp = await handleStatsRequest(eventRequest(body), statsEnv());
     expect(resp.status).toBe(400);
   });
 
@@ -185,7 +193,7 @@ describe("stats event guards", () => {
   ])("refuses event %j (not one of the five names) with 400", async (body) => {
     const fetchMock = stubFetch();
     const { ae, write } = makeAe();
-    const resp = await handleStatsRequest(eventRequest(body), proxyEnv({ STATS_AE: ae }));
+    const resp = await handleStatsRequest(eventRequest(body), statsEnv({ STATS_AE: ae }));
     expect(resp.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
@@ -200,7 +208,7 @@ describe("stats event guards", () => {
     [{ name: "cotizacion_click", props: { modelo: "UP400St:daily" } }],
     [{ name: "cotizacion_click", props: { modelo: "" } }],
   ])("refuses bad props %j with 400", async (body) => {
-    const resp = await handleStatsRequest(eventRequest(body), proxyEnv());
+    const resp = await handleStatsRequest(eventRequest(body), statsEnv());
     expect(resp.status).toBe(400);
   });
 
@@ -222,7 +230,7 @@ describe("stats event guards", () => {
       const fetchMock = stubFetch();
       const { ae, write } = makeAe();
       for (const props of [{ origen: "google" }, { pagina: "/catalogo" }, { modelo: "UP400St", origen: "google", pagina: "/" }]) {
-        const resp = await handleStatsRequest(eventRequest({ name, props }), proxyEnv({ STATS_AE: ae }));
+        const resp = await handleStatsRequest(eventRequest({ name, props }), statsEnv({ STATS_AE: ae }));
         expect(resp.status).toBe(400);
       }
       expect(fetchMock).not.toHaveBeenCalled();
@@ -235,9 +243,8 @@ describe("stats visita event", () => {
   const ORIGENES = ["google", "perfil-google", "linkedin", "directo", "whatsapp", "otro", "interno"];
 
   it.each(ORIGENES)("accepts origen %s", async (origen) => {
-    stubFetch(202);
-    const resp = await handleStatsRequest(eventRequest({ name: "visita", props: { origen, pagina: "/catalogo/ultrasonido" } }), proxyEnv());
-    expect(resp.status).toBe(202);
+    const resp = await handleStatsRequest(eventRequest({ name: "visita", props: { origen, pagina: "/catalogo/ultrasonido" } }), statsEnv());
+    expect(resp.status).toBe(204);
   });
 
   it.each([
@@ -266,30 +273,28 @@ describe("stats visita event", () => {
   ])("refuses %s with 400 and stores nothing", async (_label, props) => {
     const fetchMock = stubFetch();
     const { ae, write } = makeAe();
-    const resp = await handleStatsRequest(eventRequest({ name: "visita", props }), proxyEnv({ STATS_AE: ae }));
+    const resp = await handleStatsRequest(eventRequest({ name: "visita", props }), statsEnv({ STATS_AE: ae }));
     expect(resp.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
   });
 
   it("accepts the root path and a path of exactly 81 characters", async () => {
-    stubFetch(202);
     for (const pagina of ["/", "/" + "a".repeat(80)]) {
-      const resp = await handleStatsRequest(eventRequest({ name: "visita", props: { origen: "directo", pagina } }), proxyEnv());
-      expect(resp.status).toBe(202);
+      const resp = await handleStatsRequest(eventRequest({ name: "visita", props: { origen: "directo", pagina } }), statsEnv());
+      expect(resp.status).toBe(204);
     }
   });
 
-  it("forwards only {origen, pagina} in proxy mode", async () => {
-    const fetchMock = stubFetch(202);
+  it("records only {origen, pagina}: any other prop is dropped and nothing is forwarded", async () => {
+    const fetchMock = stubFetch();
+    const { ae, points } = makeAe();
     await handleStatsRequest(
       eventRequest({ name: "visita", props: { origen: "linkedin", pagina: "/contacto", email: "a@b.invalid" } }),
-      proxyEnv(),
+      statsEnv({ STATS_AE: ae, STATS_PAGINAS: "/contacto" }),
     );
-    expect(await fetchMock.mock.calls[0][0].json()).toEqual({
-      name: "visita",
-      props: { origen: "linkedin", pagina: "/contacto" },
-    });
+    expect(points).toEqual([{ blobs: ["visita", "", "linkedin", "/contacto"], doubles: [1], indexes: ["visita"] }]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -300,7 +305,7 @@ describe("stats rate limit", () => {
     const limit = vi.fn(async (_o: { key: string }) => ({ success: false }));
     const resp = await handleStatsRequest(
       eventRequest(undefined, { headers: { "CF-Connecting-IP": "203.0.113.9" } }),
-      proxyEnv({ STATS_RATELIMIT: { limit }, STATS_AE: ae }),
+      statsEnv({ STATS_RATELIMIT: { limit }, STATS_AE: ae }),
     );
     expect(resp.status).toBe(429);
     expect(limit).toHaveBeenCalledWith({ key: "203.0.113.9" });
@@ -309,182 +314,35 @@ describe("stats rate limit", () => {
   });
 
   it("lets the request through when the limiter allows it", async () => {
-    stubFetch(202);
     const limit = vi.fn(async (_o: { key: string }) => ({ success: true }));
-    const resp = await handleStatsRequest(eventRequest(), proxyEnv({ STATS_RATELIMIT: { limit } }));
-    expect(resp.status).toBe(202);
+    const resp = await handleStatsRequest(eventRequest(), statsEnv({ STATS_RATELIMIT: { limit } }));
+    expect(resp.status).toBe(204);
   });
 
   it("does not rate-limit refused requests (wrong origin never spends a token)", async () => {
     const limit = vi.fn(async (_o: { key: string }) => ({ success: true }));
-    await handleStatsRequest(eventRequest(undefined, { origin: "https://evil.example.invalid" }), proxyEnv({ STATS_RATELIMIT: { limit } }));
+    await handleStatsRequest(eventRequest(undefined, { origin: "https://evil.example.invalid" }), statsEnv({ STATS_RATELIMIT: { limit } }));
     expect(limit).not.toHaveBeenCalled();
   });
-
-  it("rate-limits script.js too", async () => {
-    const fetchMock = stubFetch();
-    const limit = vi.fn(async (_o: { key: string }) => ({ success: false }));
-    const resp = await handleStatsRequest(
-      new Request(SCRIPT_URL),
-      proxyEnv({ STATS_RATELIMIT: { limit } }),
-    );
-    expect(resp.status).toBe(429);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });
 
-describe("stats proxy mode (STATS_ORIGIN set)", () => {
-  it("forwards a sanitized event without cookies, credentials or the API key, and returns the upstream status", async () => {
-    const fetchMock = stubFetch(202, "accepted", { "Set-Cookie": "sid=abc", "Content-Type": "text/plain" });
-    const req = eventRequest(
-      { name: "whatsapp_click", props: { modelo: "UP400St", email: "a@b.invalid" }, extra: 1 },
-      {
-        headers: {
-          Cookie: "session=secret",
-          Authorization: "Bearer secret",
-          "X-OriginLab-API-Key": "k",
-          "User-Agent": "UA/1.0",
-          "CF-Connecting-IP": "203.0.113.9",
-        },
-      },
-    );
-    const resp = await handleStatsRequest(req, proxyEnv());
-
-    expect(resp.status).toBe(202);
-    expect(resp.headers.get("Set-Cookie")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const upstream = fetchMock.mock.calls[0][0];
-    expect(upstream.url).toBe("https://stats.example.invalid/api/event");
-    expect(upstream.method).toBe("POST");
-    expect(upstream.headers.get("Cookie")).toBeNull();
-    expect(upstream.headers.get("Authorization")).toBeNull();
-    expect(upstream.headers.get("X-OriginLab-API-Key")).toBeNull();
-    expect(upstream.headers.get("CF-Access-Client-Id")).toBeNull();
-    expect(upstream.headers.get("Origin")).toBeNull();
-    expect(upstream.headers.get("Content-Type")).toBe("application/json");
-    expect(upstream.headers.get("User-Agent")).toBe("UA/1.0");
-    expect(upstream.headers.get("X-Forwarded-For")).toBe("203.0.113.9");
-    expect(upstream.redirect).toBe("manual");
-    // Only the allowlisted shape reaches the analytics origin.
-    expect(await upstream.json()).toEqual({ name: "whatsapp_click", props: { modelo: "UP400St" } });
-  });
-
-  it("passes an upstream error status through", async () => {
-    stubFetch(500);
-    const resp = await handleStatsRequest(eventRequest(), proxyEnv());
-    expect(resp.status).toBe(500);
-  });
-
-  it("turns an upstream redirect into 502 and does not follow it", async () => {
-    stubFetch(302, null, { Location: "https://elsewhere.example.invalid/" });
-    const resp = await handleStatsRequest(eventRequest(), proxyEnv());
-    expect(resp.status).toBe(502);
-    expect(resp.headers.get("Location")).toBeNull();
-  });
-
-  it("turns an unreachable upstream into 502", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("boom"); }));
-    const resp = await handleStatsRequest(eventRequest(), proxyEnv());
-    expect(resp.status).toBe(502);
-  });
-
-  it("writes no Analytics Engine data point in proxy mode", async () => {
-    stubFetch(202);
+describe("stats counter on Analytics Engine", () => {
+  it("is the only mode: a leftover STATS_ORIGIN neither forwards an event nor serves a script", async () => {
+    const fetchMock = stubFetch(200, "console.log(1)");
     const { ae, write } = makeAe();
-    await handleStatsRequest(eventRequest(), proxyEnv({ STATS_AE: ae }));
-    expect(write).not.toHaveBeenCalled();
-  });
-
-  it("honours STATS_EVENT_PATH and tolerates a trailing slash on STATS_ORIGIN", async () => {
-    const fetchMock = stubFetch(200);
-    await handleStatsRequest(
-      eventRequest(),
-      proxyEnv({ STATS_ORIGIN: "https://stats.example.invalid/", STATS_EVENT_PATH: "/api/send" }),
-    );
-    expect(fetchMock.mock.calls[0][0].url).toBe("https://stats.example.invalid/api/send");
-  });
-
-  it.each(["http://stats.example.invalid", "stats.example.invalid", "https://stats.example.invalid/prefix", "https://user:pw@stats.example.invalid"])(
-    "treats STATS_ORIGIN %s as a misconfiguration (500), not as fallback mode",
-    async (origin) => {
-      const fetchMock = stubFetch();
-      const { ae, write } = makeAe();
-      const resp = await handleStatsRequest(eventRequest(), proxyEnv({ STATS_ORIGIN: origin, STATS_AE: ae }));
-      expect(resp.status).toBe(500);
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(write).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(["api/event", "//evil.example.invalid/x", "/a/../b", "/a?x=1"])(
-    "treats STATS_EVENT_PATH %s as a misconfiguration (500)",
-    async (path) => {
-      const fetchMock = stubFetch();
-      const resp = await handleStatsRequest(eventRequest(), proxyEnv({ STATS_EVENT_PATH: path }));
-      expect(resp.status).toBe(500);
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
-});
-
-describe("stats script.js", () => {
-  it("is proxied in proxy mode with no cookies, ignoring any query string", async () => {
-    const fetchMock = stubFetch(200, "console.log(1)", {
-      "Content-Type": "text/html",
-      "Set-Cookie": "sid=abc",
-      "X-Secret": "nope",
-    });
-    const resp = await handleStatsRequest(
-      new Request(`${SCRIPT_URL}?x=1`, { headers: { Cookie: "session=secret", Authorization: "Bearer s", "X-OriginLab-API-Key": "k" } }),
-      proxyEnv(),
-    );
-    expect(resp.status).toBe(200);
-    expect(await resp.text()).toBe("console.log(1)");
-    expect(resp.headers.get("Content-Type")).toBe("application/javascript; charset=utf-8");
-    expect(resp.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(resp.headers.get("Cache-Control")).toBe("public, max-age=3600");
-    expect(resp.headers.get("Set-Cookie")).toBeNull();
-    expect(resp.headers.get("X-Secret")).toBeNull();
-    const upstream = fetchMock.mock.calls[0][0];
-    expect(upstream.method).toBe("GET");
-    expect(upstream.url).toBe("https://stats.example.invalid/js/script.js");
-    expect(upstream.headers.get("Cookie")).toBeNull();
-    expect(upstream.headers.get("Authorization")).toBeNull();
-    expect(upstream.headers.get("X-OriginLab-API-Key")).toBeNull();
-  });
-
-  it("honours STATS_SCRIPT_PATH", async () => {
-    const fetchMock = stubFetch(200, "x");
-    await handleStatsRequest(new Request(SCRIPT_URL), proxyEnv({ STATS_SCRIPT_PATH: "/script.js" }));
-    expect(fetchMock.mock.calls[0][0].url).toBe("https://stats.example.invalid/script.js");
-  });
-
-  it.each([undefined, "", "   "])("is 404 in fallback mode (STATS_ORIGIN=%j)", async (origin) => {
-    const fetchMock = stubFetch();
-    const resp = await handleStatsRequest(new Request(SCRIPT_URL), { ...BASE_ENV, STATS_ORIGIN: origin });
-    expect(resp.status).toBe(404);
+    const env = { ...BASE_ENV, STATS_ORIGIN: "https://stats.example.invalid", STATS_AE: ae } as ProxyEnv;
+    const event = await handleStatsRequest(eventRequest(), env);
+    expect(event.status).toBe(204);
+    expect(write).toHaveBeenCalledOnce();
+    const script = await handleStatsRequest(new Request(SCRIPT_URL), env);
+    expect(script.status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("turns an upstream redirect into 502", async () => {
-    stubFetch(301, null, { Location: "https://elsewhere.example.invalid/s.js" });
-    const resp = await handleStatsRequest(new Request(SCRIPT_URL), proxyEnv());
-    expect(resp.status).toBe(502);
-  });
-
-  it("does not cache an upstream failure", async () => {
-    stubFetch(500, "oops");
-    const resp = await handleStatsRequest(new Request(SCRIPT_URL), proxyEnv());
-    expect(resp.status).toBe(500);
-    expect(resp.headers.get("Cache-Control")).toBe("no-store");
-  });
-});
-
-describe("stats counter on Analytics Engine (STATS_ORIGIN empty)", () => {
   it("writes one data point per event and answers 204 with no body", async () => {
     const fetchMock = stubFetch();
     const { ae, write } = makeAe();
-    const env = { ...BASE_ENV, STATS_ORIGIN: "", STATS_AE: ae, STATS_MODELOS: "UP400St, UP200St" };
+    const env = { ...BASE_ENV, STATS_AE: ae, STATS_MODELOS: "UP400St, UP200St" };
 
     const first = await handleStatsRequest(eventRequest({ name: "pdf_download", props: { modelo: "UP400St" } }), env);
     expect(first.status).toBe(204);
