@@ -138,3 +138,17 @@ describe("no case is left without a next step (owner 2026-11-11)", () => {
     expect(plan.steps.find((s) => s.card === replaced)?.label ?? "").not.toMatch(/Enviar la cotización/);
   });
 });
+
+describe("the week's days are calendar days (audit 2026-11-22)", () => {
+  it("each day is a local midnight, across the April DST change (a 25-hour Saturday in Santiago)", () => {
+    const plan = planNextSteps([], new Date(2027, 3, 2, 12), null);
+    expect(plan.days.map((d) => [d.day.getDate(), d.day.getHours()])).toEqual([[2, 0], [3, 0], [4, 0], [5, 0], [6, 0], [7, 0], [8, 0]]);
+  });
+
+  it("a day counts the steps whose own date it is", () => {
+    const now = new Date(2026, 10, 20, 12); // Friday
+    const monday = card({ open_tasks: [task("Llamar por las pesas", new Date(2026, 10, 23, 10).toISOString())] }, null);
+    const plan = planNextSteps([monday], now, null);
+    expect(plan.days.find((d) => d.day.getDate() === 23)?.count).toBe(1);
+  });
+});

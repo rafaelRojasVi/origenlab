@@ -11,13 +11,16 @@ import {
   followUpsDue,
   followUpStep,
   HOME_FILTER_KINDS,
+  livePauseFilter,
+  overdueTasks,
   retakeHint,
   RHYTHM,
   stepForDays,
-  todayHeaderCounts,
+  tasksDue,
   useHomeFilter,
   type QueueItem,
 } from "./today";
+import { nextContact } from "./nextContact";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T15:00:00Z");
@@ -122,12 +125,13 @@ describe("home filter", () => {
     expect(followUpsDue(cards, NOW).map((f) => [f.days, followUpStep(f)])).toEqual([[15, 4], [10, 3], [7, 2], [3, 1]]);
   });
 
-  it("the header counts follow the view", () => {
+  it("the queue follows the view", () => {
     const pedido = card({ stage: "qualifying", latest_revision: null, quote_numbers: [], created_at: ago(1) }, null);
     const silent = card({}, ago(15)); // day 15 = 4th threshold
-    expect(todayHeaderCounts([pedido, silent], NOW, null, "llamadas")).toEqual({ cotizar: 0, responder: 0, seguimientos: 1 });
-    expect(todayHeaderCounts([pedido, silent], NOW, null, "cotizar")).toEqual({ cotizar: 1, responder: 0, seguimientos: 0 });
-    expect(todayHeaderCounts([pedido, silent], NOW, null)).toEqual({ cotizar: 1, responder: 0, seguimientos: 1 });
+    const kinds = (view: "todo" | "llamadas" | "cotizar") => filterQueue(buildParaTiQueue([pedido, silent], NOW, null), view).map((q) => q.kind).sort();
+    expect(kinds("llamadas")).toEqual(["followup"]);
+    expect(kinds("cotizar")).toEqual(["cotizar"]);
+    expect(kinds("todo")).toEqual(["cotizar", "followup"]);
   });
 
   it("v3 display order: Responder first, then Cotizar, Seguimiento, Tareas", () => {
@@ -234,5 +238,37 @@ describe("retakeHint (Hoy v3 task hint mapping)", () => {
   it("is case-insensitive on the Retomar prefix", () => {
     expect(retakeHint("retomar: evaluando")).toBe("preguntar si ya decidieron");
     expect(retakeHint("RETOMAR: evaluando")).toBe("preguntar si ya decidieron");
+  });
+});
+
+describe("a pause still ahead hides every task left over from before it (audit 2026-11-22)", () => {
+  // «Llamar a Ana» was due 30 Oct; on 22 Nov the case waits, paused until 15 Dec.
+  const now = new Date("2026-11-22T15:00:00Z");
+  const call = { task_id: "t-ana", title: "Llamar a Ana", due_at: "2026-10-30T13:00:00Z", version: 1, owner: "Operadora Ficticia" };
+  const paused = () => card({ stage: "quoting", paused_until: "2026-12-15", pause_reason: "Esperando fondos o proyecto", open_tasks: [call] }, "2026-10-20T13:00:00Z");
+
+  it("is not due, not «Vencida» and not in Hoy's queue", () => {
+    const c = paused();
+    expect(tasksDue([c], now)).toEqual([]);
+    expect(overdueTasks([c], now, "Operadora Ficticia")).toEqual([]);
+    expect(buildParaTiQueue([c], now, "Operadora Ficticia").filter((q) => q.kind === "task")).toEqual([]);
+  });
+
+  it("the same task on a case without a pause is 23 days overdue", () => {
+    const c = card({ stage: "quoting", open_tasks: [call] }, "2026-10-20T13:00:00Z");
+    expect(tasksDue([c], now).map((d) => d.overdueDays)).toEqual([23]);
+    expect(overdueTasks([c], now, "Operadora Ficticia").map((d) => d.overdueDays)).toEqual([23]);
+  });
+
+  it("a task set for today or later still counts while the pause is ahead", () => {
+    const today = { ...call, task_id: "t-hoy", due_at: "2026-11-22T20:00:00Z" };
+    const c = card({ stage: "quoting", paused_until: "2026-12-15", open_tasks: [call, today] }, "2026-10-20T13:00:00Z");
+    expect(tasksDue([c], now).map((d) => d.task.task_id)).toEqual(["t-hoy"]);
+  });
+
+  it("one filter: the task Hoy leaves out is not the próximo contacto either", () => {
+    const c = paused();
+    expect(livePauseFilter(c, now)(call)).toBe(false);
+    expect(nextContact(c, now)?.source).toBe("pause");
   });
 });

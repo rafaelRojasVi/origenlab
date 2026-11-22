@@ -111,6 +111,21 @@ describe("Hecho automáticamente", () => {
   });
 });
 
+describe("Hecho automáticamente, a duplicate request (R23)", () => {
+  it("says the request was closed and «Quitar» reopens it", async () => {
+    stub([{ receipt_id: RECEIPT_B, applied_at: "2026-11-17T16:10:00+00:00", rule_id: "R23", kind: "filed",
+      source: "email", reasons: ["la cotización 09876-26 salió del caso «Persona Ficticia — cotización»"],
+      case_id: "caso-3", case_title: "Solicitud — Centrífuga ficticia", quote_number: "09876-26",
+      what: "Re: Solicitud de cotización" }]);
+    renderPanel("admin");
+    const [row] = await screen.findAllByTestId("automatic-row");
+    expect(row).toHaveTextContent("Solicitud duplicada cerrada");
+    fireEvent.click(within(row).getByRole("button", { name: "Quitar" }));
+    await waitFor(() => expect(posts.map((p) => p.path)).toEqual(["/v2/commands/remove-automatic-action"]));
+    expect(posts[0].body).toEqual({ receipt_id: RECEIPT_B });
+  });
+});
+
 describe("Hecho automáticamente, only what is news", () => {
   const row = (n: number, over: Record<string, unknown>) => ({
     receipt_id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`, applied_at: "2026-10-14T13:00:00+00:00",

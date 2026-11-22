@@ -10,7 +10,7 @@ import { chileanMobile } from "../company";
 import { dateSantiago } from "../goals";
 import { isMaskedPhone } from "../redaction";
 import { channelsFor, touchedToday, type SegRow } from "../seguimiento";
-import { nextContactAt, shownOwner } from "../seguimientoView";
+import { shownOwner } from "../seguimientoView";
 import { useSegUi } from "../segStore";
 import { shortDate } from "./PipelineBoard";
 
@@ -36,9 +36,9 @@ export function whenText(iso: string, now: Date): string {
   return dateSantiago(new Date(iso)) === dateSantiago(now) ? `hoy ${santiagoTime(iso)}` : shortDate(iso, now);
 }
 
-/** The case's próximo contacto (`nextContact`, the one rule Hoy, the Pipeline and the case panel read). */
-export function nextReminder(row: SegRow, now: Date = new Date()): string | null {
-  return nextContactAt(row.card, now);
+/** The case's próximo contacto (`SegRow.next`: `nextContact`, the one rule Hoy, the Pipeline and the case panel read). */
+export function nextReminder(row: SegRow): string | null {
+  return row.next?.at ?? null;
 }
 
 export const telHref = (phone: string) => `tel:${phone.replace(/[^\d+]/g, "")}`;

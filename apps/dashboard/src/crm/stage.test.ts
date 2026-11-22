@@ -13,7 +13,6 @@ import {
   isOnBoard,
   isSilent,
   isPaused,
-  monthKeySantiago,
   pauseReturned,
   stageBasis,
   stageDisplay,
@@ -221,10 +220,14 @@ describe("Silenciosas · Task 7 review fixes", () => {
     expect(isSilent(c, NOW)).toBe(true);
   });
 
-  it("quoting ago(21, 23h) → not silent", () => {
+  it("quoting 21 calendar days ago → not silent, whatever the hour; the 22nd day is", () => {
+    // Days are calendar days (audit 2026-11-22): 21 days and 23 hours back from noon is the 22nd day.
     const c = sent(21);
-    c.latest_revision = { ...c.latest_revision!, sent_at: ago(21, 23) };
-    expect(isSilent(c, NOW)).toBe(false);
+    const at = (iso: string) => ({ ...c, latest_revision: { ...c.latest_revision!, sent_at: iso } });
+    const day21 = new Date(NOW.getFullYear(), NOW.getMonth(), NOW.getDate() - 21);
+    expect(isSilent(at(new Date(day21.getFullYear(), day21.getMonth(), day21.getDate(), 0, 30).toISOString()), NOW)).toBe(false);
+    expect(isSilent(at(new Date(day21.getFullYear(), day21.getMonth(), day21.getDate(), 23, 30).toISOString()), NOW)).toBe(false);
+    expect(isSilent(at(new Date(day21.getFullYear(), day21.getMonth(), day21.getDate() - 1, 23, 30).toISOString()), NOW)).toBe(true);
   });
 });
 
@@ -275,14 +278,6 @@ describe("Enviada bands", () => {
   });
 });
 
-describe("monthKeySantiago", () => {
-  it("reads the month on Santiago's clock, not UTC's", () => {
-    expect(monthKeySantiago("2026-11-01T02:30:00Z")).toBe("2026-10");
-    expect(monthKeySantiago("2026-11-01T12:00:00Z")).toBe("2026-11");
-    expect(monthKeySantiago("2026-01-01T02:00:00Z")).toBe("2025-12");
-  });
-});
-
 describe("a pause that came back ends with our touch on or after its day (owner 2026-11-22)", () => {
   // Every value is invented. The pause day is 9 Nov; «now» is the 18th, noon in Santiago.
   const NOW = new Date("2026-11-18T15:00:00Z");
@@ -322,5 +317,28 @@ describe("a pause that came back ends with our touch on or after its day (owner 
     expect(stageDisplay(c, NOW).label).toBe("Enviada");
     // The same case without the pause is still the import's trace.
     expect(stageBasis(card({}), NOW)).toBe("historical_import");
+  });
+});
+
+describe("day counts are local calendar days, not 24-hour blocks (audit 2026-11-22)", () => {
+  // Local wall-clock instants, so the case reads the same in Santiago and in UTC.
+  const local = (y: number, m: number, d: number, h: number) => new Date(y, m - 1, d, h).toISOString();
+  const quoted = (sentAt: string) => {
+    const r = { ...rev("authored"), status: "sent", sent_at: sentAt };
+    return card({ quotes: [{ quote_id: "q", quote_number: "01999-26", number_origin: null, revisions: [r] }], latest_revision: r, version: 2 });
+  };
+
+  it("a quote sent at 22:00 on 31 Oct is 22 days old on 22 Nov at 09:00: Silenciosa", () => {
+    // 515 hours: 21 blocks of 24 h, but 22 calendar days.
+    expect(isSilent(quoted(local(2026, 10, 31, 22)), new Date(2026, 10, 22, 9))).toBe(true);
+  });
+
+  it("a quote sent at 22:00 on 14 Nov is in «8–21 días» on 22 Nov at 09:00", () => {
+    expect(enviadaBand(quoted(local(2026, 11, 14, 22)), new Date(2026, 10, 22, 9))).toBe("d8_21");
+  });
+
+  it("a lost case closed at 23:00 on 14 Nov leaves the board on 22 Nov at 08:00 (8 days)", () => {
+    const lost = card({ stage: "lost", closed_at: local(2026, 11, 14, 23) });
+    expect(isOnBoard(lost, new Date(2026, 10, 22, 8))).toBe(false);
   });
 });

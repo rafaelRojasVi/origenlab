@@ -9,7 +9,7 @@
  * - Loading / empty / error states
  */
 import { useRef, useState } from "react";
-import { newCaseCommandKey } from "../caseCommands";
+import { keyAfterFailure, newCaseCommandKey } from "../caseCommands";
 import { formatMoney } from "../money";
 import {
   Button,
@@ -29,7 +29,9 @@ import {
 import { useResource } from "../useResource";
 import type { Expense } from "./financeApi";
 import {
+  STALE_FINANCE_TEXT,
   fetchFinanceExpenses,
+  isStaleFinanceEdit,
   upsertExpense,
 } from "./financeApi";
 
@@ -108,6 +110,8 @@ function exportCsv(items: Expense[], month: string) {
 
 interface FormState {
   expense_id?: string;
+  /** The version the edited row was read at; sent as `expected_version`. */
+  version?: number;
   month: string;    // "YYYY-MM"
   category: string;
   amount_clp: string;
@@ -143,9 +147,10 @@ function ExpenseForm({
     setBusy(true);
     setError(null);
     try {
-      await upsertExpense(
+      // An edit names the version it was read at (`expected_version`); a create names none.
+      const saved = await upsertExpense(
         {
-          ...(form.expense_id ? { expense_id: form.expense_id } : {}),
+          ...(form.expense_id ? { expense_id: form.expense_id, expected_version: form.version } : {}),
           month: monthInputToFirstDay(form.month),
           category: form.category,
           amount_clp: Math.round(amount),
@@ -154,10 +159,19 @@ function ExpenseForm({
         },
         keyRef.current,
       );
+      // The row is now at the returned version: a further save from this form is not stale.
+      setForm((f) => ({ ...f, expense_id: saved.expense_id ?? f.expense_id, version: saved.version ?? f.version }));
+      keyRef.current = newCaseCommandKey();
       toast(form.expense_id ? "Gasto actualizado" : "Gasto registrado");
       onDone();
     } catch (err) {
-      keyRef.current = newCaseCommandKey();
+      keyRef.current = keyAfterFailure(err, keyRef.current);
+      if (isStaleFinanceEdit(err)) {
+        // Someone saved this row since it was read: reload it rather than overwrite their change.
+        toast(STALE_FINANCE_TEXT, "bad");
+        onDone();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setBusy(false);
@@ -225,6 +239,7 @@ export function FinanzasGastosPage() {
   function openEdit(exp: Expense) {
     setEditing({
       expense_id: exp.expense_id,
+      version: exp.version,
       month: exp.month.slice(0, 7),
       category: exp.category,
       amount_clp: String(exp.amount_clp),

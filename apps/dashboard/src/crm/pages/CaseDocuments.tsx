@@ -21,7 +21,7 @@ import {
   removeCaseDocument,
   useMayAttachCaseDocuments,
 } from "../caseDocuments";
-import { newCaseCommandKey } from "../caseCommands";
+import { keyAfterFailure, newCaseCommandKey } from "../caseCommands";
 import { fetchCaseMailDocuments, fetchCasePurchaseOrderCandidates } from "../crmApi";
 import type { CaseDocument, OpportunityCardData } from "../crmTypes";
 import { Button, FormField, SelectInput, TextInput, fmtDate, fmtDateTime } from "../ui";
@@ -274,7 +274,8 @@ function AttachForm({ card, onCancel, onDone }: { card: OpportunityCardData; onC
       );
       onDone();
     } catch (err) {
-      key.current = newCaseCommandKey();
+      // A refusal frees the key; a lost connection keeps it, so a retry cannot attach the OC twice.
+      key.current = keyAfterFailure(err, key.current);
       setError(documentRefusalText(err));
     } finally {
       setBusy(false);

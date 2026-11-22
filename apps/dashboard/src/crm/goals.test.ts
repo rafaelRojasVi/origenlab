@@ -61,6 +61,23 @@ describe("dateSantiago", () => {
     // 01:30 UTC on the 9th is still the 8th in Santiago (UTC−3).
     expect(dateSantiago(new Date("2026-11-09T01:30:00Z"))).toBe("2026-11-08");
   });
+
+  it("builds no formatter per call (Seguimiento calls it thousands of times a render)", () => {
+    const Real = Intl.DateTimeFormat;
+    let made = 0;
+    Intl.DateTimeFormat = new Proxy(Real, {
+      construct(target, args: ConstructorParameters<typeof Real>) {
+        made += 1;
+        return new target(...args);
+      },
+    });
+    try {
+      for (let i = 0; i < 5; i += 1) dateSantiago(new Date(Date.UTC(2026, 10, 8 + i, 15)));
+      expect(made).toBe(0);
+    } finally {
+      Intl.DateTimeFormat = Real;
+    }
+  });
 });
 
 describe("soldThisMonth", () => {

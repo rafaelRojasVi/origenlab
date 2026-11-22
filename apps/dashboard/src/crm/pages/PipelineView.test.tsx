@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "../crmTypes";
@@ -9,7 +9,9 @@ import { PipelinePage } from "./PipelinePage";
 
 // Every value below is invented; the repository is public.
 const DAY = 86_400_000;
-const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+// A pinned clock: the cases' ages are fixed at import, so the page must read the same "now".
+const NOW = new Date("2026-11-18T15:00:00Z"); // Wednesday, noon in Santiago
+const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
 
 function rev(sentAt: string): RevisionCard {
   return {
@@ -65,7 +67,13 @@ function renderAt(hash: string) {
   );
 }
 
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   clearResourceCache();
   window.location.hash = "";

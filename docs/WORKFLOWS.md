@@ -510,6 +510,11 @@ authored draft is approved directly.
   registered as `register-organization` registers one (`confirmed`, classification `customer`,
   the email's domain unless a free-mail one). Two or more active institutions of that name are
   refused 409 `organization_name_ambiguous` with `details.candidates: [{id, name}]`, never a third.
+  A new institution whose `email` the CRM already holds as one of an open case's people (owner
+  2026-11-22) is that address instead, its cases the address's own: one is used, several are
+  `case_choice_needed`; the case keeps its institution (the address's own institution first), and
+  the typed name is registered and given to the case only when the case names none. `new_case: true`
+  skips this.
   `create-quote` registers an institution this way even with CRM authoring switched off, as
   «Crear solicitud» from a forwarded request does. An archived, Labdelivery, OrigenLab-own or
   supplier/manufacturer client is refused (`supplier_exception_required`: a quote for a supplier

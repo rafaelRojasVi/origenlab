@@ -243,6 +243,47 @@ describe("the OC on a won case", () => {
     expect(await within(dialog).findByTestId("case-document")).toHaveTextContent("OC Nº 4321");
   });
 
+  it("a retry after a dropped connection sends the same key; one after a refusal, a new one", async () => {
+    let posts = 0;
+    const calls = stubApi([page([card({ stage: "won" })])], (c) => {
+      if (c.path !== "/v2/commands/attach-case-document") return undefined;
+      posts += 1;
+      return posts === 1 // the first send that reaches the API
+        ? { status: 422, body: { error: { details: { code: "document_not_pdf" } } } }
+        : { body: { document: { document_id: DOC, document_number: "4321", original_filename: "OC.pdf" }, replayed: false } };
+    });
+    // The first send never gets an answer: the connection drops.
+    const answered = globalThis.fetch;
+    let dropped = false;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST" && !dropped) {
+        dropped = true;
+        calls.push({ path: "/v2/commands/attach-case-document", method: "POST", body: null, key: new Headers(init.headers).get("Idempotency-Key") });
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+      return answered(input, init);
+    }));
+    const dialog = await openDrawer(session("admin"));
+    const block = within(dialog).getByTestId("case-documents");
+    fireEvent.click(within(block).getByRole("button", { name: "Adjuntar OC" }));
+    const form = within(block).getByRole("form", { name: "Adjuntar OC" });
+    fireEvent.click(within(form).getByRole("radio", { name: "Subir archivo" }));
+    fireEvent.change(within(form).getByLabelText(/^Archivo/), { target: { files: [new File(["%PDF-1.7 ficticio"], "OC 4321.pdf", { type: "application/pdf" })] } });
+    const send = async (n: number) => {
+      fireEvent.click(within(form).getByRole("button", { name: "Adjuntar OC" }));
+      await waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(n));
+    };
+    const settled = () => waitFor(() => expect(within(form).getByRole("button", { name: "Adjuntar OC" })).toBeEnabled());
+    await send(1); // dropped
+    await settled();
+    await send(2); // the API refuses
+    await settled();
+    await send(3);
+    const keys = calls.filter((c) => c.method === "POST").map((c) => c.key);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[1]);
+  });
+
   it("refuses a file over 20 MB before sending it", async () => {
     const calls = stubApi([page([card({ stage: "won" })])]);
     const dialog = await openDrawer(session("admin"));

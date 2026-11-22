@@ -8,7 +8,7 @@
  * - Loading / empty / error states
  */
 import { useRef, useState } from "react";
-import { newCaseCommandKey } from "../caseCommands";
+import { keyAfterFailure, newCaseCommandKey } from "../caseCommands";
 import { formatMoney } from "../money";
 import {
   Button,
@@ -28,7 +28,7 @@ import {
 } from "../ui";
 import { useResource } from "../useResource";
 import type { SupplierOrder } from "./financeApi";
-import { fetchFinanceSupplierOrders, upsertSupplierOrder } from "./financeApi";
+import { STALE_FINANCE_TEXT, fetchFinanceSupplierOrders, isStaleFinanceEdit, upsertSupplierOrder } from "./financeApi";
 
 const clp = (n: number | null) => (n != null ? (formatMoney(String(n), "CLP") ?? "—") : "—");
 const money = (n: number, ccy: string) => formatMoney(String(n), ccy) ?? "—";
@@ -47,6 +47,11 @@ const CURRENCY_OPTIONS = [
 
 interface FormState {
   order_id?: string;
+  /** The version the edited row was read at; sent as `expected_version`. */
+  version?: number;
+  /** Kept on an edit: the API writes every field, so a field the form does not show is sent as read. */
+  opportunity_id?: string;
+  quote_id?: string;
   supplier_name: string;
   ordered_on: string;
   paid_on: string;
@@ -79,6 +84,9 @@ function blankForm(): FormState {
 function orderToForm(o: SupplierOrder): FormState {
   return {
     order_id: o.order_id,
+    version: o.version,
+    ...(o.opportunity_id ? { opportunity_id: o.opportunity_id } : {}),
+    ...(o.quote_id ? { quote_id: o.quote_id } : {}),
     supplier_name: o.supplier_name,
     ordered_on: o.ordered_on,
     paid_on: o.paid_on ?? "",
@@ -115,9 +123,12 @@ function OrderForm({ initial, onDone }: { initial: FormState; onDone: () => void
     setBusy(true);
     setError(null);
     try {
-      await upsertSupplierOrder(
+      // An edit names the version it was read at (`expected_version`); a create names none.
+      const saved = await upsertSupplierOrder(
         {
-          ...(form.order_id ? { order_id: form.order_id } : {}),
+          ...(form.order_id ? { order_id: form.order_id, expected_version: form.version } : {}),
+          ...(form.opportunity_id ? { opportunity_id: form.opportunity_id } : {}),
+          ...(form.quote_id ? { quote_id: form.quote_id } : {}),
           supplier_name: form.supplier_name.trim(),
           ordered_on: form.ordered_on,
           ...(form.paid_on ? { paid_on: form.paid_on } : {}),
@@ -130,10 +141,19 @@ function OrderForm({ initial, onDone }: { initial: FormState; onDone: () => void
         },
         keyRef.current,
       );
+      // The row is now at the returned version: a further save from this form is not stale.
+      setForm((f) => ({ ...f, order_id: saved.order_id ?? f.order_id, version: saved.version ?? f.version }));
+      keyRef.current = newCaseCommandKey();
       toast(form.order_id ? "Pedido actualizado" : "Pedido registrado");
       onDone();
     } catch (err) {
-      keyRef.current = newCaseCommandKey();
+      keyRef.current = keyAfterFailure(err, keyRef.current);
+      if (isStaleFinanceEdit(err)) {
+        // Someone saved this order since it was read: reload it rather than overwrite their change.
+        toast(STALE_FINANCE_TEXT, "bad");
+        onDone();
+        return;
+      }
       setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
       setBusy(false);
@@ -192,21 +212,35 @@ function MarkReceivedButton({ order, onDone }: { order: SupplierOrder; onDone: (
   async function handleClick() {
     setBusy(true);
     try {
+      // The API writes every field of the order: send them as read, with only the reception day new.
       await upsertSupplierOrder(
         {
           order_id: order.order_id,
+          expected_version: order.version,
+          ...(order.opportunity_id ? { opportunity_id: order.opportunity_id } : {}),
+          ...(order.quote_id ? { quote_id: order.quote_id } : {}),
           supplier_name: order.supplier_name,
           ordered_on: order.ordered_on,
+          ...(order.paid_on ? { paid_on: order.paid_on } : {}),
           amount_original: order.amount_original,
           currency: order.currency,
+          ...(order.amount_clp != null ? { amount_clp: order.amount_clp } : {}),
+          ...(order.expected_arrival_on ? { expected_arrival_on: order.expected_arrival_on } : {}),
           received_on: todayStr(),
+          ...(order.notes ? { order_notes: order.notes } : {}),
         },
         keyRef.current,
       );
+      keyRef.current = newCaseCommandKey();
       toast("Pedido marcado como recibido");
       onDone();
     } catch (err) {
-      keyRef.current = newCaseCommandKey();
+      keyRef.current = keyAfterFailure(err, keyRef.current);
+      if (isStaleFinanceEdit(err)) {
+        toast(STALE_FINANCE_TEXT, "bad");
+        onDone();
+        return;
+      }
       toast(err instanceof Error ? err.message : "Error al marcar recibido", "bad");
     } finally {
       setBusy(false);
