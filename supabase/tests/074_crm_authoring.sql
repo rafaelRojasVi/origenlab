@@ -156,7 +156,14 @@ select is(pg_temp.run_as('origenlab_api', $$update crm.note
 select is(pg_temp.run_as('origenlab_owner', $$delete from crm.note where id = '74000000-0000-4000-8000-000000000901'$$),
   'P0001', 'note is never deleted: P0001');
 
--- merge-people identity repoint: subject_id alone may move, version unchanged; anything else with it is refused
+-- merge-people identity repoint: subject_id alone may move to the person it was merged into, version
+-- unchanged; anything else with it is refused (the merge pair rules are proved in 117_audit_fixes.sql)
+set role origenlab_owner;
+insert into crm.person (id, display_name, confirmation, version) values
+  ('74000000-0000-4000-8000-000000000201', 'Alex Ficticio', 'confirmed', 1);
+update crm.person set merged_into_person_id = '74000000-0000-4000-8000-000000000201', version = version + 1
+  where id = '74000000-0000-4000-8000-000000000200';
+reset role;
 select is(pg_temp.run_as('origenlab_api', $$update crm.note set subject_id = '74000000-0000-4000-8000-000000000201'
   where id = '74000000-0000-4000-8000-000000000901'$$),
   'ok', 'a note may be repointed to another subject (merge) without touching its content or version');

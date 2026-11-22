@@ -23,7 +23,7 @@
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { isMaskedPhone } from "./redaction";
 import { isPaused, pauseDayIso, pausedUntil } from "./stage";
-import { isFollowUpTask, pendingFollowUpTasks, rhythmNext } from "./today";
+import { isFollowUpTask, livePauseFilter, pendingFollowUpTasks, rhythmNext } from "./today";
 
 export type NextContactSource = "followup" | "task" | "pause" | "rhythm";
 
@@ -35,6 +35,8 @@ export interface NextContact {
   task: OpenTask | null;
   /** What to show next to the date: the task's title, or «Vuelve de pausa · motivo». */
   label: string;
+  /** For `source: "rhythm"`, the rhythm step on that day (1 from day 3 … 4 from day 15). */
+  step?: 1 | 2 | 3 | 4;
 }
 
 const byDue = (a: OpenTask, b: OpenTask) => Date.parse(a.due_at) - Date.parse(b.due_at);
@@ -63,16 +65,9 @@ export function nextContact(card: OpportunityCardData, now: Date = new Date()): 
 }
 
 /** The rhythm's day at the morning hour a reminder defaults to: not a made-up time that moves with each read. */
-function rhythmContact(r: { day: Date; step: number }): NextContact {
+function rhythmContact(r: { day: Date; step: 1 | 2 | 3 | 4 }): NextContact {
   const morning = new Date(r.day.getFullYear(), r.day.getMonth(), r.day.getDate(), 9, 0);
-  return { at: morning.toISOString(), source: "rhythm", task: null, label: r.step < 4 ? `Seguimiento ${r.step} de 3` : "Último correo" };
-}
-
-/** Keeps every task, except an overdue one while the case's pause is still ahead. */
-export function livePauseFilter(card: OpportunityCardData, now: Date): (t: OpenTask) => boolean {
-  if (pausedUntil(card, now) === null) return () => true;
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return (t) => Date.parse(t.due_at) >= startOfToday;
+  return { at: morning.toISOString(), source: "rhythm", task: null, label: r.step < 4 ? `Seguimiento ${r.step} de 3` : "Último correo", step: r.step };
 }
 
 function localIsoDay(d: Date): string {

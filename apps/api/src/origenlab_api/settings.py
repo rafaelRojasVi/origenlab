@@ -206,8 +206,6 @@ class Settings(BaseSettings):
     v2_database_expected_host: str | None = None
     """Absolute path of the PEM CA file the remote server certificate must chain to."""
     v2_database_sslrootcert: str | None = None
-    """Supabase Auth JWKS URL. When set, JWKS verification is used and the local development identity adapter is never constructed."""
-    v2_jwks_url: str | None = None
     v2_statement_timeout_ms: int = 15_000
     """Connections the V2 pool keeps open. Each one costs a TLS handshake to the database's region,
     so the pool keeps them warm instead of opening one per burst of requests."""

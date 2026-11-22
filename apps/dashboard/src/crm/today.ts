@@ -25,7 +25,7 @@ import type { HomeFilter } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { anyCallTouch, callTouch, conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
-import { pausedUntil, stageBasis } from "./stage";
+import { localDaysBetween, pausedUntil, stageBasis, startOfLocalDay } from "./stage";
 
 export type { HomeFilter } from "../api/authClient";
 
@@ -64,17 +64,33 @@ export function isFollowUpTask(task: OpenTask): boolean {
 function dueToday(task: OpenTask, now: Date): number | null {
   const due = Date.parse(task.due_at);
   if (Number.isNaN(due) || due > endOfDay(now).getTime()) return null;
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  return Math.max(0, Math.ceil((startOfToday - due) / DAY_MS));
+  return Math.max(0, localDaysBetween(due, now));
 }
 
-/** Open tasks due by tonight that are not follow-ups — those live in «Seguimientos». */
+/**
+ * Keeps every task, except an overdue one while the case's pause is still ahead: a task left from
+ * before the pause is not due (owner 2026-11-19: cases paused until December showed «Seguimiento ·
+ * hoy» from an October reminder). A task due today or later — someone called and set Friday —
+ * still counts. The one pause rule for Hoy's lists (`tasksDue`, `overdueTasks`, `followUpsDue`)
+ * and the próximo contacto (`nextContact`).
+ */
+export function livePauseFilter(card: OpportunityCardData, now: Date): (t: OpenTask) => boolean {
+  if (pausedUntil(card, now) === null) return () => true;
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return (t) => Date.parse(t.due_at) >= startOfToday;
+}
+
+/**
+ * Open tasks due by tonight that are not follow-ups — those live in «Seguimientos». A paused case's
+ * tasks from before its pause are not due (`livePauseFilter`); `overdueTasks` reads this list.
+ */
 export function tasksDue(cards: OpportunityCardData[], now: Date): DueTask[] {
   const out: DueTask[] = [];
   for (const card of cards) {
     if (!isOpenCase(card)) continue;
+    const live = livePauseFilter(card, now);
     for (const task of card.open_tasks ?? []) {
-      if (isFollowUpTask(task)) continue;
+      if (isFollowUpTask(task) || !live(task)) continue;
       const overdueDays = dueToday(task, now);
       if (overdueDays !== null) out.push({ card, task, overdueDays });
     }
@@ -218,8 +234,8 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     // to press «Hecho» — the email the sync captures is the proof.
     // While the pause is ahead, an overdue reminder from before it is not due (`livePauseFilter`).
     const pausedAhead = pausedUntil(card, now) !== null;
-    const stale = (t: OpenTask) => pausedAhead && (dueToday(t, now) ?? 0) > 0;
-    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)) && !stale(t));
+    const live = livePauseFilter(card, now);
+    const pending = open.filter((t) => !(isFollowUpTask(t) && followUpMet(t, email)) && live(t));
     // A case «Decidir casos» scheduled is decided, even if its stage still reads historical.
     const decided = open.some(isFollowUpTask);
     let task: DueTask | null = null;
@@ -238,13 +254,14 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     if (!task && conversation(card, now).kind === "replied") continue;
     const byEmail = clock !== null;
     const touchAt = byEmail ? (clock as string) : sent;
-    const days = touchAt ? Math.max(0, Math.floor((now.getTime() - Date.parse(touchAt)) / DAY_MS)) : 0;
+    // Local calendar days (`localDaysBetween`), as Seguimiento and the board count them.
+    const days = touchAt ? Math.max(0, localDaysBetween(Date.parse(touchAt), now)) : 0;
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.
     if (!task && days < RHYTHM[0].from && !young) continue;
     const rhythm = RHYTHM[stepForDays(days) - 1].key;
     const anyTouch = later(touchAt, anyCallTouch(card));
-    const touchDays = anyTouch ? Math.max(0, Math.floor((now.getTime() - Date.parse(anyTouch)) / DAY_MS)) : days;
+    const touchDays = anyTouch ? Math.max(0, localDaysBetween(Date.parse(anyTouch), now)) : days;
     out.push({ card, days, rhythm, byEmail, task, touchDays, touchAt: anyTouch });
   }
   return out.sort((a, b) => b.days - a.days);
@@ -274,7 +291,7 @@ function followUpMet(task: OpenTask, touch: string | null): boolean {
   if (touch === null) return false;
   const at = Date.parse(touch);
   if (task.created_at && at <= Date.parse(task.created_at)) return false;
-  return at >= startOfLocalDay(Date.parse(task.due_at));
+  return at >= startOfLocalDay(Date.parse(task.due_at)).getTime();
 }
 
 /** The case's «Seguimiento …» reminders still pending, earliest first: one already met is done. */
@@ -297,11 +314,6 @@ export function stepForDays(days: number): 1 | 2 | 3 | 4 {
 /** «Seguimiento N de 4»: the rhythm step a follow-up is on (1 from day 3, 2 from 7, 3 from 10, 4 from 15). */
 export function followUpStep(f: FollowUp): 1 | 2 | 3 | 4 {
   return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3 | 4;
-}
-
-function startOfLocalDay(t: number): number {
-  const d = new Date(t);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
 export interface OrgToConfirm {
@@ -330,28 +342,6 @@ export function organizationsToConfirm(cards: OpportunityCardData[]): OrgToConfi
 
 export function historicalCount(cards: OpportunityCardData[], now: Date = new Date()): number {
   return cards.filter((c) => stageBasis(c, now) === "historical_import").length;
-}
-
-/** The two counts «Hoy»'s header shows: cases to decide and follow-ups due today. */
-export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()): { replies: number; decide: number; followUps: number } {
-  return { replies: repliesToAnswer(cards, now).length, decide: historicalCount(cards, now), followUps: followUpsDue(cards, now).length };
-}
-
-/**
- * Counts for «Hoy»'s hero header: cotizar, responder and seguimientos (the three main sections).
- * `hechas` is tracked in the page's own state and not computed here.
- */
-export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null, filter: HomeFilter = "todo"): {
-  cotizar: number;
-  responder: number;
-  seguimientos: number;
-} {
-  const queue = filterQueue(buildParaTiQueue(items, now, me), filter);
-  return {
-    cotizar: queue.filter((q) => q.kind === "cotizar").length,
-    responder: queue.filter((q) => q.kind === "reply").length,
-    seguimientos: queue.filter((q) => q.kind === "followup").length,
-  };
 }
 
 /* ────────────────────────────────────────────────────────── «Para ti» queue ── */
@@ -520,11 +510,6 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   // Within every section: oldest wait first (largest waitMs first).
   return [...queue.values()].sort((a, b) =>
     RANK[a.kind] - RANK[b.kind] || b.waitMs - a.waitMs);
-}
-
-/** Count for «N para ti» in the header; `forwards` are the forwarded requests still waiting. */
-export function paraTiCount(items: OpportunityCardData[], now: Date, me: string | null, forwards = 0): number {
-  return buildParaTiQueue(items, now, me).length + forwards;
 }
 
 /* ─────────────────────────────────────────────────────── per-profile view ── */

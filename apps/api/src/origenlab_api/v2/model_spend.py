@@ -1,5 +1,6 @@
 """Model spend for the «Licitaciones» and «Prospectos» features: prices, cost of a call, and
-the monthly hard cap per feature.
+the monthly hard cap per feature. The worker's model calls (triage, case_pick, subject_memory,
+quote_read) are recorded in the same table under their own features (`MODEL_USAGE_FEATURES`).
 
 Spec §6.4: every model call is recorded in `platform.model_usage` (append-only); before each call
 the worst-case cost of that call is added to the month's spend and, if the sum would pass the cap,
@@ -31,6 +32,18 @@ _log = logging.getLogger(__name__)
 
 FEATURE_LICITACIONES = "licitaciones"
 FEATURE_PROSPECTOS = "prospectos"
+# The worker's own model calls (migration 20261122100000): mail triage, picking a mail's case,
+# the case/person memory and reading a quote PDF. Recorded under these names by the worker.
+FEATURE_TRIAGE = "triage"
+FEATURE_CASE_PICK = "case_pick"
+FEATURE_SUBJECT_MEMORY = "subject_memory"
+FEATURE_QUOTE_READ = "quote_read"
+#: Every value `platform.model_usage.feature` accepts (`model_usage_feature_check`). Only the
+#: features in `MONTHLY_CAP_USD` carry a hard cap checked here.
+MODEL_USAGE_FEATURES: tuple[str, ...] = (
+    FEATURE_LICITACIONES, FEATURE_PROSPECTOS,
+    FEATURE_TRIAGE, FEATURE_CASE_PICK, FEATURE_SUBJECT_MEMORY, FEATURE_QUOTE_READ,
+)
 MONTHLY_CAP_USD: dict[str, Decimal] = {
     FEATURE_LICITACIONES: Decimal("60"),
     FEATURE_PROSPECTOS: Decimal("10"),

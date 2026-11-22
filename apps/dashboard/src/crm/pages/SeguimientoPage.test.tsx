@@ -260,11 +260,16 @@ describe("SeguimientoPage", () => {
   });
 
   it("«Atrasado» hides touched rows", async () => {
-    stubApi();
+    // «Atrasado» is the próximo contacto's day gone by (audit 2026-11-22): A's reminder was due on
+    // Monday. B was called today and C was sent yesterday: their next contacts are ahead.
+    stubApi(() => {
+      const f = fixture();
+      f.items[0] = { ...f.items[0], open_tasks: [{ task_id: "t-a", title: "Seguimiento de CN09876", due_at: "2026-11-16T13:00:00Z", version: 1, owner: null }] };
+      return f;
+    });
     renderPage();
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(screen.getByRole("group", { name: "Estado" })).getByRole("button", { name: /^Atrasado/ }));
-    // B was called today and C was sent yesterday: only A is three days or more without a touch.
     await showing([A]);
   });
 

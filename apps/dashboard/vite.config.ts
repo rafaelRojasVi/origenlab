@@ -1,3 +1,8 @@
+// Tests run on the operators' clock (America/Santiago) on every machine, so a laptop and CI (UTC)
+// agree. Set here, before the test workers start (they inherit it); an explicit `TZ=UTC npx vitest run` still wins, which is
+// how the suite is checked for zone dependence.
+process.env.TZ ||= "America/Santiago"; // `||=`: an empty TZ (`TZ= npx vitest`) is UTC, not unset
+
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";

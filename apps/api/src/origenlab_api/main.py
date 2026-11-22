@@ -203,7 +203,6 @@ def _mount_v2_read_boundary(app: FastAPI, settings: Settings) -> None:
     # fail the process rather than surface as a per-request error that looks like a bad
     # credential.
     app.state.v2_identity = build_identity_port(
-        jwks_url=settings.v2_jwks_url,
         database_url=dsn,
         lookup=repository,
         google=google,

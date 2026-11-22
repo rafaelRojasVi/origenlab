@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
@@ -448,5 +448,92 @@ describe("Hoy · franja de metas y «Mi cola»", () => {
     expect(within(screen.getByTestId("today-scope")).getByRole("button", { name: /Mi cola/ })).toHaveAttribute("aria-pressed", "true");
     // Only one switch on the page.
     expect(screen.getAllByTestId("today-scope")).toHaveLength(1);
+  });
+});
+
+
+describe("Hoy keeps today's clock (audit 2026-11-22)", () => {
+  const ana = (due: string): OpportunityCardData => ({
+    ...card("33333333-3333-4333-8333-333333333333", "Instituto Ficticio", "2026-03-30T12:00:00Z", "01030-26"),
+    stage: "negotiating",
+    open_tasks: [{ task_id: "t-ana", title: "Llamar a Ana", due_at: due, version: 1, owner: null }],
+  });
+  const weekCells = async () => within(await screen.findByTestId("hoy-week")).getAllByRole("listitem").map((li) => li.textContent ?? "");
+
+  it("a tab left open overnight moves to the new day: header date and that day's tasks", async () => {
+    // Tuesday 31 March, 20:00 in Santiago (23:00 UTC: Tuesday in either zone); «Llamar a Ana» is
+    // due Wednesday at 10:00.
+    vi.setSystemTime(new Date("2026-03-31T23:00:00Z"));
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": { ...PIPELINE, items: [ana("2026-04-01T13:00:00Z")] } });
+    render(<OverviewPage navigate={() => undefined} />);
+    const header = await screen.findByTestId("hoy-mini-header");
+    expect(header).toHaveTextContent(/Martes 31 de marzo/);
+    await screen.findByTestId("today-para-ti");
+    expect(screen.queryByTestId("today-group-hoy")).toBeNull();
+
+    // Wednesday 08:00: the operator comes back to the tab.
+    vi.setSystemTime(new Date("2026-04-01T11:00:00Z"));
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await waitFor(() => expect(screen.getByTestId("hoy-mini-header")).toHaveTextContent(/Miércoles 1 de abril/));
+    // Wednesday's task is today's now: «Hoy» lists it.
+    expect(screen.getByTestId("today-group-hoy")).toBeInTheDocument();
+    expect(within(screen.getByTestId("today-para-ti")).getAllByText("Llamar a Ana", { exact: false }).length).toBeGreaterThan(0);
+  });
+
+  it("on a Friday, Monday is «lun», not «mañana»", async () => {
+    vi.setSystemTime(new Date("2026-11-20T15:00:00Z")); // Friday 20 Nov, noon in Santiago
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const cells = await weekCells();
+    expect(cells[1]).toMatch(/hoy$/);
+    expect(cells[2]).toMatch(/lun$/);
+    expect(cells.join(" ")).not.toMatch(/mañana/);
+  });
+
+  it("on a Saturday, Monday is «lun», not «hoy»", async () => {
+    vi.setSystemTime(new Date("2026-11-21T15:00:00Z")); // Saturday 21 Nov
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": PIPELINE });
+    render(<OverviewPage navigate={() => undefined} />);
+    const cells = await weekCells();
+    expect(cells[1]).toMatch(/lun$/);
+    expect(cells.join(" ")).not.toMatch(/hoy|mañana/);
+  });
+});
+
+describe("Hoy's header follows «Todo el equipo» (audit 2026-11-22)", () => {
+  const llamadas: AuthSessionState = {
+    kind: "signed_in",
+    method: "google_profile",
+    operator: { operatorId: "op-1", email: "contacto@ejemplo.invalid", displayName: "Contacto", role: "sales" },
+    caseCommandsEnabled: true,
+    crmAuthoringEnabled: true,
+    profile: { id: "p-ana", displayName: "Ana", roleLabel: "Ventas", homeFilter: "llamadas" },
+  };
+  // A request to quote: not on a «llamadas» queue, on the team's.
+  const request: OpportunityCardData = {
+    ...card("44444444-4444-4444-8444-444444444444", "Centro Ficticio", "2026-03-30T12:00:00Z", "01040-26"),
+    stage: "lead", quotes: [], quote_numbers: [], revision_count: 0, latest_revision: null, created_at: "2026-03-30T12:00:00Z",
+  };
+
+  it("the header count, the list's «Todo» chip and the strip agree in both scopes", async () => {
+    respond({ "/v2/workspace/fx": FX, "/v2/workspace/pipeline": { ...PIPELINE, items: [...PIPELINE.items, request] }, "/v2/workspace/invoices": { items: [], summary: {} } });
+    render(
+      <AuthSessionContext.Provider value={{ session: llamadas, signOut: async () => true }}>
+        <OverviewPage navigate={() => undefined} />
+      </AuthSessionContext.Provider>,
+    );
+    const header = await screen.findByTestId("hoy-mini-header");
+    const total = () => Number(/(\d+) cosas? para hoy/.exec(header.textContent ?? "")?.[1]);
+    const chip = () => Number(/\d+/.exec(within(screen.getByTestId("today-para-ti")).getByRole("button", { name: /^Todo \d+$/ }).textContent ?? "")?.[0]);
+    await waitFor(() => expect(header).toHaveTextContent(/cosas? para hoy/));
+    expect(total()).toBe(chip());
+    expect(within(screen.getByTestId("goal-cotizar")).getByText("0")).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByTestId("today-scope")).getByRole("button", { name: "Todo el equipo" }));
+    await waitFor(() => expect(total()).toBe(chip()));
+    expect(total()).toBe(2);
+    expect(within(screen.getByTestId("goal-cotizar")).getByText("1")).toBeInTheDocument();
   });
 });

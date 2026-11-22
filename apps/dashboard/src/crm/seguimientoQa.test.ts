@@ -4,6 +4,7 @@ import { OperatorApiError } from "../api/operatorClient";
 import { bulkResultText, runBulkFollowUp } from "./bulkAssign";
 import type { SetCaseFollowUpBody } from "./caseCommands";
 import type { OpportunityCardData } from "./crmTypes";
+import { nextContact } from "./nextContact";
 import { compactClp } from "./money";
 import { whatsAppUrl } from "./drawer/PersonPhones";
 import { rowNotes, waHref } from "./pages/SegParts";
@@ -18,8 +19,11 @@ const PROFILES: ProfileCard[] = [
 ];
 
 function row(id: string, over: Partial<SegRow> = {}, card: Partial<OpportunityCardData> = {}): SegRow {
+  const c = { opportunity_id: id, version: 2, follow_up: { operator_id: null, operator_name: null, channel: null }, open_tasks: [], quotes: [], latest_revision: null, ...card } as OpportunityCardData;
   return {
-    card: { opportunity_id: id, version: 2, follow_up: { operator_id: null, operator_name: null, channel: null }, open_tasks: [], quotes: [], latest_revision: null, ...card } as OpportunityCardData,
+    card: c,
+    // As `seguimientoRows` computes it: the row's one próximo contacto.
+    next: nextContact(c, NOW),
     ownerId: null,
     suggestedOwnerId: "op-karla",
     isSuggested: true,

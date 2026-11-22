@@ -7,7 +7,9 @@ events — nothing else; a case is read (it must exist) and never written.
 
 **A factura is paid in one payment or several.** «Pagada» records what is left, or a part of it (an
 abono); `paid_on` is set only by the payment that leaves nothing to pay. Undoing removes the latest
-payment (or the one named) and clears `paid_on`.
+payment (or the one named) and clears `paid_on`. What is left is the one balance of `balance.py`, so
+a nota de débito imported after «Pagada» raises it again: the import clears that factura's
+`paid_on` (an `invoice.unpaid` event) and the rest can be paid like any other.
 
 **The import adds, never rewrites.** A document already on record (same type and folio) is left
 exactly as it is — its case, its «Pagada» — so uploading the same month twice, or a month that
@@ -33,6 +35,7 @@ from typing import Any
 from origenlab_api.v2.command_core import CommandTransaction
 from origenlab_api.v2.commands import CommandRefused
 from origenlab_api.v2.identity import OperatorIdentity
+from origenlab_api.v2.invoices.balance import INVOICE_BALANCE_SQL
 from origenlab_api.v2.invoices.commands import (
     IMPORT_INVOICES,
     MARK_INVOICE_PAID,
@@ -298,6 +301,9 @@ class V2InvoiceCommandRepository(CommandTransaction):
                 operator=operator,
                 receipt_id=receipt_id,
             ))
+            reopened = self._reopen_after_debit_note(cur, operator, receipt_id, doc, fields["note"])
+            if reopened is not None:
+                event_ids.append(reopened)
         return {
             "command": IMPORT_INVOICES,
             "imported": imported,
@@ -329,22 +335,45 @@ class V2InvoiceCommandRepository(CommandTransaction):
         )
 
     def _owed(self, cur: Any, invoice: dict[str, Any]) -> tuple[int, int]:
-        """(billed, paid): the total net of its notas, and its live payments."""
+        """(billed, paid) of a factura, as `balance.py` counts them."""
         cur.execute(
-            """
-            select i.total_amount
-                   + coalesce((select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
-                                 from crm.invoice n
-                                where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type
-                                  and n.reference_folio = i.folio), 0),
-                   coalesce((select sum(p.amount) from crm.invoice_payment p
-                              where p.invoice_id = i.id and p.removed_at is null), 0)
-              from crm.invoice i where i.id = %s
-            """,
+            f"with invoice_balance as ({INVOICE_BALANCE_SQL}) "  # noqa: S608 - a constant, no input
+            "select billed, paid from invoice_balance where invoice_id = %s",
             (invoice["id"],),
         )
         billed, paid = cur.fetchone()
         return int(billed), int(paid)
+
+    def _reopen_after_debit_note(
+        self, cur: Any, operator: OperatorIdentity, receipt_id: str, doc: dict[str, Any], note: str
+    ) -> str | None:
+        """A nota de débito raised what a «Pagada» factura owes: it is not «Pagada» any more."""
+        if doc["doc_type"] != 56 or doc.get("reference_folio") is None:
+            return None
+        cur.execute(
+            """
+            select id::text as id, doc_type, folio, opportunity_id::text as opportunity_id, case_link,
+                   organization_id::text as organization_id, paid_on, version
+              from crm.invoice
+             where doc_type = %s and folio = %s and doc_type in (33, 34) and paid_on is not null
+               for update
+            """,
+            (doc["reference_doc_type"], doc["reference_folio"]),
+        )
+        invoice = self._row(cur)
+        if invoice is None:
+            return None
+        billed, paid = self._owed(cur, invoice)
+        if billed <= paid:
+            return None
+        result = self._change(
+            cur, operator, receipt_id, invoice,
+            command=IMPORT_INVOICES, event_type="invoice.unpaid",
+            assignments={"paid_on": None},
+            payload={"payment_id": None, "amount": None, "previous_paid_on": invoice["paid_on"].isoformat(),
+                     "debit_note_folio": doc["folio"], "billed": billed, "paid": paid, "note": note},
+        )
+        return result["event_ids"][0]
 
     def _mark_invoice_paid(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
@@ -353,8 +382,7 @@ class V2InvoiceCommandRepository(CommandTransaction):
         invoice = self._lock_invoice(cur, fields)
         if invoice["doc_type"] not in (33, 34):
             raise CommandRefused(409, "invoice_not_collectable", "only a factura is paid; a nota adjusts one")
-        if invoice["paid_on"] is not None:
-            raise CommandRefused(409, "invoice_already_paid", "this invoice is already marked paid")
+        # Not `paid_on`: a nota de débito after «Pagada» leaves something to pay. The balance decides.
         billed, paid = self._owed(cur, invoice)
         left = billed - paid
         if left <= 0:

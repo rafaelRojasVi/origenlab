@@ -1403,10 +1403,16 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
 
 def _handle_void_quote_revision(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
                                 fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
-    """A draft or an approved revision is voided; one already sent is answered by a new revision."""
+    """A draft or an approved revision is voided; one already sent is answered by a new revision.
+
+    An approved revision may have superseded earlier issued ones (`_supersede_current`) — the quote
+    the client holds. Voiding it gives them back: their supersession is cleared in the same
+    transaction (the guard allows it once the superseding revision is void), one
+    `quote_revision.supersession_cleared` event each, so the case and «Finanzas» count them again.
+    """
     revision_id, expected_version = fields["revision_id"], fields["expected_version"]
-    cur.execute("select status, origin, version, superseded_by_revision_no from crm.quote_revision "
-                "where id = %s::uuid for update", (revision_id,))
+    cur.execute("select quote_id::text as quote_id, revision_no, status, origin, version, superseded_by_revision_no "
+                "from crm.quote_revision where id = %s::uuid for update", (revision_id,))
     revision = _one(cur)
     if revision is None:
         raise CommandRefused(404, "revision_not_found", "no such quote revision")
@@ -1429,7 +1435,33 @@ def _handle_void_quote_revision(self: "V2QuoteRepository", cur: Any, operator: O
                        event_type="quote_revision.transitioned",
                        payload={"from": revision["status"], "to": "void", "reason": fields["reason"]},
                        operator=operator, receipt_id=receipt_id)
-    return {"ok": True, "revision_id": revision_id, "version": updated["version"]}
+    restored = _clear_supersession_by(self, cur, operator, revision, receipt_id)
+    return {"ok": True, "revision_id": revision_id, "version": updated["version"],
+            "restored_revision_nos": restored}
+
+
+def _clear_supersession_by(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
+                           voided: dict[str, Any], receipt_id: str) -> list[int]:
+    """The revisions `voided` superseded are current again; their revision numbers."""
+    cur.execute(
+        """
+        select id::text as id, revision_no from crm.quote_revision
+         where quote_id = %s::uuid and superseded_by_revision_no = %s
+         order by revision_no
+           for update
+        """,
+        (voided["quote_id"], voided["revision_no"]),
+    )
+    restored = _all(cur)
+    for prior in restored:
+        cur.execute("update crm.quote_revision set superseded_by_revision_no = null, superseded_at = null, "
+                    "version = version + 1, updated_at = now() where id = %s::uuid", (prior["id"],))
+        self._append_event(cur, aggregate_kind="quote_revision", aggregate_id=prior["id"],
+                           event_type="quote_revision.supersession_cleared",
+                           payload={"quote_id": voided["quote_id"], "revision_no": prior["revision_no"],
+                                    "voided_revision_no": voided["revision_no"]},
+                           operator=operator, receipt_id=receipt_id)
+    return [int(r["revision_no"]) for r in restored]
 
 
 # ------------------------------------------------------------------ create-quote-revision

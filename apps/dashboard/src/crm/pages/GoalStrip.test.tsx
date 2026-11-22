@@ -5,6 +5,7 @@ import type { AuthSessionState, HomeFilter } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { CallDay, OpportunityCardData, RevisionCard } from "../crmTypes";
 import type { Invoice } from "../pagos/invoiceApi";
+import { planNextSteps } from "../nextSteps";
 import { clearResourceCache } from "../useResource";
 import { GoalStrip, type StripFilter } from "./GoalStrip";
 
@@ -103,7 +104,8 @@ function renderStrip(
   const navigate = vi.fn();
   render(
     <AuthSessionContext.Provider value={{ session: s, signOut: async () => true }}>
-      <GoalStrip items={items} calls={calls} navigate={navigate} activeFilter={activeFilter} onFilterChange={onFilterChange} />
+      {/* The page's plan, as OverviewPage builds it once for the header, the list and the strip. */}
+      <GoalStrip plan={planNextSteps(items, NOW, null)} now={NOW} calls={calls} navigate={navigate} activeFilter={activeFilter} onFilterChange={onFilterChange} />
     </AuthSessionContext.Provider>,
   );
   return { navigate, onFilterChange };

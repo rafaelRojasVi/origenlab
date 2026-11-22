@@ -34,9 +34,11 @@ import {
   createRequestFromForward,
   createTask,
   dismissForwardedRequest,
+  keyAfterFailure,
   moveCase,
   newCaseCommandKey,
   pauseCase,
+  refusedByApi,
   resumeCase,
   useMayRunCaseCommands,
 } from "../caseCommands";
@@ -128,6 +130,7 @@ export function TodayBody({
   onForwardCount,
   refreshing = false,
   now,
+  plan: planProp,
   tendersClosing,
   aside,
   scope: scopeProp,
@@ -143,12 +146,15 @@ export function TodayBody({
   /** Called with the number of forwarded requests waiting, for the header's count. */
   onForwardCount?: (n: number) => void;
   refreshing?: boolean;
+  /** The page's clock (`useTodayClock`); without one, the clock is read again on each new `items`. */
   now?: Date;
+  /** The page's plan when it builds one for its header too (`OverviewPage`); else built here. */
+  plan?: StepPlan;
   /** `tenders_closing` from the pipeline: the tenders that close tomorrow (a tender is in no other list). */
   tendersClosing?: { id: string; title: string }[];
   /** The main column's last panel: the quote number and the rates. */
   aside?: ReactNode;
-  /** «Mi cola» / «Todo el equipo» when the page holds it (so its header counts follow); else local. */
+  /** «Mi cola» / «Todo el equipo» when the page holds it (so its header and strip follow); else local. */
   scope?: TodayScope;
   onScopeChange?: (scope: TodayScope) => void;
   /** Active kind filter from the GoalStrip or the queue's own chips. null = show all. */
@@ -156,7 +162,9 @@ export function TodayBody({
   /** Called when the user picks a filter chip (or clears it). */
   onQueueFilterChange?: (f: QueueKindFilter) => void;
 }) {
-  const at = useMemo(() => now ?? new Date(), [now]);
+  // Never the clock from when the page opened: a new answer reads it again (as the Pipeline does).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const at = useMemo(() => now ?? new Date(), [now, items]);
   const { session } = useAuthSession();
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
 
@@ -172,7 +180,10 @@ export function TodayBody({
 
   const fullQueue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
   const queue = useMemo(() => filterQueue(fullQueue, view), [fullQueue, view]);
-  const plan = useMemo(() => planNextSteps(items, at, me, 7, (s) => HOME_FILTER_KINDS[view].has(queueKindOf(s))), [items, at, me, view]);
+  const plan = useMemo(
+    () => planProp ?? planNextSteps(items, at, me, 7, (s) => HOME_FILTER_KINDS[view].has(queueKindOf(s))),
+    [planProp, items, at, me, view],
+  );
   const showDecidir = HOME_FILTER_KINDS[view].has("decidir");
 
   // Forwarded requests — fetched separately, appended to the end of the queue.
@@ -232,9 +243,9 @@ export function TodayBody({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-4">
 
-          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue; a page
-              that holds the scope (OverviewPage) shows it in its header instead ─── */}
-          {homeFilter !== "todo" && scopeProp === undefined ? (
+          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue. The page
+              may hold the scope (OverviewPage, so its header and strip follow); the switch is here. ─── */}
+          {homeFilter !== "todo" ? (
             <div data-testid="today-scope">
               <Segmented<TodayScope>
                 label="Qué cola ver"
@@ -779,7 +790,7 @@ function PauseRow({
       onClearItem();
       onChanged();
     } catch (err) {
-      keys.current.resume = newCaseCommandKey();
+      keys.current.resume = keyAfterFailure(err, keys.current.resume);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -794,7 +805,7 @@ function PauseRow({
       onClearItem();
       onChanged();
     } catch (err) {
-      keys.current.extend = newCaseCommandKey();
+      keys.current.extend = keyAfterFailure(err, keys.current.extend);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -904,7 +915,9 @@ function ReplyQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      skipKeys.current = [];
+      // A refusal frees the keys; a lost connection keeps them, so a retry replays the tasks
+      // already created instead of creating them twice.
+      if (refusedByApi(err)) skipKeys.current = [];
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -921,7 +934,7 @@ function ReplyQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      handledKey.current = newCaseCommandKey();
+      handledKey.current = keyAfterFailure(err, handledKey.current);
       toast(refusalOf(err)?.message ?? "No se pudo anotar el caso.", "bad");
     } finally { setBusy(null); }
   }
@@ -940,7 +953,7 @@ function ReplyQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current = [newCaseCommandKey()];
+      keys.current = keys.current.map((k) => keyAfterFailure(err, k));
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -1116,7 +1129,7 @@ function TaskQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current.done = newCaseCommandKey();
+      keys.current.done = keyAfterFailure(err, keys.current.done);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -1125,17 +1138,21 @@ function TaskQueueRow({
     setBusy("snooze");
     const next = new Date(Math.max(now.getTime(), Date.parse(task.due_at)) + WEEK_MS);
     leave();
+    let step: "create" | "cancel" = "create";
     try {
       await createTask(
         { opportunity_id: card.opportunity_id, title: task.title, due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
         keys.current.create,
       );
+      step = "cancel";
       await cancelTask({ task_id: task.task_id, task_version: task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       toast(`Pospuesta al ${fmtDate(next.toISOString())}.`);
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
+      // Only the step that failed gets a new key, and only when the API refused it: a created task
+      // is not created again, and a lost connection replays under the same key.
+      keys.current = { ...keys.current, [step]: keyAfterFailure(err, keys.current[step]) };
       toast(caseRefusalText(err), "bad");
       onChanged();
     } finally { setBusy(null); }
@@ -1348,7 +1365,7 @@ function FollowUpQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current.done = newCaseCommandKey();
+      keys.current.done = keyAfterFailure(err, keys.current.done);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -1359,11 +1376,13 @@ function FollowUpQueueRow({
     const next = new Date(base + WEEK_MS);
     setMenuOpen(false);
     leave();
+    let step: "create" | "cancel" = "create";
     try {
       await createTask(
         { opportunity_id: f.card.opportunity_id, title: f.task?.task.title ?? `Seguimiento de ${quote}`.trim(), due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
         keys.current.create,
       );
+      step = "cancel";
       if (f.task) {
         await cancelTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       }
@@ -1371,7 +1390,9 @@ function FollowUpQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
+      // Only the step that failed gets a new key, and only when the API refused it: a created task
+      // is not created again, and a lost connection replays under the same key.
+      keys.current = { ...keys.current, [step]: keyAfterFailure(err, keys.current[step]) };
       toast(caseRefusalText(err), "bad");
       onChanged();
     } finally { setBusy(null); }
