@@ -16,6 +16,12 @@ class InlineImage:
     mime_type: str
 
 
+# Gmail shows «Anular suscripción» for this header and mails this address with
+# this subject, which worker triage reads as «baja» (triage_rules), and the
+# capture reads our sent copy as a bulk send (capture.is_bulk_send).
+LIST_UNSUBSCRIBE = "<mailto:contacto@origenlab.cl?subject=baja>"
+
+
 class GmailSendError(RuntimeError):
     """A Gmail send that did not return a message.
 
@@ -91,6 +97,7 @@ def build_gmail_message_with_inline_images(
         if cc_list:
             msg["Cc"] = ", ".join(cc_list)
     msg["Subject"] = subject
+    msg["List-Unsubscribe"] = LIST_UNSUBSCRIBE
 
     msg.set_content(
         "Este correo contiene HTML. Si lo ve como texto plano, use un cliente que soporte HTML.",

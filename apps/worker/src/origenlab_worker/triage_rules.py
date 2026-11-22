@@ -254,6 +254,10 @@ def classify(item: TriageInput) -> RuleVerdict:
     if (phrase := _contains_any(subject, _BOUNCE_SUBJECTS)) is not None:
         return verdict("bounce", f"subject:{phrase}")
 
+    # Before the auto-reply checks: the mail Gmail sends for our List-Unsubscribe header
+    # («Anular suscripción», subject «baja») may carry Auto-Submitted, and is still a «baja».
+    if subject.strip(" .!") in _UNSUBSCRIBE_SUBJECTS:
+        return verdict("unsubscribe", "subject:baja_word")
     if (reason := _machine_header_reason(mail.machine_headers)) is not None:
         return verdict("auto_reply", reason)
     if (phrase := _contains_any(subject, _AUTO_REPLY_SUBJECTS)) is not None:
@@ -265,8 +269,6 @@ def classify(item: TriageInput) -> RuleVerdict:
         return verdict("calendar", "mime:text/calendar")
 
     own = reply_text(mail.body or "")
-    if subject.strip(" .!") in _UNSUBSCRIBE_SUBJECTS:
-        return verdict("unsubscribe", "subject:baja_word")
     if mail.body and classify_reply(mail.body).accepted:
         return verdict("unsubscribe", "body:baja_grammar")
     if _first_line_is_baja(own):
