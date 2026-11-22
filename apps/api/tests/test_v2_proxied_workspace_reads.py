@@ -105,7 +105,7 @@ def _client(monkeypatch: pytest.MonkeyPatch, role: str) -> tuple[TestClient, Any
     operators = _Operators(role)
     _STORES[id(config)] = _Sessions(operators)
     app.state.v2_identity = build_identity_port(
-        jwks_url=None, database_url=LOOPBACK, lookup=operators, google=config,
+        database_url=LOOPBACK, lookup=operators, google=config,
         sessions=_STORES[id(config)], dev_login_enabled=False, production=True,
     )
     app.state.crm_workspace = _Workspace()
