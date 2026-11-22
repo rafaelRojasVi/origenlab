@@ -188,6 +188,58 @@ paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
   list (`QUOTE_PREVIEW_POST_PATHS`) and guard (`quotePreviewRefusal`): allowed `Origin`, no
   cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 256 KiB (`QUOTE_COMMAND_MAX_BYTES`) — and no `Idempotency-Key`.
 
+## Public web form (`origenlab.cl/api/web/solicitud`)
+
+The website's «Solicitar cotización» form (`/contacto/` and the chat bubble) posts here
+(`src/web_form.ts`). Public, no session, no CORS; only `POST /api/web/solicitud` with
+`Origin: https://origenlab.cl` and a body of at most 16 KiB. In order:
+
+1. **Body.** JSON, urlencoded or multipart. A JSON body that is not a plain object (`null`, `"x"`,
+   `[]`, a number) is an empty submission, never an exception.
+2. **Honeypot.** A non-empty `_trap` field: 200 `{"status":"received"}`, nothing forwarded.
+3. **`render_at` required.** Both site forms set it from JavaScript when the page renders
+   (seconds since the epoch, or an ISO string). Missing or unusable: **400**
+   `render_at_required`. Less than 3 s before the post: 200, nothing forwarded. A form sent without
+   JavaScript has no `render_at`, so it is refused; the page tells such a visitor to write to
+   contacto@origenlab.cl instead.
+4. **Rate limit.** `WEB_FORM_RATE_LIMIT`, 5 per IP per 60 s (429).
+5. **Turnstile, when configured.** With the Worker secret `TURNSTILE_SECRET_KEY` set, every
+   submission needs the widget's `cf-turnstile-response` token, checked server-side with
+   `https://challenges.cloudflare.com/turnstile/v0/siteverify` (secret, token, visitor IP):
+   it must succeed for hostname `origenlab.cl` and action `solicitud`. No token: 403
+   `challenge_required`; a refused one: 403 `challenge_failed`; siteverify unreachable: 503
+   `challenge_unavailable` (fail closed). Without the secret there is no challenge.
+6. **Forward.** JSON to `/v2/web/quote-request` with the service key and no cookie; the token and
+   the honeypot are removed first. The API keeps its own caps (40 per 24 h globally, 3 per address).
+
+### Turning on Turnstile (owner)
+
+Do the steps in this order: the site must send tokens before the Worker requires them, or every
+request is refused.
+
+1. **Create the widget.** Cloudflare dashboard → *Turnstile* → *Add widget*: name «origenlab.cl
+   formulario», hostname `origenlab.cl`, mode *Managed*. Copy the **site key** (public) and the
+   **secret key** (never commit it).
+2. **Put the site key in the web build.** Set `TURNSTILE_SITE_KEY` in
+   `apps/web/src/data/turnstile.ts` to the site key (it is public by design; a
+   `PUBLIC_TURNSTILE_SITE_KEY` environment variable at build time overrides it), merge, and let
+   the web deploy publish the site. With a key the build adds the widget to both forms and adds
+   `https://challenges.cloudflare.com` to the CSP's `script-src` and `frame-src` in `.htaccess`.
+3. **Check the site.** On `https://origenlab.cl/contacto/` the widget shows under the form and a
+   test request still arrives at contacto@origenlab.cl (the Worker ignores the token until step 4).
+4. **Set the Worker secret.**
+
+   ```bash
+   cd apps/dashboard-proxy
+   npx wrangler secret put TURNSTILE_SECRET_KEY   # paste the secret key
+   ```
+
+   It applies at once (a secret change deploys a new Worker version). Send one more test request
+   from `/contacto/` and one from the chat bubble.
+
+To switch it off again: `npx wrangler secret delete TURNSTILE_SECRET_KEY` (the widget left on the
+site is then harmless).
+
 ## Public stats route (`origenlab.cl/api/stats/*`)
 
 First-party analytics for the public site (`src/stats.ts`), a separate route family from the dashboard
@@ -343,6 +395,7 @@ Cloudflare Access identity, so identity reaches the API only as the `__Host-` se
 | `CF_ACCESS_CLIENT_SECRET` | Worker secret | **yes** when upstream is behind Cloudflare Access (production default) |
 | `CF_ACCOUNT_ID` | Worker secret | **yes** to enable the dashboard web-stats card (see *Dashboard web-stats read*) |
 | `CF_STATS_API_TOKEN` | Worker secret | **yes** to enable the dashboard web-stats card (see *Dashboard web-stats read*) |
+| `TURNSTILE_SECRET_KEY` | Worker secret | no — set it to require Turnstile on the web form (see *Turning on Turnstile*) |
 
 Both CF Access secrets must be set together. The Worker never sends a lone `CF-Access-Client-Id` without the matching secret. `CF_ACCOUNT_ID` and `CF_STATS_API_TOKEN` are independent — when either is absent the stats card shows a configuration notice instead of data.
 

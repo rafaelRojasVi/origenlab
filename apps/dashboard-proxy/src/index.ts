@@ -438,13 +438,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
 import { handleStatsRequest, type StatsEnv } from "./stats";
 import { handleWebStatsRequest, type StatsReadEnv } from "./stats_read";
-import { handleWebFormRequest } from "./web_form";
+import { handleWebFormRequest, type WebFormEnv } from "./web_form";
 
 export default {
   fetch(request: Request, env: ProxyEnv): Promise<Response> {
     const url = new URL(request.url);
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/web/")) {
-      return handleWebFormRequest(request, env as any);
+      return handleWebFormRequest(request, env as WebFormEnv);
     }
     // Public first-party analytics: its own two-request allowlist, no dashboard session.
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/stats/")) {
