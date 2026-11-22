@@ -313,6 +313,31 @@ describe("CaseDrawer", () => {
     });
   });
 
+  describe("the header chip is the próximo contacto (audit 2026-11-22)", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a case paused until December shows no «Seguimiento · hoy» from an October reminder", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-11-22T15:00:00Z"));
+      stub();
+      const october = { task_id: "t-oct", title: "Seguimiento 01318-26", due_at: "2026-10-30T13:00:00Z", version: 1, owner: null };
+      const dialog = renderDrawer("sales", card({ paused_until: "2026-12-15", pause_reason: "Esperando fondos o proyecto", open_tasks: [october] }));
+      expect(within(dialog).queryByTestId("case-drawer-followup")).toBeNull();
+      expect(within(dialog).getByTestId("case-inline-state")).toHaveTextContent("Siguiente: Vuelve de pausa");
+    });
+
+    it("a case due by the rhythm on a later day shows that step and day", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // Rev 2 went out 28 Oct; our email on 20 Nov restarts the rhythm: day 3 is Monday 23.
+      vi.setSystemTime(new Date("2026-11-21T15:00:00Z"));
+      stub();
+      const dialog = renderDrawer("sales", card({ last_contact: { inbound: null, outbound: { at: "2026-11-20T15:00:00Z", subject: "Seguimiento", url: null } } }));
+      expect(within(dialog).getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 3 · lunes 23");
+    });
+  });
+
   describe("a paused case reads «En pausa», not its stage (owner 2026-11-22)", () => {
     afterEach(() => {
       vi.useRealTimers();
