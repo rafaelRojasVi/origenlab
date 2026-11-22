@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AuthSessionState } from "../../api/authClient";
 import { AuthSessionContext } from "../../context/AuthSessionContext";
 import type { OpportunityCardData, PipelineResponse, RevisionCard } from "../crmTypes";
@@ -875,6 +875,10 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
   });
 
   it("a case whose pause day is past: the panel says «Volvió de pausa» and «Próximo» is the follow-up due today", async () => {
+    // The rhythm counts days from the 15 Nov email: pin the clock (only Date; timers stay real for findBy).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    onTestFinished(() => vi.useRealTimers());
     stubApi((n) => {
       const data = fixture(n);
       data.items[0] = {
