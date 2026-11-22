@@ -43,8 +43,9 @@ function stubUpstream() {
   return fetchMock;
 }
 
+/** A signed-in browser's POST: every command needs the session cookie to get past the Worker. */
 function post(url: string, headers: Record<string, string>, body: string | ArrayBuffer = "{}"): Request {
-  return new Request(url, { method: "POST", headers, body });
+  return new Request(url, { method: "POST", headers: { Cookie: "__Host-origenlab_session=s1", ...headers }, body });
 }
 
 async function code(res: Response): Promise<string> {

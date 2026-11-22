@@ -18,14 +18,20 @@ const TEST_ENV: ProxyEnv = {
 
 const PRODUCTION_ORIGIN = "https://dashboard.origenlab.cl";
 
+const SESSION_COOKIE = "__Host-origenlab_session=s1";
+
+/** A request from the dashboard; signed in (session cookie) unless `session: false` or a Cookie is given. */
 function requestWithOrigin(
   url: string,
-  init: RequestInit & { origin?: string } = {},
+  init: RequestInit & { origin?: string; session?: boolean } = {},
 ): Request {
-  const { origin = PRODUCTION_ORIGIN, ...rest } = init;
+  const { origin = PRODUCTION_ORIGIN, session = true, ...rest } = init;
   const headers = new Headers(rest.headers);
   if (origin) {
     headers.set("Origin", origin);
+  }
+  if (session && !headers.has("Cookie")) {
+    headers.set("Cookie", SESSION_COOKIE);
   }
   return new Request(url, { ...rest, headers });
 }
@@ -1430,5 +1436,129 @@ describe("Publicar web (T7.3b): the editor's reads go through the GET path only"
     );
     expect(res.status).toBe(403);
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});
+
+describe("session gate: no session cookie, no upstream call", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const COMMAND_HEADERS = {
+    "Content-Type": "application/json",
+    "Idempotency-Key": "gate-key-00000001",
+    "Sec-Fetch-Site": "same-origin",
+  };
+  const COMMANDS = [
+    "/v2/commands/freeze-campaign-audience",
+    "/v2/commands/create-person",
+    "/v2/commands/apply-mail-rules",
+    "/v2/commands/advance-case-stage",
+    "/v2/commands/open-tender-case",
+    "/v2/commands/create-product",
+    "/v2/quotes/preview",
+    "/v2/web/publish-model-sheet",
+  ];
+
+  it.each(COMMANDS)("refuses POST %s with 401 before reading the body", async (path) => {
+    const fetchMock = stubUpstreamFetch();
+    const req = requestWithOrigin(`https://dashboard.origenlab.cl/api${path}`, {
+      method: "POST",
+      session: false,
+      headers: COMMAND_HEADERS,
+      body: "{}",
+    });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: { code: "session_required" } });
+    expect(req.bodyUsed).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a 60 MiB upload with every fakeable header but no session, without buffering it", async () => {
+    const fetchMock = stubUpstreamFetch();
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1_048_576));
+        if (pulled >= 60) controller.close();
+      },
+    });
+    const req = new Request("https://dashboard.origenlab.cl/api/v2/commands/attach-tender-annexes", {
+      method: "POST",
+      headers: {
+        Origin: PRODUCTION_ORIGIN,
+        "Sec-Fetch-Site": "same-origin",
+        "Idempotency-Key": "gate-key-00000002",
+        "Content-Type": "multipart/form-data; boundary=----gate",
+        "Content-Length": String(60 * 1_048_576),
+        Cookie: "CF_Authorization=edge",
+      },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(401);
+    expect(req.bodyUsed).toBe(false);
+    expect(pulled).toBeLessThanOrEqual(1); // at most the stream's first eager pull, never the body
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no cookie at all", null],
+    ["only unrelated cookies", "CF_Authorization=edge; other=1"],
+    ["the unprefixed loopback cookie", "origenlab_session=s1"],
+    ["the sign-in transaction cookie alone", "__Host-origenlab_signin=tx"],
+    ["an empty session cookie name match in a value", "x=__Host-origenlab_session=s1"],
+  ])("refuses a /v2 read with %s", async (_label, cookie) => {
+    const fetchMock = stubUpstreamFetch();
+    const headers: Record<string, string> = cookie ? { Cookie: cookie } : {};
+    const res = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/v2/contacts", { session: false, headers }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards a /v2 read and a command once the session cookie is present", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const read = await handleRequest(requestWithOrigin("https://dashboard.origenlab.cl/api/v2/contacts"), TEST_ENV);
+    expect(read.status).toBe(200);
+    const command = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/v2/commands/create-product", {
+        method: "POST",
+        headers: COMMAND_HEADERS,
+        body: "{}",
+      }),
+      TEST_ENV,
+    );
+    expect(command.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["GET", "/health"],
+    ["GET", "/auth/google/login"],
+    ["GET", "/auth/google/callback"],
+    ["GET", "/auth/session"],
+    ["GET", "/auth/profiles"],
+    ["POST", "/auth/profile/select"],
+    ["POST", "/auth/profile/clear"],
+    ["POST", "/auth/logout"],
+  ])("exempts %s %s: the sign-in flow and health work without a session", async (method, path) => {
+    const fetchMock = stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl/api${path}`, {
+        method,
+        session: false,
+        headers: method === "POST" ? { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" } : {},
+        body: method === "POST" ? "{}" : undefined,
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

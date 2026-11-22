@@ -301,6 +301,20 @@ The Worker is deliberately stricter than a generic pass-through proxy:
 
 This keeps Cloudflare Access redirects/cookies (from the API hostname's Access application) and upstream CORS policy from leaking through `/api/*`.
 
+### Session gate
+
+Every `POST` and every `/v2/*` read needs the `__Host-origenlab_session` cookie (as
+`filterAuthCookieHeader` keeps it; the unprefixed loopback name and the sign-in transaction cookie
+alone do not count). Without it the Worker answers **401** `{"error":{"code":"session_required"}}`
+before it reads the body and before anything reaches the API with the service key, so a
+request with forged `Origin`, `Sec-Fetch-Site` and `Idempotency-Key` headers can no longer push
+a 60 MiB upload upstream. Whether the session is valid is still the API's decision. Exempt by
+path, and nothing else: the sign-in flow `/auth/*` (`GET /auth/google/login`,
+`GET /auth/google/callback`, `GET /auth/session`, `GET /auth/profiles`,
+`POST /auth/profile/select`, `POST /auth/profile/clear`, `POST /auth/logout`) and `GET /health`.
+The public web form (`origenlab.cl/api/web/*`) and stats routes (`origenlab.cl/api/stats/*`) are
+dispatched before this gate; the dashboard web-stats card checks the session itself.
+
 ### Sign-in exceptions
 
 Google Workspace sign-in ([`apps/api/docs/PRODUCTION_AUTH.md`](../api/docs/PRODUCTION_AUTH.md#google-workspace-login-dashboard-v2-boundary))
@@ -352,6 +366,7 @@ Route in Cloudflare: `dashboard.origenlab.cl/api*` → this Worker (see `wrangle
 | **302 / 403** (HTML Access page) | Worker missing/wrong `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` for Access-protected upstream |
 | **502** JSON (`upstream_redirect_blocked`) | Upstream returned a redirect (often Cloudflare Access login); fix Worker Access service-token secrets |
 | **401** JSON (`unauthorized`) | Worker missing/wrong `ORIGENLAB_API_AUTH_TOKEN` (request passed Access but failed API origin auth) |
+| **401** JSON (`session_required`) | No dashboard session cookie on a POST or `/v2/*` read: sign in again (*Session gate*) |
 | **403** `path_not_allowed` | Route not on the allowlist (every V1 path is refused) |
 | **405** | Mutating HTTP method |
 

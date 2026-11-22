@@ -19,7 +19,7 @@ import {
   stripApiPrefix,
   webPublishBodyWithinLimit,
 } from "./allowlist";
-import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath } from "./auth";
+import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath, sessionCookieHeader } from "./auth";
 import { isAllowedOrigin } from "./origin";
 import { API_AUTH_HEADER, IDEMPOTENCY_KEY_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
 
@@ -295,6 +295,21 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     return jsonError(404, "not_found");
   } else if (!isAllowedUpstreamPath(upstreamPath)) {
     return jsonError(403, "path_not_allowed");
+  }
+
+  // Every POST and every `/v2/*` read needs a signed-in operator upstream. Without the session
+  // cookie there is no one to resolve, so the request stops here: before the body is buffered,
+  // and before anything reaches the API with the Worker's service key. Exempt by path:
+  // the sign-in flow (`/auth/*`: login, callback, session, profiles, profile select/clear,
+  // logout) and `/health`, which is a GET outside `/v2/*`. The public web form and stats
+  // routes never reach this function (see the default export).
+  const path = upstreamPath as string;
+  if (
+    (method === "POST" || path.startsWith("/v2/")) &&
+    !isAuthPath(path) &&
+    sessionCookieHeader(request.headers.get("Cookie")) === null
+  ) {
+    return jsonError(401, "session_required");
   }
 
   const upstreamBase = env.ORIGENLAB_API_UPSTREAM?.trim();

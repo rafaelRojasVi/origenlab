@@ -72,18 +72,18 @@ describe("CRM workspace reads", () => {
     expect(upstream.headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
   });
 
-  it.each(READS)("forwards an unauthenticated GET %s with no cookie at all", async (path) => {
-    // The Worker does not decide who is signed in; the API answers 401 (pinned in apps/api
-    // `test_v2_proxied_workspace_reads.py`). What the Worker must not do is invent a session.
-    const fetchMock = stubUpstream(401, '{"detail":"sign in"}');
+  it.each(READS)("refuses GET %s with no session cookie (401) and never forwards it", async (path) => {
+    // Who is signed in is still the API's decision (pinned in apps/api
+    // `test_v2_proxied_workspace_reads.py`); a request with no session cookie at all cannot be
+    // anyone, so it stops here and never reaches the API with the Worker's service key.
+    const fetchMock = stubUpstream(200);
     const response = await handleRequest(
-      new Request(`${DASHBOARD}/api${path}`, { headers: { Cookie: "CF_Authorization=edge; other=1" } }),
+      new Request(`${DASHBOARD}/api${path}`, { headers: { Cookie: "CF_Authorization=edge; other=1; origenlab_session=x" } }),
       TEST_ENV,
     );
     expect(response.status).toBe(401);
-    const upstream = fetchMock.mock.calls[0][0] as Request;
-    expect(upstream.headers.get("Cookie")).toBeNull();
-    expect(upstream.headers.get(OPERATOR_EMAIL_HEADER)).toBeNull();
+    expect(await response.json()).toEqual({ error: { code: "session_required" } });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("forwards no operator header even when a Cloudflare Access header arrives", async () => {
@@ -91,6 +91,7 @@ describe("CRM workspace reads", () => {
     await handleRequest(
       new Request(`${DASHBOARD}/api/v2/workspace/overview`, {
         headers: {
+          Cookie: `${AUTH_SESSION_COOKIE}=signed.value`,
           "Cf-Access-Authenticated-User-Email": " Person@OrigenLab.cl ",
           [OPERATOR_EMAIL_HEADER]: "spoofed@origenlab.cl",
         },
@@ -103,7 +104,10 @@ describe("CRM workspace reads", () => {
 
   it("keeps the work-queue query string", async () => {
     const fetchMock = stubUpstream(200);
-    await handleRequest(new Request(`${DASHBOARD}/api/v2/cockpit/work-queue?limit=200`), TEST_ENV);
+    await handleRequest(
+      new Request(`${DASHBOARD}/api/v2/cockpit/work-queue?limit=200`, { headers: { Cookie: `${AUTH_SESSION_COOKIE}=v` } }),
+      TEST_ENV,
+    );
     expect(new URL((fetchMock.mock.calls[0][0] as Request).url).search).toBe("?limit=200");
   });
 
@@ -117,9 +121,12 @@ describe("CRM workspace reads", () => {
     },
   );
 
-  it("passes the API's 401 back when there is no session, with no cookie set", async () => {
+  it("passes the API's 401 back for an expired session, with no cookie set", async () => {
     stubUpstream(401, '{"detail":"sign in"}', [["Set-Cookie", `${AUTH_SESSION_COOKIE}=forged; Path=/`]]);
-    const response = await handleRequest(new Request(`${DASHBOARD}/api/v2/workspace/pipeline`), TEST_ENV);
+    const response = await handleRequest(
+      new Request(`${DASHBOARD}/api/v2/workspace/pipeline`, { headers: { Cookie: `${AUTH_SESSION_COOKIE}=expired` } }),
+      TEST_ENV,
+    );
     expect(response.status).toBe(401);
     expect(response.headers.getSetCookie()).toEqual([]);
   });
