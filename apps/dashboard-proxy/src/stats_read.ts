@@ -27,7 +27,7 @@
  * reported separately in `visitas_interno` so they don't inflate the marketing funnel.
  */
 
-import { AUTH_SESSION_PATH } from "./auth";
+import { AUTH_SESSION_PATH, sessionCookieHeader } from "./auth";
 import {
   API_AUTH_HEADER,
   CF_ACCESS_CLIENT_ID_HEADER,
@@ -200,17 +200,12 @@ async function validateSession(request: Request, env: StatsReadEnv): Promise<num
   const upstream = env.ORIGENLAB_API_UPSTREAM?.trim().replace(/\/$/, "");
   if (!upstream) return 502;
 
-  // Forward only the two sign-in cookies (mirrors filterAuthCookieHeader in auth.ts).
-  const cookieHeader = request.headers.get("Cookie") ?? "";
-  const SESSION_NAMES = ["__Host-origenlab_session", "origenlab_session"];
-  const kept = cookieHeader
-    .split(";")
-    .map((p) => p.trim())
-    .filter((p) => SESSION_NAMES.some((n) => p.startsWith(`${n}=`)));
-  if (kept.length === 0) return 401;
+  // Only the sign-in cookies travel, and only when the session cookie is among them (auth.ts).
+  const cookie = sessionCookieHeader(request.headers.get("Cookie"));
+  if (cookie === null) return 401;
 
   const headers = new Headers({
-    Cookie: kept.join("; "),
+    Cookie: cookie,
     [API_AUTH_HEADER]: env.ORIGENLAB_API_AUTH_TOKEN ?? "",
   });
   const cfId = env.CF_ACCESS_CLIENT_ID?.trim();

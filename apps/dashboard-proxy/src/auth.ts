@@ -80,6 +80,20 @@ export function filterAuthCookieHeader(cookieHeader: string | null): string | nu
   return kept.length > 0 ? kept.join("; ") : null;
 }
 
+/**
+ * The browser's sign-in cookies (as `filterAuthCookieHeader` keeps them) when they include the
+ * session cookie; null when there is no session cookie at all. The sign-in transaction cookie
+ * alone is not a session.
+ */
+export function sessionCookieHeader(cookieHeader: string | null): string | null {
+  const kept = filterAuthCookieHeader(cookieHeader);
+  if (kept === null) {
+    return null;
+  }
+  const hasSession = kept.split("; ").some((pair) => pair.slice(0, pair.indexOf("=")).trim() === AUTH_SESSION_COOKIE);
+  return hasSession ? kept : null;
+}
+
 /** `Set-Cookie` values from the upstream that name one of the two sign-in cookies. */
 export function filterAuthSetCookies(upstream: Headers): string[] {
   return upstream.getSetCookie().filter((value) => {

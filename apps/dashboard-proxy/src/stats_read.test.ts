@@ -136,6 +136,39 @@ describe("session validation", () => {
     expect(cookie).not.toContain("tracking");
   });
 
+  it("treats the unprefixed origenlab_session as no session: 401, nothing forwarded", async () => {
+    const fetchMock = stubFetchSequence([sessionOk(), aeResponse(), aeResponse()]);
+    const resp = await handleWebStatsRequest(
+      new Request(WEB_STATS_URL, { method: "GET", headers: { Cookie: "origenlab_session=loopback.only" } }),
+      BASE_ENV,
+    );
+    expect(resp.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("never forwards the unprefixed origenlab_session next to the real one", async () => {
+    const fetchMock = stubFetchSequence([sessionOk(), aeResponse(), aeResponse()]);
+    await handleWebStatsRequest(
+      new Request(WEB_STATS_URL, {
+        method: "GET",
+        headers: { Cookie: `origenlab_session=loopback.only; ${AUTH_SESSION_COOKIE}=signed.value` },
+      }),
+      BASE_ENV,
+    );
+    const [, sessionInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new Headers(sessionInit.headers as HeadersInit).get("Cookie")).toBe(`${AUTH_SESSION_COOKIE}=signed.value`);
+  });
+
+  it("treats the sign-in transaction cookie alone as no session", async () => {
+    const fetchMock = stubFetchSequence([sessionOk(), aeResponse(), aeResponse()]);
+    const resp = await handleWebStatsRequest(
+      new Request(WEB_STATS_URL, { method: "GET", headers: { Cookie: "__Host-origenlab_signin=tx" } }),
+      BASE_ENV,
+    );
+    expect(resp.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("sends the API auth token to /auth/session", async () => {
     const fetchMock = stubFetchSequence([sessionOk(), aeResponse(), aeResponse()]);
     await handleWebStatsRequest(withSession(), BASE_ENV);
