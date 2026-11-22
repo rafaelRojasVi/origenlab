@@ -126,9 +126,9 @@ function amountBand(r: SegRow): string {
   return r.amountClp <= 10_000_000 ? "1a10" : "gt10";
 }
 
-/** «Toca hoy»: the next contact is due today or earlier (Santiago days). */
+/** «Toca hoy»: the row's next contact (`SegRow.next`) is due today or earlier (Santiago days). */
 export function dueByToday(r: SegRow, now: Date): boolean {
-  const at = nextContactAt(r.card, now);
+  const at = r.next?.at ?? null;
   return !!at && dateSantiago(new Date(at)) <= dateSantiago(now);
 }
 
@@ -284,7 +284,7 @@ export function sortRows(rows: SegRow[], order: SegOrder): SegRow[] {
     case "dias":
       return out.sort((a, b) => b.daysSinceSent - a.daysSinceSent);
     case "proximo":
-      return out.sort((a, b) => byTime(nextContactAt(a.card)) - byTime(nextContactAt(b.card)));
+      return out.sort((a, b) => byTime(a.next?.at ?? null) - byTime(b.next?.at ?? null));
   }
 }
 
@@ -301,9 +301,9 @@ const AGENDA_LABEL: Record<AgendaKey, string> = {
 };
 const AGENDA_ORDER: AgendaKey[] = ["atrasados", "hoy", "manana", "semana", "despues", "sin"];
 
-/** Which Agenda group a row falls in, by the Santiago day of its next contact. */
+/** Which Agenda group a row falls in, by the Santiago day of its next contact (`SegRow.next`). */
 export function agendaKey(r: SegRow, now: Date): AgendaKey {
-  const at = nextContactAt(r.card, now);
+  const at = r.next?.at ?? null;
   if (!at) return "sin";
   const day = dateSantiago(new Date(at));
   const today = dateSantiago(now);
@@ -384,7 +384,7 @@ export function keepOrder(rows: SegRow[], prev: readonly string[]): SegRow[] {
  */
 export function dueForCall(r: SegRow, now: Date): boolean {
   if (r.callsToday > 0) return false;
-  return dueByToday(r, now) || (nextContactAt(r.card, now) === null && r.late);
+  return dueByToday(r, now) || (!r.next && r.late);
 }
 
 /* ── bulk assign ──────────────────────────────────────────────────────── */

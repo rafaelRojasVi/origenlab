@@ -89,9 +89,11 @@ describe("seguimientoRows", () => {
   });
 
   it("sorts late first then score", () => {
+    // Late: the reminder's day went by (`SegRow.next`).
+    const overdue = [{ task_id: "t-late", title: "Seguimiento de CN09876", due_at: "2026-11-16T13:00:00Z", version: 1, owner: null }];
     const fresh = card({ title: "fresh", last_contact: { outbound: { at: "2026-11-17T15:00:00Z", subject: null, url: null }, inbound: null } });
-    const lateLow = card({ title: "late low", clp: "500000" });
-    const lateHigh = card({ title: "late high", clp: "50000000" });
+    const lateLow = card({ title: "late low", clp: "500000", open_tasks: overdue });
+    const lateHigh = card({ title: "late high", clp: "50000000", open_tasks: overdue });
     const rows = seguimientoRows([fresh, lateLow, lateHigh], profiles, NOW);
     expect(rows.map((r) => r.card.title)).toEqual(["late high", "late low", "fresh"]);
     expect(rows[0].late).toBe(true);
@@ -109,9 +111,7 @@ describe("seguimientoRows", () => {
     const byEdge = [a, b].find((r) => r.card === edge)!;
     const byYoung = [a, b].find((r) => r.card === young)!;
     expect(byEdge.daysSinceTouch).toBe(3);
-    expect(byEdge.late).toBe(true);
     expect(byYoung.daysSinceTouch).toBe(2);
-    expect(byYoung.late).toBe(false);
   });
 
   it("uses the newest touch among email, call and sent date", () => {
@@ -204,7 +204,8 @@ describe("seguimientoKpis", () => {
       [
         card({ call_counts: { total: 3, today: 3 }, last_call_any: { at: "2026-11-18T14:00:00Z", outcome: "no_contesto", author_name: "Persona Uno" } }),
         card({ last_contact: { outbound: { at: "2026-11-18T14:00:00Z", subject: null, url: null }, inbound: null } }),
-        card(),
+        // Late: its reminder was due on Monday.
+        card({ open_tasks: [{ task_id: "t-late", title: "Seguimiento de CN09876", due_at: "2026-11-16T13:00:00Z", version: 1, owner: null }] }),
       ],
       profiles,
       NOW,
@@ -235,5 +236,33 @@ describe("Hoy's rhythm and Seguimiento count the same calendar days (audit 2026-
     expect(f?.days).toBe(3);
     expect(f?.touchDays).toBe(3);
     expect(seguimientoRows([c], profiles, now)[0].daysSinceTouch).toBe(3);
+  });
+});
+
+describe("«Atrasado» is the próximo contacto's clock (audit 2026-11-22)", () => {
+  const now = new Date(2026, 10, 18, 12);
+  const at = (d: number, h = 12) => new Date(2026, 10, d, h).toISOString();
+  const reminder = (due: string) => ({ task_id: `t-${due}`, title: "Seguimiento de CN09876", due_at: due, version: 1, owner: null, created_at: at(10) });
+
+  it("untouched for 8 days but set for tomorrow: not late, and the row carries that próximo contacto", () => {
+    const c = card({ revs: [rev({ sent_at: at(10) })], open_tasks: [reminder(at(19, 10))] });
+    const row = seguimientoRows([c], profiles, now)[0];
+    expect(row.daysSinceTouch).toBe(8);
+    expect(row.next?.source).toBe("followup");
+    expect(row.late).toBe(false);
+  });
+
+  it("touched two days ago but its reminder was due yesterday: late", () => {
+    const c = card({ revs: [rev({ sent_at: at(16) })], open_tasks: [reminder(at(17, 10))] });
+    const row = seguimientoRows([c], profiles, now)[0];
+    expect(row.daysSinceTouch).toBe(2);
+    expect(row.late).toBe(true);
+  });
+
+  it("a case paused until December is not late, whatever the days without a touch", () => {
+    const c = card({ revs: [rev({ sent_at: at(1) })], paused_until: "2026-12-15", pause_reason: "Esperando fondos o proyecto" });
+    const row = seguimientoRows([c], profiles, now)[0];
+    expect(row.next?.source).toBe("pause");
+    expect(row.late).toBe(false);
   });
 });
