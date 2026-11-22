@@ -8,7 +8,8 @@ The rule is enforced here, on the answer itself, rather than in each query:
   email address and the local part is masked (`***@ejemplo.invalid`); a phone channel is masked
   by its `kind` or by a `phone` field name. A new column, a `Name <addr>` display string, a
   comma-separated recipient list and an address quoted inside a note are all caught without
-  anyone remembering to list them.
+  anyone remembering to list them. A Chilean phone number written in free text («llamar al
+  +56 9 8765 4321») is masked too, by a deliberately narrow pattern (:data:`_CL_PHONE_RE`).
 * **The route class does it, not the endpoint.** Every `/v2` GET router is built with
   :class:`ContactRedactingRoute`, which reads the operator the identity dependency recorded on
   `request.state` and rewrites the JSON body when that operator may not see addresses. A route
@@ -67,6 +68,16 @@ _EMAIL_RE = re.compile(
 )
 
 
+#: A Chilean phone number in free text, narrowly: an optional +56 / 56 country code, then a
+#: 9-digit mobile (9 XXXX XXXX) or a Santiago landline (2 XXXX XXXX), with optional single
+#: spaces, dots or hyphens between the groups. Not inside a longer run of digits, letters or
+#: dotted groups, so a RUT (12.345.678-5), an amount (1.190.000), a folio, a date or an id is
+#: left alone.
+_CL_PHONE_RE = re.compile(
+    r"(?<![\w.+-])(?:\+?56[ .-]?)?[29][ .-]?\d{4}[ .-]?\d{4}(?![\w-]|\.\d)"
+)
+
+
 def sees_contact_addresses(role: str | None) -> bool:
     return role in ROLES_THAT_SEE_CONTACT_ADDRESSES
 
@@ -75,10 +86,14 @@ def _mask_emails(text: str) -> str:
     return _EMAIL_RE.sub(lambda m: f"{EMAIL_MASK}@{m.group(0).split('@', 1)[1]}", text)
 
 
+def _mask_phones(text: str) -> str:
+    return _CL_PHONE_RE.sub(PHONE_MASK, text)
+
+
 def redact_contact_addresses(value: Any) -> Any:
     """A copy of `value` with every contact address masked. Pure; the input is not mutated."""
     if isinstance(value, str):
-        return _mask_emails(value)
+        return _mask_phones(_mask_emails(value))
     if isinstance(value, list):
         return [redact_contact_addresses(item) for item in value]
     if isinstance(value, dict):

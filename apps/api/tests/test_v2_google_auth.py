@@ -204,7 +204,7 @@ class _Harness:
         # The identity port captured the real repository at startup; rebuild it on the stubs.
         config = self.app.state.v2_google_auth
         self.app.state.v2_identity = build_identity_port(
-            jwks_url=None, database_url=LOOPBACK, lookup=self.repo, google=config,
+            database_url=LOOPBACK, lookup=self.repo, google=config,
             sessions=self.app.state.v2_auth_sessions,
             dev_login_enabled=env.get("dev", False), production=env.get("production", False),
         )
@@ -843,11 +843,11 @@ def test_production_refuses_a_missing_session_secret(monkeypatch, value) -> None
         create_app()
 
 
-def test_production_refuses_a_missing_session_secret_under_jwks_too(monkeypatch) -> None:
-    # JWKS identity needs no cookie signer, but the address-ref key does: without the secret
-    # each worker would mint refs with its own random key and viewer joins would break.
+def test_production_refuses_a_missing_session_secret_without_google_too(monkeypatch) -> None:
+    # Without Google sign-in no cookie signer is built, but the address-ref key still needs the
+    # secret: without it each worker would mint refs with its own random key and viewer joins
+    # would break.
     _env(monkeypatch, base=PROD_BASE, production=True, google=False)
-    monkeypatch.setenv("ORIGENLAB_V2_JWKS_URL", "https://auth.example.test/.well-known/jwks.json")
     monkeypatch.delenv("ORIGENLAB_AUTH_SESSION_SECRET")
     with pytest.raises(ValueError, match="ORIGENLAB_AUTH_SESSION_SECRET"):
         create_app()
@@ -873,7 +873,7 @@ def test_the_dev_adapter_itself_refuses_production() -> None:
     with pytest.raises(IdentityMisconfigured):
         LocalDevIdentity(LOOPBACK, _Repo(), production=True)
     with pytest.raises(IdentityMisconfigured):
-        build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Repo(),
+        build_identity_port(database_url=LOOPBACK, lookup=_Repo(),
                             dev_login_enabled=True, production=True)
 
 
@@ -1063,7 +1063,7 @@ def test_cookie_kinds_are_not_interchangeable() -> None:
 
 def test_the_session_adapter_is_used_when_google_is_on() -> None:
     config = _config()
-    port = build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Repo(), google=config)
+    port = build_identity_port(database_url=LOOPBACK, lookup=_Repo(), google=config)
     assert isinstance(port, GoogleSessionIdentity)
 
 

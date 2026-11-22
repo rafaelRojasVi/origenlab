@@ -887,10 +887,6 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             cur.execute("update outbound.campaign_recipient set person_id = %s where id = any(%s::uuid[])",
                         (winner_id, recipients))
         notes = ids("select id::text from crm.note where subject_kind = 'person' and subject_id = %s for update")
-        if notes:
-            cur.execute("update crm.note set subject_id = %s where id = any(%s::uuid[]) returning id::text, version",
-                        (winner_id, notes))
-            versions.update({f"note:{i}": int(v) for i, v in cur.fetchall()})
 
         ctx = _Ctx(self, cur, operator, receipt_id, None)
         cur.execute(
@@ -920,6 +916,11 @@ class PeopleRulesRepository(V2CaseCommandRepository):
             (operator.operator_id, f"fusionada en {winner_id}", winner_id, loser_id),
         )
         versions[f"person:{loser_id}"] = int(cur.fetchone()[0])
+        # Notes move once the loser names its winner: crm.note_guard repoints a note only along a merge.
+        if notes:
+            cur.execute("update crm.note set subject_id = %s where id = any(%s::uuid[]) returning id::text, version",
+                        (winner_id, notes))
+            versions.update({f"note:{i}": int(v) for i, v in cur.fetchall()})
         cur.execute("update crm.person set version = version + 1, updated_at = now() where id = %s", (winner_id,))
         ctx.event("person", loser_id, "person.merged", {"winner_person_id": winner_id})
         ctx.event("person", winner_id, "person.updated", {"merged_from_person_id": loser_id})
@@ -1069,6 +1070,13 @@ class PeopleRulesRepository(V2CaseCommandRepository):
         cur = ctx.cur
         winner_id, loser_id = merge["winner_person_id"], merge["loser_person_id"]
         moved, prior = merge.get("moved") or {}, merge.get("loser_prior") or {}
+        # Notes go back while the merge still stands: crm.note_guard repoints a note only along it.
+        note_ids = moved.get("note_ids") or []
+        if note_ids:
+            cur.execute("update crm.note set subject_id = %s where id = any(%s::uuid[]) and subject_id = %s",
+                        (loser_id, note_ids, winner_id))
+            if cur.rowcount != len(note_ids):
+                raise CommandRefused(409, "changed_since", CHANGED_SINCE)
         cur.execute(
             """
             update crm.person
@@ -1091,8 +1099,6 @@ class PeopleRulesRepository(V2CaseCommandRepository):
              "where id = any(%s::uuid[]) and person_id = %s"),
             (moved.get("campaign_recipient_ids") or [],
              "update outbound.campaign_recipient set person_id = %s where id = any(%s::uuid[]) and person_id = %s"),
-            (moved.get("note_ids") or [],
-             "update crm.note set subject_id = %s where id = any(%s::uuid[]) and subject_id = %s"),
         ):
             if ids:
                 cur.execute(sql, (loser_id, ids, winner_id))

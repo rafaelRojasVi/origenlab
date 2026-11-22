@@ -157,3 +157,22 @@ def test_with_cap_lock_takes_advisory_xact_lock():
 def test_month_window_rejects_naive_datetime():
     with pytest.raises(ValueError):
         month_window(datetime(2026, 10, 19))
+
+
+def test_the_feature_list_is_the_newest_migration_check() -> None:
+    # The worker records spend under triage, case_pick, subject_memory and quote_read; the API's
+    # list and the database's check must name the same features, or a recorded call fails.
+    import pathlib
+    import re
+
+    from origenlab_api.v2.model_spend import MODEL_USAGE_FEATURES
+
+    migrations = pathlib.Path(__file__).resolve().parents[3] / "supabase" / "migrations"
+    newest = None
+    for path in sorted(migrations.glob("*.sql")):
+        found = re.findall(r"model_usage_feature_check\s+check \(feature in \(([^)]*)\)\)", path.read_text())
+        if found:
+            newest = found[-1]
+    assert newest is not None
+    assert sorted(re.findall(r"'([a-z_]+)'", newest)) == sorted(MODEL_USAGE_FEATURES)
+    assert {"triage", "case_pick", "subject_memory", "quote_read"} <= set(MODEL_USAGE_FEATURES)
