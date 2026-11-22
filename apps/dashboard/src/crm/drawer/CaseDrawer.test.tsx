@@ -318,7 +318,7 @@ describe("CaseDrawer", () => {
       vi.useRealTimers();
     });
 
-    it("a reminder our later email already met is not the next step; the case's next action is", () => {
+    it("a reminder our later email already met is not the next step; the rhythm's next day is", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-11-08T15:00:00Z"));
       stub();
@@ -329,7 +329,8 @@ describe("CaseDrawer", () => {
       );
       // The stepper (case-inline-state) shows the next step.
       const stepper = within(dialog).getByTestId("case-inline-state");
-      expect(stepper).toHaveTextContent("Siguiente: Hacer seguimiento de 01318-26");
+      // Our email of 7 Nov met it; the rhythm's first follow-up is on day 3, Tuesday 10 (as in Hoy).
+      expect(stepper).toHaveTextContent(/Siguiente: Seguimiento 1 de 3 · mar,? 10/);
       expect(stepper).not.toHaveTextContent("Seguimiento 01318-26 ·");
     });
 

@@ -460,12 +460,21 @@ describe("SeguimientoPage", () => {
   });
 
   it("keeps the view in the hash and in this browser", async () => {
+    // The rhythm counts days from the quotes: pin the clock (only Date; timers stay real for findBy).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     window.location.hash = "#/ventas/seguimiento?vista=agenda&caso=" + B;
     stubApi();
     renderPage();
     const agenda = await screen.findByTestId("seg-agenda");
-    // A and B have no reminder; C neither: all «Sin fecha».
-    expect(within(agenda).getByRole("heading", { name: /Sin fecha/ })).toHaveTextContent("3");
+    // No reminder on any: the follow-up rhythm dates them, as Hoy does — A and B (quote 8 days
+    // without an answer) today, C (quote yesterday) on its day 3, Friday. None is «Sin fecha».
+    expect(within(agenda).getByRole("heading", { name: /^Hoy/ })).toHaveTextContent("2");
+    expect(within(agenda).getByRole("heading", { name: /Esta semana/ })).toHaveTextContent("1");
+    expect(within(agenda).queryByRole("heading", { name: /Sin fecha/ })).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("group", { name: "Vista" })).getByRole("button", { name: "Por encargado" }));
     await screen.findByTestId("seg-board");
     expect(window.location.hash).toContain("vista=encargado");

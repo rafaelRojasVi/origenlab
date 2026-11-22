@@ -7,7 +7,10 @@
  *    is done, `pendingFollowUpTasks`);
  * 2. else the earliest other open task;
  * 3. else, while the case is paused (ahead or come back), the day the pause ends;
- * 4. else none.
+ * 4. else the follow-up rhythm's day (`rhythmNext`): today when Hoy lists it as «Seguimiento N de 3»,
+ *    else the next step's day — the same day Hoy's agenda and the Pipeline show (QA 2026-11-22:
+ *    Seguimiento read «Sin fecha» for 45 cases Hoy had dated);
+ * 5. else none.
  *
  * A reminder always wins over the pause: a case paused until Monday that someone called and set
  * for Friday is due Friday, not «3 d atrasado · Vuelve de pausa». But while the pause is still
@@ -20,7 +23,7 @@
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
 import { isMaskedPhone } from "./redaction";
 import { isPaused, pauseDayIso, pausedUntil } from "./stage";
-import { followUpStep, followUpsDue, isFollowUpDueToday, isFollowUpTask, pendingFollowUpTasks } from "./today";
+import { isFollowUpTask, pendingFollowUpTasks, rhythmNext } from "./today";
 
 export type NextContactSource = "followup" | "task" | "pause" | "rhythm";
 
@@ -50,17 +53,19 @@ export function nextContact(card: OpportunityCardData, now: Date = new Date()): 
     const at = pauseDayIso(card.paused_until);
     if (pausedUntil(card, now) !== null) return { at, source: "pause", task: null, label: `Vuelve de pausa · ${reason}` };
     // The pause came back: the rhythm's follow-up due today wins, as in Hoy.
-    const due = followUpsDue([card], now).find(isFollowUpDueToday);
-    if (due) {
-      const step = followUpStep(due);
-      // Today, at the morning hour a reminder defaults to: not a made-up time that moves with each read.
-      const morning = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0);
-      return { at: morning.toISOString(), source: "rhythm", task: null, label: step < 4 ? `Seguimiento ${step} de 3` : "Último correo" };
-    }
+    const due = rhythmNext(card, now);
+    if (due?.dueToday) return rhythmContact(due);
     const today = card.paused_until.slice(0, 10) === localIsoDay(now);
     return { at, source: "pause", task: null, label: `${today ? "Vuelve" : "Volvió"} de pausa · ${reason}` };
   }
-  return null;
+  const rhythm = rhythmNext(card, now);
+  return rhythm ? rhythmContact(rhythm) : null;
+}
+
+/** The rhythm's day at the morning hour a reminder defaults to: not a made-up time that moves with each read. */
+function rhythmContact(r: { day: Date; step: number }): NextContact {
+  const morning = new Date(r.day.getFullYear(), r.day.getMonth(), r.day.getDate(), 9, 0);
+  return { at: morning.toISOString(), source: "rhythm", task: null, label: r.step < 4 ? `Seguimiento ${r.step} de 3` : "Último correo" };
 }
 
 /** Keeps every task, except an overdue one while the case's pause is still ahead. */

@@ -41,6 +41,8 @@ interface Spec {
   answered?: boolean;
   due?: string | null;
   lastCallToday?: boolean;
+  /** The client wrote after the quote: no follow-up rhythm, so no date unless a task sets one. */
+  clientWrote?: boolean;
 }
 
 function card(s: Spec): OpportunityCardData {
@@ -58,6 +60,7 @@ function card(s: Spec): OpportunityCardData {
     call_counts: { total: s.total ?? 0, today: s.today ?? 0 },
     last_call_any: s.lastCallToday ? { at: "2026-11-18T14:00:00Z", outcome: "no_contesto", author_name: null } : null,
     last_call: s.answered ? { at: "2026-11-01T14:00:00Z", outcome: "contesto" } : null,
+    last_contact: s.clientWrote ? { outbound: null, inbound: { at: "2026-11-12T15:00:00Z", subject: "Consulta", url: null } } : null,
   } as unknown as OpportunityCardData;
 }
 
@@ -83,7 +86,9 @@ describe("filters", () => {
     expect(one("canal", "correo")).toEqual(["2", "3"]); // no phone, no channel → correo
     expect(one("canal", "whatsapp")).toEqual(["4"]);
     expect(one("estado", "atrasado")).toEqual(["1", "3"]);
-    expect(one("estado", "toca_hoy")).toEqual(["3"]);
+    // «1» and «2» have had the quote 8 days without an answer: the rhythm has them due today, as
+    // Hoy lists them; «4» (quote yesterday) is due on day 3; «3» by its reminder.
+    expect(one("estado", "toca_hoy")).toEqual(["1", "2", "3"]);
     expect(one("estado", "nunca")).toEqual(["1", "4"]);
     expect(one("estado", "llamado_hoy")).toEqual(["2"]);
     expect(one("estado", "contesto")).toEqual(["2"]);
@@ -147,7 +152,7 @@ describe("agenda", () => {
       { id: "tomorrow", due: "2026-11-19T15:00:00Z" },
       { id: "week", due: "2026-11-22T15:00:00Z" }, // Sunday
       { id: "later", due: "2026-11-23T15:00:00Z" }, // next Monday
-      { id: "none" },
+      { id: "none", clientWrote: true },
     ]);
     const groups = agendaGroups(rows, NOW);
     expect(groups.map((g) => [g.key, g.label, g.rows.map((r) => r.card.opportunity_id)])).toEqual([
@@ -158,7 +163,7 @@ describe("agenda", () => {
       ["despues", "Más adelante", ["later"]],
       ["sin", "Sin fecha", ["none"]],
     ]);
-    expect(agendaGroups(rowsOf([{ id: "x" }]), NOW).map((g) => g.key)).toEqual(["sin"]);
+    expect(agendaGroups(rowsOf([{ id: "x", clientWrote: true }]), NOW).map((g) => g.key)).toEqual(["sin"]);
   });
 
   it("uses Santiago midnight, not UTC", () => {
@@ -173,7 +178,7 @@ describe("agenda", () => {
   });
 
   it("ignores a suggested next step's date", () => {
-    const [row] = rowsOf([{ id: "s" }]);
+    const [row] = rowsOf([{ id: "s", clientWrote: true }]);
     row.card.next_action = { text: "x", source: "suggested", due_at: "2026-11-18T12:00:00Z" };
     expect(agendaKey(row, NOW)).toBe("sin");
   });

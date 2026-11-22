@@ -50,6 +50,11 @@ const TABS: { key: DrawerTab; label: string }[] = [
 type FormRequest = { mode: Exclude<Mode, null>; target?: MoveTarget } | null;
 
 /** «mié 11 nov»: a day near enough to need no year. */
+/** `iso` falls on today, in the browser's zone. */
+function onToday(iso: string): boolean {
+  return new Date(iso).toDateString() === new Date().toDateString();
+}
+
 function shortDay(value: string | Date): string {
   const d = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(d.getTime())) return "—";
@@ -186,7 +191,7 @@ function CaseDrawerBody({
   // The same reminder the chip reads: a pending one only (one our later email already met is done).
   // The one próximo contacto every screen shows (`nextContact`), else the API's suggestion.
   const next = nextContact(card);
-  const nextStep = next ? `${next.label} · ${next.source === "rhythm" ? "hoy" : shortDay(next.at)}` : card.next_action.text;
+  const nextStep = next ? `${next.label} · ${next.source === "rhythm" && onToday(next.at) ? "hoy" : shortDay(next.at)}` : card.next_action.text;
 
   const decide: { key: string; label: string; icon: IconName; on: boolean; go: () => void }[] = [
     { key: "call", label: "Llamada", icon: "phone", on: lifted.call, go: () => ask("call") },
@@ -468,7 +473,7 @@ function NextStepLine({ card, inFooter }: { card: OpportunityCardData; inFooter:
     return (
       <p className="rounded-md bg-warn-bg/60 px-3 py-2 text-[13px] text-ink" data-testid="drawer-next-rhythm">
         <span className="text-ink-faint">Próximo contacto: </span>
-        {next.label} · hoy
+        {next.label} · {onToday(next.at) ? "hoy" : fmtDate(next.at)}
       </p>
     );
   }
