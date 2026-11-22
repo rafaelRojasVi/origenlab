@@ -293,11 +293,14 @@ def _cmd_send(args: argparse.Namespace) -> int:
     accepted = sum(1 for o in outcomes if o.result == "accepted")
     failed = sum(1 for o in outcomes if o.result == "failed")
     skipped = sum(1 for o in outcomes if o.result == "skipped")
+    # Gmail did not answer clearly (timeout, network, 5xx): it may have sent it.
+    # Run `reconcile` before the next batch; the sender skips these rows.
+    in_flight = sum(1 for o in outcomes if o.result == "in_flight")
     print(json.dumps({
         "mode": "live" if args.live else "dry_run", "accepted": accepted,
-        "failed": failed, "skipped": skipped,
+        "failed": failed, "skipped": skipped, "in_flight": in_flight,
     }, ensure_ascii=False, indent=2))
-    return 0 if failed == 0 else 2
+    return 0 if failed == 0 and in_flight == 0 else 2
 
 
 def _cmd_export(args: argparse.Namespace) -> int:

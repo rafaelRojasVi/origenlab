@@ -20,7 +20,10 @@ the ``in_flight`` row is committed *before* the Gmail API call, so if the
 process dies between Gmail accepting the message and the terminal result
 being persisted, the row is left ``in_flight`` and a retry refuses to call
 Gmail again for that recipient (fail-closed; requires reconciliation or
-explicit operator recovery — see ``outbound_campaign_reconcile.py``). Each
+explicit operator recovery — see ``outbound_campaign_reconcile.py``). The
+same holds when Gmail does not clearly refuse: only a 4xx answer resolves the
+row to ``failed``; a timeout, a network error or a 5xx leaves it ``in_flight``
+(Gmail may have sent it) and stops the batch. Each
 attempt commits immediately so ``stop_on_error`` never rolls back a prior
 accepted send.
 """
@@ -30,7 +33,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from origenlab_email_pipeline.gmail_send import build_gmail_message_with_inline_images, gmail_api_send_message
+from origenlab_email_pipeline.gmail_send import (
+    GmailSendError,
+    build_gmail_message_with_inline_images,
+    gmail_api_send_message,
+)
 from origenlab_email_pipeline.manual_contact_status import load_manual_status_map
 from origenlab_email_pipeline.outbound_campaign_gate import evaluate_campaign_eligibility
 from origenlab_email_pipeline.outbound_campaign_store import (
@@ -159,24 +166,36 @@ def send_campaign_batch(
         )
         conn.commit()
 
+        raw_message = msg.as_bytes()
         try:
-            api_result = gmail_api_send_message(access_token=access_token, raw_message_bytes=msg.as_bytes())
+            api_result = gmail_api_send_message(access_token=access_token, raw_message_bytes=raw_message)
             message_id = api_result.get("id")
         except Exception as exc:
-            # Phase 2 (failure path): Gmail did not accept it -- safe to resolve to
-            # 'failed' so a future run can retry this recipient.
-            finish_live_attempt(
-                conn, attempt_id=attempt_id, recipient_id=recipient_id,
-                result="failed", error_detail=str(exc),
-            )
-            conn.commit()
+            if isinstance(exc, GmailSendError) and exc.definitely_not_sent:
+                # Phase 2 (failure path): Gmail answered 4xx -- it refused the
+                # message, so resolving to 'failed' lets a future run retry it.
+                finish_live_attempt(
+                    conn, attempt_id=attempt_id, recipient_id=recipient_id,
+                    result="failed", error_detail=str(exc),
+                )
+                conn.commit()
+                outcomes.append(SendOutcome(
+                    recipient_id=recipient_id, email=email, mode="live",
+                    result="failed", gmail_message_id=None, error=str(exc),
+                ))
+                if stop_on_error:
+                    break
+                continue
+            # A timeout, a dropped connection, a 5xx or an unreadable answer:
+            # Gmail may have sent it. The row stays in_flight -- the next batch
+            # skips it and `reconcile` matches it against Sent. Retrying here
+            # would send the same email twice.
             outcomes.append(SendOutcome(
                 recipient_id=recipient_id, email=email, mode="live",
-                result="failed", gmail_message_id=None, error=str(exc),
+                result="in_flight", gmail_message_id=None,
+                error=f"{REASON_AMBIGUOUS_IN_FLIGHT}: {exc}",
             ))
-            if stop_on_error:
-                break
-            continue
+            break
 
         # Phase 2 (success path): Gmail accepted it -- resolve immediately.
         finish_live_attempt(

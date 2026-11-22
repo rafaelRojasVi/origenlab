@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from origenlab_email_pipeline.candidate_export_gate import GateContext
+from origenlab_email_pipeline.gmail_send import GmailSendError
 from origenlab_email_pipeline.outbound_campaign_schema import ensure_outbound_campaign_tables
 from origenlab_email_pipeline.outbound_campaign_sender import (
     REASON_ALREADY_SENT,
@@ -108,7 +109,7 @@ def test_api_failure_before_acceptance_records_failed_and_allows_retry(conn: sql
     rid = _reserve(conn, "a@x.cl")
     with patch(
         "origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message",
-        side_effect=RuntimeError("quota exceeded"),
+        side_effect=GmailSendError("Gmail API error 429: quota exceeded", status=429),
     ):
         outcomes = send_campaign_batch(
             conn, campaign_id="hielscher-sonicators-2026", recipients=[(rid, "a@x.cl")],
@@ -118,6 +119,61 @@ def test_api_failure_before_acceptance_records_failed_and_allows_retry(conn: sql
     assert outcomes[0].result == "failed"
     assert latest_attempt_status(conn, "hielscher-sonicators-2026", rid)[0] == "failed"
     assert has_accepted_attempt(conn, "hielscher-sonicators-2026", rid) is None
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("The read operation timed out"),
+        GmailSendError("Gmail API no answer: TimeoutError()", status=None),
+        GmailSendError("Gmail API error 503: backend error", status=503),
+        ConnectionResetError("connection reset by peer"),
+    ],
+    ids=["raw-timeout", "wrapped-timeout", "http-503", "dropped-connection"],
+)
+def test_ambiguous_gmail_failure_stays_in_flight_and_is_never_resent(
+    conn: sqlite3.Connection, html_file: Path, error: Exception,
+) -> None:
+    """A slow or broken Gmail answer may still have sent the email: the row stays
+    in_flight, the batch stops, and the next batch does not call Gmail again."""
+    r1 = _reserve(conn, "a@x.cl")
+    r2 = _reserve(conn, "b@x.cl")
+    with patch(
+        "origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message",
+        side_effect=[error],
+    ) as mock_send:
+        outcomes = send_campaign_batch(
+            conn, campaign_id="hielscher-sonicators-2026", recipients=[(r1, "a@x.cl"), (r2, "b@x.cl")],
+            html=html_file.read_text(), html_dir=html_file.parent, live=True, access_token="tok",
+            gate_ctx=_permissive_ctx(), batch_id="b1", stop_on_error=False,
+        )
+    assert mock_send.call_count == 1  # the batch stops: Gmail is not answering
+    assert [o.result for o in outcomes] == ["in_flight"]
+    assert latest_attempt_status(conn, "hielscher-sonicators-2026", r1)[0] == "in_flight"
+
+    with patch("origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message") as retry:
+        retry_outcomes = send_campaign_batch(
+            conn, campaign_id="hielscher-sonicators-2026", recipients=[(r1, "a@x.cl")],
+            html=html_file.read_text(), html_dir=html_file.parent, live=True, access_token="tok",
+            gate_ctx=_permissive_ctx(), batch_id="b2",
+        )
+        retry.assert_not_called()
+    assert retry_outcomes[0].error == REASON_AMBIGUOUS_IN_FLIGHT
+
+
+def test_gmail_4xx_resolves_failed(conn: sqlite3.Connection, html_file: Path) -> None:
+    rid = _reserve(conn, "a@x.cl")
+    with patch(
+        "origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message",
+        side_effect=GmailSendError("Gmail API error 400: invalid To header", status=400),
+    ):
+        outcomes = send_campaign_batch(
+            conn, campaign_id="hielscher-sonicators-2026", recipients=[(rid, "a@x.cl")],
+            html=html_file.read_text(), html_dir=html_file.parent, live=True, access_token="tok",
+            gate_ctx=_permissive_ctx(), batch_id="b1",
+        )
+    assert outcomes[0].result == "failed"
+    assert latest_attempt_status(conn, "hielscher-sonicators-2026", rid)[0] == "failed"
 
 
 def test_retry_after_accepted_send_is_a_noop(conn: sqlite3.Connection, html_file: Path) -> None:
@@ -203,7 +259,7 @@ def test_partial_batch_failure_preserves_prior_accepted_attempts(conn: sqlite3.C
     r2 = _reserve(conn, "b@x.cl")
     with patch(
         "origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message",
-        side_effect=[{"id": "MSG-1"}, RuntimeError("quota exceeded")],
+        side_effect=[{"id": "MSG-1"}, GmailSendError("Gmail API error 429: quota exceeded", status=429)],
     ):
         outcomes = send_campaign_batch(
             conn, campaign_id="hielscher-sonicators-2026", recipients=[(r1, "a@x.cl"), (r2, "b@x.cl")],
