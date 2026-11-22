@@ -128,6 +128,7 @@ export function TodayBody({
   onForwardCount,
   refreshing = false,
   now,
+  plan: planProp,
   tendersClosing,
   aside,
   scope: scopeProp,
@@ -143,12 +144,15 @@ export function TodayBody({
   /** Called with the number of forwarded requests waiting, for the header's count. */
   onForwardCount?: (n: number) => void;
   refreshing?: boolean;
+  /** The page's clock (`useTodayClock`); without one, the clock is read again on each new `items`. */
   now?: Date;
+  /** The page's plan when it builds one for its header too (`OverviewPage`); else built here. */
+  plan?: StepPlan;
   /** `tenders_closing` from the pipeline: the tenders that close tomorrow (a tender is in no other list). */
   tendersClosing?: { id: string; title: string }[];
   /** The main column's last panel: the quote number and the rates. */
   aside?: ReactNode;
-  /** «Mi cola» / «Todo el equipo» when the page holds it (so its header counts follow); else local. */
+  /** «Mi cola» / «Todo el equipo» when the page holds it (so its header and strip follow); else local. */
   scope?: TodayScope;
   onScopeChange?: (scope: TodayScope) => void;
   /** Active kind filter from the GoalStrip or the queue's own chips. null = show all. */
@@ -156,7 +160,9 @@ export function TodayBody({
   /** Called when the user picks a filter chip (or clears it). */
   onQueueFilterChange?: (f: QueueKindFilter) => void;
 }) {
-  const at = useMemo(() => now ?? new Date(), [now]);
+  // Never the clock from when the page opened: a new answer reads it again (as the Pipeline does).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const at = useMemo(() => now ?? new Date(), [now, items]);
   const { session } = useAuthSession();
   const me = session.kind === "signed_in" ? (session.profile?.displayName ?? session.operator.displayName ?? null) : null;
 
@@ -172,7 +178,10 @@ export function TodayBody({
 
   const fullQueue = useMemo(() => buildParaTiQueue(items, at, me), [items, at, me]);
   const queue = useMemo(() => filterQueue(fullQueue, view), [fullQueue, view]);
-  const plan = useMemo(() => planNextSteps(items, at, me, 7, (s) => HOME_FILTER_KINDS[view].has(queueKindOf(s))), [items, at, me, view]);
+  const plan = useMemo(
+    () => planProp ?? planNextSteps(items, at, me, 7, (s) => HOME_FILTER_KINDS[view].has(queueKindOf(s))),
+    [planProp, items, at, me, view],
+  );
   const showDecidir = HOME_FILTER_KINDS[view].has("decidir");
 
   // Forwarded requests — fetched separately, appended to the end of the queue.
@@ -232,9 +241,9 @@ export function TodayBody({
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-4">
 
-          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue; a page
-              that holds the scope (OverviewPage) shows it in its header instead ─── */}
-          {homeFilter !== "todo" && scopeProp === undefined ? (
+          {/* ─── «Mi cola · Ana» / «Todo el equipo» — only for a profile with its own queue. The page
+              may hold the scope (OverviewPage, so its header and strip follow); the switch is here. ─── */}
+          {homeFilter !== "todo" ? (
             <div data-testid="today-scope">
               <Segmented<TodayScope>
                 label="Qué cola ver"
