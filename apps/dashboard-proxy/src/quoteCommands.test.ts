@@ -289,12 +289,12 @@ describe("quote preview", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("advertises POST and the JSON content type on its preflight", async () => {
+  it("answers no preflight: OPTIONS is 405 with no CORS headers", async () => {
     const res = await handleRequest(
       new Request(PREVIEW, { method: "OPTIONS", headers: { Origin: DASHBOARD } }),
       TEST_ENV,
     );
-    expect(res.headers.get("Access-Control-Allow-Methods")).toContain("POST");
-    expect(res.headers.get("Access-Control-Allow-Headers")).toContain("Content-Type");
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Access-Control-Allow-Methods")).toBeNull();
   });
 });

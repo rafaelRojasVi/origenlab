@@ -145,108 +145,40 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("GET /api/health from allowed Origin returns Access-Control-Allow-Origin", async () => {
-    stubUpstreamFetch(JSON.stringify({ status: "ok" }));
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("GET response includes Access-Control-Allow-Credentials: true for allowed Origin", async () => {
+  it("sends no CORS headers: the dashboard calls /api on its own host", async () => {
     stubUpstreamFetch();
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
-      "Accept, Content-Type, X-Request-ID",
-    );
-    expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+    for (const origin of [PRODUCTION_ORIGIN, "https://evil.example.com", "http://localhost:5173"]) {
+      const response = await handleRequest(
+        requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET", origin }),
+        TEST_ENV,
+      );
+      expect(response.status).toBe(200);
+      expect([...response.headers.keys()].filter((name) => name.startsWith("access-control-"))).toEqual([]);
+      expect(response.headers.get("Vary")).toBeNull();
+    }
   });
 
-  it("OPTIONS /api/health returns 204 and CORS headers", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it.each(["https://dashboard.origenlab.cl/api/health", "https://dashboard.origenlab.cl/api/v2/commands/freeze-campaign-audience"])(
+    "answers no preflight: OPTIONS %s is 405 with no CORS headers and no upstream call",
+    async (url) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const response = await handleRequest(
+        requestWithOrigin(url, {
+          method: "OPTIONS",
+          headers: { "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type,idempotency-key" },
+        }),
+        TEST_ENV,
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+      expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
+      expect(response.headers.get("Access-Control-Allow-Headers")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
-        method: "OPTIONS",
-      }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(204);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("disallowed Origin does not get Access-Control-Allow-Origin", async () => {
-    stubUpstreamFetch();
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
-        method: "GET",
-        origin: "https://evil.example.com",
-      }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("upstream CORS headers cannot override dashboard CORS policy for allowed Origin", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: {
-            "Access-Control-Allow-Origin": "https://evil.example.com",
-            "Access-Control-Allow-Credentials": "false",
-            "Access-Control-Allow-Methods": "GET, POST, DELETE",
-            "Access-Control-Allow-Headers": "Authorization, X-OriginLab-API-Key",
-            "Access-Control-Expose-Headers": "Server-Timing, X-OriginLab-API-Key",
-            "Access-Control-Max-Age": "86400",
-            "Content-Type": "application/json",
-          },
-        });
-      }),
-    );
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
-      "Accept, Content-Type, X-Request-ID",
-    );
-    expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
-    expect(response.headers.get("Access-Control-Max-Age")).toBeNull();
-  });
-
-  it("upstream CORS headers cannot grant access to disallowed Origin", async () => {
+  it("strips every upstream CORS header", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -259,6 +191,7 @@ describe("handleRequest", () => {
             "Access-Control-Allow-Headers": "Authorization, X-OriginLab-API-Key",
             "Access-Control-Expose-Headers": "Server-Timing, X-OriginLab-API-Key",
             "Access-Control-Max-Age": "86400",
+            "Access-Control-Allow-Private-Network": "true",
             "Content-Type": "application/json",
           },
         });
@@ -266,40 +199,12 @@ describe("handleRequest", () => {
     );
 
     const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
-        method: "GET",
-        origin: "https://evil.example.com",
-      }),
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
       TEST_ENV,
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBeNull();
-    expect(response.headers.get("Access-Control-Expose-Headers")).toBeNull();
-    expect(response.headers.get("Access-Control-Max-Age")).toBeNull();
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("Access-Control-Allow-Origin is never * on success or error responses", async () => {
-    stubUpstreamFetch();
-
-    const success = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-    expect(success.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const forbidden = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/emails", { method: "GET" }),
-      TEST_ENV,
-    );
-    expect(forbidden.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
+    expect([...response.headers.keys()].filter((name) => name.startsWith("access-control-"))).toEqual([]);
   });
 
   it("mutating methods remain 405", async () => {
@@ -312,8 +217,6 @@ describe("handleRequest", () => {
         TEST_ENV,
       );
       expect(response.status).toBe(405);
-      expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-      expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
     }
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -412,7 +315,6 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(response.headers.get("Content-Type")).toContain("application/json");
     expect(response.headers.get("Cache-Control")).toBe("no-store, private");
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
 
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("upstream_not_configured");
@@ -431,23 +333,9 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(response.headers.get("Content-Type")).toContain("application/json");
     expect(response.headers.get("Cache-Control")).toBe("no-store, private");
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
 
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("auth_token_not_configured");
-  });
-
-  it("OPTIONS returns 204 without upstream fetch", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "OPTIONS" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(204);
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("upstream 302 is converted to 502 JSON with code upstream_redirect_blocked", async () => {
@@ -478,28 +366,6 @@ describe("handleRequest", () => {
 
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("upstream_redirect_blocked");
-  });
-
-  it("upstream redirect response includes Access-Control-Allow-Origin for allowed Origin", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return new Response("", {
-          status: 302,
-          headers: { Location: "https://api.origenlab.cl/cdn-cgi/access/login" },
-        });
-      }),
-    );
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(502);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
   });
 
   it("upstream redirect response does not include Location header", async () => {
@@ -549,7 +415,7 @@ describe("handleRequest", () => {
     expect(response.headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBeNull();
   });
 
-  it("normal 200 response still includes CORS and proxy diagnostics", async () => {
+  it("normal 200 response includes proxy diagnostics", async () => {
     stubUpstreamFetch(JSON.stringify({ status: "ok" }));
 
     const response = await handleRequest(
@@ -558,7 +424,6 @@ describe("handleRequest", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
     expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
     expect(response.headers.get("X-OriginLab-Upstream-Status")).toBe("200");
   });
@@ -586,30 +451,6 @@ describe("handleRequest", () => {
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("Set-Cookie2")).toBeNull();
     expect(response.headers.getSetCookie?.() ?? []).toEqual([]);
-  });
-
-  it("upstream 200 with Set-Cookie still includes Access-Control-Allow-Origin for allowed Origin", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Set-Cookie": "CF_Authorization=upstream-api-token; Path=/; HttpOnly; Secure",
-          },
-        });
-      }),
-    );
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
   });
 
   it("upstream 200 with Set-Cookie still includes proxy diagnostic headers", async () => {
@@ -658,7 +499,6 @@ describe("handleRequest", () => {
     expect(response.headers.get("Location")).toBeNull();
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("Set-Cookie2")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
   });
 });
 
@@ -724,12 +564,15 @@ describe("Marketing commands (draft create/save, audience freeze)", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("advertises POST and Idempotency-Key on the preflight for allowed origins only", async () => {
-    const pre = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS" }), TEST_ENV);
-    expect(pre.headers.get("Access-Control-Allow-Methods")).toContain("POST");
-    expect(pre.headers.get("Access-Control-Allow-Headers")).toContain("Idempotency-Key");
-    const foreign = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS", origin: "https://evil.test" }), TEST_ENV);
-    expect(foreign.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  it("refuses a command from the local dev origin: the Worker allows only the dashboard's own", async () => {
+    stubUpstreamFetch();
+    const base = good();
+    const headers = new Headers(base.headers);
+    headers.set("Origin", "http://localhost:5173");
+    const res = await handleRequest(new Request(base.url, { method: "POST", headers, body: JSON.stringify({ confirmed: true }) }), TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "origin_not_allowed" } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
   it("does not let the Marketing reads accept a write", async () => {

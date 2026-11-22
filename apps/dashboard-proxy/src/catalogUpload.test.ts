@@ -203,21 +203,16 @@ describe("catalog JSON commands guard", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("advertises Idempotency-Key in preflight for catalog POST paths only", async () => {
+  it("answers no preflight on catalog POST paths: OPTIONS is 405 with no CORS headers", async () => {
     for (const path of ["v2/commands/create-product", "v2/commands/add-product-image"]) {
       const res = await handleRequest(
         new Request(`${DASHBOARD}/api/${path}`, { method: "OPTIONS", headers: { Origin: DASHBOARD } }),
         TEST_ENV,
       );
-      expect(res.headers.get("Access-Control-Allow-Methods"), path).toContain("POST");
-      expect(res.headers.get("Access-Control-Allow-Headers"), path).toContain("Idempotency-Key");
+      expect(res.status, path).toBe(405);
+      expect(res.headers.get("Access-Control-Allow-Methods"), path).toBeNull();
+      expect(res.headers.get("Access-Control-Allow-Headers"), path).toBeNull();
     }
-    const read = await handleRequest(
-      new Request(`${DASHBOARD}/api/v2/catalog/products`, { method: "OPTIONS", headers: { Origin: DASHBOARD } }),
-      TEST_ENV,
-    );
-    expect(read.headers.get("Access-Control-Allow-Methods")).not.toContain("POST");
-    expect(read.headers.get("Access-Control-Allow-Headers")).not.toContain("Idempotency-Key");
   });
 });
 

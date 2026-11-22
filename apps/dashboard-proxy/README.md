@@ -121,8 +121,8 @@ SameSite=Lax); only the two sign-in cookies ever reach upstream. For the eight c
 Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
-a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
-(413). CORS advertises `POST` on every listed POST path and `Idempotency-Key` on the marketing and catalog command paths.
+a preflight, which this Worker never answers), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
+(413).
 
 **Idempotency.** `Idempotency-Key` is required and must match `^[A-Za-z0-9._:-]{8,128}$` (400
 `idempotency_key_required`); it is forwarded byte-for-byte. Upstream the key is one
@@ -160,8 +160,7 @@ Seven exact GET paths (`src/allowlist.ts`; UUIDs lower-case, query strings pass 
 Ten exact POST paths, all under `/v2/commands/`, each behind `catalogCommandRefusal` (`src/index.ts`):
 an allowed `Origin` (403 `origin_not_allowed`), no cross-site `Sec-Fetch-Site` (403
 `cross_site_request`), the right `Content-Type` (415), a well-formed `Idempotency-Key` (400) and a
-body within the limit, declared or actual (413). CORS advertises `POST` and `Idempotency-Key` on
-these paths. The upload's multipart type needs no preflight, so its CSRF protection rests on the
+body within the limit, declared or actual (413). The upload's multipart type needs no preflight, so its CSRF protection rests on the
 required `Idempotency-Key` (a custom header, which forces one) plus the Origin and Sec-Fetch-Site checks.
 
 - Nine JSON commands (`create-product`, `update-product`, `confirm-product-content`,
@@ -296,8 +295,8 @@ wrangler secret put CF_STATS_API_TOKEN  --name origenlab-dashboard-proxy
 The Worker is deliberately stricter than a generic pass-through proxy:
 
 - Upstream **3xx** responses are not forwarded to the browser. They become **502** JSON: `{ "error": { "code": "upstream_redirect_blocked" } }`.
-- Upstream `Location`, `Set-Cookie`, `Set-Cookie2`, and upstream CORS headers are stripped before the dashboard sees the response.
-- Allowed dashboard origins receive credentialed CORS headers and `Access-Control-Expose-Headers: X-Request-ID`.
+- Upstream `Location`, `Set-Cookie`, `Set-Cookie2`, and every upstream `Access-Control-*` header are stripped before the dashboard sees the response.
+- **No CORS.** The dashboard calls `/api/*` on its own host, so the Worker sends no CORS headers and answers no preflight: `OPTIONS` is 405 like any other unlisted method. Local development reaches the API through the Vite dev proxy (`apps/dashboard/vite.config.ts`), never through this Worker. The only `Origin` any POST may carry is `https://dashboard.origenlab.cl` (`src/origin.ts`).
 - Responses include `X-OriginLab-Proxy: dashboard-proxy`; forwarded upstream responses also include `X-OriginLab-Upstream-Status`.
 
 This keeps Cloudflare Access redirects/cookies (from the API hostname's Access application) and upstream CORS policy from leaking through `/api/*`.
