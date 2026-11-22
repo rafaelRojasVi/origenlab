@@ -961,10 +961,10 @@ literal**: the importer indexes `supplier_master.domain_norm` and
 `supplier_contact_channel.value_normalized` from the Wave 1A bundle and
 classifies every prior-contact address with
 `marketing_supplier_domains.is_supplier_email_domain` — the same function the
-live outbound gate uses. **289** of the 9,460 classify as supplier/provider, and
-`outbound_v2.eligibility` independently refuses them with `policy_supplier`; a
-test asserts both agree, and that any address under a recorded supplier domain
-classifies, not only the ones already seen.
+live outbound gate uses. **289** of the 9,460 classify as supplier/provider; the
+V2 marketing audience (`apps/api`, `v2/marketing_audience.py`) refuses an address
+under a supplier domain or organization (`supplier`), and a test asserts that any
+address under a recorded supplier domain classifies, not only the ones already seen.
 
 Supplier evidence loads as `evidence.assertion` of kind `supplier_candidate`,
 `resolution = 'unresolved'` — pending evidence, never automatic CRM truth

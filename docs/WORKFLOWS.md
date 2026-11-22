@@ -1129,16 +1129,16 @@ approval on a row carrying any of them. There is no override table; the columns 
 
 **One implementation.** `freeze-campaign-audience` (`apps/api`, `v2/audience_freeze.py`) is
 the only code that decides W12 or writes the override triple. The pipeline's pure
-`outbound_v2.eligibility` no longer has a recontact override: its `RecontactOverride` type had
-no caller and also cleared `prior_reply` and `cooldown`, which this section forbids, so it was
-retired and a test refuses its return. Shipped migration comments are not rewritten; where they
-disagree, this section wins:
+`outbound_v2` package (audience preview and eligibility) had no caller and was deleted on
+2026-11-22; its recontact override had been retired before that, because it also cleared
+`prior_reply` and `cooldown`, which this section forbids. Shipped migration comments are not
+rewritten; where they disagree, this section wins:
 
 | Migration | Comment says | Current truth |
 |---|---|---|
 | `20260905230814_slice0_outbound_tables` | override-triple immutability "is a Slice 5 trigger" | enforced by the snapshot guard of `20260927200000_slice5_w12_recontact_review` (step 2 above) |
-| `20260920190000_slice0_wave1b_…_archived_recontact_interval` | "`outbound_v2.eligibility` reads" `recontact_interval_days` | it never did: `CampaignPolicy` carries the field unread, and cooldown arrives precomputed as `cooldown_until`. The cooldown the freeze enforces is an active `outbound.contact_control` row of kind `cooldown` (read by the API freeze, never lifted by W12); `recontact_interval_days` is only stored and selected with the campaign — no code derives a cooldown from it yet |
-| `20260908120200_slice0_outbound_address_shape_…` | `ADDRESS_SHAPE_PATTERN` lives in `outbound_v2/eligibility.py` | still true — unaffected by the retirement |
+| `20260920190000_slice0_wave1b_…_archived_recontact_interval` | "`outbound_v2.eligibility` reads" `recontact_interval_days` | it never did, and the package is deleted. The cooldown the freeze enforces is an active `outbound.contact_control` row of kind `cooldown` (read by the API freeze, never lifted by W12); `recontact_interval_days` is only stored and selected with the campaign — no code derives a cooldown from it yet |
+| `20260908120200_slice0_outbound_address_shape_…` | `ADDRESS_SHAPE_PATTERN` lives in `outbound_v2/eligibility.py`, kept identical by `tests/outbound_v2/test_address_shape.py` | both deleted with the package (2026-11-22); the database's address-shape check stands alone |
 
 ### W13 — Campaign safety block (pause)
 

@@ -34,7 +34,8 @@ classified against the supplier domains recorded in the Wave 1A bundle's `suppli
 and the addresses in `supplier_contact_channel`, using the same
 `marketing_supplier_domains.is_supplier_email_domain` the live outbound gate uses. The
 classification is reported and attached to the evidence; it is not a new eligibility rule,
-because `outbound_v2.eligibility` already owns that decision.
+because the V2 marketing audience (`apps/api`, `v2/marketing_audience.py`) already owns that
+decision: it refuses an address under a supplier domain or organization (`supplier`).
 """
 
 from __future__ import annotations
