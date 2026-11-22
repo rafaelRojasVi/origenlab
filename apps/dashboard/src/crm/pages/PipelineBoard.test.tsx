@@ -8,7 +8,7 @@ import { Toaster } from "../ui";
 import { clearResourceCache } from "../useResource";
 import { PipelinePage } from "./PipelinePage";
 import { stagePath } from "../caseCommands";
-import { activityTimestamp, ageBucket, boardColumnOf, boardStatusLine, pausedUntil } from "../stage";
+import { activityTimestamp, ageBucket, boardColumnOf, pausedUntil } from "../stage";
 import { moveRefusal } from "./CaseMove";
 import { Board, cardMoney, columnMoney, silentFollowUpStep, sortCards } from "./PipelineBoard";
 import { urgencyByCase, urgencyText, type CaseUrgency } from "../urgency";
@@ -80,16 +80,6 @@ describe("board helpers", () => {
     expect(ageBucket("2024-01-01T00:00:00Z", NOW)).toBe("older");
     expect(ageBucket(null, NOW)).toBe("none");
     expect(ageBucket("no es una fecha", NOW)).toBe("none");
-  });
-
-  it("says one thing per card: the blocker, or the gaps", () => {
-    expect(boardStatusLine(card())).toEqual({ text: "sin decidir · sin Drive", tone: "warn" });
-    expect(boardStatusLine(card({ contact: null }, null))).toEqual({ text: "sin cotización · sin contacto", tone: "warn" });
-    expect(
-      boardStatusLine(card({ attention: [{ code: "canonical_undetermined", label: "Hay más de una revisión vigente", blocking: true }] })),
-    ).toEqual({ text: "Hay más de una revisión vigente", tone: "bad" });
-    const done = card({ drive_folder: { source: "archive_ledger", folder_id: "f", url: "https://drive.example.cl/f" }, status: "ok" });
-    expect(boardStatusLine(done)).toEqual({ text: "sin decidir · al día", tone: "neutral" });
   });
 });
 

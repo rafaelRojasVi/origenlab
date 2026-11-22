@@ -684,13 +684,6 @@ describe("«Para ti» queue", () => {
     expect(rows[0].kind).toBe("reply");
   });
 
-  it("the header count includes the forwarded requests waiting", async () => {
-    const { paraTiCount } = await import("../today");
-    const c = card(inbound("2026-10-06T13:00:00Z"), "2026-10-01T12:00:00Z");
-    expect(paraTiCount([c], NOW, null)).toBe(1);
-    expect(paraTiCount([c], NOW, null, 2)).toBe(3);
-  });
-
   it("puts a reply (rank 0) before cotizar (rank 1) in Hoy v3 ordering", async () => {
     const { buildParaTiQueue } = await import("../today");
     // A case at «qualifying» with no sent quote, with an inbound from yesterday.
@@ -704,21 +697,6 @@ describe("«Para ti» queue", () => {
     const order = buildParaTiQueue([reply, solicitud], NOW, null).map((q) => q.kind);
     expect(order[0]).toBe("reply");
     expect(order[1]).toBe("cotizar");
-  });
-
-  it("todayHeaderCounts counts cotizar, responder and seguimientos separately", async () => {
-    const { todayHeaderCounts } = await import("../today");
-    const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString();
-    const solicitud = card(
-      { ...inbound(yesterday), stage: "qualifying", latest_revision: null, quote_numbers: [], quotes: [] },
-    );
-    const tenMinAgo = new Date(NOW.getTime() - 600_000).toISOString();
-    const reply = card(inbound(tenMinAgo));
-    const silent15 = card({}, "2026-09-21T15:00:00Z"); // 15 days = 4th threshold
-    const counts = todayHeaderCounts([solicitud, reply, silent15], NOW, null);
-    expect(counts.cotizar).toBe(1);
-    expect(counts.responder).toBe(1);
-    expect(counts.seguimientos).toBe(1);
   });
 });
 

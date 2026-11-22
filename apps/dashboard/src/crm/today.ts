@@ -344,28 +344,6 @@ export function historicalCount(cards: OpportunityCardData[], now: Date = new Da
   return cards.filter((c) => stageBasis(c, now) === "historical_import").length;
 }
 
-/** The two counts «Hoy»'s header shows: cases to decide and follow-ups due today. */
-export function todayCounts(cards: OpportunityCardData[], now: Date = new Date()): { replies: number; decide: number; followUps: number } {
-  return { replies: repliesToAnswer(cards, now).length, decide: historicalCount(cards, now), followUps: followUpsDue(cards, now).length };
-}
-
-/**
- * Counts for «Hoy»'s hero header: cotizar, responder and seguimientos (the three main sections).
- * `hechas` is tracked in the page's own state and not computed here.
- */
-export function todayHeaderCounts(items: OpportunityCardData[], now: Date, me: string | null, filter: HomeFilter = "todo"): {
-  cotizar: number;
-  responder: number;
-  seguimientos: number;
-} {
-  const queue = filterQueue(buildParaTiQueue(items, now, me), filter);
-  return {
-    cotizar: queue.filter((q) => q.kind === "cotizar").length,
-    responder: queue.filter((q) => q.kind === "reply").length,
-    seguimientos: queue.filter((q) => q.kind === "followup").length,
-  };
-}
-
 /* ────────────────────────────────────────────────────────── «Para ti» queue ── */
 
 /** A follow-up stays on «Hoy» from day 3 until OrigenLab touches the case — an email or a call that
@@ -532,11 +510,6 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
   // Within every section: oldest wait first (largest waitMs first).
   return [...queue.values()].sort((a, b) =>
     RANK[a.kind] - RANK[b.kind] || b.waitMs - a.waitMs);
-}
-
-/** Count for «N para ti» in the header; `forwards` are the forwarded requests still waiting. */
-export function paraTiCount(items: OpportunityCardData[], now: Date, me: string | null, forwards = 0): number {
-  return buildParaTiQueue(items, now, me).length + forwards;
 }
 
 /* ─────────────────────────────────────────────────────── per-profile view ── */

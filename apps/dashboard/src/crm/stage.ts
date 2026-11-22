@@ -127,7 +127,7 @@ const TERMINAL: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
 
 /** Owner ruling 2026-11-08: an Enviada case moves to «Silenciosas» after this many days without an answer. */
 export const SILENT_AFTER_DAYS = 21;
-/** Owner ruling 2026-11-08: a lost case stays on the board this many days after closing, then only in «Cerradas». */
+/** Owner ruling 2026-11-08: a lost case stays on the board this many days after closing, then leaves it. */
 export const LOST_ON_BOARD_DAYS = 7;
 
 /** Local calendar days from `iso` to `now` (`localDaysBetween`), or null when `iso` is not a date. */
@@ -168,7 +168,7 @@ export function closedAt(card: OpportunityCardData): string | null {
 
 /**
  * Whether the Tablero shows the card. Everything does except a `lost`/`abandoned` case closed more
- * than `LOST_ON_BOARD_DAYS` ago (it lives under «Cerradas»). A won case always stays.
+ * than `LOST_ON_BOARD_DAYS` ago. A won case always stays.
  */
 export function isOnBoard(card: OpportunityCardData, now: Date = new Date()): boolean {
   if (card.stage !== "lost" && card.stage !== "abandoned") return true;
@@ -196,16 +196,6 @@ export function enviadaBand(card: OpportunityCardData, now: Date = new Date()): 
   const days = wholeDaysSince(latest?.sent_at, now);
   if (days === null || days > SILENT_AFTER_DAYS) return null;
   return days <= 7 ? "d0_7" : "d8_21";
-}
-
-const SANTIAGO_MONTH = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit" });
-
-/** `YYYY-MM` of an instant on Santiago's clock: a loss at 23:30 on 31 October is October's. */
-export function monthKeySantiago(iso: string): string {
-  const parts = SANTIAGO_MONTH.formatToParts(new Date(iso));
-  const year = parts.find((p) => p.type === "year")?.value ?? "";
-  const month = parts.find((p) => p.type === "month")?.value ?? "";
-  return `${year}-${month}`;
 }
 
 /** The Tablero column a card sits in: «En pausa» first, then «Silenciosas», then the stage's column.
@@ -360,28 +350,4 @@ export function ageBucket(sentAt: string | null | undefined, now: Date = new Dat
   const days = Math.max(0, Math.floor((now.getTime() - t) / 86_400_000));
   for (const b of AGE_BUCKETS) if (days <= b.maxDays) return b.key;
   return "older";
-}
-
-/**
- * One compact status line for a board card, replacing the row of chips the card view shows.
- * The column already says the stage, so the line says only what an operator must still do:
- * the blocking reason when there is one, otherwise the gaps («sin Drive», «sin Gmail»,
- * «sin contacto») — and whether the stage is only the historical import's trace.
- */
-export function boardStatusLine(card: OpportunityCardData): { text: string; tone: Tone } {
-  const blocking = card.attention.find((a) => a.blocking);
-  if (blocking) return { text: blocking.label, tone: "bad" };
-  const parts: string[] = [];
-  if (stageBasis(card) === "historical_import") parts.push("sin decidir");
-  const latest = card.latest_revision;
-  if (!latest) parts.push("sin cotización");
-  else {
-    if (!card.drive_folder) parts.push("sin Drive");
-    if (!latest.gmail) parts.push("sin Gmail");
-  }
-  if (!card.contact) parts.push("sin contacto");
-  if (parts.length === 0 || (parts.length === 1 && parts[0] === "sin decidir")) {
-    return { text: parts.length ? "sin decidir · al día" : "Al día", tone: parts.length ? "neutral" : "good" };
-  }
-  return { text: parts.join(" · "), tone: card.status === "ok" ? "neutral" : "warn" };
 }

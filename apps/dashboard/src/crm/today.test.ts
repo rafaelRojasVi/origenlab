@@ -17,7 +17,6 @@ import {
   RHYTHM,
   stepForDays,
   tasksDue,
-  todayHeaderCounts,
   useHomeFilter,
   type QueueItem,
 } from "./today";
@@ -126,12 +125,13 @@ describe("home filter", () => {
     expect(followUpsDue(cards, NOW).map((f) => [f.days, followUpStep(f)])).toEqual([[15, 4], [10, 3], [7, 2], [3, 1]]);
   });
 
-  it("the header counts follow the view", () => {
+  it("the queue follows the view", () => {
     const pedido = card({ stage: "qualifying", latest_revision: null, quote_numbers: [], created_at: ago(1) }, null);
     const silent = card({}, ago(15)); // day 15 = 4th threshold
-    expect(todayHeaderCounts([pedido, silent], NOW, null, "llamadas")).toEqual({ cotizar: 0, responder: 0, seguimientos: 1 });
-    expect(todayHeaderCounts([pedido, silent], NOW, null, "cotizar")).toEqual({ cotizar: 1, responder: 0, seguimientos: 0 });
-    expect(todayHeaderCounts([pedido, silent], NOW, null)).toEqual({ cotizar: 1, responder: 0, seguimientos: 1 });
+    const kinds = (view: "todo" | "llamadas" | "cotizar") => filterQueue(buildParaTiQueue([pedido, silent], NOW, null), view).map((q) => q.kind).sort();
+    expect(kinds("llamadas")).toEqual(["followup"]);
+    expect(kinds("cotizar")).toEqual(["cotizar"]);
+    expect(kinds("todo")).toEqual(["cotizar", "followup"]);
   });
 
   it("v3 display order: Responder first, then Cotizar, Seguimiento, Tareas", () => {

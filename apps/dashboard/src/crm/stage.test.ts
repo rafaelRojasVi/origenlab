@@ -13,7 +13,6 @@ import {
   isOnBoard,
   isSilent,
   isPaused,
-  monthKeySantiago,
   pauseReturned,
   stageBasis,
   stageDisplay,
@@ -276,14 +275,6 @@ describe("Enviada bands", () => {
       { key: "d0_7", label: "0–7 días" },
       { key: "d8_21", label: "8–21 días" },
     ]);
-  });
-});
-
-describe("monthKeySantiago", () => {
-  it("reads the month on Santiago's clock, not UTC's", () => {
-    expect(monthKeySantiago("2026-11-01T02:30:00Z")).toBe("2026-10");
-    expect(monthKeySantiago("2026-11-01T12:00:00Z")).toBe("2026-11");
-    expect(monthKeySantiago("2026-01-01T02:00:00Z")).toBe("2025-12");
   });
 });
 
