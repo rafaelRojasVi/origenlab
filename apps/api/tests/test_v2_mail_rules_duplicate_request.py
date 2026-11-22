@@ -52,7 +52,7 @@ def request_case(**over) -> CaseState:
 
 def mail(**over) -> MailEvidence:
     base = dict(id="e-1", thread_id="t-1", direction="outbound", sender="Ventas <contacto@origenlab.cl>",
-                recipients=(f"{CLIENT}; otra@gmail.com",), subject="Re: Solicitud de cotización", sent_at=SENT,
+                recipients=(f"{CLIENT}; otra@ejemplo.invalid",), subject="Re: Solicitud de cotización", sent_at=SENT,
                 documents=(MailDocument(filename="Cotización CN01342 — Persona.pdf", sha256="a" * 64),),
                 linked_case_ids=("c-cotizador",))
     base.update(over)

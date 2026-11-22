@@ -290,7 +290,7 @@ export const RULE_GUIDE: Record<string, RuleGuide> = {
     cuando: "Sale el PDF de una cotización hecha en el Cotizador como caso nuevo («+ Cliente nuevo») a alguien que ya tenía una solicitud abierta, sin cotización enviada ni aprobada: la misma persona y la misma institución, o una institución recién escrita en el Cotizador.",
     hace: "Cierra esa solicitud como duplicada del caso desde el que salió la cotización; el caso de la cotización no se toca. Una cotización en borrador de la solicitud queda en ella. «Quitar» reabre la solicitud donde estaba.",
     automatica: true,
-    ejemplo: "La solicitud reenviada de compras@hospital.cl espera; la cotización 09876 se hizo como caso nuevo y se le envió → la solicitud queda cerrada como «Duplicado».",
+    ejemplo: "La solicitud reenviada de compras@hospital-ficticio.cl espera; la cotización 09876 se hizo como caso nuevo y se le envió → la solicitud queda cerrada como «Duplicado».",
   },
 };
 
