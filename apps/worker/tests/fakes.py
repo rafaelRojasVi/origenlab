@@ -149,9 +149,11 @@ class FakeGmail:
         m = self.messages.get(message_id)
         if m is None:
             raise GmailNotFound("not_found")
-        frm = email.message_from_bytes(m.raw).get("From") if m.raw else None
+        parsed = email.message_from_bytes(m.raw) if m.raw else None
+        frm = parsed.get("From") if parsed is not None else None
+        subject = parsed.get("Subject") if parsed is not None else None
         return MessageMeta(message_id, m.thread_id, m.labels, m.size or len(m.raw), m.internal_ms,
-                           {"from": str(frm or "Ana <ana@cliente.invalid>"), "subject": "x"})
+                           {"from": str(frm or "Ana <ana@cliente.invalid>"), "subject": str(subject or "x")})
 
     def raw(self, message_id: str) -> RawMessage:
         self.raw_calls.append(message_id)

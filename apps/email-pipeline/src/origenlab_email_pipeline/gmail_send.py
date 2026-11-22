@@ -16,6 +16,29 @@ class InlineImage:
     mime_type: str
 
 
+# Gmail shows «Anular suscripción» for this header and mails this address with
+# this subject, which worker triage reads as «baja» (triage_rules), and the
+# capture reads our sent copy as a bulk send (capture.is_bulk_send).
+LIST_UNSUBSCRIBE = "<mailto:contacto@origenlab.cl?subject=baja>"
+
+
+class GmailSendError(RuntimeError):
+    """A Gmail send that did not return a message.
+
+    ``status`` is the HTTP status when Gmail answered with one, else None (a
+    timeout or a dropped connection). Only a 4xx proves Gmail refused the
+    message; a 5xx or no answer at all may still have been sent.
+    """
+
+    def __init__(self, message: str, *, status: int | None) -> None:
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def definitely_not_sent(self) -> bool:
+        return self.status is not None and 400 <= self.status < 500
+
+
 _CATALOG_SRC_RE = re.compile(r"""src=["'](catalog_assets_premium/[^"']+)["']""", re.IGNORECASE)
 
 
@@ -74,6 +97,7 @@ def build_gmail_message_with_inline_images(
         if cc_list:
             msg["Cc"] = ", ".join(cc_list)
     msg["Subject"] = subject
+    msg["List-Unsubscribe"] = LIST_UNSUBSCRIBE
 
     msg.set_content(
         "Este correo contiene HTML. Si lo ve como texto plano, use un cliente que soporte HTML.",
@@ -102,9 +126,12 @@ def build_gmail_message_with_inline_images(
 def gmail_api_send_message(*, access_token: str, raw_message_bytes: bytes) -> dict:
     """Send an email via Gmail REST API using an OAuth access token.
 
-    Uses `users/me/messages/send`.
+    Uses `users/me/messages/send`. Raises :class:`GmailSendError` with the
+    HTTP status for an HTTP error answer, and with ``status=None`` for a
+    timeout or a network error (the message may or may not have been sent).
     """
     import json
+    import urllib.error
     import urllib.request
 
     raw = _base64url(raw_message_bytes)
@@ -123,11 +150,14 @@ def gmail_api_send_message(*, access_token: str, raw_message_bytes: bytes) -> di
         with urllib.request.urlopen(req, timeout=60) as resp:
             body = resp.read().decode("utf-8")
             return json.loads(body)
-    except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
+    except urllib.error.HTTPError as e:
         err_body = ""
         try:
             err_body = e.read().decode("utf-8")
         except Exception:
             err_body = "<unable to read error body>"
-        raise RuntimeError(f"Gmail API error {e.code}: {err_body}") from e
+        raise GmailSendError(f"Gmail API error {e.code}: {err_body}", status=e.code) from e
+    except (TimeoutError, OSError) as e:
+        # urllib.error.URLError is an OSError; socket timeouts are TimeoutError.
+        raise GmailSendError(f"Gmail API no answer: {e!r}", status=None) from e
 

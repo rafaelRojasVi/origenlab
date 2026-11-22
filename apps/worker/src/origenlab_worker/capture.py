@@ -40,6 +40,7 @@ from origenlab_worker.v1_reuse import (
     date_iso_from_msg,
     message_from_bytes,
     recipients_header,
+    is_unsubscribe_subject,
     require_stageable_gmail_payload,
     walk_attachments,
 )
@@ -127,7 +128,8 @@ class UnparsedMessage:
     reason: str
 
 
-def intake_skip_reason(label_ids: Sequence[str], from_header: str | None = None) -> str | None:
+def intake_skip_reason(label_ids: Sequence[str], from_header: str | None = None,
+                       subject: str | None = None) -> str | None:
     """`draft`, `spam` or `trash` when any label is one V1 intake excludes; else None.
 
     Label *ids*, never names: system ids (`DRAFT`, `SPAM`, `TRASH`, `INBOX`, `SENT`) are what the
@@ -141,11 +143,18 @@ def intake_skip_reason(label_ids: Sequence[str], from_header: str | None = None)
     blocks only an address we wrote to (`triage.spam_report_guard`), so a forged one cannot block
     a contact. The evidence check (`require_stageable_gmail_payload`) makes the same exception, by
     the same sender pattern.
+
+    A second exception, Spam only (2026-11-22): a «BAJA» whose whole subject is an unsubscribe word
+    (`is_unsubscribe_subject`, the set triage reads). Gmail files some of these replies as spam,
+    and they were never captured, so the person stayed on the list. The rest of Spam is skipped.
     """
     bounce = bool(from_header and DELIVERY_REPORT_SENDER.search(from_header))
+    unsubscribe = is_unsubscribe_subject(subject)
     for label in label_ids:
         reason = SKIPPED_INTAKE.get(classify_intake_folder(label))
         if reason in ("trash", "spam") and bounce:
+            continue
+        if reason == "spam" and unsubscribe:
             continue
         if reason is not None:
             return reason

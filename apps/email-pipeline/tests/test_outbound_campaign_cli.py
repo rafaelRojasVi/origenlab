@@ -247,6 +247,51 @@ def test_send_live_limit_transitions_only_the_limited_recipients_then_finishes_r
     assert set(final_states.values()) == {"sent"}
 
 
+def test_send_live_refreshes_credentials_once_before_the_loop(
+    db_path: Path, tmp_path: Path, capsys, monkeypatch,
+) -> None:
+    """A still-valid but nearly expired token is refreshed before the first send."""
+    _init_and_reserve_three(db_path, capsys)
+    html_file = tmp_path / "campaign.html"
+    html_file.write_text("<html><body>Hola</body></html>", encoding="utf-8")
+    token_json = tmp_path / "token.json"
+    monkeypatch.setenv("ORIGENLAB_GMAIL_OAUTH_CLIENT_JSON", str(tmp_path / "client.json"))
+    monkeypatch.setenv("ORIGENLAB_GMAIL_TOKEN_JSON", str(token_json))
+
+    class _Creds:
+        token = "nearly-expired"
+        refresh_token = "refresh-me"
+        refreshes = 0
+
+        def refresh(self, _request) -> None:
+            type(self).refreshes += 1
+            self.token = "fresh-token"
+
+        def to_json(self) -> str:
+            return '{"token": "fresh-token"}'
+
+    tokens_used: list[str] = []
+
+    def _send(*, access_token: str, raw_message_bytes: bytes) -> dict:
+        tokens_used.append(access_token)
+        return {"id": f"M{len(tokens_used)}"}
+
+    with patch(
+        "origenlab_email_pipeline.gmail_workspace_oauth.load_credentials_for_gmail_imap",
+        return_value=_Creds(),
+    ), patch(
+        "origenlab_email_pipeline.outbound_campaign_sender.gmail_api_send_message", side_effect=_send,
+    ):
+        code, _out = _run(
+            db_path, "send", "--campaign-id", "hielscher-sonicators-2026", "--html", str(html_file),
+            "--live", "--gmail-user", "contacto@origenlab.cl", capsys=capsys,
+        )
+    assert code == 0
+    assert _Creds.refreshes == 1
+    assert tokens_used == ["fresh-token"] * 3
+    assert token_json.read_text(encoding="utf-8") == '{"token": "fresh-token"}'
+
+
 def test_send_no_longer_accepts_out_flag(db_path: Path, tmp_path: Path, capsys) -> None:
     """--out was removed from `send` -- it never wrote anything and duplicated `export`."""
     html_file = tmp_path / "campaign.html"

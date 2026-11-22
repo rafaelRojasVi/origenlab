@@ -3,20 +3,22 @@
 One call per candidate, outside a transaction. Cap pattern exactly like tender/job.py _call_model:
   1. short transaction: with_cap_lock + ensure_within_cap (worst-case cost), then commit;
   2. the model call, with no transaction open;
-  3. short transaction: record_usage.
+  3. short transaction: record_usage — right after the call returns, before the answer is parsed.
 
 BudgetReached → stop the run cleanly (caller catches it and sets counts.error='budget').
 UnpricedModel → refuse before any paid call.
 
 Model: from env `ORIGENLAB_WORKER_PROSPECT_MODEL`, default `claude-sonnet-5-5`, validated by
 `check_model_id`. Returns FitResult; fit < 30 is below threshold (caller still stores it as
-hidden so the candidate is never picked again).
+hidden so the candidate is never picked again). A call that fails stores nothing: the candidate
+stays in the pool and a later run scores it.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -37,6 +39,7 @@ _log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 ENV_PROSPECT_MODEL = "ORIGENLAB_WORKER_PROSPECT_MODEL"
+ENV_ANTHROPIC_API_KEY = "ORIGENLAB_WORKER_ANTHROPIC_API_KEY"
 
 # Rough upper bound: project title + discipline + keywords in Spanish
 INPUT_TOKENS_ESTIMATE = 800
@@ -78,9 +81,13 @@ class FitResult:
 
 
 def call_fit(conn: Any, candidate_context: str, model: str,
-             search_run_id: str | None) -> FitResult:
+             search_run_id: str | None, *, api_key: str | None = None) -> FitResult:
     """One Claude call for a candidate's fit. `conn` must be outside a transaction when called.
-    Raises BudgetReached or UnpricedModel (both are not bugs)."""
+    Raises BudgetReached or UnpricedModel (both are not bugs), and whatever the call raises.
+
+    The key is the worker's own (`ORIGENLAB_WORKER_ANTHROPIC_API_KEY`, or `api_key`) — the SDK's
+    default `ANTHROPIC_API_KEY` is not set on the worker, so every call failed. No SDK retries: a
+    failed candidate is simply scored by a later run."""
     import anthropic
     from origenlab_api.v2.model_spend import MONTHLY_CAP_USD
 
@@ -94,8 +101,12 @@ def call_fit(conn: Any, candidate_context: str, model: str,
         with_cap_lock(cur, FEATURE_PROSPECTOS)
         ensure_within_cap(cur, FEATURE_PROSPECTOS, datetime.now(timezone.utc), worst)
 
+    key = (api_key if api_key is not None else os.environ.get(ENV_ANTHROPIC_API_KEY, "")).strip()
+    if not key:
+        raise RuntimeError("anthropic_api_key_missing")
+
     # 2. Model call (no transaction open)
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(api_key=key, max_retries=0)
     message = client.messages.create(
         model=model,
         max_tokens=MAX_TOKENS,
@@ -104,6 +115,14 @@ def call_fit(conn: Any, candidate_context: str, model: str,
     )
     served_model = getattr(message, "model", None) or model
     usage = message.usage
+
+    # 3. Record usage (short tx) — right after the call, before parsing: a paid answer that does
+    # not parse is still paid.
+    with conn.transaction(), conn.cursor() as cur:
+        record_usage(cur, feature=FEATURE_PROSPECTOS, step="prospect", model=model, usage=usage,
+                     bid_preparation_id=None, served_model=served_model,
+                     search_run_id=search_run_id)
+
     raw = (message.content[0].text if message.content else "{}").strip()
     try:
         parsed = json.loads(raw)
@@ -112,12 +131,6 @@ def call_fit(conn: Any, candidate_context: str, model: str,
     fit = max(0, min(int(parsed.get("fit") or 0), 100))
     why_now = str(parsed.get("why_now") or "").strip()[:500] or "Proyecto adjudicado por ANID."
     equipment = [str(e).strip() for e in (parsed.get("equipment") or []) if str(e).strip()][:4]
-
-    # 3. Record usage (short tx)
-    with conn.transaction(), conn.cursor() as cur:
-        record_usage(cur, feature=FEATURE_PROSPECTOS, step="prospect", model=model, usage=usage,
-                     bid_preparation_id=None, served_model=served_model,
-                     search_run_id=search_run_id)
 
     return FitResult(fit=fit, why_now=why_now, equipment=equipment,
                      model=served_model, usage=usage)

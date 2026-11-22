@@ -18,6 +18,8 @@ from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
 )
 from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
     DELIVERY_REPORT_SENDER,
+    UNSUBSCRIBE_SUBJECTS,
+    is_unsubscribe_subject,
 )
 from origenlab_email_pipeline.migration.v2_evidence_stage.manifest import (
     _require_stageable_gmail_payload as require_stageable_gmail_payload,
@@ -54,6 +56,8 @@ __all__ = [
     "classify_send_direction",
     "date_iso_from_msg",
     "DELIVERY_REPORT_SENDER",
+    "UNSUBSCRIBE_SUBJECTS",
+    "is_unsubscribe_subject",
     "message_from_bytes",
     "recipients_header",
     "require_stageable_gmail_payload",

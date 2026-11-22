@@ -560,6 +560,20 @@ def test_a_delivery_report_in_the_trash_or_spam_is_stageable_and_nothing_else_is
             parse_manifest(_manifest(records=[person]))
 
 
+@pytest.mark.parametrize("key", ["subject_raw", "subject"])
+def test_a_baja_in_spam_is_stageable_and_the_rest_of_spam_is_not(key) -> None:
+    """Gmail files some «BAJA» replies as spam (2026-11-22); only Spam, only a bare baja word."""
+    record = _gmail_record(labels=["SPAM"])
+    record["payload"].pop("subject")
+    record["payload"][key] = "BAJA"
+    parse_manifest(_manifest(records=[record]))
+    for subject, label, why in (("Oferta BAJA", "SPAM", "excluded_spam"), ("BAJA", "TRASH", "excluded_trash")):
+        other = _gmail_record(labels=[label])
+        other["payload"][key] = subject
+        with pytest.raises(ManifestRefused, match=why):
+            parse_manifest(_manifest(records=[other]))
+
+
 @pytest.mark.parametrize("declared", ["excluded_spam", "excluded_trash", "metadata_only", None, ""])
 def test_only_a_stageable_intake_class_may_be_declared(declared) -> None:
     raw = _manifest(records=[_gmail_record(intake_class=declared)])
