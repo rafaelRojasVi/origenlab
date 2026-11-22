@@ -340,7 +340,6 @@ def test_the_dev_header_viewer_is_redacted_end_to_end(monkeypatch: pytest.Monkey
     from origenlab_api.v2.identity import build_identity_port
 
     app.state.v2_identity = build_identity_port(
-        jwks_url=None,
         database_url="postgresql://u:p@127.0.0.1:54332/unused",
         lookup=_Lookup(),
         dev_login_enabled=True,
@@ -780,3 +779,38 @@ def test_on_real_rows_the_route_never_confirms_a_masked_address_for_a_viewer(
     visible = client.get("/v2/evidence", params={"q": "instituto persona"})
     assert visible.json()["total"] == 1
     assert visible.json()["items"][0]["kind"] == "organization_name"
+
+
+# ----------------------------------------------------------------------- phones in free text
+
+@pytest.mark.parametrize("text", [
+    "Llamar al +56 9 8765 4321 mañana",
+    "cel 9 8765 4321",
+    "cel 987654321.",
+    "fono +56 2 2345 6789",
+    "fono 2 2345 6789",
+    "whatsapp +56987654321",
+    "tel 56-9-8765-4321",
+    "anotado 9.8765.4321",
+])
+def test_a_chilean_phone_in_free_text_is_masked(text: str) -> None:
+    from origenlab_api.v2.contact_redaction import redact_contact_addresses
+
+    out = redact_contact_addresses({"body": text})["body"]
+    assert "8765" not in out and "2345 6789" not in out
+    assert "***" in out
+
+
+@pytest.mark.parametrize("text", [
+    "RUT 12.345.678-5 y 9.876.543-2",
+    "Total $ 1.190.000 IVA incluido",
+    "Folio 912345 del 2026-11-22",
+    "cotización CN01328-2 por 2.345.678",
+    "id 7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "migración 20261122100000",
+    "monto 29123456789 no es un teléfono",
+])
+def test_free_text_that_is_not_a_phone_is_left_alone(text: str) -> None:
+    from origenlab_api.v2.contact_redaction import redact_contact_addresses
+
+    assert redact_contact_addresses({"body": text})["body"] == text
