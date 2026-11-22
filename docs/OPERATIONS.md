@@ -201,7 +201,7 @@ Names and value shapes only; values are Render secrets and are never written in 
 | `ORIGENLAB_AUTH_SESSION_TTL_SECONDS` | `43200` |
 | `ORIGENLAB_PROFILE_LOGIN_ENABLED` | `true` — the shared-account profile selector |
 | `ORIGENLAB_PROFILE_PIN_PEPPER` | random, at least 32 bytes — the same value the roster tool uses |
-| `ORIGENLAB_V2_JWKS_URL` | **unset — must remain unset** (corrected 2026-10-02, see below) |
+| `ORIGENLAB_V2_JWKS_URL` | not read since 2026-11-22 (see below); leave it unset |
 | `ORIGENLAB_DEV_LOGIN_ENABLED` | unset |
 | `ORIGENLAB_V2_CRM_AUTHORING_ENABLED` | `true` once the operator turns CRM authoring on (the 28 `/v2/commands/*` people/organization/note commands, sales and admin); unset (default `false`) keeps the hosted deployment read-only and every authoring path a 404. The three #619 review findings that gated it are fixed ([`STATUS.md`](STATUS.md) §2.7.46). `GET /auth/session` reports the switch as `crm_authoring_enabled`, and the dashboard offers no CRM editor while it is off |
 | `ORIGENLAB_V2_CAMPAIGN_TEST_SEND_ENABLED` | `true` once the owner has authorized the Gmail send token (`apps/api/README.md` «Campaign test sends»); unset (default `false`) leaves «Enviar prueba» unmounted. Mounted only together with a readable, valid token file below — a bad file logs «campaign test send disabled» and the feature stays off |
@@ -210,19 +210,13 @@ Names and value shapes only; values are Render secrets and are never written in 
 | `ORIGENLAB_GITHUB_PUBLISH_TOKEN` | secret. Fine-grained personal access token limited to the site repository (`ORIGENLAB_GITHUB_REPO`, default `rafaelRojasVi/origenlab`): **Contents: read and write**, **Actions: read and write** (write dispatches `web-deploy.yml`, read lists its runs for the status line). Owner steps: create the token on GitHub, set it on Render, set the switch above, then publish one sheet and approve the deploy in the GitHub `production` environment — the approval stays in GitHub. **Do not turn the switch on yet:** the commit goes straight to `ORIGENLAB_GITHUB_REF` (`main`), which the `main` ruleset refuses (502 `branch_protected`), and the release gate (`scripts/deploy/check_branch_protection.py`) fails closed if the ruleset has any bypass actor, so the token must never be given one. Publishing needs an owner design decision first: commit to a branch and open a PR, or use a staging ref and decide whether the `production` environment may deploy from it. The switch stays off until then |
 | `ORIGENLAB_GITHUB_REPO` / `ORIGENLAB_GITHUB_REF` | optional: `owner/name` of the site repository (default `rafaelRojasVi/origenlab`) and the branch the sheet is committed to and the workflow dispatched on (default `main`). Committer name and email: `ORIGENLAB_GITHUB_PUBLISH_COMMITTER_NAME` / `_EMAIL` (default `OrigenLab panel` / `panel@origenlab.cl`) |
 
-**`ORIGENLAB_V2_JWKS_URL` must remain unset for the current deployment architecture.** An
-earlier revision of this step instructed the operator to set it to the project's JWKS. That
-was wrong, and the code proves it: `build_identity_port` in
-`apps/api/src/origenlab_api/v2/identity.py` chooses the JWKS adapter **whenever the variable
-is set, ahead of every other adapter**, and that adapter's `resolve` raises
-`IdentityMisconfigured` on **every request** — it exists as a target for Supabase Auth, which
-has not started ([`STATUS.md`](STATUS.md) §2, slice 1). Setting the variable would therefore
-break every authenticated production request. The production identity today is the Google
-OIDC session adapter, selected when no JWKS URL is set and Google sign-in is on; the
-development header adapter is refused independently whenever `ORIGENLAB_ENV=production`, so
-leaving the JWKS URL unset does not open it. When Supabase Auth replaces Google sign-in, this
-step changes in a reviewed PR that also lands the adapter implementation — never by setting
-the variable first.
+**`ORIGENLAB_V2_JWKS_URL` is no longer read.** Until 2026-11-22 `build_identity_port`
+(`apps/api/src/origenlab_api/v2/identity.py`) chose an unimplemented JWKS adapter whenever the
+variable was set, and its `resolve` raised on every request — setting it would have broken every
+authenticated production request. That placeholder adapter and the setting are gone. The
+production identity is the Google OIDC session adapter; the development header adapter is refused
+whenever `ORIGENLAB_ENV=production`. When Supabase Auth replaces Google sign-in, its adapter and
+its setting land together in a reviewed PR.
 
 The dashboard build needs no change. The proxy lists the named `/v2` GET paths and `/auth/*`;
 the Worker source no longer derives an operator header from Cloudflare Access (built 2026-10-03; not deployed until step 9).

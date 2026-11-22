@@ -9,19 +9,31 @@
 | `GET /v2/workspace/finance/resumen` | Resumen v3: caja 30/60/90, meta 3-layer, indicadores, cobrar_hoy, pedidos_estimados |
 
 «Vendido» = net_amount of crm.invoice doc_type 33/34 issued in the Santiago month, plus notas de
-débito (56) minus notas de crédito (61). «Por cobrar» is the total balance of unpaid invoices (not
-month-scoped). «Pipeline ponderado» is the sum of open-case amounts weighted by stage probability.
+débito (56) minus notas de crédito (61). «Por cobrar» is the total balance still owed on facturas
+(not month-scoped), by the one formula of `invoices/balance.py`: a nota de débito after «Pagada»
+is owed again. «Pipeline ponderado» is the sum of open-case amounts weighted by stage probability.
 «Capital atado» is the sum of supplier orders in-flight (ordered but not yet received). «Gastos mes»
-is the sum of crm.expense for the current month.
+is the sum of crm.expense for the current month. «Margen del mes» is the engine's own economics
+(`quotes/economics.py`) of the month's won revisions, given only when every one of them has a cost
+on every line — a partial margin is never shown as if it were complete.
+
+"Today" is the Santiago day, read from the database clock unless the repository was given a
+`clock` (tests): every statement takes it as `%(today)s`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections import defaultdict
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
+
+from origenlab_api.v2.finance.partners import LEGACY_PARTNER_A_SALARY, LEGACY_PARTNER_B_RATE, paid_by_to_json
+from origenlab_api.v2.invoices.balance import INVOICE_BALANCE_SQL
+from origenlab_api.v2.quotes.economics import frozen_economics
+from origenlab_api.v2.quotes.inputs import PARAMETERS_SQL, parameters_from
 
 # Stage-to-probability weights for the pipeline ponderado.
 # Probabilities reflect historical OrigenLab close rates.
@@ -35,27 +47,15 @@ _STAGE_WEIGHTS: dict[str, float] = {
 
 _DEFAULT_TARGET_NET = 6_000_000  # pesos CLP
 
-_POR_COBRAR_AGING_SQL = """
+_POR_COBRAR_AGING_SQL = f"""
 with month_bounds as (
-  select (now() at time zone 'America/Santiago')::date as today
+  select %(today)s::date as today
 ),
-invoice_balance as (
-  select
-    i.id,
-    i.issued_on,
-    (i.total_amount
-     + coalesce((
-         select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
-           from crm.invoice n
-          where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
-     ), 0)
-     - coalesce((
-         select sum(p.amount) from crm.invoice_payment p
-          where p.invoice_id = i.id and p.removed_at is null
-     ), 0)
-    ) as balance_iva
-  from crm.invoice i
-  where i.doc_type in (33, 34) and i.paid_on is null
+invoice_balance as ({INVOICE_BALANCE_SQL}),
+owed as (
+  select i.id, i.issued_on, b.balance as balance_iva
+    from crm.invoice i
+    join invoice_balance b on b.invoice_id = i.id
 )
 select
   case
@@ -65,14 +65,15 @@ select
     else '90+'
   end as bucket,
   coalesce(sum(ib.balance_iva), 0) as total_iva
-from invoice_balance ib, month_bounds mb
+from owed ib, month_bounds mb
 where ib.balance_iva > 0
 group by 1
 """
 
 _MONTHLY_HISTORY_SQL = """
 select
-  date_trunc('month', i.issued_on at time zone 'America/Santiago')::date::text as month,
+  -- issued_on is a date (the SII's day): truncating it directly keeps the 1st in its own month
+  date_trunc('month', i.issued_on)::date::text as month,
   coalesce(sum(
     case i.doc_type
       when 33 then i.net_amount
@@ -83,20 +84,21 @@ select
     end
   ), 0) as neto
 from crm.invoice i
-where i.issued_on >= (date_trunc('month', now() at time zone 'America/Santiago') - interval '5 months')::date
+where i.issued_on >= (date_trunc('month', %(today)s::date) - interval '5 months')::date
+  and i.issued_on < (date_trunc('month', %(today)s::date) + interval '1 month')::date
   and i.doc_type in (33, 34, 56, 61)
 group by 1
 order by 1
 """
 
-_MES_SQL = """
+_MES_SQL = f"""
 with
   -- current Santiago month boundaries
   month_bounds as (
     select
-      date_trunc('month', now() at time zone 'America/Santiago')::date as month_start,
-      (date_trunc('month', now() at time zone 'America/Santiago') + interval '1 month')::date as month_end,
-      (now() at time zone 'America/Santiago')::date as today
+      date_trunc('month', %(today)s::date)::date as month_start,
+      (date_trunc('month', %(today)s::date) + interval '1 month')::date as month_end,
+      %(today)s::date as today
   ),
   -- vendido: net_amount of invoices issued in this Santiago month (facturas + notas de débito + notas de crédito)
   vendido as (
@@ -113,55 +115,12 @@ with
     where i.issued_on >= mb.month_start and i.issued_on < mb.month_end
       and i.doc_type in (33, 34, 56, 61)
   ),
-  -- por cobrar: total balance of unpaid facturas (not month-scoped)
+  -- por cobrar: what is still owed on facturas (not month-scoped), `invoices/balance.py`
+  invoice_balance as ({INVOICE_BALANCE_SQL}),
   por_cobrar as (
-    select coalesce(sum(
-      -- billed = total + notas adjustments
-      i.total_amount
-      + coalesce((
-        select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
-          from crm.invoice n
-         where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
-      ), 0)
-      -- subtract payments
-      - coalesce((
-        select sum(p.amount) from crm.invoice_payment p
-         where p.invoice_id = i.id and p.removed_at is null
-      ), 0)
-    ), 0) as total,
-    count(*) filter (where i.doc_type in (33, 34) and i.paid_on is null) as count
-    from crm.invoice i
-    where i.doc_type in (33, 34)
-      and i.paid_on is null
-      and (
-        i.total_amount
-        + coalesce((
-          select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
-            from crm.invoice n
-           where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
-        ), 0)
-        - coalesce((
-          select sum(p.amount) from crm.invoice_payment p
-           where p.invoice_id = i.id and p.removed_at is null
-        ), 0)
-      ) > 0
-  ),
-  -- pipeline ponderado: open cases with their amounts × stage weight
-  -- We pass stage weights from Python since SQL doesn't have the mapping
-  pipeline_raw as (
-    select o.stage,
-           coalesce(
-             -- latest live quote revision (CLP tax base), else null
-             (select qr.tax_base
-                from crm.quote q
-                join crm.quote_revision qr on qr.quote_id = q.id
-               where q.opportunity_id = o.id and qr.status = 'active'
-                 and qr.quote_currency = 'CLP' and qr.tax_base is not null
-               order by qr.created_at desc limit 1),
-             0
-           ) as amount_clp
-      from crm.opportunity o
-     where o.stage not in ('won', 'lost', 'abandoned')
+    select coalesce(sum(b.balance), 0) as total, count(*) as count
+      from invoice_balance b
+     where b.balance > 0
   ),
   -- capital atado: supplier orders placed but not fully received
   capital as (
@@ -226,7 +185,7 @@ select o.stage,
 """
 
 _EXPENSES_SQL = """
-select e.id::text as expense_id, e.month::text, e.category, e.amount_clp,
+select e.id::text as expense_id, e.version, e.month::text, e.category, e.amount_clp,
        e.paid_by, e.notes, e.source, e.external_ref,
        e.created_at::text, e.updated_at::text,
        op.display_name as created_by
@@ -237,7 +196,7 @@ select e.id::text as expense_id, e.month::text, e.category, e.amount_clp,
 """
 
 _SUPPLIER_ORDERS_SQL = """
-select so.id::text as order_id, so.supplier_name, so.ordered_on::text,
+select so.id::text as order_id, so.version, so.supplier_name, so.ordered_on::text,
        so.paid_on::text, so.amount_original, so.currency, so.amount_clp,
        so.expected_arrival_on::text, so.received_on::text, so.notes,
        so.created_at::text, so.updated_at::text,
@@ -252,7 +211,7 @@ select so.id::text as order_id, so.supplier_name, so.ordered_on::text,
 
 _SETTINGS_SQL = """
 with active_rule as (
-  select rule_name, arriendo_clp, tasa_sebastian, sueldo_tatiana,
+  select rule_name, arriendo_clp, partner_b_rate, partner_a_salary,
          arriendo_pct_empresa, split_pct, valid_from::text, notes
     from crm.partner_rule
    order by valid_from desc
@@ -270,8 +229,8 @@ select
   ct.month as target_month,
   ar.rule_name,
   ar.arriendo_clp,
-  ar.tasa_sebastian,
-  ar.sueldo_tatiana,
+  ar.partner_b_rate,
+  ar.partner_a_salary,
   ar.arriendo_pct_empresa,
   ar.split_pct,
   ar.valid_from,
@@ -286,9 +245,9 @@ _RESUMEN_MES_SQL = """
 with
   month_bounds as (
     select
-      date_trunc('month', now() at time zone 'America/Santiago')::date as month_start,
-      (date_trunc('month', now() at time zone 'America/Santiago') + interval '1 month')::date as month_end,
-      (now() at time zone 'America/Santiago')::date as today
+      date_trunc('month', %(today)s::date)::date as month_start,
+      (date_trunc('month', %(today)s::date) + interval '1 month')::date as month_end,
+      %(today)s::date as today
   ),
   vendido as (
     select coalesce(sum(
@@ -356,8 +315,8 @@ _INDICADORES_SQL = """
 with
   month_bounds as (
     select
-      date_trunc('month', now() at time zone 'America/Santiago')::date as month_start,
-      (date_trunc('month', now() at time zone 'America/Santiago') + interval '1 month')::date as month_end
+      date_trunc('month', %(today)s::date)::date as month_start,
+      (date_trunc('month', %(today)s::date) + interval '1 month')::date as month_end
   ),
   -- avg payment days per client RUT (from paid facturas)
   avg_per_client as (
@@ -375,31 +334,6 @@ with
       from crm.invoice i
      where i.doc_type in (33, 34) and i.paid_on is not null
   ),
-  -- this month's won cases: cost and subtotal for margin.
-  -- cost is aggregated once per revision via LATERAL; without it, a direct JOIN to quote_line would
-  -- multiply tax_base by the line count (3 lines → subtotal 3×), inflating the margin percentage.
-  margen_this_month as (
-    select
-      coalesce(sum(rev_cost.costo), 0) as costo,
-      coalesce(sum(qr.tax_base), 0) as subtotal
-    from crm.opportunity o
-    join crm.quote_revision qr on qr.quote_id = o.won_quote_id and qr.revision_no = o.won_revision_no
-    cross join month_bounds mb
-    -- LATERAL aggregates item lines once per revision; tax_base then joins exactly once per won case
-    left join lateral (
-      select coalesce(sum(
-        -- CLP lines have fx_rate = null; coalesce(null, 1) = 1, so no currency conversion is applied.
-        -- Foreign-currency lines store the CLP-per-unit rate (same as engine.py _rate()).
-        l.quantity * l.unit_cost * coalesce(l.fx_rate, 1)
-      ), 0) as costo
-        from crm.quote_line l
-       where l.quote_revision_id = qr.id and l.line_kind = 'item'
-    ) rev_cost on true
-    where o.stage = 'won'
-      and date(o.closed_at at time zone 'America/Santiago') >= mb.month_start
-      and date(o.closed_at at time zone 'America/Santiago') < mb.month_end
-      and qr.quote_currency = 'CLP'
-  ),
   -- top 3 slow payers (by avg days on paid invoices)
   slow_payers as (
     select i.client_name,
@@ -415,16 +349,43 @@ with
 select
   oa.avg_days as dpc_avg,
   oa.n as dpc_count,
-  mm.costo as margen_costo,
-  mm.subtotal as margen_subtotal,
   (select json_agg(json_build_object('org', sp.client_name, 'days', round(sp.avg_days)::int, 'n', sp.n)
                    order by sp.avg_days desc)
      from slow_payers sp) as clientes_lentos
-from overall_avg oa, margen_this_month mm
+from overall_avg oa
 """
 
-_OPEN_INVOICES_SQL = """
-with avg_days as (
+# «Margen del mes»: the month's won cases, each at its winning revision, priced as approval froze it
+# (`quotes/economics.py`, the «Rentabilidad» report's own figures: item cost, import costs from the
+# logistics lines, sale). The first statement is the revisions, the second their stored lines.
+_WON_REVISIONS_BASE_SQL = """
+with month_bounds as (
+  select date_trunc('month', %(today)s::date)::date as month_start,
+         (date_trunc('month', %(today)s::date) + interval '1 month')::date as month_end
+), won as (
+  select qr.id as revision_id, qr.quote_currency, qr.tax_rate, qr.expense_allocation_mode
+    from crm.opportunity o
+    join crm.quote_revision qr on qr.quote_id = o.won_quote_id and qr.revision_no = o.won_revision_no
+    cross join month_bounds mb
+   where o.stage = 'won'
+     and (o.closed_at at time zone 'America/Santiago')::date >= mb.month_start
+     and (o.closed_at at time zone 'America/Santiago')::date < mb.month_end
+)
+"""
+_WON_REVISIONS_SQL = _WON_REVISIONS_BASE_SQL + """
+select w.revision_id::text as revision_id, w.quote_currency, w.tax_rate, w.expense_allocation_mode
+  from won w
+"""
+_WON_LINES_SQL = _WON_REVISIONS_BASE_SQL + """
+select l.*
+  from crm.quote_line l
+  join won w on w.revision_id = l.quote_revision_id
+ order by l.quote_revision_id, l.line_no
+"""
+
+_OPEN_INVOICES_SQL = f"""
+with invoice_balance as ({INVOICE_BALANCE_SQL}),
+avg_days as (
   select i.client_rut,
          avg(i.paid_on - i.issued_on)::numeric as avg_d
     from crm.invoice i
@@ -432,23 +393,13 @@ with avg_days as (
    group by i.client_rut
 ),
 today_cte as (
-  select (now() at time zone 'America/Santiago')::date as today
+  select %(today)s::date as today
 )
 select
   i.id::text as invoice_id, i.folio, i.issued_on::text, i.client_rut, i.client_name,
   i.total_amount,
-  -- balance = total + nota adjustments - payments
-  (i.total_amount
-   + coalesce((
-       select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
-         from crm.invoice n
-        where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
-   ), 0)
-   - coalesce((
-       select sum(p.amount) from crm.invoice_payment p
-        where p.invoice_id = i.id and p.removed_at is null
-   ), 0)
-  ) as balance_iva,
+  -- what is still owed (`invoices/balance.py`)
+  b.balance as balance_iva,
   round(coalesce(a.avg_d, 30))::int as avg_days_client,
   (i.issued_on + (coalesce(a.avg_d, 30))::int)::text as expected_pay_date,
   o.id::text as opportunity_id,
@@ -458,19 +409,8 @@ from crm.invoice i
 cross join today_cte t
 left join avg_days a on a.client_rut = i.client_rut
 left join crm.opportunity o on o.id = i.opportunity_id
-where i.doc_type in (33, 34) and i.paid_on is null
-  and (
-    i.total_amount
-    + coalesce((
-        select sum(case n.doc_type when 56 then n.total_amount else -n.total_amount end)
-          from crm.invoice n
-         where n.doc_type in (56, 61) and n.reference_doc_type = i.doc_type and n.reference_folio = i.folio
-    ), 0)
-    - coalesce((
-        select sum(p.amount) from crm.invoice_payment p
-         where p.invoice_id = i.id and p.removed_at is null
-    ), 0)
-  ) > 0
+join invoice_balance b on b.invoice_id = i.id
+where b.balance > 0
 order by i.issued_on asc
 """
 
@@ -522,11 +462,55 @@ def _iso(v: Any) -> str | None:
     return v.isoformat() if v is not None else None
 
 
+def _margen_mes(revisions: list[dict[str, Any]], lines: list[dict[str, Any]],
+                params: dict[str, Decimal | str]) -> dict[str, Any]:
+    """«Margen del mes» from the month's won revisions, priced as approval froze them.
+
+    Sale, product cost and import costs (the logistics lines) are `quotes/economics.py`'s, as the
+    «Rentabilidad» report reads them. The figure is given only when every won revision is a CLP
+    one the engine prices with a cost on every item line (`cost_coverage` full); otherwise the
+    month's margin is unknown — `known` false, the amounts 0 — and never a partial one shown as if
+    it were complete. `revisions`/`incomplete` say how many there were and how many lacked costs.
+    """
+    by_revision: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for line in lines:
+        by_revision[str(line["quote_revision_id"])].append(line)
+    sale = cost = Decimal(0)
+    incomplete = 0
+    for r in revisions:
+        e = None
+        if r["quote_currency"] == "CLP" and r["tax_rate"] is not None and r["expense_allocation_mode"] is not None:
+            e = frozen_economics(r, by_revision.get(str(r["revision_id"]), []), params)
+        if e is None or e["cost_coverage"]["state"] != "full":
+            incomplete += 1
+            continue
+        sale += e["sale_net_clp"]
+        cost += e["product_cost_clp"] + e["import_costs_clp"]
+    known = bool(revisions) and incomplete == 0 and sale > 0
+    return {
+        "known": known,
+        "pct": round(float((1 - cost / sale) * 100), 1) if known else 0.0,
+        "costo": int(cost) if known else 0,
+        "subtotal": int(sale) if known else 0,
+        "revisions": len(revisions),
+        "incomplete": incomplete,
+    }
+
+
 class FinanceReadRepository:
-    def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = 30_000) -> None:
+    def __init__(self, connect: Any, dsn: str, statement_timeout_ms: int = 30_000,
+                 clock: Callable[[], date] | None = None) -> None:
         self._connect = connect
         self._dsn = dsn
         self._statement_timeout_ms = statement_timeout_ms
+        self._clock = clock
+
+    def _today(self, cur: Any) -> date:
+        """The Santiago day: the injected clock's, else the database's."""
+        if self._clock is not None:
+            return self._clock()
+        cur.execute("select (now() at time zone 'America/Santiago')::date")
+        return cur.fetchone()[0]
 
     @contextmanager
     def _read(self) -> Iterator[Any]:
@@ -542,7 +526,8 @@ class FinanceReadRepository:
     def mes(self) -> dict[str, Any]:
         """The 5 KPI cards for the Mes view plus pipeline ponderado by stage."""
         with self._read() as cur:
-            cur.execute(_MES_SQL, {"default_target": _DEFAULT_TARGET_NET})
+            today = {"today": self._today(cur)}
+            cur.execute(_MES_SQL, {"default_target": _DEFAULT_TARGET_NET, **today})
             names = [d.name for d in cur.description]
             row = dict(zip(names, cur.fetchone(), strict=True))
 
@@ -551,11 +536,11 @@ class FinanceReadRepository:
             pipe_rows = cur.fetchall()
 
             # por_cobrar aging breakdown (IVA-inclusive)
-            cur.execute(_POR_COBRAR_AGING_SQL)
+            cur.execute(_POR_COBRAR_AGING_SQL, today)
             aging_rows = cur.fetchall()
 
             # monthly history (last 6 months)
-            cur.execute(_MONTHLY_HISTORY_SQL)
+            cur.execute(_MONTHLY_HISTORY_SQL, today)
             history_rows = cur.fetchall()
 
         pipeline_net = 0
@@ -601,13 +586,11 @@ class FinanceReadRepository:
         """Expenses for a month (default: current Santiago month)."""
         with self._read() as cur:
             if month is None:
-                cur.execute(
-                    "select date_trunc('month', now() at time zone 'America/Santiago')::date::text"
-                )
-                month = cur.fetchone()[0]
+                month = self._today(cur).replace(day=1).isoformat()
             cur.execute(_EXPENSES_SQL, {"month": month})
             names = [d.name for d in cur.description]
-            rows = [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
+            rows = [{**r, "paid_by": paid_by_to_json(r["paid_by"])}
+                    for r in (dict(zip(names, v, strict=True)) for v in cur.fetchall())]
         return {
             "month": month,
             "items": rows,
@@ -633,6 +616,7 @@ class FinanceReadRepository:
             cur.execute(_SETTINGS_SQL, {"default_target": _DEFAULT_TARGET_NET})
             names = [d.name for d in cur.description]
             row = dict(zip(names, cur.fetchone(), strict=True))
+        partner_b_rate = float(row["partner_b_rate"]) if row["partner_b_rate"] is not None else None
         return {
             "monthly_target": {
                 "net": row["latest_target_net"],
@@ -643,8 +627,11 @@ class FinanceReadRepository:
             "partner_rule": {
                 "rule_name": row["rule_name"],
                 "arriendo_clp": row["arriendo_clp"],
-                "tasa_sebastian": float(row["tasa_sebastian"]) if row["tasa_sebastian"] is not None else None,
-                "sueldo_tatiana": row["sueldo_tatiana"],
+                "partner_b_rate": partner_b_rate,
+                "partner_a_salary": row["partner_a_salary"],
+                # The dashboard's names for the same two values (`partners.py`), kept stable.
+                LEGACY_PARTNER_B_RATE: partner_b_rate,
+                LEGACY_PARTNER_A_SALARY: row["partner_a_salary"],
                 "arriendo_pct_empresa": float(row["arriendo_pct_empresa"]) if row["arriendo_pct_empresa"] is not None else None,
                 "split_pct": float(row["split_pct"]) if row["split_pct"] is not None else None,
                 "valid_from": row["valid_from"],
@@ -655,18 +642,29 @@ class FinanceReadRepository:
     def resumen(self) -> dict[str, Any]:
         """Resumen v3: caja 30/60/90, meta 3-layer, indicadores, cobrar_hoy, pedidos_estimados."""
         with self._read() as cur:
+            today = {"today": self._today(cur)}
             # 1. Meta section: vendido, ganado_sin_facturar, en_negociacion, meta
-            cur.execute(_RESUMEN_MES_SQL, {"default_target": _DEFAULT_TARGET_NET})
+            cur.execute(_RESUMEN_MES_SQL, {"default_target": _DEFAULT_TARGET_NET, **today})
             names = [d.name for d in cur.description]
             mes_row = dict(zip(names, cur.fetchone(), strict=True))
 
-            # 2. Indicadores: avg payment days, margin, slow payers
-            cur.execute(_INDICADORES_SQL)
+            # 2. Indicadores: avg payment days, slow payers
+            cur.execute(_INDICADORES_SQL, today)
             names2 = [d.name for d in cur.description]
             ind_row = dict(zip(names2, cur.fetchone(), strict=True))
 
+            # 2b. «Margen del mes»: the month's won revisions, their lines, the parameters
+            cur.execute(_WON_REVISIONS_SQL, today)
+            won_names = [d.name for d in cur.description]
+            won_revisions = [dict(zip(won_names, r, strict=True)) for r in cur.fetchall()]
+            cur.execute(_WON_LINES_SQL, today)
+            line_names = [d.name for d in cur.description]
+            won_lines = [dict(zip(line_names, r, strict=True)) for r in cur.fetchall()]
+            cur.execute(PARAMETERS_SQL)
+            params = parameters_from(cur.fetchall())
+
             # 3. Open invoices (for caja calculation + cobrar_hoy)
-            cur.execute(_OPEN_INVOICES_SQL)
+            cur.execute(_OPEN_INVOICES_SQL, today)
             inv_names = [d.name for d in cur.description]
             open_invs = [dict(zip(inv_names, r, strict=True)) for r in cur.fetchall()]
 
@@ -691,9 +689,10 @@ class FinanceReadRepository:
 
         # ── caja: 30 / 60 / 90 day horizons ─────────────────────────────────
         IVA_RATE = Decimal("1.19")
-        # sale_confirmado: confirmed supplier orders still in transit (no arrival date → all horizons)
-        in_flight_total = sum(int(so["amount_clp"] or 0) for so in so_rows if so["received_on"] is None)
-        sale_confirmado = in_flight_total
+        # sale_confirmado: confirmed supplier orders still in transit and not yet paid (no arrival date →
+        # all horizons). A prepaid order's money has already left: it is capital atado, not outflow.
+        sale_confirmado = sum(int(so["amount_clp"] or 0) for so in so_rows
+                              if so["received_on"] is None and so["paid_on"] is None)
         # sale_estimado: won cases whose supplier purchase hasn't been registered yet
         #   + current-month operational expenses already committed
         pedidos_est_total = sum(int(r["estimated_cost_clp"]) for r in ped_rows)
@@ -750,9 +749,7 @@ class FinanceReadRepository:
 
         # ── indicadores ───────────────────────────────────────────────────────
         dpc_avg = float(ind_row["dpc_avg"]) if ind_row["dpc_avg"] else 0.0
-        margen_costo = int(ind_row["margen_costo"])
-        margen_subtotal = int(ind_row["margen_subtotal"])
-        margen_pct = round((1 - margen_costo / margen_subtotal) * 100, 1) if margen_subtotal > 0 else 0.0
+        margen = _margen_mes(won_revisions, won_lines, params)
         clientes_lentos_raw = ind_row["clientes_lentos"] or []
         clientes_lentos = [
             {
@@ -765,9 +762,13 @@ class FinanceReadRepository:
         indicadores = {
             "dias_promedio_cobro": round(dpc_avg, 1),
             "dias_promedio_cobro_count": int(ind_row["dpc_count"]),
-            "margen_mes_pct": margen_pct,
-            "margen_mes_costo": margen_costo,
-            "margen_mes_subtotal": margen_subtotal,
+            # The dashboard shows «—» while the subtotal is 0: an unknown margin leaves it 0.
+            "margen_mes_pct": margen["pct"],
+            "margen_mes_costo": margen["costo"],
+            "margen_mes_subtotal": margen["subtotal"],
+            "margen_mes_known": margen["known"],
+            "margen_mes_revisions": margen["revisions"],
+            "margen_mes_incomplete": margen["incomplete"],
             "clientes_lentos": clientes_lentos,
         }
 

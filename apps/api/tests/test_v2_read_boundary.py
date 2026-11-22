@@ -16,13 +16,13 @@ from origenlab_api.settings import Settings
 from origenlab_api.v2.identity import (
     IdentityMisconfigured,
     IdentityRefused,
-    JwksVerifier,
     LocalDevIdentity,
     OperatorIdentity,
     OperatorLookup,
     build_identity_port,
     is_loopback_dsn,
 )
+from origenlab_api.v2 import identity as identity_module
 from origenlab_api.v2.repository import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, clamp_limit
 
 from origenlab_api.commercial_operator_identity import OPERATOR_EMAIL_HEADER
@@ -89,20 +89,22 @@ def test_the_dev_identity_adapter_refuses_a_non_loopback_database() -> None:
     assert "no override" in str(excinfo.value)
 
 
-def test_jwks_wins_whenever_it_is_configured() -> None:
-    # A deployment that has configured JWKS must never silently fall back to the header
-    # adapter, even against a loopback database.
-    port = build_identity_port(
-        jwks_url="https://example.supabase.co/auth/v1/.well-known/jwks.json",
-        database_url=LOOPBACK,
-        lookup=_Lookup(_operator()),
-    )
-    assert isinstance(port, JwksVerifier)
+def test_a_jwks_url_in_the_environment_changes_nothing(monkeypatch) -> None:
+    # The unimplemented JWKS adapter that took over whenever ORIGENLAB_V2_JWKS_URL was set (and
+    # then refused every request) is gone: the setting is not read, and the port is chosen as if
+    # it were absent.
+    from origenlab_api.settings import Settings
+
+    monkeypatch.setenv("ORIGENLAB_V2_JWKS_URL", "https://example.supabase.co/auth/v1/.well-known/jwks.json")
+    assert not hasattr(Settings(), "v2_jwks_url")
+    port = build_identity_port(database_url=LOOPBACK, lookup=_Lookup(_operator()), dev_login_enabled=True)
+    assert isinstance(port, LocalDevIdentity)
+    assert "JwksVerifier" not in dir(identity_module)
 
 
 def test_the_dev_adapter_is_chosen_only_when_explicitly_enabled() -> None:
     port = build_identity_port(
-        jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()), dev_login_enabled=True
+        database_url=LOOPBACK, lookup=_Lookup(_operator()), dev_login_enabled=True
     )
     assert isinstance(port, LocalDevIdentity)
 
@@ -111,13 +113,8 @@ def test_no_identity_switched_on_is_a_startup_failure_not_a_dev_default() -> Non
     # Before Google sign-in the header adapter was the silent default whenever JWKS was
     # absent. It is now opt-in: with nothing enabled the boundary refuses to build.
     with pytest.raises(IdentityMisconfigured) as excinfo:
-        build_identity_port(jwks_url=None, database_url=LOOPBACK, lookup=_Lookup(_operator()))
+        build_identity_port(database_url=LOOPBACK, lookup=_Lookup(_operator()))
     assert "ORIGENLAB_DEV_LOGIN_ENABLED" in str(excinfo.value)
-
-
-def test_jwks_without_a_url_refuses_at_construction() -> None:
-    with pytest.raises(IdentityMisconfigured):
-        JwksVerifier("   ", _Lookup(_operator()))
 
 
 # ----------------------------------------------------------------------- identity

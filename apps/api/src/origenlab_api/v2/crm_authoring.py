@@ -702,16 +702,6 @@ def _handle_merge_people(
         (winner_id, loser_id),
     )
 
-    # Repoint notes
-    cur.execute(
-        """
-        update crm.note
-           set subject_id = %s::uuid
-         where subject_kind = 'person' and subject_id = %s::uuid
-        """,
-        (winner_id, loser_id),
-    )
-
     # Affiliations: repoint non-conflicting; close conflicting loser ones
     cur.execute(
         """
@@ -767,6 +757,17 @@ def _handle_merge_people(
             winner_id,
             loser_id,
         ),
+    )
+
+    # Repoint notes — after the loser names its winner: crm.note_guard lets a note's subject move only
+    # to the person it was merged into.
+    cur.execute(
+        """
+        update crm.note
+           set subject_id = %s::uuid
+         where subject_kind = 'person' and subject_id = %s::uuid
+        """,
+        (winner_id, loser_id),
     )
 
     # Bump winner version
