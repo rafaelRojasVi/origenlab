@@ -459,6 +459,46 @@ describe("Hoy actions", () => {
     });
   });
 
+  it("«+1 semana» retried after a dropped connection replays the same keys; a refusal renews only the refused step's", async () => {
+    // Attempt 1: the task is written, the cancel never answers. Attempt 2: the cancel is refused.
+    // Attempt 3 goes through.
+    const sent: { path: string; key: string | null }[] = [];
+    let cancels = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const path = new URL(url, "http://localhost").pathname;
+      if (!init?.body) return Promise.resolve(new Response("{}", { status: 404 }));
+      sent.push({ path, key: new Headers(init.headers).get("Idempotency-Key") });
+      const ok = () => Promise.resolve(new Response(JSON.stringify({ command: "x", opportunity_id: "o", opportunity_version: 5, command_receipt_id: "rcpt-1", replayed: false }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (path !== "/v2/commands/cancel-task") return ok();
+      cancels += 1;
+      if (cancels === 1) return Promise.reject(new TypeError("Failed to fetch"));
+      if (cancels === 2) return Promise.resolve(new Response(JSON.stringify({ detail: { code: "task_version_conflict" } }), { status: 409 }));
+      return ok();
+    }));
+    const c = card({ open_tasks: [task("t2", "2026-10-05T12:00:00Z", 1)] });
+    renderToday([c]);
+    const snooze = async (n: number) => {
+      pick(c);
+      const row = await screen.findByTestId("today-task-t2");
+      await waitFor(() => expect(row).not.toHaveClass("crm-row-out"));
+      fireEvent.click(within(row).getByRole("button", { name: "Más opciones" }));
+      fireEvent.click(within(row).getByRole("menuitem", { name: "+1 semana" }));
+      await waitFor(() => expect(sent.filter((x) => x.path === "/v2/commands/cancel-task")).toHaveLength(n));
+    };
+    await snooze(1);
+    await snooze(2);
+    await snooze(3);
+    const keys = (p: string) => sent.filter((x) => x.path === p).map((x) => x.key);
+    const create = keys("/v2/commands/create-task");
+    const cancel = keys("/v2/commands/cancel-task");
+    // The task was written once: every retry replays it under its first key.
+    expect(new Set(create).size).toBe(1);
+    // The dropped cancel is retried with its key; the refused one gets a new key.
+    expect(cancel[1]).toBe(cancel[0]);
+    expect(cancel[2]).not.toBe(cancel[1]);
+  });
+
   it("moves a replied case still «Enviada» to «Conversación» in one click", async () => {
     const calls = stub();
     const c = card({

@@ -34,9 +34,11 @@ import {
   createRequestFromForward,
   createTask,
   dismissForwardedRequest,
+  keyAfterFailure,
   moveCase,
   newCaseCommandKey,
   pauseCase,
+  refusedByApi,
   resumeCase,
   useMayRunCaseCommands,
 } from "../caseCommands";
@@ -788,7 +790,7 @@ function PauseRow({
       onClearItem();
       onChanged();
     } catch (err) {
-      keys.current.resume = newCaseCommandKey();
+      keys.current.resume = keyAfterFailure(err, keys.current.resume);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -803,7 +805,7 @@ function PauseRow({
       onClearItem();
       onChanged();
     } catch (err) {
-      keys.current.extend = newCaseCommandKey();
+      keys.current.extend = keyAfterFailure(err, keys.current.extend);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -913,7 +915,9 @@ function ReplyQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      skipKeys.current = [];
+      // A refusal frees the keys; a lost connection keeps them, so a retry replays the tasks
+      // already created instead of creating them twice.
+      if (refusedByApi(err)) skipKeys.current = [];
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -930,7 +934,7 @@ function ReplyQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      handledKey.current = newCaseCommandKey();
+      handledKey.current = keyAfterFailure(err, handledKey.current);
       toast(refusalOf(err)?.message ?? "No se pudo anotar el caso.", "bad");
     } finally { setBusy(null); }
   }
@@ -949,7 +953,7 @@ function ReplyQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current = [newCaseCommandKey()];
+      keys.current = keys.current.map((k) => keyAfterFailure(err, k));
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -1125,7 +1129,7 @@ function TaskQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current.done = newCaseCommandKey();
+      keys.current.done = keyAfterFailure(err, keys.current.done);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -1134,17 +1138,21 @@ function TaskQueueRow({
     setBusy("snooze");
     const next = new Date(Math.max(now.getTime(), Date.parse(task.due_at)) + WEEK_MS);
     leave();
+    let step: "create" | "cancel" = "create";
     try {
       await createTask(
         { opportunity_id: card.opportunity_id, title: task.title, due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
         keys.current.create,
       );
+      step = "cancel";
       await cancelTask({ task_id: task.task_id, task_version: task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       toast(`Pospuesta al ${fmtDate(next.toISOString())}.`);
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
+      // Only the step that failed gets a new key, and only when the API refused it: a created task
+      // is not created again, and a lost connection replays under the same key.
+      keys.current = { ...keys.current, [step]: keyAfterFailure(err, keys.current[step]) };
       toast(caseRefusalText(err), "bad");
       onChanged();
     } finally { setBusy(null); }
@@ -1357,7 +1365,7 @@ function FollowUpQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current.done = newCaseCommandKey();
+      keys.current.done = keyAfterFailure(err, keys.current.done);
       toast(caseRefusalText(err), "bad");
     } finally { setBusy(null); }
   }
@@ -1368,11 +1376,13 @@ function FollowUpQueueRow({
     const next = new Date(base + WEEK_MS);
     setMenuOpen(false);
     leave();
+    let step: "create" | "cancel" = "create";
     try {
       await createTask(
         { opportunity_id: f.card.opportunity_id, title: f.task?.task.title ?? `Seguimiento de ${quote}`.trim(), due_at: next.toISOString(), note: "Pospuesta una semana desde «Hoy»." },
         keys.current.create,
       );
+      step = "cancel";
       if (f.task) {
         await cancelTask({ task_id: f.task.task.task_id, task_version: f.task.task.version, note: `Pospuesta al ${fmtDate(next.toISOString())}.` }, keys.current.cancel);
       }
@@ -1380,7 +1390,9 @@ function FollowUpQueueRow({
       onClearItem(); onChanged();
     } catch (err) {
       restore();
-      keys.current = { done: keys.current.done, create: newCaseCommandKey(), cancel: newCaseCommandKey() };
+      // Only the step that failed gets a new key, and only when the API refused it: a created task
+      // is not created again, and a lost connection replays under the same key.
+      keys.current = { ...keys.current, [step]: keyAfterFailure(err, keys.current[step]) };
       toast(caseRefusalText(err), "bad");
       onChanged();
     } finally { setBusy(null); }

@@ -16,7 +16,7 @@ import { setClientDetail, setRecipient } from "./draftEditor";
 import type { QuoteClientDetails, QuoteDraft, QuoteRecipientPick, QuoteWorkspace, QuoteWorkspaceContact } from "./quoteApi";
 import { AssignInstitution } from "../pages/AssignInstitution";
 import { crmHash } from "../crmRoute";
-import { addCaseOrganization, caseRefusalText, newCaseCommandKey } from "../caseCommands";
+import { addCaseOrganization, caseRefusalText, keyAfterFailure, newCaseCommandKey } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
 
 const OTHER = "other";
@@ -176,7 +176,8 @@ export function ClientSection({
       setPersonaOpen(false);
       await onInstitutionAdded?.();
     } catch (err) {
-      personaKey.current = newCaseCommandKey();
+      // A refusal frees the key; a lost connection keeps it, so a retry cannot add the person twice.
+      personaKey.current = keyAfterFailure(err, personaKey.current);
       setAddProblem(caseRefusalText(err));
     } finally {
       setPersonaBusy(false);

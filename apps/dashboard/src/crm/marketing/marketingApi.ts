@@ -36,6 +36,8 @@ import type {
   UnsubscribeReviewResult,
 } from "./marketingTypes";
 import { refusalOfError } from "../../api/refusalEnvelope";
+// One key helper for every command (`caseCommands.newCaseCommandKey`).
+import { newCaseCommandKey as newIdempotencyKey } from "../caseCommands";
 
 export const MARKETING_PATHS = {
   taxonomy: "/v2/workspace/marketing/taxonomy",
@@ -126,12 +128,6 @@ export interface DraftFields {
   body_html: string;
   max_sends: number;
   recontact_interval_days: number;
-}
-
-function newIdempotencyKey(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 /** The single mutating request of this module. */
