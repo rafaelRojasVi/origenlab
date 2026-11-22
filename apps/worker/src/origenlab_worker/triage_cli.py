@@ -726,7 +726,8 @@ def run_prospect_search_once(env: Mapping[str, str]) -> int:
                 print(json.dumps({"outcome": "no_run"}, sort_keys=True), flush=True)
                 return EXIT_OK
             run_id = row[0]
-            counts = run_search(conn, run_id, model)
+            counts = run_search(conn, run_id, model,
+                                api_key=(env.get(ENV_ANTHROPIC_API_KEY) or "").strip() or None)
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"outcome": "failed", "error": type(exc).__name__}, sort_keys=True), flush=True)
         return EXIT_OK
