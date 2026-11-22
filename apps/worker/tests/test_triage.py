@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,13 @@ class FakeDb:
         self.people_recorded: list[tuple[str, dict]] = []
         self.intents: list[tuple[str, dict]] = []
 
+    lock_held_elsewhere = False
+    loads = 0
+
+    @contextmanager
+    def message_lock(self, sid):
+        yield not self.lock_held_elsewhere
+
     def message_people(self, message_id):
         return self.people
 
@@ -60,6 +68,7 @@ class FakeDb:
         self.intents.append((sid, value))
 
     def load(self, sid):
+        self.loads += 1
         if sid != "sr-1":
             return None
         return (self.msg, self.done, self.done_class if self.done else None, self.delivery_done,
@@ -144,6 +153,15 @@ READING = {"intent": "quote_request", "stage": "lead", "urgency": "high",
            "requester_organization": "Universidad Ejemplo", "summary_es": "Pide cotizar.", "needs_reply": True}
 CAND = ProductCandidate("p-1", "UP200Ht", "UP200HT", "Homogeneizador", "model_key", "UP200HT")
 
+
+
+def test_a_message_another_job_is_triaging_is_left_to_it() -> None:
+    """Procrastinate's queueing lock covers only waiting jobs: a second job for a message still
+    being triaged must not read it (or pay the model) again."""
+    db = FakeDb()
+    db.lock_held_elsewhere = True
+    result = triage_one(db, FakeStore(make_raw()), "sr-1", ModelSettings(None, DEFAULT_MODEL))
+    assert result.outcome == "locked" and db.loads == 0 and db.recorded == []
 
 def test_a_quote_request_is_read_by_the_model_and_recorded_with_its_products() -> None:
     db, reader = FakeDb(candidates=[CAND]), Reader(READING)

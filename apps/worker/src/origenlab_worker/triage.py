@@ -389,6 +389,24 @@ class TriageDb:
             cur.execute(f"set local statement_timeout = {self._timeout}")
             yield cur
 
+    @contextmanager
+    def message_lock(self, source_record_id: str) -> Iterator[bool]:
+        """A session advisory lock on `triage:<source_record_id>`: True when this connection took it.
+        Released in `finally`; a broken connection has already released it with its session."""
+        key = f"triage:{source_record_id}"
+        with self._conn.cursor() as cur:
+            cur.execute("select pg_try_advisory_lock(hashtextextended(%s, 0))", (key,))
+            held = bool(cur.fetchone()[0])
+        try:
+            yield held
+        finally:
+            if held:
+                try:
+                    with self._conn.cursor() as cur:
+                        cur.execute("select pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+                except Exception:  # noqa: BLE001 - the session (and its lock) is gone with the connection
+                    pass
+
     def pending(self, *, since_days: int, limit: int) -> list[str]:
         with self._tx() as cur:
             cur.execute(_PENDING, (
@@ -893,6 +911,18 @@ def _unreadable(db: TriageDb, source_record_id: str, reason: str, *, done: bool,
 
 def triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: ModelSettings, *,
                clock: Callable[[], float] = time.monotonic) -> TriageResult:
+    """Triage one message, alone. Procrastinate's queueing lock covers only waiting ('todo') jobs:
+    a slow job still running when the sweep defers the same message again ran twice and paid the
+    model twice. A per-message advisory lock on the job's own connection closes that gap; a second
+    job finding it held answers `locked` and leaves the message to the job that holds it."""
+    with db.message_lock(source_record_id) as held:
+        if not held:
+            return TriageResult("locked")
+        return _triage_one(db, store, source_record_id, settings, clock=clock)
+
+
+def _triage_one(db: TriageDb, store: EmlStore, source_record_id: str, settings: ModelSettings, *,
+                clock: Callable[[], float]) -> TriageResult:
     started = clock()
     loaded = db.load(source_record_id)
     if loaded is None:
