@@ -2,6 +2,7 @@
 import { getCollection } from 'astro:content';
 import Button from './ui/Button.astro';
 import Icon from './ui/Icon.astro';
+import TurnstileWidget from './TurnstileWidget.astro';
 import { contact } from '../data/contact';
 import { publicClaim } from '../data/claims';
 import { buildWhatsAppQuoteMessage, buildWhatsAppQuoteUrl } from '../lib/whatsapp';
@@ -115,6 +116,8 @@ const okText = publicClaim('cotizacion-mismo-dia-habil')
           Ver <a href="/privacidad/" class="link-plain">política de privacidad</a>.
         </label>
       </div>
+
+      <TurnstileWidget />
 
       <div class="cb__exits">
         <Button type="submit" modelo={model?.slug}>Enviar</Button>

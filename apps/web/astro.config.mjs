@@ -2,6 +2,33 @@
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { TURNSTILE_ORIGIN, turnstileSiteKey } from './src/data/turnstile.mjs';
+
+/**
+ * Con clave de Turnstile (`src/data/turnstile.mjs`), la CSP del `.htaccess`
+ * construido admite el script y el iframe del widget; sin clave queda intacta.
+ * @returns {import('astro').AstroIntegration}
+ */
+function turnstileCsp() {
+  return {
+    name: 'origenlab-turnstile-csp',
+    hooks: {
+      'astro:build:done': ({ dir }) => {
+        if (!turnstileSiteKey(process.env.PUBLIC_TURNSTILE_SITE_KEY)) return;
+        const file = fileURLToPath(new URL('.htaccess', dir));
+        const before = readFileSync(file, 'utf8');
+        const after = before.replace(
+          "script-src 'self' 'unsafe-inline';",
+          `script-src 'self' 'unsafe-inline' ${TURNSTILE_ORIGIN}; frame-src ${TURNSTILE_ORIGIN};`,
+        );
+        if (after === before) throw new Error('turnstileCsp: no se encontró script-src en la CSP de .htaccess');
+        writeFileSync(file, after);
+      },
+    },
+  };
+}
 
 // https://astro.build/config
 export default defineConfig({
@@ -12,6 +39,7 @@ export default defineConfig({
     format: 'directory',
   },
   integrations: [
+    turnstileCsp(),
     sitemap({
       // Superficies internas y borradores legales: no se indexan y no entran
       // al sitemap. Las rutas legales vuelven al índice cuando `legal.ts`

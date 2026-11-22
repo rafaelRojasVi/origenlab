@@ -221,10 +221,12 @@ request is refused.
    formulario», hostname `origenlab.cl`, mode *Managed*. Copy the **site key** (public) and the
    **secret key** (never commit it).
 2. **Put the site key in the web build.** Set `TURNSTILE_SITE_KEY` in
-   `apps/web/src/data/turnstile.ts` to the site key (it is public by design; a
+   `apps/web/src/data/turnstile.mjs` to the site key (it is public by design; a
    `PUBLIC_TURNSTILE_SITE_KEY` environment variable at build time overrides it), merge, and let
-   the web deploy publish the site. With a key the build adds the widget to both forms and adds
-   `https://challenges.cloudflare.com` to the CSP's `script-src` and `frame-src` in `.htaccess`.
+   the web deploy publish the site. With a key the build adds the widget to both forms (the
+   script loads on the first focus in a form, not on every page view), adds
+   `https://challenges.cloudflare.com` to the CSP's `script-src` and `frame-src` in `.htaccess`,
+   and names Turnstile in the Cloudflare row of `/privacidad/` (`validate:privacy` checks all three).
 3. **Check the site.** On `https://origenlab.cl/contacto/` the widget shows under the form and a
    test request still arrives at contacto@origenlab.cl (the Worker ignores the token until step 4).
 4. **Set the Worker secret.**

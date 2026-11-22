@@ -6,6 +6,7 @@ import SectionIndex from '../components/ui/SectionIndex.astro';
 import Icon from '../components/ui/Icon.astro';
 import Button from '../components/ui/Button.astro';
 import FaqList from '../components/ui/FaqList.astro';
+import TurnstileWidget from '../components/TurnstileWidget.astro';
 import { contact, telUrl } from '../data/contact';
 import { company } from '../data/company';
 import { faqItems } from '../data/faq';
@@ -210,6 +211,15 @@ const steps = [
             <p id="solicitud-consent-error" role="alert" hidden class="sol-field-error"></p>
           </div>
 
+          <TurnstileWidget />
+
+          <noscript>
+            <p class="t-small sol-noscript">
+              Este formulario necesita JavaScript. Escríbanos directamente a{' '}
+              <a href={`mailto:${contact.email}`} class="link-plain">{contact.email}</a>.
+            </p>
+          </noscript>
+
           <div class="sol-submit">
             <Button type="submit" id="solicitud-btn">
               <span data-btn-label>{ctaLabels.pedirCotizacion}</span>
@@ -404,6 +414,13 @@ reqs.forEach(function(f){
   f.addEventListener('input',function(){if(f.getAttribute('aria-invalid')==='true')vf(f);});
 });
 
+// El token de Turnstile sirve una sola vez: tras un envío fallido se pide otro.
+function resetChallenge(){
+  var w=form.querySelector('.cf-turnstile');
+  if(!w||!window.turnstile)return;
+  try{window.turnstile.reset(w);}catch(e){}
+}
+
 function buildMailto(){
   var n=(form.querySelector('[name="need"]')||{}).value||'';
   var em=(form.querySelector('[name="email"]')||{}).value||'';
@@ -447,6 +464,7 @@ form.addEventListener('submit',function(ev){
         errPanel.removeAttribute('hidden');
         btn.disabled=false;
         lab.textContent=orig;
+        resetChallenge();
         errPanel.focus();
       }
     })
@@ -456,6 +474,7 @@ form.addEventListener('submit',function(ev){
       errPanel.removeAttribute('hidden');
       btn.disabled=false;
       lab.textContent=orig;
+      resetChallenge();
       errPanel.focus();
     });
 });
@@ -527,6 +546,7 @@ form.noValidate=true;
   .sol-input[aria-invalid='true'], .sol-textarea[aria-invalid='true'] { border-color: var(--color-error); border-width: 2px; }
   .sol-textarea { height: auto; padding-block: 0.75rem; resize: vertical; min-height: 8rem; }
   .sol-submit { margin-top: 0.5rem; }
+  .sol-noscript { margin: 0 0 1rem; color: var(--color-error-fg); }
   .sol-consent { grid-template-columns: auto minmax(0, 1fr); column-gap: 0.75rem; align-items: start; }
   .sol-consent input { width: 1.25rem; height: 1.25rem; margin: 0.125rem 0 0; accent-color: var(--color-teal-700); }
   .sol-consent .sol-field-error { grid-column: 2; }
