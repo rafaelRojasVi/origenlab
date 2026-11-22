@@ -878,7 +878,9 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
     // The rhythm counts days from the 15 Nov email: pin the clock (only Date; timers stay real for findBy).
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
-    onTestFinished(() => vi.useRealTimers());
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     stubApi((n) => {
       const data = fixture(n);
       data.items[0] = {
