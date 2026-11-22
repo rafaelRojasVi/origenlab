@@ -43,8 +43,9 @@ function stubUpstream() {
   return fetchMock;
 }
 
+/** A signed-in browser's POST: every command needs the session cookie to get past the Worker. */
 function post(url: string, headers: Record<string, string>, body: string | ArrayBuffer = "{}"): Request {
-  return new Request(url, { method: "POST", headers, body });
+  return new Request(url, { method: "POST", headers: { Cookie: "__Host-origenlab_session=s1", ...headers }, body });
 }
 
 async function code(res: Response): Promise<string> {
@@ -289,12 +290,12 @@ describe("quote preview", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("advertises POST and the JSON content type on its preflight", async () => {
+  it("answers no preflight: OPTIONS is 405 with no CORS headers", async () => {
     const res = await handleRequest(
       new Request(PREVIEW, { method: "OPTIONS", headers: { Origin: DASHBOARD } }),
       TEST_ENV,
     );
-    expect(res.headers.get("Access-Control-Allow-Methods")).toContain("POST");
-    expect(res.headers.get("Access-Control-Allow-Headers")).toContain("Content-Type");
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Access-Control-Allow-Methods")).toBeNull();
   });
 });

@@ -69,6 +69,16 @@ form.addEventListener('submit', (event) => {
     .catch(() => {
       err.hidden = false;
       send.disabled = false;
+      // El token de Turnstile (si el formulario lo lleva) sirve una sola vez: se pide otro.
+      const widget = form.querySelector('.cf-turnstile');
+      const turnstile = (window as unknown as { turnstile?: { reset(el: Element): void } }).turnstile;
+      if (widget && turnstile) {
+        try {
+          turnstile.reset(widget);
+        } catch {
+          // Sin token nuevo el Worker responde 403 y se muestra este mismo aviso.
+        }
+      }
       err.focus();
     });
 });

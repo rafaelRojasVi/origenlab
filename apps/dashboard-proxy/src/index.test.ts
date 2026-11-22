@@ -18,14 +18,20 @@ const TEST_ENV: ProxyEnv = {
 
 const PRODUCTION_ORIGIN = "https://dashboard.origenlab.cl";
 
+const SESSION_COOKIE = "__Host-origenlab_session=s1";
+
+/** A request from the dashboard; signed in (session cookie) unless `session: false` or a Cookie is given. */
 function requestWithOrigin(
   url: string,
-  init: RequestInit & { origin?: string } = {},
+  init: RequestInit & { origin?: string; session?: boolean } = {},
 ): Request {
-  const { origin = PRODUCTION_ORIGIN, ...rest } = init;
+  const { origin = PRODUCTION_ORIGIN, session = true, ...rest } = init;
   const headers = new Headers(rest.headers);
   if (origin) {
     headers.set("Origin", origin);
+  }
+  if (session && !headers.has("Cookie")) {
+    headers.set("Cookie", SESSION_COOKIE);
   }
   return new Request(url, { ...rest, headers });
 }
@@ -145,108 +151,40 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("GET /api/health from allowed Origin returns Access-Control-Allow-Origin", async () => {
-    stubUpstreamFetch(JSON.stringify({ status: "ok" }));
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("GET response includes Access-Control-Allow-Credentials: true for allowed Origin", async () => {
+  it("sends no CORS headers: the dashboard calls /api on its own host", async () => {
     stubUpstreamFetch();
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
-      "Accept, Content-Type, X-Request-ID",
-    );
-    expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+    for (const origin of [PRODUCTION_ORIGIN, "https://evil.example.com", "http://localhost:5173"]) {
+      const response = await handleRequest(
+        requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET", origin }),
+        TEST_ENV,
+      );
+      expect(response.status).toBe(200);
+      expect([...response.headers.keys()].filter((name) => name.startsWith("access-control-"))).toEqual([]);
+      expect(response.headers.get("Vary")).toBeNull();
+    }
   });
 
-  it("OPTIONS /api/health returns 204 and CORS headers", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+  it.each(["https://dashboard.origenlab.cl/api/health", "https://dashboard.origenlab.cl/api/v2/commands/freeze-campaign-audience"])(
+    "answers no preflight: OPTIONS %s is 405 with no CORS headers and no upstream call",
+    async (url) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const response = await handleRequest(
+        requestWithOrigin(url, {
+          method: "OPTIONS",
+          headers: { "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type,idempotency-key" },
+        }),
+        TEST_ENV,
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+      expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
+      expect(response.headers.get("Access-Control-Allow-Headers")).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
-        method: "OPTIONS",
-      }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(204);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("disallowed Origin does not get Access-Control-Allow-Origin", async () => {
-    stubUpstreamFetch();
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
-        method: "GET",
-        origin: "https://evil.example.com",
-      }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("upstream CORS headers cannot override dashboard CORS policy for allowed Origin", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: {
-            "Access-Control-Allow-Origin": "https://evil.example.com",
-            "Access-Control-Allow-Credentials": "false",
-            "Access-Control-Allow-Methods": "GET, POST, DELETE",
-            "Access-Control-Allow-Headers": "Authorization, X-OriginLab-API-Key",
-            "Access-Control-Expose-Headers": "Server-Timing, X-OriginLab-API-Key",
-            "Access-Control-Max-Age": "86400",
-            "Content-Type": "application/json",
-          },
-        });
-      }),
-    );
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, HEAD, OPTIONS");
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
-      "Accept, Content-Type, X-Request-ID",
-    );
-    expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
-    expect(response.headers.get("Access-Control-Max-Age")).toBeNull();
-  });
-
-  it("upstream CORS headers cannot grant access to disallowed Origin", async () => {
+  it("strips every upstream CORS header", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -259,6 +197,7 @@ describe("handleRequest", () => {
             "Access-Control-Allow-Headers": "Authorization, X-OriginLab-API-Key",
             "Access-Control-Expose-Headers": "Server-Timing, X-OriginLab-API-Key",
             "Access-Control-Max-Age": "86400",
+            "Access-Control-Allow-Private-Network": "true",
             "Content-Type": "application/json",
           },
         });
@@ -266,40 +205,12 @@ describe("handleRequest", () => {
     );
 
     const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", {
-        method: "GET",
-        origin: "https://evil.example.com",
-      }),
+      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
       TEST_ENV,
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Headers")).toBeNull();
-    expect(response.headers.get("Access-Control-Expose-Headers")).toBeNull();
-    expect(response.headers.get("Access-Control-Max-Age")).toBeNull();
-    expect(response.headers.get("Vary")).toBe("Origin");
-  });
-
-  it("Access-Control-Allow-Origin is never * on success or error responses", async () => {
-    stubUpstreamFetch();
-
-    const success = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-    expect(success.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const forbidden = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/emails", { method: "GET" }),
-      TEST_ENV,
-    );
-    expect(forbidden.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
+    expect([...response.headers.keys()].filter((name) => name.startsWith("access-control-"))).toEqual([]);
   });
 
   it("mutating methods remain 405", async () => {
@@ -312,8 +223,6 @@ describe("handleRequest", () => {
         TEST_ENV,
       );
       expect(response.status).toBe(405);
-      expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-      expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
     }
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -412,7 +321,6 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(response.headers.get("Content-Type")).toContain("application/json");
     expect(response.headers.get("Cache-Control")).toBe("no-store, private");
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
 
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("upstream_not_configured");
@@ -431,23 +339,9 @@ describe("handleRequest", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(response.headers.get("Content-Type")).toContain("application/json");
     expect(response.headers.get("Cache-Control")).toBe("no-store, private");
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
 
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("auth_token_not_configured");
-  });
-
-  it("OPTIONS returns 204 without upstream fetch", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "OPTIONS" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(204);
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("upstream 302 is converted to 502 JSON with code upstream_redirect_blocked", async () => {
@@ -478,28 +372,6 @@ describe("handleRequest", () => {
 
     const body = (await response.json()) as { error: { code: string } };
     expect(body.error.code).toBe("upstream_redirect_blocked");
-  });
-
-  it("upstream redirect response includes Access-Control-Allow-Origin for allowed Origin", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return new Response("", {
-          status: 302,
-          headers: { Location: "https://api.origenlab.cl/cdn-cgi/access/login" },
-        });
-      }),
-    );
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.status).toBe(502);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
   });
 
   it("upstream redirect response does not include Location header", async () => {
@@ -549,7 +421,7 @@ describe("handleRequest", () => {
     expect(response.headers.get(CF_ACCESS_CLIENT_SECRET_HEADER)).toBeNull();
   });
 
-  it("normal 200 response still includes CORS and proxy diagnostics", async () => {
+  it("normal 200 response includes proxy diagnostics", async () => {
     stubUpstreamFetch(JSON.stringify({ status: "ok" }));
 
     const response = await handleRequest(
@@ -558,7 +430,6 @@ describe("handleRequest", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
     expect(response.headers.get("X-OriginLab-Proxy")).toBe("dashboard-proxy");
     expect(response.headers.get("X-OriginLab-Upstream-Status")).toBe("200");
   });
@@ -586,30 +457,6 @@ describe("handleRequest", () => {
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("Set-Cookie2")).toBeNull();
     expect(response.headers.getSetCookie?.() ?? []).toEqual([]);
-  });
-
-  it("upstream 200 with Set-Cookie still includes Access-Control-Allow-Origin for allowed Origin", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        return new Response(JSON.stringify({ status: "ok" }), {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json",
-            "Set-Cookie": "CF_Authorization=upstream-api-token; Path=/; HttpOnly; Secure",
-          },
-        });
-      }),
-    );
-
-    const response = await handleRequest(
-      requestWithOrigin("https://dashboard.origenlab.cl/api/health", { method: "GET" }),
-      TEST_ENV,
-    );
-
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(PRODUCTION_ORIGIN);
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
-    expect(response.headers.get("Access-Control-Allow-Credentials")).toBe("true");
   });
 
   it("upstream 200 with Set-Cookie still includes proxy diagnostic headers", async () => {
@@ -658,7 +505,6 @@ describe("handleRequest", () => {
     expect(response.headers.get("Location")).toBeNull();
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("Set-Cookie2")).toBeNull();
-    expect(response.headers.get("Access-Control-Allow-Origin")).not.toBe("*");
   });
 });
 
@@ -724,12 +570,15 @@ describe("Marketing commands (draft create/save, audience freeze)", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("advertises POST and Idempotency-Key on the preflight for allowed origins only", async () => {
-    const pre = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS" }), TEST_ENV);
-    expect(pre.headers.get("Access-Control-Allow-Methods")).toContain("POST");
-    expect(pre.headers.get("Access-Control-Allow-Headers")).toContain("Idempotency-Key");
-    const foreign = await handleRequest(requestWithOrigin(FREEZE, { method: "OPTIONS", origin: "https://evil.test" }), TEST_ENV);
-    expect(foreign.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  it("refuses a command from the local dev origin: the Worker allows only the dashboard's own", async () => {
+    stubUpstreamFetch();
+    const base = good();
+    const headers = new Headers(base.headers);
+    headers.set("Origin", "http://localhost:5173");
+    const res = await handleRequest(new Request(base.url, { method: "POST", headers, body: JSON.stringify({ confirmed: true }) }), TEST_ENV);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: { code: "origin_not_allowed" } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
   it("does not let the Marketing reads accept a write", async () => {
@@ -1587,5 +1436,129 @@ describe("Publicar web (T7.3b): the editor's reads go through the GET path only"
     );
     expect(res.status).toBe(403);
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+});
+
+describe("session gate: no session cookie, no upstream call", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const COMMAND_HEADERS = {
+    "Content-Type": "application/json",
+    "Idempotency-Key": "gate-key-00000001",
+    "Sec-Fetch-Site": "same-origin",
+  };
+  const COMMANDS = [
+    "/v2/commands/freeze-campaign-audience",
+    "/v2/commands/create-person",
+    "/v2/commands/apply-mail-rules",
+    "/v2/commands/advance-case-stage",
+    "/v2/commands/open-tender-case",
+    "/v2/commands/create-product",
+    "/v2/quotes/preview",
+    "/v2/web/publish-model-sheet",
+  ];
+
+  it.each(COMMANDS)("refuses POST %s with 401 before reading the body", async (path) => {
+    const fetchMock = stubUpstreamFetch();
+    const req = requestWithOrigin(`https://dashboard.origenlab.cl/api${path}`, {
+      method: "POST",
+      session: false,
+      headers: COMMAND_HEADERS,
+      body: "{}",
+    });
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: { code: "session_required" } });
+    expect(req.bodyUsed).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a 60 MiB upload with every fakeable header but no session, without buffering it", async () => {
+    const fetchMock = stubUpstreamFetch();
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1_048_576));
+        if (pulled >= 60) controller.close();
+      },
+    });
+    const req = new Request("https://dashboard.origenlab.cl/api/v2/commands/attach-tender-annexes", {
+      method: "POST",
+      headers: {
+        Origin: PRODUCTION_ORIGIN,
+        "Sec-Fetch-Site": "same-origin",
+        "Idempotency-Key": "gate-key-00000002",
+        "Content-Type": "multipart/form-data; boundary=----gate",
+        "Content-Length": String(60 * 1_048_576),
+        Cookie: "CF_Authorization=edge",
+      },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    const res = await handleRequest(req, TEST_ENV);
+    expect(res.status).toBe(401);
+    expect(req.bodyUsed).toBe(false);
+    expect(pulled).toBeLessThanOrEqual(1); // at most the stream's first eager pull, never the body
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no cookie at all", null],
+    ["only unrelated cookies", "CF_Authorization=edge; other=1"],
+    ["the unprefixed loopback cookie", "origenlab_session=s1"],
+    ["the sign-in transaction cookie alone", "__Host-origenlab_signin=tx"],
+    ["an empty session cookie name match in a value", "x=__Host-origenlab_session=s1"],
+  ])("refuses a /v2 read with %s", async (_label, cookie) => {
+    const fetchMock = stubUpstreamFetch();
+    const headers: Record<string, string> = cookie ? { Cookie: cookie } : {};
+    const res = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/v2/contacts", { session: false, headers }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("forwards a /v2 read and a command once the session cookie is present", async () => {
+    const fetchMock = stubUpstreamFetch();
+    const read = await handleRequest(requestWithOrigin("https://dashboard.origenlab.cl/api/v2/contacts"), TEST_ENV);
+    expect(read.status).toBe(200);
+    const command = await handleRequest(
+      requestWithOrigin("https://dashboard.origenlab.cl/api/v2/commands/create-product", {
+        method: "POST",
+        headers: COMMAND_HEADERS,
+        body: "{}",
+      }),
+      TEST_ENV,
+    );
+    expect(command.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["GET", "/health"],
+    ["GET", "/auth/google/login"],
+    ["GET", "/auth/google/callback"],
+    ["GET", "/auth/session"],
+    ["GET", "/auth/profiles"],
+    ["POST", "/auth/profile/select"],
+    ["POST", "/auth/profile/clear"],
+    ["POST", "/auth/logout"],
+  ])("exempts %s %s: the sign-in flow and health work without a session", async (method, path) => {
+    const fetchMock = stubUpstreamFetch();
+    const res = await handleRequest(
+      requestWithOrigin(`https://dashboard.origenlab.cl/api${path}`, {
+        method,
+        session: false,
+        headers: method === "POST" ? { "Content-Type": "application/json", "Sec-Fetch-Site": "same-origin" } : {},
+        body: method === "POST" ? "{}" : undefined,
+      }),
+      TEST_ENV,
+    );
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

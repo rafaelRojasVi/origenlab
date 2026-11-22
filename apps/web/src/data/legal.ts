@@ -23,6 +23,8 @@
  *   texto envejezca.
  */
 
+import { turnstileSiteKey } from './turnstile.mjs';
+
 export const legalStatus = {
   /** `draft` hasta que un profesional habilitado en Chile revise el texto. */
   state: 'draft' as const,
@@ -119,7 +121,11 @@ export const technicalProviders: readonly TechnicalProvider[] = [
   {
     id: 'cloudflare',
     label: 'Cloudflare',
-    role: 'actúa como proxy, DNS y capa de seguridad del dominio',
+    // Con Turnstile encendido (`turnstile.mjs`), quien llena el formulario también habla con
+    // Cloudflare: la página lo dice, y `validate:privacy` lo exige.
+    role: turnstileSiteKey(import.meta.env.PUBLIC_TURNSTILE_SITE_KEY)
+      ? 'actúa como proxy, DNS y capa de seguridad del dominio, y con Turnstile comprueba que el formulario lo envía una persona'
+      : 'actúa como proxy, DNS y capa de seguridad del dominio',
   },
   {
     id: 'titan',

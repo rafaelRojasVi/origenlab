@@ -179,7 +179,8 @@ describe("profile selection through the Worker", () => {
 
   it("the guard itself accepts only the dashboard origin", () => {
     expect(authCommandRefusal(post(SELECT, GOOD))).toBeNull();
-    expect(authCommandRefusal(post(SELECT, { ...GOOD, Origin: "http://localhost:5173" }))).toBeNull();
+    expect(authCommandRefusal(post(SELECT, { ...GOOD, Origin: "http://localhost:5173" })))
+      .toEqual({ status: 403, code: "origin_not_allowed" });
     expect(authCommandRefusal(post(SELECT, { ...GOOD, Origin: "https://dashboard.origenlab.cl.evil.example" })))
       .toEqual({ status: 403, code: "origin_not_allowed" });
   });

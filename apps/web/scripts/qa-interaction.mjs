@@ -854,7 +854,7 @@ console.log('\nFormulario de cotización (/contacto/, 375 px)');
 
   // Fill required fields and submit (mocked: no real endpoint in dist/)
   await page.fill('#solicitud-need', 'Autoclave de 50 L para laboratorio de microbiología');
-  await page.fill('#solicitud-email', 'ana@uchile.cl');
+  await page.fill('#solicitud-email', 'ana@ficticio.invalid');
   await page.fill('#solicitud-org', 'U. de Chile - ICBM');
   // aria-invalid removed after correction
   check(!(await page.locator('#solicitud-email').getAttribute('aria-invalid')), 'formulario: aria-invalid resuelto tras corrección');

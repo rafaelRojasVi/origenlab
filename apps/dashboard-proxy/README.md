@@ -121,8 +121,8 @@ SameSite=Lax); only the two sign-in cookies ever reach upstream. For the eight c
 Worker also refuses, before forwarding: a missing or unlisted `Origin` (403
 `origin_not_allowed`), `Sec-Fetch-Site: cross-site` (403 `cross_site_request`), any
 `Content-Type` other than `application/json` (415 — a cross-site form cannot send one without
-a preflight, which is answered only for listed origins), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
-(413). CORS advertises `POST` on every listed POST path and `Idempotency-Key` on the marketing and catalog command paths.
+a preflight, which this Worker never answers), a body over 3.5 MB (4 KB for `set-campaign-planning`, 16 KB for the two block commands) declared or actual
+(413).
 
 **Idempotency.** `Idempotency-Key` is required and must match `^[A-Za-z0-9._:-]{8,128}$` (400
 `idempotency_key_required`); it is forwarded byte-for-byte. Upstream the key is one
@@ -160,8 +160,7 @@ Seven exact GET paths (`src/allowlist.ts`; UUIDs lower-case, query strings pass 
 Ten exact POST paths, all under `/v2/commands/`, each behind `catalogCommandRefusal` (`src/index.ts`):
 an allowed `Origin` (403 `origin_not_allowed`), no cross-site `Sec-Fetch-Site` (403
 `cross_site_request`), the right `Content-Type` (415), a well-formed `Idempotency-Key` (400) and a
-body within the limit, declared or actual (413). CORS advertises `POST` and `Idempotency-Key` on
-these paths. The upload's multipart type needs no preflight, so its CSRF protection rests on the
+body within the limit, declared or actual (413). The upload's multipart type needs no preflight, so its CSRF protection rests on the
 required `Idempotency-Key` (a custom header, which forces one) plus the Origin and Sec-Fetch-Site checks.
 
 - Nine JSON commands (`create-product`, `update-product`, `confirm-product-content`,
@@ -189,10 +188,64 @@ paths. Roles (sales and admin; a viewer is refused) are enforced upstream.
   list (`QUOTE_PREVIEW_POST_PATHS`) and guard (`quotePreviewRefusal`): allowed `Origin`, no
   cross-site `Sec-Fetch-Site`, `application/json` only, body ≤ 256 KiB (`QUOTE_COMMAND_MAX_BYTES`) — and no `Idempotency-Key`.
 
+## Public web form (`origenlab.cl/api/web/solicitud`)
+
+The website's «Solicitar cotización» form (`/contacto/` and the chat bubble) posts here
+(`src/web_form.ts`). Public, no session, no CORS; only `POST /api/web/solicitud` with
+`Origin: https://origenlab.cl` and a body of at most 16 KiB. In order:
+
+1. **Body.** JSON, urlencoded or multipart. A JSON body that is not a plain object (`null`, `"x"`,
+   `[]`, a number) is an empty submission, never an exception.
+2. **Honeypot.** A non-empty `_trap` field: 200 `{"status":"received"}`, nothing forwarded.
+3. **`render_at` required.** Both site forms set it from JavaScript when the page renders
+   (seconds since the epoch, or an ISO string). Missing or unusable: **400**
+   `render_at_required`. Less than 3 s before the post: 200, nothing forwarded. A form sent without
+   JavaScript has no `render_at`, so it is refused; the page tells such a visitor to write to
+   contacto@origenlab.cl instead.
+4. **Rate limit.** `WEB_FORM_RATE_LIMIT`, 5 per IP per 60 s (429).
+5. **Turnstile, when configured.** With the Worker secret `TURNSTILE_SECRET_KEY` set, every
+   submission needs the widget's `cf-turnstile-response` token, checked server-side with
+   `https://challenges.cloudflare.com/turnstile/v0/siteverify` (secret, token, visitor IP):
+   it must succeed for hostname `origenlab.cl` and action `solicitud`. No token: 403
+   `challenge_required`; a refused one: 403 `challenge_failed`; siteverify unreachable: 503
+   `challenge_unavailable` (fail closed). Without the secret there is no challenge.
+6. **Forward.** JSON to `/v2/web/quote-request` with the service key and no cookie; the token and
+   the honeypot are removed first. The API keeps its own caps (40 per 24 h globally, 3 per address).
+
+### Turning on Turnstile (owner)
+
+Do the steps in this order: the site must send tokens before the Worker requires them, or every
+request is refused.
+
+1. **Create the widget.** Cloudflare dashboard → *Turnstile* → *Add widget*: name «origenlab.cl
+   formulario», hostname `origenlab.cl`, mode *Managed*. Copy the **site key** (public) and the
+   **secret key** (never commit it).
+2. **Put the site key in the web build.** Set `TURNSTILE_SITE_KEY` in
+   `apps/web/src/data/turnstile.mjs` to the site key (it is public by design; a
+   `PUBLIC_TURNSTILE_SITE_KEY` environment variable at build time overrides it), merge, and let
+   the web deploy publish the site. With a key the build adds the widget to both forms (the
+   script loads on the first focus in a form, not on every page view), adds
+   `https://challenges.cloudflare.com` to the CSP's `script-src` and `frame-src` in `.htaccess`,
+   and names Turnstile in the Cloudflare row of `/privacidad/` (`validate:privacy` checks all three).
+3. **Check the site.** On `https://origenlab.cl/contacto/` the widget shows under the form and a
+   test request still arrives at contacto@origenlab.cl (the Worker ignores the token until step 4).
+4. **Set the Worker secret.**
+
+   ```bash
+   cd apps/dashboard-proxy
+   npx wrangler secret put TURNSTILE_SECRET_KEY   # paste the secret key
+   ```
+
+   It applies at once (a secret change deploys a new Worker version). Send one more test request
+   from `/contacto/` and one from the chat bubble.
+
+To switch it off again: `npx wrangler secret delete TURNSTILE_SECRET_KEY` (the widget left on the
+site is then harmless).
+
 ## Public stats route (`origenlab.cl/api/stats/*`)
 
 First-party analytics for the public site (`src/stats.ts`), a separate route family from the dashboard
-allowlist (like `/api/web/*`): no session, no operator identity, no CORS. Exactly two requests exist and
+allowlist (like `/api/web/*`): no session, no operator identity, no CORS. Exactly one request exists and
 everything else under the prefix is 404:
 
 - `POST /api/stats/event` — body `{name, props}`, at most 2 KB, `Origin: https://origenlab.cl`,
@@ -202,15 +255,8 @@ everything else under the prefix is 404:
   no `modelo`): `origen` is one of `google`, `perfil-google`, `linkedin`, `directo`, `whatsapp`, `otro`, `interno`
   (`interno`: a same-site navigation, from another origenlab.cl page; anything else is a 400) and `pagina` matches `^/[a-z0-9/-]{0,80}$` and contains no `//` (path only: no query, fragment, dot, `%` or
   uppercase). No cookies, no identifiers. Other props are dropped.
-- `GET /api/stats/script.js` — only when `STATS_ORIGIN` is set; 404 otherwise.
 
-`STATS_ORIGIN` (a `[vars]` entry) picks the mode. Set to `https://host`, the validated event and the script
-are proxied to that self-hosted analytics origin (`STATS_EVENT_PATH` and `STATS_SCRIPT_PATH` adapt the
-upstream paths; proxy mode needs a payload adapter — Plausible `domain`/`url`, Umami `type`/`payload.website` —
-that does not exist yet, so counter mode only for now) with a fresh header set: never the browser's cookies or
-`Authorization`, never the API key or Access credentials. Proxy mode forwards `{name, props}` as validated.
-
-Empty (counter mode), the Worker writes **one Workers Analytics Engine data point per event** to the
+The Worker writes **one Workers Analytics Engine data point per event** to the
 `STATS_AE` binding (dataset `origenlab_web_stats`), answers 204 and exposes nothing readable:
 
 | Field | Value |
@@ -243,7 +289,7 @@ ORDER BY total DESC
 The free-plan allowance (data points per day, queries, retention) is not recorded here: the owner
 confirms it in the Cloudflare dashboard before relying on it.
 
-A malformed `STATS_ORIGIN` is a 500, never a silent fallback. `STATS_RATELIMIT` allows 60 requests per IP per
+Nothing is forwarded to any other origin. `STATS_RATELIMIT` allows 60 requests per IP per
 60 s. Nothing logs an IP, User-Agent or body.
 
 ## Dashboard web-stats read (`dashboard.origenlab.cl/api/stats/web-stats`)
@@ -303,11 +349,25 @@ wrangler secret put CF_STATS_API_TOKEN  --name origenlab-dashboard-proxy
 The Worker is deliberately stricter than a generic pass-through proxy:
 
 - Upstream **3xx** responses are not forwarded to the browser. They become **502** JSON: `{ "error": { "code": "upstream_redirect_blocked" } }`.
-- Upstream `Location`, `Set-Cookie`, `Set-Cookie2`, and upstream CORS headers are stripped before the dashboard sees the response.
-- Allowed dashboard origins receive credentialed CORS headers and `Access-Control-Expose-Headers: X-Request-ID`.
+- Upstream `Location`, `Set-Cookie`, `Set-Cookie2`, and every upstream `Access-Control-*` header are stripped before the dashboard sees the response.
+- **No CORS.** The dashboard calls `/api/*` on its own host, so the Worker sends no CORS headers and answers no preflight: `OPTIONS` is 405 like any other unlisted method. Local development reaches the API through the Vite dev proxy (`apps/dashboard/vite.config.ts`), never through this Worker. The only `Origin` any POST may carry is `https://dashboard.origenlab.cl` (`src/origin.ts`).
 - Responses include `X-OriginLab-Proxy: dashboard-proxy`; forwarded upstream responses also include `X-OriginLab-Upstream-Status`.
 
 This keeps Cloudflare Access redirects/cookies (from the API hostname's Access application) and upstream CORS policy from leaking through `/api/*`.
+
+### Session gate
+
+Every `POST` and every `/v2/*` read needs the `__Host-origenlab_session` cookie (as
+`filterAuthCookieHeader` keeps it; the unprefixed loopback name and the sign-in transaction cookie
+alone do not count). Without it the Worker answers **401** `{"error":{"code":"session_required"}}`
+before it reads the body and before anything reaches the API with the service key, so a
+request with forged `Origin`, `Sec-Fetch-Site` and `Idempotency-Key` headers can no longer push
+a 60 MiB upload upstream. Whether the session is valid is still the API's decision. Exempt by
+path, and nothing else: the sign-in flow `/auth/*` (`GET /auth/google/login`,
+`GET /auth/google/callback`, `GET /auth/session`, `GET /auth/profiles`,
+`POST /auth/profile/select`, `POST /auth/profile/clear`, `POST /auth/logout`) and `GET /health`.
+The public web form (`origenlab.cl/api/web/*`) and stats routes (`origenlab.cl/api/stats/*`) are
+dispatched before this gate; the dashboard web-stats card checks the session itself.
 
 ### Sign-in exceptions
 
@@ -337,6 +397,7 @@ Cloudflare Access identity, so identity reaches the API only as the `__Host-` se
 | `CF_ACCESS_CLIENT_SECRET` | Worker secret | **yes** when upstream is behind Cloudflare Access (production default) |
 | `CF_ACCOUNT_ID` | Worker secret | **yes** to enable the dashboard web-stats card (see *Dashboard web-stats read*) |
 | `CF_STATS_API_TOKEN` | Worker secret | **yes** to enable the dashboard web-stats card (see *Dashboard web-stats read*) |
+| `TURNSTILE_SECRET_KEY` | Worker secret | no — set it to require Turnstile on the web form (see *Turning on Turnstile*) |
 
 Both CF Access secrets must be set together. The Worker never sends a lone `CF-Access-Client-Id` without the matching secret. `CF_ACCOUNT_ID` and `CF_STATS_API_TOKEN` are independent — when either is absent the stats card shows a configuration notice instead of data.
 
@@ -360,6 +421,7 @@ Route in Cloudflare: `dashboard.origenlab.cl/api*` → this Worker (see `wrangle
 | **302 / 403** (HTML Access page) | Worker missing/wrong `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` for Access-protected upstream |
 | **502** JSON (`upstream_redirect_blocked`) | Upstream returned a redirect (often Cloudflare Access login); fix Worker Access service-token secrets |
 | **401** JSON (`unauthorized`) | Worker missing/wrong `ORIGENLAB_API_AUTH_TOKEN` (request passed Access but failed API origin auth) |
+| **401** JSON (`session_required`) | No dashboard session cookie on a POST or `/v2/*` read: sign in again (*Session gate*) |
 | **403** `path_not_allowed` | Route not on the allowlist (every V1 path is refused) |
 | **405** | Mutating HTTP method |
 

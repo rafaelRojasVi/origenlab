@@ -1,0 +1,43 @@
+---
+/**
+ * El widget de Cloudflare Turnstile dentro de un formulario de cotización, sólo si
+ * hay clave de sitio (`data/turnstile.mjs`); sin clave no dibuja nada.
+ *
+ * Renderizado implícito: el script de Turnstile busca `.cf-turnstile` y deja el
+ * token en un campo oculto `cf-turnstile-response` dentro del mismo `<form>`, que
+ * `new FormData(form)` ya envía. El script se pide recién cuando alguien empieza a
+ * llenar un formulario (primer foco), no en cada visita: quien sólo mira el sitio
+ * no habla con ningún tercero.
+ */
+import { TURNSTILE_ORIGIN, turnstileSiteKey } from '../data/turnstile.mjs';
+
+const siteKey = turnstileSiteKey(import.meta.env.PUBLIC_TURNSTILE_SITE_KEY);
+const apiUrl = `${TURNSTILE_ORIGIN}/turnstile/v0/api.js`;
+---
+
+{siteKey && (
+  <>
+    <div class="cf-turnstile ts-widget" data-sitekey={siteKey} data-action="solicitud" data-language="es" data-theme="light"></div>
+    <script is:inline define:vars={{ apiUrl }}>
+      (function () {
+        var widget = document.currentScript && document.currentScript.previousElementSibling;
+        var form = widget && widget.closest('form');
+        if (!form) return;
+        function load() {
+          if (document.getElementById('cf-turnstile-api')) return;
+          var s = document.createElement('script');
+          s.id = 'cf-turnstile-api';
+          s.src = apiUrl;
+          s.async = true;
+          s.defer = true;
+          document.head.appendChild(s);
+        }
+        form.addEventListener('focusin', load, { once: true });
+      })();
+    </script>
+  </>
+)}
+
+<style>
+  .ts-widget { margin: 0.5rem 0 1rem; min-height: 65px; }
+</style>

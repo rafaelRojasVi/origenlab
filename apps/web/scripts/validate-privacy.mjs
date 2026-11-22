@@ -188,6 +188,30 @@ for (const body of visitBodies) {
 const visitSource = readFileSync(join(root, 'src/lib/visit.ts'), 'utf8');
 assert(/const body = JSON\.stringify\(\{ name: 'visita', props: \{ origen: classifyOrigin\([^)]*\), pagina \} \}\)/.test(visitSource), 'visit.ts: la carga útil es sólo origen y página; el referente entra por el clasificador');
 
+/* -- 7. Turnstile: el único tercero posible, y sólo si está encendido -------
+ *
+ * Con clave de sitio (`src/data/turnstile.mjs`) los formularios llevan el widget
+ * de Cloudflare: la página de privacidad debe nombrarlo y la CSP debe admitir su
+ * origen. Sin clave no hay widget, y la CSP no admite ningún origen ajeno.
+ */
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+const widgetPages = pages.filter((file) => readFileSync(file, 'utf8').includes('class="cf-turnstile'));
+const csp = readFileSync(join(dist, '.htaccess'), 'utf8').match(/Content-Security-Policy "([^"]*)"/)?.[1] ?? '';
+// The CSP as directive → exact source tokens, so an origin is matched as a whole token, not as text.
+const cspSources = new Map(
+  csp.split(';').map((d) => d.trim().split(/\s+/)).filter((t) => t[0]).map(([name, ...sources]) => [name, sources]),
+);
+const isTurnstile = (source) => source === TURNSTILE_ORIGIN;
+const cspAllows = (directive) => (cspSources.get(directive) ?? []).some(isTurnstile);
+if (widgetPages.length > 0) {
+  const privacy = readFileSync(join(dist, 'privacidad/index.html'), 'utf8');
+  assert(privacy.includes('Turnstile'), 'con Turnstile encendido, /privacidad/ lo nombra');
+  assert(cspAllows('script-src'), 'con Turnstile encendido, la CSP admite su script');
+  assert(cspAllows('frame-src'), 'con Turnstile encendido, la CSP admite su iframe');
+} else {
+  assert(![...cspSources.values()].some((sources) => sources.some(isTurnstile)), 'sin Turnstile, la CSP no admite su origen');
+}
+
 if (failed) {
   console.error('\nvalidate:privacy FALLÓ');
   process.exit(1);

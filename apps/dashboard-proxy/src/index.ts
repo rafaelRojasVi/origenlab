@@ -19,8 +19,8 @@ import {
   stripApiPrefix,
   webPublishBodyWithinLimit,
 } from "./allowlist";
-import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath } from "./auth";
-import { applyCorsHeaders, isAllowedOrigin, stripUpstreamCorsHeaders } from "./cors";
+import { filterAuthSetCookies, isAllowedAuthRedirect, isAuthPath, sessionCookieHeader } from "./auth";
+import { isAllowedOrigin } from "./origin";
 import { API_AUTH_HEADER, IDEMPOTENCY_KEY_HEADER, buildUpstreamHeaders, buildUpstreamUrl, type ProxyEnv } from "./proxy";
 
 export type { ProxyEnv } from "./proxy";
@@ -32,7 +32,7 @@ export {
   buildUpstreamHeaders,
   API_AUTH_HEADER,
 };
-export { ALLOWED_ORIGINS, applyCorsHeaders, isAllowedOrigin } from "./cors";
+export { DASHBOARD_ORIGIN, isAllowedOrigin } from "./origin";
 
 const PROXY_MARKER = "dashboard-proxy";
 const CACHE_CONTROL_NO_STORE = "no-store, private";
@@ -44,12 +44,11 @@ function applyProxyDiagnosticHeaders(headers: Headers, upstreamStatus?: number):
   }
 }
 
-function jsonError(request: Request, status: number, code: string): Response {
+function jsonError(status: number, code: string): Response {
   const headers = new Headers({
     "Content-Type": "application/json",
     "Cache-Control": CACHE_CONTROL_NO_STORE,
   });
-  applyCorsHeaders(request, headers);
   applyProxyDiagnosticHeaders(headers);
   return new Response(JSON.stringify({ error: { code } }), {
     status,
@@ -57,16 +56,11 @@ function jsonError(request: Request, status: number, code: string): Response {
   });
 }
 
-function blockedRedirectResponse(
-  request: Request,
-  method: string,
-  upstreamStatus: number,
-): Response {
+function blockedRedirectResponse(method: string, upstreamStatus: number): Response {
   const headers = new Headers({
     "Content-Type": "application/json",
     "Cache-Control": CACHE_CONTROL_NO_STORE,
   });
-  applyCorsHeaders(request, headers);
   applyProxyDiagnosticHeaders(headers, upstreamStatus);
 
   return new Response(
@@ -150,8 +144,9 @@ const isMultipartWithBoundary = (raw: string): boolean => /^multipart\/form-data
 /**
  * The CSRF and replay guard for the marketing commands, checked before anything is forwarded.
  * The session cookie is SameSite=Lax and HttpOnly; these checks do not rely on that alone:
- * a cross-site form or script cannot send an allowed `Origin`, a JSON `Content-Type` without a
- * preflight this Worker only answers for allowed origins, or a custom `Idempotency-Key`.
+ * a cross-site form or script cannot send an allowed `Origin`, and cannot send a JSON
+ * `Content-Type` or a custom `Idempotency-Key` without a preflight, which this Worker never answers
+ * (it serves the dashboard's own origin only and sends no CORS headers).
  */
 export function marketingCommandRefusal(request: Request): Refusal {
   const path = stripApiPrefix(new URL(request.url).pathname) ?? "";
@@ -166,8 +161,8 @@ export function marketingCommandRefusal(request: Request): Refusal {
  *
  * CSRF on the upload: multipart is a "simple" content type, so a cross-site form could send one
  * without a preflight. Protection there rests on the required `Idempotency-Key` (a custom header,
- * which forces a preflight this Worker answers only for listed origins) together with the Origin
- * and Sec-Fetch-Site checks, not on the content type.
+ * which forces a preflight this Worker never answers) together with the Origin and
+ * Sec-Fetch-Site checks, not on the content type.
  */
 export function catalogCommandRefusal(request: Request): Refusal {
   const path = stripApiPrefix(new URL(request.url).pathname) ?? "";
@@ -219,7 +214,7 @@ export function webPublishRefusal(request: Request): Refusal {
  * `Sec-Fetch-Site` past this, so it cannot sign someone out, switch their profile, or drive PIN
  * guesses through their session. The two profile routes also require a JSON body (which no
  * cross-site form can send, and no cross-site script can send without a preflight this Worker
- * only answers for allowed origins) of at most `AUTH_PROFILE_MAX_BYTES`.
+ * never answers) of at most `AUTH_PROFILE_MAX_BYTES`.
  */
 export function authCommandRefusal(request: Request): Refusal {
   const origin = originRefusal(request);
@@ -238,19 +233,12 @@ export function authCommandRefusal(request: Request): Refusal {
   return null;
 }
 
-const ALLOWED_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const ALLOWED_METHODS = new Set(["GET", "HEAD"]);
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export async function handleRequest(request: Request, env: ProxyEnv): Promise<Response> {
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
-
-  if (method === "OPTIONS") {
-    const headers = new Headers();
-    applyCorsHeaders(request, headers);
-    applyProxyDiagnosticHeaders(headers);
-    return new Response(null, { status: 204, headers });
-  }
 
   const upstreamPath = stripApiPrefix(url.pathname);
 
@@ -261,7 +249,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
   // allowlisting never implies POST permission.
   if (method === "POST") {
     if (upstreamPath === null || !isAllowedPostPath(upstreamPath)) {
-      return jsonError(request, 405, "method_not_allowed");
+      return jsonError(405, "method_not_allowed");
     }
     if (
       isAllowedMarketingCommandPostPath(upstreamPath) ||
@@ -272,51 +260,66 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     ) {
       const refusal = marketingCommandRefusal(request);
       if (refusal) {
-        return jsonError(request, refusal.status, refusal.code);
+        return jsonError(refusal.status, refusal.code);
       }
     }
     if (isAllowedCatalogCommandPostPath(upstreamPath) || isAllowedCatalogUploadPostPath(upstreamPath)) {
       const refusal = catalogCommandRefusal(request);
       if (refusal) {
-        return jsonError(request, refusal.status, refusal.code);
+        return jsonError(refusal.status, refusal.code);
       }
     }
     if (isAllowedQuotePreviewPostPath(upstreamPath)) {
       const refusal = quotePreviewRefusal(request);
       if (refusal) {
-        return jsonError(request, refusal.status, refusal.code);
+        return jsonError(refusal.status, refusal.code);
       }
     }
     if (isAllowedWebPublishPostPath(upstreamPath)) {
       const refusal = webPublishRefusal(request);
       if (refusal) {
-        return jsonError(request, refusal.status, refusal.code);
+        return jsonError(refusal.status, refusal.code);
       }
     }
     if (isAllowedAuthPostPath(upstreamPath)) {
       const refusal = authCommandRefusal(request);
       if (refusal) {
-        return jsonError(request, refusal.status, refusal.code);
+        return jsonError(refusal.status, refusal.code);
       }
     }
   } else if (MUTATING_METHODS.has(method)) {
-    return jsonError(request, 405, "method_not_allowed");
+    return jsonError(405, "method_not_allowed");
   } else if (!ALLOWED_METHODS.has(method)) {
-    return jsonError(request, 405, "method_not_allowed");
+    return jsonError(405, "method_not_allowed");
   } else if (upstreamPath === null) {
-    return jsonError(request, 404, "not_found");
+    return jsonError(404, "not_found");
   } else if (!isAllowedUpstreamPath(upstreamPath)) {
-    return jsonError(request, 403, "path_not_allowed");
+    return jsonError(403, "path_not_allowed");
+  }
+
+  // Every POST and every `/v2/*` read needs a signed-in operator upstream. Without the session
+  // cookie there is no one to resolve, so the request stops here: before the body is buffered,
+  // and before anything reaches the API with the Worker's service key. Exempt by path:
+  // the sign-in flow (`/auth/*`: login, callback, session, profiles, profile select/clear,
+  // logout) and `/health`, which is a GET outside `/v2/*`. The public web form and stats
+  // routes never reach this function (see the default export).
+  const path = upstreamPath as string;
+  if (
+    (method === "POST" || path.startsWith("/v2/")) &&
+    !isAuthPath(path) &&
+    sessionCookieHeader(request.headers.get("Cookie")) === null
+  ) {
+    return jsonError(401, "session_required");
   }
 
   const upstreamBase = env.ORIGENLAB_API_UPSTREAM?.trim();
   if (!upstreamBase) {
-    return jsonError(request, 500, "upstream_not_configured");
+    return jsonError(500, "upstream_not_configured");
   }
 
   const token = env.ORIGENLAB_API_AUTH_TOKEN?.trim();
   if (!token) {
-    return jsonError(request, 500, "auth_token_not_configured");
+    return jsonError(500, "auth_token_not_configured");
   }
 
   // Every branch above that did not already return guarantees upstreamPath
@@ -337,14 +340,14 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     body.byteLength > marketingCommandMaxBytes(upstreamPath as string)
   ) {
     // A body larger than its declared Content-Length, or one sent without it.
-    return jsonError(request, 413, "payload_too_large");
+    return jsonError(413, "payload_too_large");
   }
   if (
     body !== undefined &&
     isAllowedCrmAuthoringCommandPostPath(upstreamPath as string) &&
     body.byteLength > CRM_AUTHORING_MAX_BYTES
   ) {
-    return jsonError(request, 413, "payload_too_large");
+    return jsonError(413, "payload_too_large");
   }
   if (
     body !== undefined &&
@@ -352,28 +355,28 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
       isAllowedCatalogUploadPostPath(upstreamPath as string)) &&
     body.byteLength > catalogCommandMaxBytes(upstreamPath as string)
   ) {
-    return jsonError(request, 413, "payload_too_large");
+    return jsonError(413, "payload_too_large");
   }
   if (
     body !== undefined &&
     isAllowedQuotePreviewPostPath(upstreamPath as string) &&
     body.byteLength > catalogCommandMaxBytes(upstreamPath as string)
   ) {
-    return jsonError(request, 413, "payload_too_large");
+    return jsonError(413, "payload_too_large");
   }
   if (
     body !== undefined &&
     isAllowedWebPublishPostPath(upstreamPath as string) &&
     !webPublishBodyWithinLimit(body.byteLength)
   ) {
-    return jsonError(request, 413, "payload_too_large");
+    return jsonError(413, "payload_too_large");
   }
   if (
     body !== undefined &&
     isAllowedAuthProfilePostPath(upstreamPath as string) &&
     body.byteLength > AUTH_PROFILE_MAX_BYTES
   ) {
-    return jsonError(request, 413, "payload_too_large");
+    return jsonError(413, "payload_too_large");
   }
   const upstreamRequest = new Request(upstreamUrl, {
     method,
@@ -392,7 +395,7 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
     ) {
       return authRedirectResponse(upstreamResponse, location as string);
     }
-    return blockedRedirectResponse(request, method, upstreamResponse.status);
+    return blockedRedirectResponse(method, upstreamResponse.status);
   }
 
   const responseHeaders = new Headers(upstreamResponse.headers);
@@ -412,14 +415,18 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
       responseHeaders.delete(name);
     }
   }
-  stripUpstreamCorsHeaders(responseHeaders);
+  // Same-origin only: whatever CORS policy the upstream API advertises never reaches the browser.
+  for (const name of [...responseHeaders.keys()]) {
+    if (name.toLowerCase().startsWith("access-control-")) {
+      responseHeaders.delete(name);
+    }
+  }
 
   const requestId = upstreamResponse.headers.get("X-Request-ID");
   if (requestId) {
     responseHeaders.set("X-Request-ID", requestId);
   }
 
-  applyCorsHeaders(request, responseHeaders);
   applyProxyDiagnosticHeaders(responseHeaders, upstreamResponse.status);
 
   return new Response(method === "HEAD" ? null : upstreamResponse.body, {
@@ -431,13 +438,13 @@ export async function handleRequest(request: Request, env: ProxyEnv): Promise<Re
 
 import { handleStatsRequest, type StatsEnv } from "./stats";
 import { handleWebStatsRequest, type StatsReadEnv } from "./stats_read";
-import { handleWebFormRequest } from "./web_form";
+import { handleWebFormRequest, type WebFormEnv } from "./web_form";
 
 export default {
   fetch(request: Request, env: ProxyEnv): Promise<Response> {
     const url = new URL(request.url);
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/web/")) {
-      return handleWebFormRequest(request, env as any);
+      return handleWebFormRequest(request, env as WebFormEnv);
     }
     // Public first-party analytics: its own two-request allowlist, no dashboard session.
     if (url.hostname === "origenlab.cl" && url.pathname.startsWith("/api/stats/")) {

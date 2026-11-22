@@ -174,7 +174,10 @@ describe("sign-in redirects", () => {
 
   it("still blocks every non-auth redirect", async () => {
     stubUpstream({ status: 302, headers: [["Location", GOOGLE_LOGIN]] });
-    const response = await handleRequest(new Request(`${DASHBOARD}/api/v2/contacts`), TEST_ENV);
+    const response = await handleRequest(
+      new Request(`${DASHBOARD}/api/v2/contacts`, { headers: { Cookie: `${AUTH_SESSION_COOKIE}=v` } }),
+      TEST_ENV,
+    );
     expect(response.status).toBe(502);
   });
 });
