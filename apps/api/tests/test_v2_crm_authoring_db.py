@@ -347,6 +347,14 @@ def test_merge_people_repoints_and_archives_loser(disposable_database, world):
             (camp_id, f"loser-{tag}@example.test", loser_id),
         )
         cr_id = cur.fetchone()[0]
+        # A note on the loser: crm.note_guard lets it move only to the person the loser merged into.
+        cur.execute(
+            "insert into crm.note (subject_kind, subject_id, body, author_operator_id)"
+            " values ('person', %s::uuid, 'Nota ficticia del perdedor',"
+            " (select id from platform.operator where email_norm = %s)) returning id::text",
+            (loser_id, f"admin-{tag}@example.test"),
+        )
+        note_id = cur.fetchone()[0]
 
     # Read current versions after cp add
     with psycopg.connect(runtime_dsn(disposable_database)) as conn, conn.cursor() as cur:
@@ -355,13 +363,13 @@ def test_merge_people_repoints_and_archives_loser(disposable_database, world):
         cur.execute("select version from crm.person where id = %s::uuid", (winner_id,))
         winner_ver = cur.fetchone()[0]
 
-    # Build digest (1 cp, 0 affiliations, 0 opp, 1 campaign_recipient, 0 notes)
+    # Build digest (1 cp, 0 affiliations, 0 opp, 1 campaign_recipient, 1 note)
     moves = {
         "contact_points": 1,
         "affiliations": 0,
         "opportunity_participants": 0,
         "campaign_recipients": 1,
-        "notes": 0,
+        "notes": 1,
     }
     digest = merge_preview_digest({
         "loser":  {"id": loser_id,  "version": loser_ver},
@@ -394,6 +402,11 @@ def test_merge_people_repoints_and_archives_loser(disposable_database, world):
     with psycopg.connect(runtime_dsn(disposable_database)) as conn, conn.cursor() as cur:
         cur.execute("select person_id::text from outbound.campaign_recipient where id = %s::uuid", (cr_id,))
         assert cur.fetchone()[0] == winner_id
+
+    # Note repointed to winner, its version untouched
+    with psycopg.connect(runtime_dsn(disposable_database)) as conn, conn.cursor() as cur:
+        cur.execute("select subject_id::text, version from crm.note where id = %s::uuid", (note_id,))
+        assert cur.fetchone() == (winner_id, 1)
 
 
 @needs_db
