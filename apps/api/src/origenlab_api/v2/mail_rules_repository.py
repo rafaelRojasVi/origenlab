@@ -68,6 +68,7 @@ from origenlab_api.v2.mail_rules import (
     AUTO,
     CONFIRM_ORGANIZATION_RECORD,
     CREATE_REQUEST_FROM_FORWARD_STEP,
+    DUPLICATE_CLOSE_PREFIX,
     LATE_QUOTE_WINDOW_DAYS,
     LINK_AFTER_CLOSE,
     OWN_DOMAINS,
@@ -320,6 +321,23 @@ select distinct p.opportunity_id::text, cp.value_norm
    and (cp.id = p.contact_point_id or (p.person_id is not null and cp.person_id = p.person_id))
  where p.valid_to is null
 """
+#: R23: every open sales case a Cotizador «Nueva cotización» opened (`create-quote` with a client —
+#: its `opportunity.created` event carries that command's receipt), the quote that same command
+#: created, and whether the case's institution was registered by it too (a name typed there).
+_COTIZADOR_CASES_SQL = """
+select o.id::text as opportunity_id, qe.aggregate_id::text as quote_id,
+       exists (select 1 from crm.domain_event oe
+                where oe.aggregate_kind = 'organization' and oe.aggregate_id = o.organization_id
+                  and oe.event_type = 'organization.created'
+                  and oe.command_receipt_id = ce.command_receipt_id) as organization_typed
+  from crm.opportunity o
+  join crm.domain_event ce on ce.aggregate_kind = 'opportunity' and ce.aggregate_id = o.id
+                          and ce.event_type = 'opportunity.created'
+  join platform.command_receipt r on r.id = ce.command_receipt_id and r.command_name = 'create-quote'
+  join crm.domain_event qe on qe.command_receipt_id = ce.command_receipt_id and qe.aggregate_kind = 'quote'
+                          and qe.event_type = 'quote.created'
+ where o.kind = 'sale' and o.closed_at is null
+"""
 _APPLIED_EVIDENCE_SQL = """
 select distinct response_body ->> 'evidence_id', response_body ->> 'rule_id'
   from platform.command_receipt
@@ -357,7 +375,7 @@ select sr.id::text, sr.payload ->> 'sender',
 _OWN_SENDER_RE = "@(" + "|".join(d.replace(".", "\\.") for d in sorted(OWN_DOMAINS)) + ")([>,;[:space:]]|$)"
 #: Rules that act on an email another rule already acted on (R14, R16), each once: their apply receipt
 #: is looked up by its own key, not by the email.
-AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18", "R19"})
+AFTER_APPLY_RULES: frozenset[str] = frozenset({"R14", "R16", "R17", "R18", "R19", "R23"})
 #: R15: the institutions «por confirmar», what created them (the receipt of their
 #: `organization.created` event), and the PDF file name of each quote on their cases that is still
 #: sent and was recorded `%(days)s` days ago or more. A case an undo discarded does not count.
@@ -487,6 +505,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
         if email:
             participants.setdefault(case_id, set()).add(email)
 
+    cur.execute(_COTIZADOR_CASES_SQL)
+    opened_by_cotizador = {r[0]: (r[1], bool(r[2])) for r in cur.fetchall()}
+
     cur.execute(_CASES_SQL)
     cases = tuple(
         CaseState(id=r["id"], title=r["title"], stage=r["stage"], version=int(r["version"]),
@@ -495,7 +516,9 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                   quotes=tuple(by_case.get(r["id"], ())),
                   people=tuple(sorted(case_people.get(r["id"], ()))),
                   paused_until=r["paused_until"].isoformat() if r["paused_until"] else None,
-                  participants=tuple(sorted(participants.get(r["id"], ()))))
+                  participants=tuple(sorted(participants.get(r["id"], ()))),
+                  opened_with_quote_id=opened_by_cotizador.get(r["id"], (None, False))[0],
+                  organization_typed=opened_by_cotizador.get(r["id"], (None, False))[1])
         for r in rows()
     )
 
@@ -966,6 +989,14 @@ class MailRulesRepository(V2CaseCommandRepository):
             if row is not None and row[0] == "negotiating":
                 run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
                                          "stage": "quoting", "note": note})
+        if rule == "R23":
+            # The request back where it was — unless a person reopened or closed it otherwise since.
+            cur.execute("select stage, version, close_reason from crm.opportunity where id = %s for update", (case_id,))
+            row = cur.fetchone()
+            if (row is not None and row[0] == "abandoned"
+                    and (row[2] or "").startswith(DUPLICATE_CLOSE_PREFIX) and action.get("from_stage")):
+                run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
+                                         "stage": action["from_stage"], "note": note})
         if rule == "R22":
             # The pause R22 set ends — unless a person changed or ended it since; then it is theirs.
             cur.execute("select version, paused_until::text from crm.opportunity where id = %s for update", (case_id,))
