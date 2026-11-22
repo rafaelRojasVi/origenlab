@@ -27,9 +27,12 @@ const HOUR_MS = 3_600_000;
 
 /* ──────────────────────────────────────────────────────────────── days ── */
 
+// Built once: a formatter costs ~100 µs to make, and Seguimiento asks for thousands of days a render.
+const SANTIAGO_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" });
+
 /** `now` as a Santiago calendar day, `YYYY-MM-DD`. */
 export function dateSantiago(now: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  return SANTIAGO_DAY.format(now);
 }
 
 /** The Santiago wall-clock parts of an instant. */
