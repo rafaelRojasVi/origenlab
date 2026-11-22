@@ -201,14 +201,15 @@ const csp = readFileSync(join(dist, '.htaccess'), 'utf8').match(/Content-Securit
 const cspSources = new Map(
   csp.split(';').map((d) => d.trim().split(/\s+/)).filter((t) => t[0]).map(([name, ...sources]) => [name, sources]),
 );
-const cspAllows = (directive) => (cspSources.get(directive) ?? []).includes(TURNSTILE_ORIGIN);
+const isTurnstile = (source) => source === TURNSTILE_ORIGIN;
+const cspAllows = (directive) => (cspSources.get(directive) ?? []).some(isTurnstile);
 if (widgetPages.length > 0) {
   const privacy = readFileSync(join(dist, 'privacidad/index.html'), 'utf8');
   assert(privacy.includes('Turnstile'), 'con Turnstile encendido, /privacidad/ lo nombra');
   assert(cspAllows('script-src'), 'con Turnstile encendido, la CSP admite su script');
   assert(cspAllows('frame-src'), 'con Turnstile encendido, la CSP admite su iframe');
 } else {
-  assert(![...cspSources.values()].some((sources) => sources.includes(TURNSTILE_ORIGIN)), 'sin Turnstile, la CSP no admite su origen');
+  assert(![...cspSources.values()].some((sources) => sources.some(isTurnstile)), 'sin Turnstile, la CSP no admite su origen');
 }
 
 if (failed) {
