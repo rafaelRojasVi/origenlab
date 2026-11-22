@@ -883,7 +883,7 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
     expect(within(modal).getAllByRole("button", { name: "Cerrar" })[0]).toHaveClass("tap-44");
   });
 
-  it("a case whose pause day is past: the panel says «Volvió de pausa» and «Próximo» is the follow-up due today", async () => {
+  it("a pause we answered by email after its day is over: no pause line, «Próximo» is the follow-up due today", async () => {
     // The rhythm counts days from the 15 Nov email: pin the clock (only Date; timers stay real for findBy).
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
@@ -902,8 +902,9 @@ describe("Seguimiento QA fixes (2026-11-19)", () => {
     await screen.findByTestId(`seg-row-${A}`);
     fireEvent.click(within(row(A)).getByRole("button", { name: "Instituto Ficticio" }));
     const panel = within(await screen.findByRole("dialog"));
-    expect(panel.getByTestId("case-drawer-pause")).toHaveTextContent("Volvió de pausa el");
-    expect(panel.getByTestId("case-drawer-pause")).not.toHaveTextContent("En pausa hasta");
+    // Paused until 25 Oct, emailed on 15 Nov: the email resumed it (owner 2026-11-22: «we contacted
+    // them and they're still there»), so the panel no longer says «Volvió de pausa».
+    expect(panel.queryByTestId("case-drawer-pause")).not.toBeInTheDocument();
     expect(panel.getByTestId("case-drawer-followup")).toHaveTextContent("Seguimiento 1 de 3 · hoy");
     expect(panel.getByTestId("drawer-next-rhythm")).toHaveTextContent("Próximo contacto: Seguimiento 1 de 3 · hoy");
     expect(panel.queryByTestId("drawer-next-pause")).not.toBeInTheDocument();

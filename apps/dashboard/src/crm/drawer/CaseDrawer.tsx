@@ -27,7 +27,7 @@ import { FollowUpPicker } from "../pages/FollowUpPicker";
 import { CompleteFromMail } from "../pages/CompleteFromMail";
 import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quotes/openOrCreateQuote";
 import { isMaskedAddress } from "../redaction";
-import { STATUS_LABEL, pauseDayIso, pausedUntil } from "../stage";
+import { STATUS_LABEL, isPaused, pauseDayIso, pausedUntil } from "../stage";
 import { nextContact } from "../nextContact";
 import { endOfDay, followUpStep, followUpsDue, pendingFollowUpTasks } from "../today";
 import { Badge, Button, Drawer, Section, fmtDate } from "../ui";
@@ -236,17 +236,21 @@ function CaseDrawerBody({
   ];
   const at = STEPS.findIndex((st) => st.stages.includes(card.stage));
   const lostState = card.stage === "lost" ? "Perdida" : card.stage === "abandoned" ? "Cerrada" : null;
-  const pausedDay = card.paused_until && !card.closed_at ? card.paused_until : null;
+  // A paused case is «En pausa», not its stage (owner 2026-11-22: paused cases read «Conversación»):
+  // the stage it keeps is ticked, none is lit as the current state, and the pause line says it. A
+  // pause OrigenLab already answered with an email or a call is over (`pauseReturned`).
+  const paused = isPaused(card);
+  const pausedDay = card.paused_until && !card.closed_at && paused ? card.paused_until : null;
   const stepper = (
     <section className="rounded-lg border border-line bg-canvas-sunken/30 p-2.5" aria-label="Estado del caso" data-testid="case-inline-state">
       <ol className="grid grid-cols-4 gap-1">
         {STEPS.map((st, i) => {
-          const done = at >= 0 && i < at;
-          const here = i === at && !lostState;
+          const done = at >= 0 && (i < at || (paused && i === at));
+          const here = i === at && !lostState && !paused;
           return (
             <li key={st.key} className="min-w-0">
               <button type="button" onClick={st.go} disabled={here || !lifted.lost && st.key !== "ganada"}
-                title={here ? "Estado actual" : `Pasar a ${st.label}`}
+                title={here ? "Estado actual" : paused && i === at ? `${st.label} · el caso está en pausa` : `Pasar a ${st.label}`}
                 className={`flex h-8 w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
                   here ? "bg-ink text-canvas" : done ? "bg-accent/10 text-accent hover:bg-accent/20" : "bg-canvas-sunken text-ink-muted hover:text-ink"
                 } disabled:cursor-default`}>

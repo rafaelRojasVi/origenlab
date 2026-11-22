@@ -165,6 +165,30 @@ describe("a pause still ahead hides reminders left over from before it (owner 20
 
 describe("Hoy audit 2026-11-22: what a case shows on every screen", () => {
   const santiagoDay = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Santiago" }).format(new Date(iso));
+  const emailed = (at: string) => ({ inbound: null, outbound: { at, url: null } }) as unknown as OpportunityCardData["last_contact"];
+
+  it("a pause that came back and that we answered by email after its day is over: no «Volvió de pausa», no lateness", () => {
+    // Paused until 9 Nov; we wrote on 16 Nov (two days before NOW, the 18th): the pause is resumed.
+    const c = card({ stage: "negotiating", paused_until: "2026-11-09", pause_reason: "Evaluando internamente", last_contact: emailed(santiago(16, 10).toISOString()) });
+    expect(nextContact(c, NOW)).toMatchObject({ source: "rhythm", label: "Seguimiento 1 de 3" });
+    // Day 3 from the 16th is Thursday the 19th — on Hoy's agenda, the Pipeline and Seguimiento alike.
+    expect(santiagoDay(nextContactAt(c, NOW) as string)).toBe("2026-11-19");
+    const steps = planNextSteps([c], NOW, null).steps;
+    expect(steps.map((s) => [s.kind, s.dueDays])).toEqual([["seguimiento", 1]]);
+    expect(urgencyByCase([c], NOW).get("case-1")?.level).toBe("pronto");
+  });
+
+  it("an email before the pause's day does not end it", () => {
+    // Paused until today (the 18th); our last email was yesterday: the case comes back today.
+    const c = card({ paused_until: "2026-11-18", pause_reason: "Evaluando internamente", last_contact: emailed(santiago(17, 10).toISOString()) });
+    expect(nextContact(c, NOW)).toMatchObject({ source: "pause", label: "Vuelve de pausa · Evaluando internamente" });
+    expect(planNextSteps([c], NOW, null).steps.map((s) => [s.kind, s.group])).toEqual([["pausa", "hoy"]]);
+  });
+
+  it("a call that reached the client on or after the pause's day ends it too", () => {
+    const c = card({ paused_until: "2026-11-09", pause_reason: "Evaluando internamente", last_call: { at: santiago(17, 10).toISOString(), outcome: "contesto" } });
+    expect(nextContact(c, NOW)?.source).not.toBe("pause");
+  });
 
   it("with no reminder, Seguimiento's próximo contacto is the rhythm's next day Hoy shows, never «Sin fecha»", () => {
     // Quote sent on Monday the 16th: day 3 is Thursday the 19th.
