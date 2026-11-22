@@ -124,14 +124,18 @@ export function useResource<T>(
       return sameRead && prev.kind === "ready" ? prev : { kind: "loading" };
     });
     setRefreshing(true);
+    // A read superseded by a newer one (a reload, another filter, the page closed) answers into
+    // nothing: neither its rows nor its failure may touch the memory the newer read keeps.
     loader()
       .then((data) => {
+        if (!alive) return;
         if (key !== null) remember(loader, key, data);
-        if (alive) setState({ kind: "ready", data });
+        setState({ kind: "ready", data });
       })
       .catch((err: unknown) => {
+        if (!alive) return;
         if (key !== null) memory.get(loader)?.delete(key);
-        if (alive) setState(classifyError(err));
+        setState(classifyError(err));
       })
       .finally(() => {
         if (alive) setRefreshing(false);

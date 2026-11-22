@@ -98,7 +98,7 @@ export function SegCard({
       </div>
       <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ink-muted">
         <span className="text-ink-faint">Próximo:</span>
-        <NextDate due={nextReminder(row, now)} now={now} />
+        <NextDate due={nextReminder(row)} now={now} />
       </div>
       {mayCommand ? (
         <div className="mt-2" onPointerDown={(e) => e.stopPropagation()} data-testid="seg-card-follow-up">

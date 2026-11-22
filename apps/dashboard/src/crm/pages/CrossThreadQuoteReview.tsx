@@ -1,7 +1,7 @@
 /** A human-reviewed bridge between unrelated Gmail threads: propose, never auto-link. */
 import { useCallback, useRef, useState } from "react";
 import { fetchCaseQuoteCandidates } from "../crmApi";
-import { caseRefusalText, isStaleRefusal, linkCaseQuoteEvidence, newCaseCommandKey } from "../caseCommands";
+import { caseRefusalText, isStaleRefusal, keyAfterFailure, linkCaseQuoteEvidence, newCaseCommandKey } from "../caseCommands";
 import type { OpportunityCardData, CrossThreadQuoteCandidate } from "../crmTypes";
 import { useResource } from "../useResource";
 import { crmHash } from "../crmRoute";
@@ -47,7 +47,8 @@ export function CrossThreadQuoteReview({
         ],
       }, true);
     } catch (err) {
-      key.current = newCaseCommandKey();
+      // A refusal frees the key; a lost connection keeps it, so a retry cannot link twice.
+      key.current = keyAfterFailure(err, key.current);
       setError(caseRefusalText(err));
       if (isStaleRefusal(err)) onDone({ tone: "bad", lines: [caseRefusalText(err)] }, true);
     } finally {

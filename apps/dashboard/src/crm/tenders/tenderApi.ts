@@ -16,15 +16,12 @@
  */
 import { OperatorApiError, fetchJsonGet, notifyIfSessionRefused, operatorApiUrl } from "../../api/operatorClient";
 import { refusalOfError } from "../../api/refusalEnvelope";
+import { newCaseCommandKey } from "../caseCommands";
 
 export const MAX_BIDDER_DOCUMENT_BYTES = 20 * 1024 * 1024;
 
-/** A fresh key for one command attempt; the same attempt retried keeps it. */
-export function newTenderCommandKey(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `tender-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
+/** A fresh key for one command attempt; the same attempt retried keeps it. One helper for every command. */
+export const newTenderCommandKey = newCaseCommandKey;
 
 /** The API's refusal (code, message, status) behind an error; null for an error that is not the API's. */
 export const tenderRefusal = refusalOfError;

@@ -8,7 +8,7 @@
  */
 import { useRef, useState, type FormEvent } from "react";
 import { addNote } from "../authoring/crmAuthoringApi";
-import { caseRefusalText, cancelTask, createTask, newCaseCommandKey } from "../caseCommands";
+import { caseRefusalText, cancelTask, createTask, newCaseCommandKey, refusedByApi } from "../caseCommands";
 import type { OpportunityCardData } from "../crmTypes";
 import { isFollowUpTask } from "../today";
 import { Button, TextareaInput, fmtDate, toast } from "../ui";
@@ -128,16 +128,24 @@ export function FollowUpReminder({
     e.preventDefault();
     setBusy(true);
     const body = text.trim();
+    let noted = false;
     try {
       if (body) {
         await addNote({ subject_kind: "opportunity", subject_id: card.opportunity_id, body }, keys.current.note);
       }
+      noted = true;
       const due = await scheduleFollowUp({ card, day, note: body || "Recordatorio desde «Recordarme…».", now, keys: keys.current });
       toast(followUpSavedText(day, due, now));
       onDone();
     } catch (err) {
-      keys.current = { note: newCaseCommandKey(), ...newFollowUpKeys() };
       toast(caseRefusalText(err), "bad");
+      if (!refusedByApi(err)) {
+        // No answer: the note or the reminder may be recorded. The form stays open with the same
+        // keys, so «Guardar» again replays them instead of writing them twice.
+        return;
+      }
+      // Refused: nothing more was recorded, so new keys — but a note already written keeps its own.
+      keys.current = { note: noted ? keys.current.note : newCaseCommandKey(), ...newFollowUpKeys() };
       onDone();
     } finally {
       setBusy(false);

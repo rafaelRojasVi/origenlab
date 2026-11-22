@@ -123,7 +123,8 @@ describe("Hoy and Seguimiento agree on one case (QA 2026-11-19)", () => {
     // …but it was touched yesterday, not 21 days ago.
     const step = planNextSteps([c], NOW, null).steps[0];
     expect(stepAge(step).text).toBe("23 h");
-    expect(item.kind === "followup" && item.followUp.touchDays).toBe(0);
+    // 23 hours back from noon is yesterday: one calendar day (audit 2026-11-22), not «0 d».
+    expect(item.kind === "followup" && item.followUp.touchDays).toBe(1);
     // Without the call, the count runs from the quote.
     const silent = buildParaTiQueue([{ ...c, last_call_any: null }], NOW, null)[0];
     expect(silent.kind === "followup" && silent.followUp.touchDays).toBe(21);

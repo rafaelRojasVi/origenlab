@@ -148,6 +148,21 @@ export function newCaseCommandKey(): string {
     : `case-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/**
+ * The key for the next try of a command that failed with `err`. The API refused it (an
+ * `OperatorApiError` below 500): nothing was recorded, so a new key. No answer (a dropped
+ * connection) or a server/gateway failure (5xx, a timeout behind the proxy): the command may have
+ * run, so the same key — the retry replays it instead of recording it twice.
+ */
+export function keyAfterFailure(err: unknown, key: string): string {
+  return refusedByApi(err) ? newCaseCommandKey() : key;
+}
+
+/** The API answered `err` with a refusal: the command was not recorded (`keyAfterFailure`). */
+export function refusedByApi(err: unknown): boolean {
+  return err instanceof OperatorApiError && err.status < 500;
+}
+
 const TERMINAL_RECEIPT_STAGES: ReadonlySet<string> = new Set(["won", "lost", "abandoned"]);
 
 /**

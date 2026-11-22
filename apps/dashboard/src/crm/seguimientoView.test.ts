@@ -72,7 +72,7 @@ describe("filters", () => {
   const rows = rowsOf([
     { id: "1", owner: "op-karla", channel: "llamada", phone: "+56 9 1234 5678", amount: "500000", stage: "quoting", total: 0 },
     { id: "2", owner: "op-rafa", channel: "correo", amount: "5000000", stage: "negotiating", today: 1, total: 2, answered: true, lastCallToday: true },
-    { id: "3", owner: null, channel: null, amount: "20000000", stage: "quoting", total: 1, due: "2026-11-18T12:00:00Z" },
+    { id: "3", owner: null, channel: null, amount: "20000000", stage: "quoting", total: 1, due: "2026-11-17T12:00:00Z" },
     { id: "4", owner: "op-tati", channel: "whatsapp", phone: "+56 9 1234 5678", amount: null, stage: "quoting", sent: "2026-11-17T15:00:00Z" },
   ]);
 
@@ -85,9 +85,10 @@ describe("filters", () => {
     expect(one("canal", "llamada")).toEqual(["1"]);
     expect(one("canal", "correo")).toEqual(["2", "3"]); // no phone, no channel → correo
     expect(one("canal", "whatsapp")).toEqual(["4"]);
-    expect(one("estado", "atrasado")).toEqual(["1", "3"]);
-    // «1» and «2» have had the quote 8 days without an answer: the rhythm has them due today, as
-    // Hoy lists them; «4» (quote yesterday) is due on day 3; «3» by its reminder.
+    // «Atrasado» is a próximo contacto whose day went by (audit 2026-11-22): «3»'s reminder was
+    // yesterday. «1» and «2» have had the quote 8 days without an answer: the rhythm has them due
+    // today, as Hoy lists them — due, not late; «4» (quote yesterday) is due on day 3.
+    expect(one("estado", "atrasado")).toEqual(["3"]);
     expect(one("estado", "toca_hoy")).toEqual(["1", "2", "3"]);
     expect(one("estado", "nunca")).toEqual(["1", "4"]);
     expect(one("estado", "llamado_hoy")).toEqual(["2"]);
@@ -140,7 +141,8 @@ describe("sortRows", () => {
     expect(order("prioridad")[0]).toBe("b"); // highest amount and a phone
     expect(order("monto")).toEqual(["b", "a", "c"]);
     expect(order("dias")).toEqual(["b", "c", "a"]);
-    expect(order("proximo")).toEqual(["c", "a", "b"]);
+    // «b» (17 days since its quote) is due today by the rhythm, before «c» (19th) and «a» (20th).
+    expect(order("proximo")).toEqual(["b", "c", "a"]);
   });
 });
 
@@ -184,14 +186,15 @@ describe("agenda", () => {
   });
 
   it("reads the open «Seguimiento» reminder first, like the sheet's «Próximo»", () => {
-    const [row] = rowsOf([{ id: "r" }]);
-    row.card.open_tasks = [
+    // The row keeps the próximo contacto it was built with (`SegRow.next`): build it from the tasks.
+    const withTasks = (tasks: OpportunityCardData["open_tasks"]) => seguimientoRows([{ ...card({ id: "r" }), open_tasks: tasks }], PROFILES, NOW)[0];
+    const both = withTasks([
       { task_id: "t1", title: "Enviar ficha", due_at: "2026-11-18T13:00:00Z", version: 1, owner: null },
       { task_id: "t2", title: "Seguimiento · llamar", due_at: "2026-11-19T15:00:00Z", version: 1, owner: null },
-    ];
-    expect(agendaKey(row, NOW)).toBe("manana");
-    row.card.open_tasks = [{ task_id: "t1", title: "Enviar ficha", due_at: "2026-11-18T13:00:00Z", version: 1, owner: null }];
-    expect(agendaKey(row, NOW)).toBe("hoy");
+    ]);
+    expect(agendaKey(both, NOW)).toBe("manana");
+    const one = withTasks([{ task_id: "t1", title: "Enviar ficha", due_at: "2026-11-18T13:00:00Z", version: 1, owner: null }]);
+    expect(agendaKey(one, NOW)).toBe("hoy");
   });
 });
 
