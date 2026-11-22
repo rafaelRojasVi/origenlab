@@ -25,14 +25,14 @@ def test_build_web_quote_message_round_trip() -> None:
     from origenlab_api.v2.gmail_send import build_web_quote_message
 
     raw = build_web_quote_message(
-        reply_to="ana@uchile.cl",
+        reply_to="ana@ficticio.invalid",
         institution="U. de Chile",
         need="Autoclave 50 L",
         extra={},
         submitted_at="2026-10-18T15:00:00-03:00",
     )
     msg = message_from_bytes(raw, policy=email.policy.default)
-    assert msg["Reply-To"].addresses[0].addr_spec == "ana@uchile.cl"
+    assert msg["Reply-To"].addresses[0].addr_spec == "ana@ficticio.invalid"
     assert msg["Subject"] == "Solicitud de cotización — sitio web — U. de Chile"
     assert msg["X-OrigenLab-Origin"] == "web-quote-form/v1"
     assert msg["From"].addresses[0].addr_spec == "contacto@origenlab.cl"
@@ -40,7 +40,7 @@ def test_build_web_quote_message_round_trip() -> None:
     assert "List-Unsubscribe" not in msg
     # The address is in the body too (spec §3.2), so it is seen without pressing «Responder».
     assert msg.get_content().splitlines()[:3] == [
-        "Institución o empresa: U. de Chile", "Correo: ana@uchile.cl", "Qué necesita: Autoclave 50 L"]
+        "Institución o empresa: U. de Chile", "Correo: ana@ficticio.invalid", "Qué necesita: Autoclave 50 L"]
 
 
 def test_header_injection_in_institution_is_refused() -> None:
@@ -309,34 +309,79 @@ def test_timing_guard_silently_succeeds_without_sending() -> None:
     assert sender.calls == []
 
 
-def test_submission_without_render_at_is_accepted_and_sent() -> None:
-    """A no-JS form has no timing signal: the request is not refused and the mail goes out."""
+def test_submission_without_render_at_is_refused_and_not_sent() -> None:
+    """Both site forms always send render_at: a submission without it has no timing gate to pass."""
     sender = _MockSender()
     client = TestClient(_route_app(sender=sender))
     body = _body()
     del body["render_at"]
     r = client.post("/v2/web/quote-request", json=body)
-    assert r.status_code == 200
-    assert r.json()["status"] == "sent"
-    assert len(sender.calls) == 1
-
-
-def test_submission_with_null_render_at_is_accepted_and_sent() -> None:
-    sender = _MockSender()
-    client = TestClient(_route_app(sender=sender))
-    r = client.post("/v2/web/quote-request", json=_body(render_at=None))
-    assert r.status_code == 200
-    assert len(sender.calls) == 1
-
-
-def test_honeypot_non_empty_silently_succeeds_without_sending() -> None:
-    """Non-empty honeypot field silently succeeds without calling the sender."""
-    sender = _MockSender()
-    client = TestClient(_route_app(sender=sender))
-    r = client.post("/v2/web/quote-request", json=_body(hp="i-am-a-bot"))
-    assert r.status_code == 200
-    assert r.json()["status"] == "sent"
+    assert r.status_code == 422
     assert sender.calls == []
+
+
+@pytest.mark.parametrize("render_at", [None, "", "not-a-time", 0, -5, "inf", "nan", "Infinity"])
+def test_submission_with_an_invalid_render_at_is_refused_and_not_sent(render_at) -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(render_at=render_at))
+    assert r.status_code == 422
+    assert sender.calls == []
+
+
+def test_render_at_as_a_numeric_string_is_accepted() -> None:
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(render_at=str(time.time() - 10)))
+    assert r.status_code == 200
+    assert len(sender.calls) == 1
+
+
+def test_the_model_has_no_hp_field_and_an_hp_value_changes_nothing() -> None:
+    """The site's honeypot is `_trap`, dropped by the Worker; the API never had a sender for `hp`."""
+    from origenlab_api.v2.web_quote_form import WebQuoteFormRequest
+
+    assert "hp" not in WebQuoteFormRequest.model_fields
+    sender = _MockSender()
+    client = TestClient(_route_app(sender=sender))
+    r = client.post("/v2/web/quote-request", json=_body(hp="anything"))
+    assert r.status_code == 200
+    assert len(sender.calls) == 1
+
+
+def test_per_address_entries_leave_the_dict_once_their_window_has_passed() -> None:
+    from datetime import timedelta
+
+    from origenlab_api.v2.web_quote_form import WebQuoteFormCaps
+
+    caps = WebQuoteFormCaps()
+    old = datetime.now(timezone.utc) - timedelta(hours=25)
+    for i in range(500):
+        caps.per_address[f"visitante{i}@ficticio.invalid"] = deque([old])
+    caps.check_and_record("nuevo@ficticio.invalid")
+    assert list(caps.per_address) == ["nuevo@ficticio.invalid"]
+
+
+def test_a_refused_send_creates_no_per_address_entry() -> None:
+    from origenlab_api.v2.web_quote_form import CapExceeded, WebQuoteFormCaps
+
+    caps = WebQuoteFormCaps()
+    now = datetime.now(timezone.utc)
+    caps.global_deque.extend([now] * caps.GLOBAL_LIMIT)
+    with pytest.raises(CapExceeded):
+        caps.check_and_record("otro@ficticio.invalid")
+    assert caps.per_address == {}
+
+
+def test_per_address_cap_still_counts_sends_inside_the_window() -> None:
+    from origenlab_api.v2.web_quote_form import CapExceeded, WebQuoteFormCaps
+
+    caps = WebQuoteFormCaps()
+    for _ in range(caps.PER_ADDRESS_LIMIT):
+        caps.check_and_record("ana@ficticio.invalid")
+    with pytest.raises(CapExceeded):
+        caps.check_and_record("ana@ficticio.invalid")
+    assert len(caps.per_address["ana@ficticio.invalid"]) == caps.PER_ADDRESS_LIMIT
 
 
 def test_crlf_in_need_field_is_allowed() -> None:

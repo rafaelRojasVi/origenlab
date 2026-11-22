@@ -1,6 +1,6 @@
 """POST /v2/web/quote-request — website «Solicitar cotización» form → notification mail.
 
-Input is sanitised, timing- and honeypot-checked, deduplicated and rate-capped before
+Input is sanitised, timing-checked, deduplicated and rate-capped before
 a single self-addressed notification is dispatched as contacto@origenlab.cl with the
 visitor's address in Reply-To.  No copy is sent to the visitor.
 
@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from origenlab_api.v2.gmail_send import MAX_ADDRESS_LENGTH, _ADDRESS, build_web_quote_message
 
@@ -70,11 +70,10 @@ class WebQuoteFormRequest(BaseModel):
     product: str | None = None
     #: Version of the consent text the visitor accepted, e.g. «consent-v1-2026-11».
     consent_version: str | None = None
-    #: Seconds since the epoch when the page rendered. ``None`` = no timing signal (the
-    #: form was sent without JavaScript); such a submission is not refused.
-    render_at: float | None = None
-    #: Honeypot field — must be absent or empty from real browsers.
-    hp: str = ""
+    #: Seconds since the epoch when the page rendered. Required: both site forms set it from
+    #: JavaScript and the Worker refuses a submission without it, so a missing, non-finite or
+    #: non-positive value is a 422. (The honeypot ``_trap`` is the Worker's: it never gets here.)
+    render_at: float = Field(gt=0, allow_inf_nan=False)
 
     @field_validator("need")
     @classmethod
@@ -150,6 +149,14 @@ class WebQuoteFormCaps:
         while q and q[0] < cutoff:
             q.popleft()
 
+    def _prune_addresses(self, cutoff: datetime) -> None:
+        """Drop every address with no send left in the window, so the dict cannot grow forever."""
+        for address in list(self.per_address):
+            q = self.per_address[address]
+            self._prune(q, cutoff)
+            if not q:
+                del self.per_address[address]
+
     def check_and_record(self, email: str) -> None:
         """Check caps and, if not exceeded, record this send.
 
@@ -159,17 +166,17 @@ class WebQuoteFormCaps:
         cutoff = now - self.WINDOW
 
         self._prune(self.global_deque, cutoff)
+        self._prune_addresses(cutoff)
         if len(self.global_deque) >= self.GLOBAL_LIMIT:
             raise CapExceeded("global cap exceeded")
 
-        addr_q = self.per_address.setdefault(email, deque())
-        self._prune(addr_q, cutoff)
-        if len(addr_q) >= self.PER_ADDRESS_LIMIT:
+        addr_q = self.per_address.get(email)
+        if addr_q is not None and len(addr_q) >= self.PER_ADDRESS_LIMIT:
             raise CapExceeded("per-address cap exceeded")
 
         # Record only after both checks pass.
         self.global_deque.append(now)
-        addr_q.append(now)
+        self.per_address.setdefault(email, deque()).append(now)
 
     def seed_from_timestamps(self, sent_at: Sequence[datetime]) -> None:
         """Pre-populate the global window with form mails already sent (their real send times).
@@ -259,18 +266,14 @@ def post_web_quote_request(body: WebQuoteFormRequest, request: Request) -> Any:
 
     Silently succeeds (no mail sent) for:
     - Submissions faster than 3 s after render_at (bot guard).
-    - Non-empty honeypot field (bot guard).
     - Duplicate submission_id seen within the last 10 minutes (idempotency).
+
+    A missing or invalid render_at is a 422 (model validation).
 
     Returns 429 when a rate cap is exceeded.
     """
-    # --- bot guards (fail-open: pretend to send, reveal nothing) ---
-    if body.render_at is not None:
-        elapsed = time.time() - body.render_at
-        if elapsed < _BOT_TIMING_THRESHOLD_SECONDS:
-            return {"status": "sent"}
-
-    if body.hp:
+    # --- bot guard (pretend to send, reveal nothing) ---
+    if time.time() - body.render_at < _BOT_TIMING_THRESHOLD_SECONDS:
         return {"status": "sent"}
 
     # --- idempotency ---
