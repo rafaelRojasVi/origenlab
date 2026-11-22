@@ -10,8 +10,14 @@ What it writes:
   * `crm.monthly_target` — `set_monthly_target` upserts (one row per calendar month)
   * `crm.partner_rule` — `set_partner_rule` inserts a new row (append-only by trigger)
 
-Nothing here touches durable CRM tables directly. `crm.domain_event` and
-`platform.command_receipt` are written by `CommandTransaction`.
+An update names the version the operator saw (`expected_version`) and writes only at that
+version (`where id = %s and version = %s`), advancing it by one; a row changed since is a 409
+`stale_version` and nothing is written, so a stale form never wipes a newer save.
+
+Each event names its row by a uuid: an expense or an order by its id, a month's target and a rule
+by their `aggregate_id` (migration 20261122100000; `crm.domain_event.aggregate_id` is a uuid).
+
+`crm.domain_event` and `platform.command_receipt` are written by `CommandTransaction`.
 """
 
 from __future__ import annotations
@@ -29,6 +35,13 @@ from origenlab_api.v2.finance.commands import (
 from origenlab_api.v2.identity import OperatorIdentity
 
 
+def _stale(kind: str, expected: int, found: int) -> CommandRefused:
+    return CommandRefused(
+        409, "stale_version",
+        f"this {kind} changed since it was shown to you (you saw version {expected}, it is at {found}); re-read it",
+    )
+
+
 class FinanceCommandRepository(CommandTransaction):
     """`upsert_expense`, `upsert_supplier_order`, `set_monthly_target`, `set_partner_rule`."""
 
@@ -40,8 +53,7 @@ class FinanceCommandRepository(CommandTransaction):
         if expense_id:
             # Update path: load the existing row and check it is a manual entry
             cur.execute(
-                "select id::text as id, source, month, category, amount_clp from crm.expense "
-                "where id = %s for update",
+                "select id::text as id, source, version from crm.expense where id = %s for update",
                 (expense_id,),
             )
             existing = self._row(cur)
@@ -56,14 +68,17 @@ class FinanceCommandRepository(CommandTransaction):
                 """
                 update crm.expense
                    set month = %s, category = %s, amount_clp = %s, paid_by = %s,
-                       notes = %s, updated_at = now()
-                 where id = %s
-                returning id::text
+                       notes = %s, version = version + 1, updated_at = now()
+                 where id = %s and version = %s
+                returning version
                 """,
                 (fields["month"], fields["category"], fields["amount_clp"], fields["paid_by"],
-                 fields["expense_notes"], expense_id),
+                 fields["expense_notes"], expense_id, fields["expected_version"]),
             )
             row = cur.fetchone()
+            if row is None:
+                raise _stale("expense", fields["expected_version"], int(existing["version"]))
+            version = int(row[0])
             event_type = "expense.updated"
         else:
             # Insert path
@@ -72,13 +87,12 @@ class FinanceCommandRepository(CommandTransaction):
                 insert into crm.expense
                     (month, category, amount_clp, paid_by, notes, source, created_by_operator_id)
                 values (%s, %s, %s, %s, %s, 'manual', %s)
-                returning id::text
+                returning id::text, version
                 """,
                 (fields["month"], fields["category"], fields["amount_clp"], fields["paid_by"],
                  fields["expense_notes"], operator.operator_id),
             )
-            row = cur.fetchone()
-            expense_id = row[0]
+            expense_id, version = cur.fetchone()
             event_type = "expense.created"
 
         self._append_event(
@@ -96,7 +110,8 @@ class FinanceCommandRepository(CommandTransaction):
             operator=operator,
             receipt_id=receipt_id,
         )
-        return {"command": UPSERT_EXPENSE, "expense_id": expense_id, "event_type": event_type}
+        return {"command": UPSERT_EXPENSE, "expense_id": expense_id, "version": int(version),
+                "event_type": event_type}
 
     def _upsert_supplier_order(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
@@ -105,7 +120,7 @@ class FinanceCommandRepository(CommandTransaction):
         order_id = fields.get("order_id")
         if order_id:
             cur.execute(
-                "select id::text as id from crm.supplier_order where id = %s for update",
+                "select id::text as id, version from crm.supplier_order where id = %s for update",
                 (order_id,),
             )
             existing = self._row(cur)
@@ -117,14 +132,19 @@ class FinanceCommandRepository(CommandTransaction):
                    set opportunity_id = %s, quote_id = %s, supplier_name = %s,
                        ordered_on = %s, paid_on = %s, amount_original = %s, currency = %s,
                        amount_clp = %s, expected_arrival_on = %s, received_on = %s,
-                       notes = %s, updated_at = now()
-                 where id = %s
+                       notes = %s, version = version + 1, updated_at = now()
+                 where id = %s and version = %s
+                returning version
                 """,
                 (fields["opportunity_id"], fields["quote_id"], fields["supplier_name"],
                  fields["ordered_on"], fields["paid_on"], fields["amount_original"],
                  fields["currency"], fields["amount_clp"], fields["expected_arrival_on"],
-                 fields["received_on"], fields["order_notes"], order_id),
+                 fields["received_on"], fields["order_notes"], order_id, fields["expected_version"]),
             )
+            row = cur.fetchone()
+            if row is None:
+                raise _stale("supplier order", fields["expected_version"], int(existing["version"]))
+            version = int(row[0])
             event_type = "supplier_order.updated"
         else:
             cur.execute(
@@ -134,14 +154,14 @@ class FinanceCommandRepository(CommandTransaction):
                      amount_original, currency, amount_clp, expected_arrival_on, received_on,
                      notes, created_by_operator_id)
                 values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                returning id::text
+                returning id::text, version
                 """,
                 (fields["opportunity_id"], fields["quote_id"], fields["supplier_name"],
                  fields["ordered_on"], fields["paid_on"], fields["amount_original"],
                  fields["currency"], fields["amount_clp"], fields["expected_arrival_on"],
                  fields["received_on"], fields["order_notes"], operator.operator_id),
             )
-            order_id = cur.fetchone()[0]
+            order_id, version = cur.fetchone()
             event_type = "supplier_order.created"
 
         self._append_event(
@@ -159,7 +179,8 @@ class FinanceCommandRepository(CommandTransaction):
             operator=operator,
             receipt_id=receipt_id,
         )
-        return {"command": UPSERT_SUPPLIER_ORDER, "order_id": order_id, "event_type": event_type}
+        return {"command": UPSERT_SUPPLIER_ORDER, "order_id": order_id, "version": int(version),
+                "event_type": event_type}
 
     def _set_monthly_target(
         self, cur: Any, operator: OperatorIdentity, fields: dict[str, Any], receipt_id: str
@@ -173,16 +194,16 @@ class FinanceCommandRepository(CommandTransaction):
                set sales_target_net = excluded.sales_target_net,
                    notes = excluded.notes,
                    set_by_operator_id = excluded.set_by_operator_id
-            returning month::text
+            returning month::text, aggregate_id::text
             """,
             (fields["month"], fields["sales_target_net"],
              fields["target_notes"], operator.operator_id),
         )
-        month = cur.fetchone()[0]
+        month, aggregate_id = cur.fetchone()
         self._append_event(
             cur,
             aggregate_kind="monthly_target",
-            aggregate_id=month,
+            aggregate_id=aggregate_id,
             event_type="monthly_target.set",
             payload={
                 "month": fields["month"].isoformat(),
@@ -202,21 +223,21 @@ class FinanceCommandRepository(CommandTransaction):
         cur.execute(
             """
             insert into crm.partner_rule
-                (valid_from, rule_name, arriendo_clp, tasa_sebastian, sueldo_tatiana,
+                (valid_from, rule_name, arriendo_clp, partner_b_rate, partner_a_salary,
                  arriendo_pct_empresa, split_pct, notes, set_by_operator_id)
             values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            returning id
+            returning id, aggregate_id::text
             """,
             (fields["valid_from"], fields["rule_name"], fields["arriendo_clp"],
-             fields["tasa_sebastian"], fields["sueldo_tatiana"],
+             fields["partner_b_rate"], fields["partner_a_salary"],
              fields["arriendo_pct_empresa"], fields["split_pct"],
              fields["rule_notes"], operator.operator_id),
         )
-        rule_id = cur.fetchone()[0]
+        rule_id, aggregate_id = cur.fetchone()
         self._append_event(
             cur,
             aggregate_kind="partner_rule",
-            aggregate_id=str(rule_id),
+            aggregate_id=aggregate_id,
             event_type="partner_rule.set",
             payload={
                 "valid_from": fields["valid_from"].isoformat(),

@@ -1,10 +1,10 @@
 """Read-only query behind `GET /v2/workspace/invoices` («Pagos»). Same `(connect, dsn)` wiring as the other readers.
 
-A factura's **billed** amount is its total, less the notas de crédito and plus the notas de débito
-that reference it; its **balance** is what is still owed: billed less its live payments (abonos,
-`crm.invoice_payment`). It is **por cobrar** while it is not «Pagada» and something is owed; the age
-is counted from its issue day in Santiago. Notas are listed under the factura they adjust. A
-factura marked «Pagada» before payments were recorded one by one owes nothing.
+A factura's **billed** amount, what it has **paid** and its **balance** are the one formula of
+`balance.py` (also «Finanzas»' and the «Pagada» command's). It is **por cobrar** while its balance
+is above zero — a nota de débito issued after «Pagada» makes it owed again; the age is counted from
+its issue day in Santiago. Notas are listed under the factura they adjust. A factura marked «Pagada»
+before payments were recorded one by one owes nothing.
 """
 
 from __future__ import annotations
@@ -14,8 +14,11 @@ from contextlib import contextmanager
 from datetime import date
 from typing import Any
 
-_ITEMS = """
-with avg_days_per_client as (
+from origenlab_api.v2.invoices.balance import INVOICE_BALANCE_SQL
+
+_ITEMS = f"""
+with invoice_balance as ({INVOICE_BALANCE_SQL}),
+avg_days_per_client as (
   -- per-client average payment days from paid facturas (doc_type 33/34)
   select i2.client_rut,
          round(avg(i2.paid_on - i2.issued_on))::int as avg_d
@@ -26,6 +29,7 @@ with avg_days_per_client as (
 select i.id::text as invoice_id, i.version, i.doc_type, i.folio, i.issued_on, i.client_rut, i.client_name,
        i.net_amount, i.vat_amount, i.exempt_amount, i.total_amount,
        i.reference_doc_type, i.reference_folio, i.case_link, i.paid_on,
+       ib.billed, ib.paid as paid_amount, ib.balance,
        -- payment-time history: default 30 d (Ley 21.131) when no history exists for the client
        coalesce(a.avg_d, 30) as avg_days_client,
        -- expected pay date only meaningful while unpaid; set for all rows, filtered in shape()
@@ -44,6 +48,7 @@ select i.id::text as invoice_id, i.version, i.doc_type, i.folio, i.issued_on, i.
   left join crm.organization org on org.id = i.organization_id
   left join crm.opportunity o on o.id = i.opportunity_id
   left join avg_days_per_client a on a.client_rut = i.client_rut
+  left join invoice_balance ib on ib.invoice_id = i.id
  where (%(opportunity_id)s::uuid is null or i.opportunity_id = %(opportunity_id)s::uuid
         or (i.doc_type in (56, 61) and exists (
               select 1 from crm.invoice f
@@ -78,21 +83,20 @@ def shape(rows: list[dict[str, Any]], today: date, avg_days_overall: int = 0, av
         if r["doc_type"] in (56, 61) and (r["reference_doc_type"], r["reference_folio"]) in facturas:
             continue  # listed under the factura it adjusts
         own = notes.get((r["doc_type"], r["folio"]), []) if r["doc_type"] in (33, 34) else []
-        billed = r["total_amount"] + sum(n["total_amount"] * (1 if n["doc_type"] == 56 else -1) for n in own)
         payments = r.get("payments") or []
-        paid_amount = sum(int(p["amount"]) for p in payments)
-        if r["paid_on"] is not None and paid_amount == 0:
-            paid_amount = max(billed, 0)  # «Pagada» before payments were recorded one by one
-        balance = billed - paid_amount
         collectable = r["doc_type"] in (33, 34)
+        # The balance is `balance.py`'s (the SQL's), not recomputed here.
+        billed = int(r["billed"]) if collectable else None
+        paid_amount = int(r["paid_amount"]) if collectable else None
+        balance = int(r["balance"]) if collectable else None
         if not collectable:
             status = "nota"
-        elif r["paid_on"] is not None:
-            status = "paid"
-        elif billed <= 0:
+        elif balance > 0:
+            status = "unpaid"  # even when marked «Pagada»: a nota de débito after it is owed
+        elif billed <= 0 and paid_amount == 0:
             status = "credited"
         else:
-            status = "unpaid"
+            status = "paid"
         days = (today - r["issued_on"]).days
         case = None
         if r["o_id"] is not None:
