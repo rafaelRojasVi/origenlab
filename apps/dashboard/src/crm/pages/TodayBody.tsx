@@ -595,7 +595,7 @@ function ParaTiSection({
       return <CotizarQueueRow key={s.id} item={item} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} />;
     }
     if (item.kind === "followup") {
-      return <FollowUpQueueRow key={s.id} followUp={item.followUp} draft={drafts[s.card.opportunity_id]} waitMs={item.waitMs} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} onClose={onClose} now={now} />;
+      return <FollowUpQueueRow key={s.id} followUp={item.followUp} others={item.others} draft={drafts[s.card.opportunity_id]} waitMs={item.waitMs} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} onClose={onClose} now={now} />;
     }
     return <TaskQueueRow key={s.id} due={item.due} index={i} navigate={navigate} mayDecide={mayDecide} onChanged={onChanged} onClearItem={clear} now={now} pause={s.pause} />;
   };
@@ -661,7 +661,7 @@ function ParaTiSection({
                 </div>
                 <ul>
                   {steps.map((s) => (
-                    <QueueListRow key={s.id} step={s} selected={s.id === current} onSelect={() => setSelected(s.id)} />
+                    <QueueListRow key={s.id} step={s} selected={s.id === current} onSelect={() => setSelected(s.id)} draft={!!drafts[s.card.opportunity_id]} />
                   ))}
                   {fwd.map((f) => (
                     <li key={f.id}>
@@ -698,6 +698,15 @@ function ParaTiSection({
                   Siguiente →
                 </button>
               </div>
+              {curStep?.item?.kind === "followup" && curStep.item.others.length ? (
+                <p className="rounded-lg bg-info-bg px-3 py-2 text-[12.5px] text-info" data-testid="hoy-same-person">
+                  La misma persona también espera respuesta en:{" "}
+                  {curStep.item.others.map((o, i) => (
+                    <span key={o.opportunity_id}>{i ? ", " : ""}<b>{displayName(o).name}</b>{quoteProduct(o) ? ` (${quoteProduct(o)})` : ""}</span>
+                  ))}
+                  . Un solo mensaje para todos.
+                </p>
+              ) : null}
               {curStep ? <CaseInline card={curStep.card} onChanged={onChanged} /> : null}
               {curStep ? (
                 <details className="rounded-lg border border-line" data-testid="hoy-shortcuts">
@@ -1319,9 +1328,10 @@ function FollowUpPhoneLinks({ personId, step }: { personId: string; step: 2 | 3 
 /* ─────────────────────────────────────────────── Follow-up row ── */
 
 function FollowUpQueueRow({
-  followUp, draft, waitMs, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
+  followUp, others = [], draft, waitMs, index, navigate, mayDecide, onChanged, onClearItem, onClose, now,
 }: {
   followUp: FollowUp;
+  others?: OpportunityCardData[];
   draft?: CaseDraft;
   waitMs: number;
   index: number;
@@ -1442,6 +1452,20 @@ function FollowUpQueueRow({
           ) : null}
           {what ? <span className="truncate">{` · ${what}`}</span> : null}
         </p>
+        {others.length ? (
+          <p className="mt-0.5 truncate text-[11px] text-ink-muted" data-testid="today-followup-others">
+            También:{" "}
+            {others.map((o, i) => (
+              <span key={o.opportunity_id}>
+                {i ? ", " : ""}
+                <button type="button" className="text-accent hover:underline" onClick={() => navigate("oportunidades", o.opportunity_id)}>
+                  {displayName(o).name}{quoteProduct(o) ? ` (${quoteProduct(o)})` : ""}
+                </button>
+              </span>
+            ))}
+            <span className="text-ink-faint"> · la misma persona: un solo mensaje para todos</span>
+          </p>
+        ) : null}
         {(fStep === 2 || fStep === 3) && f.card.contact?.person_id ? (
           <FollowUpPhoneLinks personId={f.card.contact.person_id} step={fStep} />
         ) : null}

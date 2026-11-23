@@ -2,8 +2,8 @@
 
 A «Llamada» is an ordinary `crm.note` with `note_kind = 'llamada'`: the owner wants to count calls
 by outcome, so the outcome and the agreed next step are columns, not text folded into the body.
-The five values spell the `note_call_outcome_check` constraint of migration
-`20261110100000_slice8_note_kind.sql` and `docs/DOMAIN.md` §7.17 exactly.
+The six values spell the `note_call_outcome_check` constraint of migrations
+`20261110100000_slice8_note_kind.sql` and `20261123100000_slice9_note_call_whatsapp.sql` (a WhatsApp sent) and `docs/DOMAIN.md` §7.17 exactly.
 
 The columns are written once, when the note is inserted (`note_guard()` freezes them after), and
 the shape is all or nothing: a call record is `note_kind = 'llamada'` **with** an outcome (the next
@@ -19,7 +19,7 @@ from typing import Literal, get_args
 NoteKind = Literal["llamada"]
 NOTE_KIND_LLAMADA: NoteKind = "llamada"
 
-CallOutcome = Literal["contesto", "no_contesto", "buzon", "numero_malo", "reunion"]
+CallOutcome = Literal["contesto", "no_contesto", "buzon", "numero_malo", "reunion", "whatsapp"]
 CALL_OUTCOMES: tuple[str, ...] = get_args(CallOutcome)
 
 #: `note_call_next_step_check`: at most this many characters.

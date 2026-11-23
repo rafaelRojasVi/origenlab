@@ -204,6 +204,8 @@ export interface MailTouch {
    * The rhythm step counts the follow-ups among them (`followUpsSent`). Absent from an older API.
    */
   sent_times?: string[];
+  /** Outbound only: an opaque ref of the client we wrote to (never the address); joins two cases for one person. */
+  to_ref?: string;
 }
 
 export interface QuoteCard {

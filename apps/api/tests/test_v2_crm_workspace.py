@@ -395,6 +395,35 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
     assert cards[1]["last_contact"] == {"outbound": None, "inbound": None}
 
 
+def test_mail_only_to_us_or_a_supplier_is_not_a_contact_with_the_client() -> None:
+    """An internal forward or a supplier price check on the case's thread is no follow-up (audit 2026-11-23)."""
+    base = {"opportunity_id": "o1", "direction_hint": None, "comms_direction": None}
+    rows = [
+        {**base, "sent_at": "2026-10-01T12:00:00Z", "gmail_message_id": "q", "subject": "Cotización",
+         "sender": "contacto@origenlab.cl", "recipients": "Persona <persona@ejemplo.invalid>"},
+        {**base, "sent_at": "2026-10-05T12:00:00Z", "gmail_message_id": "fw", "subject": "Fwd: Cotización",
+         "sender": "contacto@origenlab.cl", "recipients": "otra@origenlab.cl"},
+        {**base, "sent_at": "2026-10-06T12:00:00Z", "gmail_message_id": "px", "subject": "Precio",
+         "sender": "contacto@origenlab.cl", "recipients": "ventas@proveedor.invalid; contacto@origenlab.cl"},
+        {**base, "sent_at": "2026-10-07T12:00:00Z", "gmail_message_id": "pr", "subject": "Re: Precio",
+         "sender": "Ventas <ventas@proveedor.invalid>", "recipients": "contacto@origenlab.cl"},
+        # Unknown recipients: still counted (a staged record of ours).
+        {**base, "sent_at": "2026-10-08T12:00:00Z", "gmail_message_id": "st", "subject": None,
+         "sender": None, "direction_hint": "sent", "recipients": None},
+    ]
+    out = last_contacts(rows, ["proveedor.invalid"])["o1"]
+    assert out["outbound"]["sent_times"] == ["2026-10-01T12:00:00+00:00", "2026-10-08T12:00:00+00:00"]
+    # Whom we wrote to rides as an opaque ref, never the address.
+    quote_only = last_contacts(rows[:1])["o1"]["outbound"]
+    assert quote_only["to_ref"] == address_ref("persona@ejemplo.invalid")
+    assert "persona@" not in json.dumps(quote_only)
+    assert out["inbound"] is None  # the supplier's answer is not the client writing back
+    # Without the supplier list the price check and its answer count, as before.
+    plain = last_contacts(rows)["o1"]
+    assert len(plain["outbound"]["sent_times"]) == 3
+    assert plain["inbound"]["at"] == "2026-10-07T12:00:00+00:00"
+
+
 def test_mail_display_name_never_contains_an_address() -> None:
     for sender in ('person@example.invalid', '"person@example.invalid" <person@example.invalid>'):
         touch = last_contacts([{"opportunity_id": "o", "sent_at": "2026-10-01T12:00:00Z",

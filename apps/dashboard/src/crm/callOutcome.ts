@@ -5,7 +5,7 @@
  * next step are fields of their own, never text folded into the body.
  */
 
-export const CALL_OUTCOMES = ["contesto", "no_contesto", "buzon", "numero_malo", "reunion"] as const;
+export const CALL_OUTCOMES = ["contesto", "no_contesto", "buzon", "numero_malo", "reunion", "whatsapp"] as const;
 
 export type CallOutcome = (typeof CALL_OUTCOMES)[number];
 
@@ -15,6 +15,7 @@ export const CALL_OUTCOME_LABEL: Record<CallOutcome, string> = {
   buzon: "Buzón de voz",
   numero_malo: "Número equivocado",
   reunion: "Reunión agendada",
+  whatsapp: "WhatsApp enviado",
 };
 
 /** `note_call_next_step_check`: at most this many characters. */
@@ -27,7 +28,7 @@ export function callOutcomeLabel(outcome: string): string {
 
 /** A note needs a body: when the operator wrote none, the call says what happened. */
 export function defaultCallBody(outcome: CallOutcome): string {
-  return `Llamada: ${CALL_OUTCOME_LABEL[outcome]}`;
+  return outcome === "whatsapp" ? CALL_OUTCOME_LABEL[outcome] : `Llamada: ${CALL_OUTCOME_LABEL[outcome]}`;
 }
 
 export interface CallNoteBody {

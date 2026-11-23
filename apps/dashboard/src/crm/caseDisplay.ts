@@ -165,8 +165,8 @@ export function lastTouch(card: OpportunityCardData): { by: "client" | "settled"
   return { by: "none", at: null, url: null };
 }
 
-/** Outcomes of a call that count as a follow-up touch: the client was reached. */
-export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion"]);
+/** Outcomes that count as a follow-up touch: the client was reached, or a WhatsApp went out (rhythm step 3). */
+export const CALL_TOUCH_OUTCOMES: ReadonlySet<string> = new Set<CallOutcome>(["contesto", "reunion", "whatsapp"]);
 
 /**
  * When OrigenLab last reached the client by phone after the quote went out, or null. A newest

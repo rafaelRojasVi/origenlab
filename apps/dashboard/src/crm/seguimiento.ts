@@ -10,7 +10,7 @@ import { isDelivered, quoteProduct } from "./caseDisplay";
 import type { OpportunityCardData, PipelineResponse } from "./crmTypes";
 import { PILOT_CALLS_PER_DAY, dateSantiago } from "./goals";
 import { caseAmountClp } from "./nextSteps";
-import { nextContact, type NextContact } from "./nextContact";
+import { nextContact, stepChannel, type NextContact } from "./nextContact";
 import { isMaskedPhone } from "./redaction";
 import { localDaysBetween } from "./stage";
 import { isOpenCase } from "./today";
@@ -125,10 +125,11 @@ export function normalizeChannel(
   ownerId: string | null,
   profiles: ProfileCard[],
   hasPhone: boolean,
+  step?: 1 | 2 | 3 | 4,
 ): FollowUpChannel {
   if (channel === "whatsapp") return canWhatsapp(ownerId, profiles) ? "whatsapp" : "llamada";
   if (channel) return channel;
-  return hasPhone ? "llamada" : "correo";
+  return stepChannel(step, hasPhone);
 }
 
 /** Local calendar days from `at` to `now`: the count Hoy's rhythm and the board use (`localDaysBetween`). */
@@ -170,7 +171,8 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
     ownerId,
     suggestedOwnerId,
     isSuggested: ownerId === null && suggestedOwnerId !== null,
-    channel: normalizeChannel(card.follow_up?.channel ?? null, ownerId ?? suggestedOwnerId, profiles, !!phone),
+    channel: normalizeChannel(card.follow_up?.channel ?? null, ownerId ?? suggestedOwnerId, profiles, !!phone,
+                              next?.source === "rhythm" ? next.step : undefined),
     amountClp: caseAmountClp(card),
     sentAt,
     daysSinceSent: sentAt ? daysSince(sentAt, now) : 0,

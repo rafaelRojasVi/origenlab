@@ -1474,7 +1474,7 @@ every role, including the merge-people identity-repoint):
 | column | values | rule |
 |---|---|---|
 | `note_kind` | `llamada` or null | null is an ordinary note; no default, no backfill — every earlier note stays ordinary |
-| `call_outcome` | `contesto`, `no_contesto`, `buzon`, `numero_malo`, `reunion` | required on a call record, forbidden otherwise; a column so calls can be counted by outcome |
+| `call_outcome` | `contesto`, `no_contesto`, `buzon`, `numero_malo`, `reunion`, `whatsapp` (a WhatsApp sent, 2026-11-23) | required on a call record, forbidden otherwise; a column so calls can be counted by outcome |
 | `call_next_step` | text, at most 500 characters | optional, only on a call record |
 
 `note_call_shape` ties them: a call record is `note_kind = 'llamada'` with an outcome; anything else
