@@ -14,7 +14,7 @@
 import type { OpportunityCardData } from "./crmTypes";
 import { nextContact } from "./nextContact";
 import { pauseReturned } from "./stage";
-import { RHYTHM, buildParaTiQueue, retakeHint, rhythmNext, type QueueItem } from "./today";
+import { buildParaTiQueue, followUpStepLabel, retakeHint, rhythmNext, type QueueItem } from "./today";
 
 export type StepGroup = "atrasado" | "hoy" | "manana" | "semana";
 export type StepKind = "responder" | "cotizar" | "seguimiento" | "pausa" | "tarea";
@@ -153,9 +153,6 @@ function returnedPauses(items: OpportunityCardData[], now: Date, taken: Set<stri
 // `nextBusinessDay` lives in today.ts with the rhythm (`rhythmNext`); re-exported here.
 export { nextBusinessDay } from "./today";
 
-function followUpLabel(stepIndex: number, from: number): string {
-  return stepIndex >= 3 ? `Último correo · día ${from}` : `Seguimiento ${stepIndex + 1} de 3 · día ${from}`;
-}
 
 /** The projections: the next follow-up day of each quoted case, and the tasks due in the coming days. */
 /**
@@ -204,7 +201,7 @@ function upcoming(items: OpportunityCardData[], now: Date, taken: Set<string>, h
     out.push({
       id, kind: "seguimiento", group: groupFor(ahead), card, due: r.day, dueDays: ahead, amountClp, owner: null,
       score: scoreFor("seguimiento", amountClp, r.days), item: null, pause: null, state: null, actionable: false,
-      label: followUpLabel(r.step - 1, RHYTHM[r.step - 1].from),
+      label: followUpStepLabel(r.step, r.close),
     });
     taken.add(id);
   }

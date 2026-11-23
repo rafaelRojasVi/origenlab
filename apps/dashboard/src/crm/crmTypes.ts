@@ -199,6 +199,11 @@ export interface MailTouch {
   url: string | null;
   /** Inbound only: mail rule R18 read it as needing no answer («gracias, te aviso»); «Quitar» clears it. */
   no_reply?: boolean;
+  /**
+   * Outbound only: every email OrigenLab sent on the case's threads, oldest first (the newest 30).
+   * The rhythm step counts the follow-ups among them (`followUpsSent`). Absent from an older API.
+   */
+  sent_times?: string[];
 }
 
 export interface QuoteCard {

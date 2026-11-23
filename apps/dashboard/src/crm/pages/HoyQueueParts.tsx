@@ -108,7 +108,9 @@ export function stepAge(step: NextStep): { text: string; tone: "bad" | "warn" | 
   if (step.dueDays === 0) {
     const ms = step.item && "waitMs" in step.item ? (step.item as { waitMs: number }).waitMs : null;
     if (ms === null || ms === undefined) return { text: "hoy", tone: "neutral", title: "Toca hoy" };
-    const days = Math.floor(ms / 86_400_000);
+    // A follow-up counts calendar days, as its rule does (`touchDays`): a touch on Friday afternoon is
+    // «3 d» on Monday morning, not «2 d» of whole 24-hour blocks (audit 2026-11-23).
+    const days = step.item?.kind === "followup" ? step.item.followUp.touchDays : Math.floor(ms / 86_400_000);
     const word = WAIT_WORD[step.kind];
     if (days < 1) {
       const hours = Math.max(0, Math.floor(ms / 3_600_000));

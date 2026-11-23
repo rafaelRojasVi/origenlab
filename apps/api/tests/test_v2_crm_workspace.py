@@ -380,8 +380,10 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
     assert out["o1"]["inbound"].pop("_requester_domain") == "ejemplo.invalid"
     assert out["o1"]["inbound"].pop("_requester_read") is None
     assert out["o1"] == {
+        # Every email of ours once, oldest first: m3 came through two threads.
         "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
-                     "url": "https://mail.google.com/mail/u/0/#all/m3"},
+                     "url": "https://mail.google.com/mail/u/0/#all/m3",
+                     "sent_times": ["2026-09-01T10:00:00-03:00", "2026-09-20T10:00:00-03:00"]},
         "inbound": {"at": "2026-09-10T09:00:00+00:00", "subject": "Re: Cotización",
                     "url": "https://mail.google.com/mail/u/0/#all/m2", "sender_name": "Persona"},
     }

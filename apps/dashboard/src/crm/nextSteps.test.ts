@@ -56,7 +56,7 @@ describe("planNextSteps", () => {
     const s = plan.steps.find((x) => x.card === oneDay);
     expect(s?.group).toBe("semana");
     expect(s?.dueDays).toBe(2);
-    expect(s?.label).toBe("Seguimiento 1 de 3 · día 3");
+    expect(s?.label).toBe("Seguimiento 1 de 3");
     expect(plan.days[2].count).toBe(1);
   });
 
