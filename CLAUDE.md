@@ -5,14 +5,14 @@ follow the router below — do not read broadly before it.
 
 ## Two architectures live here — know which one you are in
 
-**V1 is running. V2 is the accepted replacement.** Both are in this repository
+**V2 is in production. V1 still runs alongside it.** Both are in this repository
 at once, and they disagree about where durable truth lives. Read the right
 one for your task:
 
-| | **V1 — running** | **V2 — accepted 2026-09-05** |
+| | **V1 — still running** | **V2 — in production (accepted 2026-09-05)** |
 |---|---|---|
 | Durable truth | PostgreSQL `commercial.*` | Supabase PostgreSQL 17, seven private schemas |
-| Code | `apps/{api,dashboard,dashboard-proxy,email-pipeline}`, `apps/email-pipeline/alembic/` | `supabase/` (schema foundation only — no app code yet) |
+| Code | `apps/{api,dashboard,dashboard-proxy,email-pipeline}`, `apps/email-pipeline/alembic/` | `supabase/` (schema and migrations), `apps/api/src/origenlab_api/v2/`, `apps/worker` |
 | Canonical docs | `docs/architecture/**` and the other legacy trees | [`docs/README.md`](docs/README.md) and the six documents it indexes |
 
 **For V2 work — any change under `supabase/`, or any new commercial slice —
@@ -93,8 +93,9 @@ apps/web              public marketing site — no operator/CRM code
 
 supabase/             V2 durable core (PostgreSQL 17, seven private
                       schemas) — schema, roles, grants, RLS and pgTAP
-                      evidence only. No application code reads or writes
-                      it yet. See docs/README.md, not this section.
+                      evidence. In production: apps/api (origenlab_api/v2)
+                      and apps/worker read and write it. Live state is
+                      docs/STATUS.md §0; design is docs/README.md.
 ```
 
 ## Core rule
