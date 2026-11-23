@@ -33,8 +33,8 @@ def _body(**over) -> dict:
 # ───────────────────────────────────────────────────────────── the five outcomes ──
 
 
-def test_the_five_outcomes_are_defined_once() -> None:
-    assert CALL_OUTCOMES == ("contesto", "no_contesto", "buzon", "numero_malo", "reunion")
+def test_the_six_outcomes_are_defined_once() -> None:
+    assert CALL_OUTCOMES == ("contesto", "no_contesto", "buzon", "numero_malo", "reunion", "whatsapp")
     assert NOTE_KIND_LLAMADA == "llamada"
 
 

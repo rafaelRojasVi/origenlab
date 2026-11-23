@@ -397,7 +397,7 @@ _SQL_PIPELINE_CALLS = """
      group by 1, 2
      order by 1, 2
 """
-# The newest live call on each case the client answered (contestó · reunión): a follow-up touch
+# The newest live call on each case the client answered (contestó · reunión), or a WhatsApp sent: a follow-up touch
 # on Hoy, like an email we sent. `at` is when the call was first logged (the root's time), so an
 # edit does not move the clock. Live cases only (open, or won), like `_SQL_PIPELINE_NOTES`.
 _SQL_PIPELINE_LAST_CALLS = """
@@ -410,7 +410,7 @@ _SQL_PIPELINE_LAST_CALLS = """
       join crm.opportunity op on op.id = n.subject_id
      where n.subject_kind = 'opportunity' and n.status = 'active'
        and (op.closed_at is null or op.stage = 'won')
-       and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion')
+       and n.note_kind = 'llamada' and n.call_outcome in ('contesto', 'reunion', 'whatsapp')
        and not exists (select 1 from crm.note n2 where n2.revision_of_note_id = n.id)
      order by n.subject_id, coalesce(r.occurred_at, r.created_at, n.occurred_at, n.created_at) desc, n.id desc
 """
@@ -451,7 +451,7 @@ _SQL_PIPELINE_CALL_COUNTS = _LIVE_CALLS_CTE + """
     select c.subject_id::text as opportunity_id, count(*)::int as total,
            (count(*) filter (where (c.logged_at at time zone 'America/Santiago')::date = %(today)s::date))::int as today
       from live_calls c
-     where c.subject_kind = 'opportunity'
+     where c.subject_kind = 'opportunity' and c.call_outcome <> 'whatsapp'  -- a WhatsApp is not a call
      group by c.subject_id
 """
 # The newest call on each case, whatever its outcome (`_SQL_PIPELINE_LAST_CALLS` keeps only answered ones).
@@ -497,6 +497,7 @@ _SQL_PIPELINE_CALLS_BY_OPERATOR = _LIVE_CALLS_CTE + """
       from live_calls c
       join platform.operator o on o.id = c.author_operator_id
      where (c.logged_at at time zone 'America/Santiago')::date = %(today)s::date
+       and c.call_outcome <> 'whatsapp'  -- the calls-a-day goal counts calls only
      group by c.author_operator_id, o.display_name
      order by 3 desc, 2, 1
 """
@@ -550,6 +551,7 @@ _SQL_PIPELINE_CONTACT = """
            sr.payload->>'subject_raw' as subject,
            sr.payload->>'gmail_message_id' as gmail_message_id,
            sr.payload->>'sender' as sender,
+           sr.payload->>'recipients' as recipients,
            sr.payload->>'direction_hint' as direction_hint,
            (select cm.direction from comms.message cm
              where cm.provider_message_id = sr.payload->>'gmail_message_id'
@@ -569,6 +571,17 @@ _SQL_PIPELINE_CONTACT = """
       join evidence.source_record sr
         on sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = ct.thread_id
      where not sr.is_quarantined and sr.review_status <> 'rejected'
+"""
+# Domains of registered suppliers and manufacturers: mail to them is not mail to the client.
+_SQL_SUPPLIER_DOMAINS = """
+    select distinct d.domain_norm
+      from crm.organization_domain d
+      join crm.organization o on o.id = d.organization_id
+     where d.removed_at is null
+       and (o.kind in ('supplier', 'manufacturer')
+            or exists (select 1 from crm.organization_relationship rel
+                        where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
+                          and (rel.valid_to is null or rel.valid_to > current_date)))
 """
 # The Gmail threads of one case (`%(o)s`): any thread with an email linked to it, plus the threads
 # its quote revisions came from — «Correos del caso» and the email reader read the same set.
@@ -968,12 +981,23 @@ def _aware(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+def _only_to_us_or_suppliers(recipients: str | None, suppliers: set[str]) -> bool:
+    """An email of ours whose every recipient is OrigenLab or a supplier: an internal forward or a
+    price check, not a touch of the client. False when the recipients are unknown."""
+    domains = {a.rsplit("@", 1)[1].strip().lower() for _, a in getaddresses([(recipients or "").replace(";", ",")])
+               if "@" in a}
+    return bool(domains) and domains <= set(OWN_DOMAINS) | suppliers
+
+
+def last_contacts(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
     """Per case, the newest email OrigenLab sent and the newest one it received on its threads.
 
     Pure, so it is tested without a database. A message without a usable `sent_at` is skipped;
-    one message reached through two of the case's threads counts once.
+    one message reached through two of the case's threads counts once. An email of ours sent only
+    to OrigenLab or to suppliers (`supplier_domains`) is not a contact with the client: it is not
+    the last outbound and not a follow-up in `sent_times` (audit 2026-11-23).
     """
+    suppliers = {d.lower() for d in supplier_domains}
     out: dict[str, dict[str, Any]] = {}
     best: dict[tuple[str, str], datetime] = {}
     # The visitor of the case's newest web-form submission: still the case's contact when a later
@@ -998,6 +1022,10 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
                                    row.get("web_form_reply_to"))
         if direction == "inbound" and not enquirer and is_automatic_mail(row.get("sender"), row.get("triage_class")):
             continue  # a bounce or an out-of-office: nobody on the client's side wrote it
+        if direction == "outbound" and _only_to_us_or_suppliers(row.get("recipients"), suppliers):
+            continue  # an internal forward or a supplier price check on the case's thread
+        if direction == "inbound" and not enquirer and _only_to_us_or_suppliers(row.get("sender"), suppliers):
+            continue  # the supplier answering our price check, not the client
         if direction == "inbound":
             read = (row.get("requester_read") or "").strip()
             subject = " ".join((row.get("subject") or "").split())
@@ -1024,6 +1052,13 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
         }
         if direction == "inbound" and row.get("no_reply"):
             out[row["opportunity_id"]][direction]["no_reply"] = True
+        if direction == "outbound":
+            # Whom we wrote to, as an opaque ref: Hoy joins two cases chased at the same person
+            # without the address ever reaching the browser.
+            client = [a for a in addresses_in(row.get("recipients"))
+                      if a.rsplit("@", 1)[-1] not in set(OWN_DOMAINS) | suppliers]
+            if client:
+                out[row["opportunity_id"]][direction]["to_ref"] = address_ref(client[0])
         if enquirer:
             # A web-quote-form submission: the From's name is OrigenLab's own, never the client's.
             continue
@@ -1711,7 +1746,7 @@ class CrmWorkspaceRepository:
                 setup.execute("set transaction read only")
                 setup.execute(f"set local statement_timeout = {int(self._statement_timeout_ms)}")
 
-            # 18 data queries in 1 RTT via psycopg pipeline mode.
+            # 19 data queries in 1 RTT via psycopg pipeline mode.
             cur_opps = conn.cursor()
             cur_case_orgs = conn.cursor()
             cur_quotes = conn.cursor()
@@ -1730,6 +1765,7 @@ class CrmWorkspaceRepository:
             cur_last_call_any = conn.cursor()
             cur_calls_by_operator = conn.cursor()
             cur_recent_notes = conn.cursor()
+            cur_suppliers = conn.cursor()
             with conn.pipeline():
                 cur_opps.execute(_SQL_PIPELINE_OPPS)
                 cur_case_orgs.execute(_SQL_PIPELINE_CASE_ORGS)
@@ -1751,6 +1787,7 @@ class CrmWorkspaceRepository:
                 cur_last_call_any.execute(_SQL_PIPELINE_LAST_CALL_ANY)
                 cur_calls_by_operator.execute(_SQL_PIPELINE_CALLS_BY_OPERATOR, {"today": today})
                 cur_recent_notes.execute(_SQL_PIPELINE_RECENT_NOTES)
+                cur_suppliers.execute(_SQL_SUPPLIER_DOMAINS)
 
             # Fetch after pipeline: all results are ready.
             opps = self._rows(cur_opps)
@@ -1767,7 +1804,7 @@ class CrmWorkspaceRepository:
                 ]
                 sources[row["source_record_id"]] = row
             participants = self._rows(cur_participants)
-            contacts = last_contacts(self._rows(cur_contact))
+            contacts = last_contacts(self._rows(cur_contact), [r["domain_norm"] for r in self._rows(cur_suppliers)])
             tasks = self._rows(cur_tasks)
             notes = self._rows(cur_notes)
             documents = self._rows(cur_documents)
@@ -2879,18 +2916,7 @@ class CrmWorkspaceRepository:
                 {"o": opportunity_id},
             )
             rows = self._rows(cur)
-            cur.execute(
-                """
-                select distinct d.domain_norm
-                  from crm.organization_domain d
-                  join crm.organization o on o.id = d.organization_id
-                 where d.removed_at is null
-                   and (o.kind in ('supplier', 'manufacturer')
-                        or exists (select 1 from crm.organization_relationship rel
-                                    where rel.organization_id = o.id and rel.role in ('supplier', 'manufacturer')
-                                      and (rel.valid_to is null or rel.valid_to > current_date)))
-                """
-            )
+            cur.execute(_SQL_SUPPLIER_DOMAINS)
             suppliers = [r[0] for r in cur.fetchall()]
         threads = case_threads(rows, suppliers)
         messages = [m for t in threads for m in t["messages"]]

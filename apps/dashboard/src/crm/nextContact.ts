@@ -76,13 +76,23 @@ function localIsoDay(d: Date): string {
 
 /**
  * The channel of the próximo contacto: the one chosen in Seguimiento (`follow_up.channel`), else
- * the one Seguimiento shows by default — a call when the case has a phone we can read, else an
- * email. Seguimiento's sheet and Hoy's queue both read it, so one case never says «Llamada» in one
- * place and «correo» in the other (QA 2026-11-19).
+ * the one the rhythm step asks for (`stepChannel`). Seguimiento's sheet and Hoy's queue both read
+ * it, so one case never says «Llamada» in one place and «correo» in the other (QA 2026-11-19).
  */
-export function nextContactChannel(card: OpportunityCardData): "llamada" | "correo" | "whatsapp" {
+export function nextContactChannel(card: OpportunityCardData, now: Date = new Date()): "llamada" | "correo" | "whatsapp" {
   const chosen = card.follow_up?.channel ?? null;
   if (chosen) return chosen;
   const phone = card.contact?.phone || null;
-  return phone && !isMaskedPhone(phone) ? "llamada" : "correo";
+  const next = nextContact(card, now);
+  return stepChannel(next?.source === "rhythm" ? next.step : undefined, !!phone && !isMaskedPhone(phone));
+}
+
+/**
+ * The channel a follow-up step asks for when nobody chose one (owner 2026-11-23, «primero correo,
+ * después teléfono»): step 1 and the closing step 4 are an email; steps 2 and 3 a call when there
+ * is a phone, else an email. No step known (a reminder, a task): a call when there is a phone.
+ */
+export function stepChannel(step: 1 | 2 | 3 | 4 | undefined, hasPhone: boolean): "llamada" | "correo" {
+  if (step === 1 || step === 4) return "correo";
+  return hasPhone ? "llamada" : "correo";
 }

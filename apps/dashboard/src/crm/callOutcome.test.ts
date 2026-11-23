@@ -10,7 +10,7 @@ import {
 
 describe("call outcomes", () => {
   it("names the five outcomes, in the order the API lists them (a test in apps/api checks the two files agree)", () => {
-    expect(CALL_OUTCOMES).toEqual(["contesto", "no_contesto", "buzon", "numero_malo", "reunion"]);
+    expect(CALL_OUTCOMES).toEqual(["contesto", "no_contesto", "buzon", "numero_malo", "reunion", "whatsapp"]);
     expect(Object.keys(CALL_OUTCOME_LABEL)).toEqual([...CALL_OUTCOMES]);
     expect(CALL_NEXT_STEP_MAX).toBe(500);
   });
@@ -22,6 +22,7 @@ describe("call outcomes", () => {
       buzon: "Buzón de voz",
       numero_malo: "Número equivocado",
       reunion: "Reunión agendada",
+      whatsapp: "WhatsApp enviado",
     });
     for (const key of CALL_OUTCOMES) expect(callOutcomeLabel(key)).not.toBe(key);
     expect(callOutcomeLabel("telepatia")).toBe("Otro resultado");

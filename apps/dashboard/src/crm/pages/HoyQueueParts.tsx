@@ -56,7 +56,7 @@ export function stepIcon(step: NextStep): IconName {
   if (step.kind === "pausa") return "clock";
   if (step.kind === "tarea") return "check";
   // The same channel Seguimiento shows for the case (`nextContactChannel`): the one chosen there,
-  // else a call when the case has a phone, else an email (QA 2026-11-19: Hoy said «correo» while
+  // else the one the rhythm step asks for (`stepChannel`; QA 2026-11-19: Hoy said «correo» while
   // Seguimiento said «Llamada» for one case).
   return CHANNEL_ICON[nextContactChannel(step.card)];
 }
@@ -126,10 +126,14 @@ export function stepAge(step: NextStep): { text: string; tone: "bad" | "warn" | 
 const AGE_TONE = { bad: "bg-bad-bg text-bad", warn: "bg-warn-bg text-warn", neutral: "bg-canvas-sunken text-ink-muted" };
 
 export function QueueListRow({
-  step, selected, onSelect,
-}: { step: NextStep; selected: boolean; onSelect: () => void }) {
+  step, selected, onSelect, draft = false,
+}: { step: NextStep; selected: boolean; onSelect: () => void; draft?: boolean }) {
   const { name } = displayName(step.card);
   const age = stepAge(step);
+  // A follow-up already written in Gmail only needs sending; one row may cover the same person's other cases.
+  const followUp = step.item?.kind === "followup" ? step.item : null;
+  const action = followUp && draft ? "Borrador listo — falta enviar" : stepAction(step);
+  const more = followUp?.others.length ? ` · +${followUp.others.length} ${followUp.others.length === 1 ? "caso" : "casos"} de la misma persona` : "";
   return (
     <li>
       <button
@@ -144,7 +148,7 @@ export function QueueListRow({
         <QueueIcon name={stepIcon(step)} />
         <span className="min-w-0">
           <span className="block truncate text-[13px] font-semibold text-ink">{name}</span>
-          <span className="block truncate text-[12px] text-ink-muted">{stepAction(step)}{quoteProduct(step.card) ? ` · ${quoteProduct(step.card)}` : ""}</span>
+          <span className="block truncate text-[12px] text-ink-muted">{action}{more}{quoteProduct(step.card) ? ` · ${quoteProduct(step.card)}` : ""}</span>
         </span>
         <span title={age.title} className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${AGE_TONE[age.tone]}`}>{age.text}</span>
       </button>

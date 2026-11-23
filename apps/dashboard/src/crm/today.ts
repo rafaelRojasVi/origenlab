@@ -25,6 +25,7 @@ import type { HomeFilter } from "../api/authClient";
 import { useAuthSession } from "../context/AuthSessionContext";
 import { anyCallTouch, callTouch, conversation, lastTouch } from "./caseDisplay";
 import type { OpenTask, OpportunityCardData } from "./crmTypes";
+import { isMaskedAddress } from "./redaction";
 import { localDaysBetween, pausedUntil, stageBasis, startOfLocalDay } from "./stage";
 
 export type { HomeFilter } from "../api/authClient";
@@ -215,6 +216,15 @@ export interface FollowUp {
   /** The closing email (step 4) went out with no answer: the case is not chased again — after
    *  `CLOSE_AFTER_DAYS` Hoy says to close it «Perdida · Sin respuesta». */
   close: boolean;
+}
+
+/** Who a follow-up goes to: the client our last email went to (`to_ref`), else the case's CRM person, else its address. */
+function personKey(card: OpportunityCardData): string | null {
+  const ref = card.last_contact?.outbound?.to_ref;
+  if (ref) return `to:${ref}`;
+  if (card.contact?.person_id) return `person:${card.contact.person_id}`;
+  const addr = card.contact?.address?.trim().toLowerCase();
+  return addr && !isMaskedAddress(addr) ? `addr:${addr}` : null;
 }
 
 /** Days the client gets to answer the closing email (step 4) before Hoy says to close the case (owner 2026-11-16). */
@@ -471,6 +481,8 @@ export interface FollowUpQueueItem {
   card: OpportunityCardData;
   followUp: FollowUp;
   waitMs: number;
+  /** Other cases due today for the same person: one message covers them all. */
+  others: OpportunityCardData[];
 }
 /** An item in the unified «Para ti» queue; one per opportunity. */
 export type QueueItem = CotizarQueueItem | ReplyQueueItem | TaskQueueItem | FollowUpQueueItem;
@@ -546,12 +558,23 @@ export function buildParaTiQueue(items: OpportunityCardData[], now: Date, me: st
     queue.set(id, { kind: "task", opportunity_id: id, card: due.card, due, waitMs });
   }
 
-  // 3. Follow-ups due: from day 3 until OrigenLab touches the case, or an operator reminder due today
+  // 3. Follow-ups due: from day 3 until OrigenLab touches the case, or an operator reminder due today.
+  // Two cases for the same person are one row naming both (audit 2026-11-23: one person got two
+  // follow-ups the same day); the row with the longest silence (`followUpsDue` order) leads.
+  const byContact = new Map<string, FollowUpQueueItem>();
   for (const f of followUpsDue(items, now).filter(isFollowUpDueToday)) {
     const id = f.card.opportunity_id;
     if (queue.has(id) || answered.has(id)) continue;
-    queue.set(id, { kind: "followup", opportunity_id: id, card: f.card, followUp: f,
-      waitMs: f.touchAt ? Math.max(0, now.getTime() - Date.parse(f.touchAt)) : f.touchDays * DAY_MS });
+    const who = personKey(f.card);
+    const lead = who ? byContact.get(who) : undefined;
+    if (lead) {
+      lead.others.push(f.card);
+      continue;
+    }
+    const item: FollowUpQueueItem = { kind: "followup", opportunity_id: id, card: f.card, followUp: f, others: [],
+      waitMs: f.touchAt ? Math.max(0, now.getTime() - Date.parse(f.touchAt)) : f.touchDays * DAY_MS };
+    if (who) byContact.set(who, item);
+    queue.set(id, item);
   }
 
   // Display order (owner, 2026-11-10 Hoy v3): Responder · Cotizar · Seguimiento · Tareas;

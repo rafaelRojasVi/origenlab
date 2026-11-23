@@ -22,7 +22,7 @@ import {
   useHomeFilter,
   type QueueItem,
 } from "./today";
-import { nextContact } from "./nextContact";
+import { nextContact, nextContactChannel, stepChannel } from "./nextContact";
 
 // Every value below is invented; the repository is public.
 const NOW = new Date("2026-10-06T15:00:00Z");
@@ -328,5 +328,61 @@ describe("the rhythm step is the follow-ups sent, not the days (owner 2026-11-23
     const c = card({ last_contact: { outbound: { at: ago(8), subject: "Re", url: null }, inbound: null } });
     expect(followUpsSent(c)).toBeNull();
     expect(followUpStep(followUpsDue([c], NOW)[0])).toBe(stepForDays(8));
+  });
+});
+
+describe("Seguimiento gaps (owner 2026-11-23)", () => {
+  const contact = (address: string, phone: string | null = null) =>
+    ({ source: "gmail_recipient", name: null, address, others: 0, phone }) as unknown as OpportunityCardData["contact"];
+  function chasedBy(days: number[], over: Partial<OpportunityCardData> = {}): OpportunityCardData {
+    const times = [ago(33), ...days.map((d) => ago(d))];
+    return card({
+      last_contact: { outbound: { at: times[times.length - 1], subject: "Re", url: null, sent_times: times }, inbound: null },
+      ...over,
+    }, ago(33));
+  }
+
+  it("channel: email first, then phone — steps 1 and 4 by email, 2 and 3 by phone when there is one", () => {
+    expect(stepChannel(1, true)).toBe("correo");
+    expect(stepChannel(2, true)).toBe("llamada");
+    expect(stepChannel(3, true)).toBe("llamada");
+    expect(stepChannel(4, true)).toBe("correo");
+    expect(stepChannel(2, false)).toBe("correo");
+    const phone = "+56 9 1234 5678";
+    expect(nextContactChannel(chasedBy([], { contact: contact("a@ficticio.invalid", phone) }), NOW)).toBe("correo");
+    expect(nextContactChannel(chasedBy([10], { contact: contact("a@ficticio.invalid", phone) }), NOW)).toBe("llamada");
+    // A channel someone chose still wins.
+    const chosen = chasedBy([], { contact: contact("a@ficticio.invalid", phone),
+      follow_up: { operator_id: null, operator_name: null, channel: "llamada" } });
+    expect(nextContactChannel(chosen, NOW)).toBe("llamada");
+  });
+
+  it("a WhatsApp sent counts as a touch: step 3 moves on", () => {
+    const recent = chasedBy([10, 6], { last_call: { at: ago(2), outcome: "whatsapp" } });
+    expect(callTouch(recent)).toBe(ago(2));
+    expect(followUpsSent(recent)).toBe(3);
+    expect(followUpsDue([recent], NOW)).toEqual([]); // touched 2 days ago: not due yet
+    const later = chasedBy([12, 8], { last_call: { at: ago(4), outcome: "whatsapp" } });
+    expect(followUpStep(followUpsDue([later], NOW)[0])).toBe(4);
+  });
+
+  it("two cases of the same person are one Hoy row naming the other", () => {
+    const a = chasedBy([5], { contact: contact("Persona@Ficticio.invalid") });
+    const b = chasedBy([4], { contact: contact("persona@ficticio.invalid") });
+    const other = chasedBy([4], { contact: contact("otra@ficticio.invalid") });
+    const rows = buildParaTiQueue([a, b, other], NOW, null).filter((q) => q.kind === "followup");
+    expect(rows.map((r) => r.opportunity_id)).toEqual([a.opportunity_id, other.opportunity_id]);
+    const lead = rows[0];
+    expect(lead.kind === "followup" && lead.others.map((o) => o.opportunity_id)).toEqual([b.opportunity_id]);
+  });
+
+  it("without a contact on the card, whom our last email went to (`to_ref`) joins the two cases", () => {
+    const sentTo = (c: OpportunityCardData, ref: string): OpportunityCardData =>
+      ({ ...c, last_contact: { inbound: null, outbound: { ...c.last_contact!.outbound!, to_ref: ref } } });
+    const a = sentTo(chasedBy([5]), "ref-1");
+    const b = sentTo(chasedBy([4]), "ref-1");
+    const c = sentTo(chasedBy([4]), "ref-2");
+    const rows = buildParaTiQueue([a, b, c], NOW, null).filter((q) => q.kind === "followup");
+    expect(rows.map((r) => r.opportunity_id)).toEqual([a.opportunity_id, c.opportunity_id]);
   });
 });

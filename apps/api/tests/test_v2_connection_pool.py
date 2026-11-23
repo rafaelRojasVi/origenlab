@@ -324,8 +324,8 @@ def test_overview_output_shape_is_unchanged() -> None:
         assert "count" in entity
 
 
-def test_pipeline_statement_count_is_at_most_twenty() -> None:
-    """pipeline() runs ≤ 20 SQL statements: 2 setup + 18 data queries.
+def test_pipeline_statement_count_is_at_most_twenty_one() -> None:
+    """pipeline() runs ≤ 21 SQL statements: 2 setup + 19 data queries.
 
     With psycopg pipeline mode the 13 data queries are sent in 1 RTT (instead of
     13), but the SQL statement count stays at 15 — the test documents the bound.
@@ -338,7 +338,8 @@ def test_pipeline_statement_count_is_at_most_twenty() -> None:
     the newest answered call per case (`_SQL_PIPELINE_LAST_CALLS`, a follow-up touch); the last four
     are «Ventas › Seguimiento»: the case contact's phone, the calls per case, the newest call of
     any outcome per case and today's calls per operator; the eighteenth is the three newest notes and
-    calls per case (`_SQL_PIPELINE_RECENT_NOTES`, the row's latest notes), one windowed read.
+    calls per case (`_SQL_PIPELINE_RECENT_NOTES`, the row's latest notes), one windowed read; the
+    nineteenth is the supplier domains (`_SQL_SUPPLIER_DOMAINS`: mail to a supplier is no follow-up).
     All are fixed: none runs per card.
     """
     from origenlab_api.v2.crm_workspace import CrmWorkspaceRepository
@@ -346,8 +347,8 @@ def test_pipeline_statement_count_is_at_most_twenty() -> None:
     conn = _CountingConn()
     repo = CrmWorkspaceRepository(connect=_fake_connect_factory(conn), dsn="unused")
     result = repo.pipeline()
-    assert len(conn.statements) <= 20, (
-        f"pipeline() used {len(conn.statements)} statements; expected ≤ 20. "
+    assert len(conn.statements) <= 21, (
+        f"pipeline() used {len(conn.statements)} statements; expected ≤ 21. "
         f"Statements: {conn.statements}"
     )
     assert "items" in result and "total" in result
