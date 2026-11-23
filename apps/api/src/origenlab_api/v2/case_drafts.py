@@ -22,15 +22,34 @@ CACHE_SECONDS = 60.0
 #: Opens the case's thread in Gmail, where the draft shows under the last message.
 GMAIL_THREAD_URL = "https://mail.google.com/mail/u/0/#all/{}"
 
-#: The open cases' threads among these Gmail thread ids (`= any`, one bounded query).
+#: The open cases' threads among these Gmail thread ids (`= any`, one bounded query). A case's
+#: thread is one with an email linked to it, or one of its quote revisions' threads: the email the
+#: revision came from, or the message that sent it. A quote goes out on its own thread, and a
+#: follow-up draft is written as a reply there. Every revision counts, not only the newest or the
+#: sent ones: a superseded or still-draft revision's thread is still a conversation of the case.
 CASE_THREADS_SQL = """
-select distinct o.id::text as opportunity_id, sr.payload->>'gmail_thread_id' as thread_id
-  from crm.opportunity_evidence oe
-  join evidence.source_record sr on sr.id = oe.source_record_id
-  join crm.opportunity o on o.id = oe.opportunity_id
- where oe.unlinked_at is null and sr.kind = 'gmail_message'
-   and sr.payload->>'gmail_thread_id' = any(%s)
-   and o.stage not in ('won', 'lost', 'abandoned')
+select distinct t.opportunity_id::text as opportunity_id, t.thread_id
+  from (
+    select oe.opportunity_id, sr.payload->>'gmail_thread_id' as thread_id
+      from crm.opportunity_evidence oe
+      join evidence.source_record sr on sr.id = oe.source_record_id
+     where oe.unlinked_at is null and sr.kind = 'gmail_message'
+       and sr.payload->>'gmail_thread_id' = any(%(t)s)
+    union
+    select q.opportunity_id, sr.payload->>'gmail_thread_id'
+      from crm.quote_revision qr
+      join crm.quote q on q.id = qr.quote_id
+      join evidence.source_record sr on sr.id = qr.origin_source_record_id
+     where sr.kind = 'gmail_message' and sr.payload->>'gmail_thread_id' = any(%(t)s)
+    union
+    select q.opportunity_id, sm.provider_thread_id
+      from crm.quote_revision qr
+      join crm.quote q on q.id = qr.quote_id
+      join comms.message sm on sm.id = qr.sent_message_id
+     where sm.provider_thread_id = any(%(t)s)
+  ) t
+  join crm.opportunity o on o.id = t.opportunity_id
+ where o.stage not in ('won', 'lost', 'abandoned')
 """
 
 
@@ -85,7 +104,7 @@ def read_case_drafts(drafts: DraftThreads | None, connect: Callable[..., Any], d
     with connect(dsn, autocommit=False) as conn, conn.cursor() as cur:
         cur.execute("set transaction read only")
         cur.execute(f"set local statement_timeout = {int(statement_timeout_ms)}")
-        cur.execute(CASE_THREADS_SQL, (sorted(threads),))
+        cur.execute(CASE_THREADS_SQL, {"t": sorted(threads)})
         cols = [c.name for c in cur.description]
         rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
         conn.rollback()

@@ -44,3 +44,30 @@ def test_a_draft_on_the_case_thread_shows_on_the_open_case_only(world) -> None:
     assert got["available"] is True
     assert set(got["items"]) == {open_case}
     assert got["items"][open_case]["drafts"] == 2
+
+
+def _quote_threads(dsn: str, case_id: str) -> set[str]:
+    rows = _owner(dsn, """select sm.provider_thread_id from crm.quote_revision qr
+                            join crm.quote q on q.id = qr.quote_id
+                            join comms.message sm on sm.id = qr.sent_message_id
+                           where q.opportunity_id = %s""", (case_id,))
+    return {r[0] for r in rows}
+
+
+def test_a_draft_on_the_quote_revisions_thread_shows_on_the_open_case_only(world) -> None:
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    open_case = _sent_case(world, admin)
+    closed_case = _sent_case(world, admin)
+    _owner(dsn, "update crm.opportunity set stage = 'lost', closed_at = now() where id = %s", (closed_case,))
+    open_threads, closed_threads = _quote_threads(dsn, open_case), _quote_threads(dsn, closed_case)
+    assert open_threads and closed_threads
+    # Only the quote's own thread carries a draft: no email evidence is linked to it.
+    _owner(dsn, "update crm.opportunity_evidence set unlinked_at = now(), unlink_reason = 'test'"
+                " where opportunity_id in (%s, %s) and unlinked_at is null",
+           (open_case, closed_case))
+    threads = {t: ["m1"] for t in open_threads | closed_threads}
+
+    got = read_case_drafts(DraftThreads(_Lister(threads)), psycopg.connect, runtime_dsn(dsn), 5000)
+    assert set(got["items"]) == {open_case}
+    assert got["items"][open_case]["drafts"] == len(open_threads)
