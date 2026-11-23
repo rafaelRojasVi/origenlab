@@ -881,13 +881,13 @@ describe("Hoy per profile («Mi cola» / «Todo el equipo»)", () => {
     expect(screen.queryByRole("button", { name: "Todo el equipo" })).toBeNull();
   });
 
-  it("follow-up row shows «Seguimiento» chip and «Seguimiento 2 de 4» (Hoy v3 flat queue)", () => {
-    const silent7 = card({}, "2026-09-29T15:00:00Z"); // 7 days = step 2 threshold
+  it("follow-up row shows «Seguimiento» chip and «Seguimiento 2 de 3» (Hoy v3 flat queue)", () => {
+    const silent7 = card({}, "2026-09-29T15:00:00Z"); // an older API (no sent_times): 7 days = step 2
     const navigate = renderAs(profileSession("llamadas"), [silent7]);
     // Hoy v3: no QueueSection heading «Llamar»; the unified queue uses chip badges per row.
     expect(screen.queryByRole("heading", { level: 2, name: "Llamar" })).not.toBeInTheDocument();
     const row = screen.getByTestId(`today-followup-${silent7.opportunity_id}`);
-    expect(row).toHaveTextContent("Seguimiento 2 de 4");
+    expect(row).toHaveTextContent("Seguimiento 2 de 3");
     // «Registrar llamada» opens the case's drawer over Hoy.
     expect(within(row).getByRole("button", { name: "Registrar llamada" })).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();

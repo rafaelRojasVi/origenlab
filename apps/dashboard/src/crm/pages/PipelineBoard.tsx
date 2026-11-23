@@ -36,13 +36,14 @@ import {
   byLatestActivity,
   enviadaBand,
   isOnBoard,
+  localDaysBetween,
   pauseDayIso,
   pauseReturned,
   pausedUntil,
   type BoardColumnKey,
   type EnviadaBandKey,
 } from "../stage";
-import { followUpStep, followUpsDue, ourLastTouch, stepForDays } from "../today";
+import { followUpStep, followUpsDue, followUpsSent, ourLastTouch, stepForDays, stepForSent } from "../today";
 import { fmtDate } from "../ui";
 import { GrowingListEnd } from "../GrowingListEnd";
 import { useGrowingList } from "../useGrowingList";
@@ -148,9 +149,10 @@ function enviadaBandOf(card: OpportunityCardData, at: Date): EnviadaBandKey {
 export function silentFollowUpStep(card: OpportunityCardData, at: Date): 1 | 2 | 3 | 4 {
   const due = followUpsDue([card], at)[0];
   if (due) return followUpStep(due);
+  const sent = followUpsSent(card);
+  if (sent !== null) return stepForSent(sent);
   const since = Date.parse(ourLastTouch(card) ?? card.latest_revision?.sent_at ?? "");
-  const days = Number.isNaN(since) ? 0 : Math.floor((at.getTime() - since) / 86_400_000);
-  return stepForDays(days);
+  return stepForDays(Number.isNaN(since) ? 0 : localDaysBetween(since, at));
 }
 
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];

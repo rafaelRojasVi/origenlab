@@ -122,8 +122,9 @@ describe("Hoy and Seguimiento agree on one case (QA 2026-11-19)", () => {
     expect(item.kind === "followup" && item.followUp.task).not.toBeNull();
     // …but it was touched yesterday, not 21 days ago.
     const step = planNextSteps([c], NOW, null).steps[0];
-    expect(stepAge(step).text).toBe("23 h");
-    // 23 hours back from noon is yesterday: one calendar day (audit 2026-11-22), not «0 d».
+    // 23 hours back from noon is yesterday: one calendar day (audit 2026-11-22), not «0 d» — and the
+    // badge says so too, the same count the rule uses (audit 2026-11-23: «2 d» on day 3).
+    expect(stepAge(step).text).toBe("1 d sin toque");
     expect(item.kind === "followup" && item.followUp.touchDays).toBe(1);
     // Without the call, the count runs from the quote.
     const silent = buildParaTiQueue([{ ...c, last_call_any: null }], NOW, null)[0];
@@ -200,7 +201,7 @@ describe("Hoy audit 2026-11-22: what a case shows on every screen", () => {
     const step = planNextSteps([c], NOW, null).steps[0];
     expect(santiagoDay(next!.at)).toBe("2026-11-19");
     expect(step.dueDays).toBe(1);
-    expect(stepAction(step)).toBe("Seguimiento 1 de 3 · día 3");
+    expect(stepAction(step)).toBe("Seguimiento 1 de 3");
   });
 
   it("a quote sent on Thursday: the rhythm's day 3 falls on Sunday and waits for Monday on every screen", () => {

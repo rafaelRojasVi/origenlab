@@ -210,6 +210,46 @@ export interface FollowUp {
   touchDays: number;
   /** When that last touch was, or null when the case has none. */
   touchAt: string | null;
+  /** Follow-ups OrigenLab already sent (`followUpsSent`); null from an older API, when the step falls back to the days. */
+  sent: number | null;
+  /** The closing email (step 4) went out with no answer: the case is not chased again — after
+   *  `CLOSE_AFTER_DAYS` Hoy says to close it «Perdida · Sin respuesta». */
+  close: boolean;
+}
+
+/** Days the client gets to answer the closing email (step 4) before Hoy says to close the case (owner 2026-11-16). */
+export const CLOSE_AFTER_DAYS = 14;
+
+/**
+ * How many follow-ups OrigenLab sent since the quote went out — or since the client last wrote,
+ * which restarts the count: our emails on the case's threads after that moment, plus a call that
+ * reached the client. This, not the days since the last email, is the rhythm's step (owner
+ * 2026-11-23: four unanswered follow-ups showed «Seguimiento 1 de 3» because each one restarted
+ * the day count). Null when the API does not send the case's emails (`sent_times`).
+ */
+export function followUpsSent(card: OpportunityCardData): number | null {
+  const times = card.last_contact?.outbound?.sent_times;
+  if (!times) return null;
+  const sent = card.latest_revision?.sent_at ?? null;
+  const inbound = card.last_contact?.inbound?.at ?? null;
+  // The quote's own email is the sent moment itself (a minute of slack, as `lastTouch`).
+  let from = sent ? Date.parse(sent) + 60_000 : Number.NEGATIVE_INFINITY;
+  if (inbound && !Number.isNaN(Date.parse(inbound))) from = Math.max(from, Date.parse(inbound));
+  let n = times.filter((t) => Date.parse(t) > from).length;
+  const call = callTouch(card);
+  if (call && Date.parse(call) > from) n += 1;
+  return n;
+}
+
+/** The rhythm step for a number of follow-ups sent: the next one (1 to 4; the 4th is the closing email). */
+export function stepForSent(sent: number): 1 | 2 | 3 | 4 {
+  return Math.min(4, sent + 1) as 1 | 2 | 3 | 4;
+}
+
+/** «Seguimiento 2 de 3», «Último correo», or «Cerrar · sin respuesta» once the closing email had no answer. */
+export function followUpStepLabel(step: 1 | 2 | 3 | 4, close = false): string {
+  if (close) return "Cerrar · sin respuesta";
+  return step < 4 ? `Seguimiento ${step} de 3` : "Último correo";
 }
 
 /**
@@ -259,10 +299,14 @@ export function followUpsDue(cards: OpportunityCardData[], now: Date, { young = 
     // Day 3 first — a quote that went out today is not chased today — unless the operator asked
     // to be reminded today: a reminder they set is shown on its day.
     if (!task && days < RHYTHM[0].from && !young) continue;
-    const rhythm = RHYTHM[stepForDays(days) - 1].key;
+    const sentCount = followUpsSent(card);
+    // After the closing email nobody chases again: the case waits for an answer, then Hoy says to close it.
+    const close = sentCount !== null && sentCount >= 4;
+    if (!task && close && days < CLOSE_AFTER_DAYS && !young) continue;
+    const rhythm = RHYTHM[(sentCount === null ? stepForDays(days) : stepForSent(sentCount)) - 1].key;
     const anyTouch = later(touchAt, anyCallTouch(card));
     const touchDays = anyTouch ? Math.max(0, localDaysBetween(Date.parse(anyTouch), now)) : days;
-    out.push({ card, days, rhythm, byEmail, task, touchDays, touchAt: anyTouch });
+    out.push({ card, days, rhythm, byEmail, task, touchDays, touchAt: anyTouch, sent: sentCount, close });
   }
   return out.sort((a, b) => b.days - a.days);
 }
@@ -304,14 +348,14 @@ export function pendingFollowUpTasks(card: OpportunityCardData): OpenTask[] {
 
 /**
  * The rhythm step for a number of days since OrigenLab's last touch: 4 from `RHYTHM[3].from`
- * (15), 3 from `RHYTHM[2].from` (10), 2 from `RHYTHM[1].from` (7), else 1. The one mapping the
- * board card, the drawer chip and `followUpsDue` share.
+ * (15), 3 from `RHYTHM[2].from` (10), 2 from `RHYTHM[1].from` (7), else 1. Only for an older API
+ * without the case's emails; otherwise the step is the follow-ups sent (`stepForSent`).
  */
 export function stepForDays(days: number): 1 | 2 | 3 | 4 {
   return days >= RHYTHM[3].from ? 4 : days >= RHYTHM[2].from ? 3 : days >= RHYTHM[1].from ? 2 : 1;
 }
 
-/** «Seguimiento N de 4»: the rhythm step a follow-up is on (1 from day 3, 2 from 7, 3 from 10, 4 from 15). */
+/** The rhythm step a follow-up is on: the follow-ups already sent plus one (`stepForSent`). */
 export function followUpStep(f: FollowUp): 1 | 2 | 3 | 4 {
   return (RHYTHM.findIndex((r) => r.key === f.rhythm) + 1) as 1 | 2 | 3 | 4;
 }
@@ -352,6 +396,7 @@ export function historicalCount(cards: OpportunityCardData[], now: Date = new Da
  *  acted on that day (or whose day fell on a weekend) until the next step, and after day 15 for good. */
 export function isFollowUpDueToday(f: FollowUp): boolean {
   if (f.task !== null) return true;
+  if (f.close) return f.days >= CLOSE_AFTER_DAYS;
   return f.days >= RHYTHM[0].from;
 }
 
@@ -371,6 +416,8 @@ export interface RhythmNext {
   dueToday: boolean;
   /** Days since OrigenLab's last touch, as `FollowUp.days`. */
   days: number;
+  /** The closing email had no answer: the day is when to close the case (`FollowUp.close`). */
+  close: boolean;
 }
 
 /**
@@ -385,11 +432,14 @@ export function rhythmNext(card: OpportunityCardData, now: Date): RhythmNext | n
   const f = followUpsDue([card], now, { young: true })[0];
   if (!f) return null;
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (isFollowUpDueToday(f)) return { day: startOfToday, step: followUpStep(f), dueToday: true, days: f.days };
+  if (isFollowUpDueToday(f)) return { day: startOfToday, step: followUpStep(f), dueToday: true, days: f.days, close: f.close };
+  const inDays = (n: number) => nextBusinessDay(new Date(startOfToday.getFullYear(), startOfToday.getMonth(), startOfToday.getDate() + n));
+  if (f.close) return { day: inDays(CLOSE_AFTER_DAYS - f.days), step: 4, dueToday: false, days: f.days, close: true };
+  // The next follow-up is due 3 days after our last touch; its step is the follow-ups sent so far.
+  if (f.sent !== null) return { day: inDays(RHYTHM[0].from - f.days), step: followUpStep(f), dueToday: false, days: f.days, close: false };
   const next = RHYTHM.findIndex((r) => r.from > f.days);
   if (next < 0) return null;
-  const day = nextBusinessDay(new Date(startOfToday.getFullYear(), startOfToday.getMonth(), startOfToday.getDate() + RHYTHM[next].from - f.days));
-  return { day, step: (next + 1) as 1 | 2 | 3 | 4, dueToday: false, days: f.days };
+  return { day: inDays(RHYTHM[next].from - f.days), step: (next + 1) as 1 | 2 | 3 | 4, dueToday: false, days: f.days, close: false };
 }
 
 /** A pre-quote open case with no sent quote: the operator must still write the quotation. */

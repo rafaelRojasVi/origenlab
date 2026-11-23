@@ -9,7 +9,9 @@ import {
   callTouch,
   filterQueue,
   followUpsDue,
+  followUpsSent,
   followUpStep,
+  followUpStepLabel,
   HOME_FILTER_KINDS,
   livePauseFilter,
   overdueTasks,
@@ -270,5 +272,61 @@ describe("a pause still ahead hides every task left over from before it (audit 2
     const c = paused();
     expect(livePauseFilter(c, now)(call)).toBe(false);
     expect(nextContact(c, now)?.source).toBe("pause");
+  });
+});
+
+describe("the rhythm step is the follow-ups sent, not the days (owner 2026-11-23)", () => {
+  /** A quote sent 33 days ago and our emails `daysAgo` (the quote's own email first). */
+  function chased(daysAgo: number[], over: Partial<OpportunityCardData> = {}): OpportunityCardData {
+    const quote = ago(33);
+    const times = [quote, ...daysAgo.map((d) => ago(d))];
+    const newest = times[times.length - 1];
+    return card({
+      last_contact: { outbound: { at: newest, subject: "Re: Cotización", url: null, sent_times: times }, inbound: null },
+      ...over,
+    }, quote);
+  }
+
+  it("four unanswered follow-ups are past the closing email, not «Seguimiento 1 de 3»", () => {
+    // The real case: quote, then follow-ups 17, 13, 9 and 3 days ago — each restarted the day count.
+    const c = chased([17, 13, 9, 3]);
+    expect(followUpsSent(c)).toBe(4);
+    // Closing email sent 3 days ago: not chased again, and not to close yet.
+    expect(followUpsDue([c], NOW)).toEqual([]);
+    expect(nextContact(c, NOW)?.label).toBe("Cerrar · sin respuesta");
+    // 14 days after it with no answer, Hoy says to close it.
+    const old = chased([30, 26, 22, 14]);
+    const due = followUpsDue([old], NOW)[0];
+    expect(due.close).toBe(true);
+    expect(followUpStepLabel(followUpStep(due), due.close)).toBe("Cerrar · sin respuesta");
+  });
+
+  it("each follow-up sent moves the step: email, call, WhatsApp, closing email", () => {
+    expect(followUpStep(followUpsDue([chased([])], NOW)[0])).toBe(1);
+    expect(followUpStep(followUpsDue([chased([10])], NOW)[0])).toBe(2);
+    expect(followUpStep(followUpsDue([chased([10, 5])], NOW)[0])).toBe(3);
+    const fourth = followUpsDue([chased([12, 8, 4])], NOW)[0];
+    expect(followUpStep(fourth)).toBe(4);
+    expect(followUpStepLabel(followUpStep(fourth))).toBe("Último correo");
+    // Still 3 days after our last email before the next one.
+    expect(followUpsDue([chased([12, 8, 2])], NOW)).toEqual([]);
+  });
+
+  it("the client writing back restarts the count", () => {
+    const c = chased([20, 16, 12, 4], {
+      last_contact: {
+        outbound: { at: ago(4), subject: "Re", url: null, sent_times: [ago(33), ago(20), ago(16), ago(12), ago(4)] },
+        inbound: { at: ago(14), subject: "Re", url: null, no_reply: true },
+      },
+    });
+    // Only our emails after the client's «gracias, te aviso» count: 12 and 4 days ago.
+    expect(followUpsSent(c)).toBe(2);
+    expect(followUpStep(followUpsDue([c], NOW)[0])).toBe(3);
+  });
+
+  it("an older API without the case's emails keeps the day rhythm", () => {
+    const c = card({ last_contact: { outbound: { at: ago(8), subject: "Re", url: null }, inbound: null } });
+    expect(followUpsSent(c)).toBeNull();
+    expect(followUpStep(followUpsDue([c], NOW)[0])).toBe(stepForDays(8));
   });
 });

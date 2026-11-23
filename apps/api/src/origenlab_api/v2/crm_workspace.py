@@ -983,6 +983,9 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
     # domain a client wrote from: «Asignar institución»'s suggestion (private, stripped like _enquirer).
     reads: dict[str, tuple[datetime, str]] = {}
     domains: dict[str, tuple[datetime, str]] = {}
+    # Every email OrigenLab sent on the case, once each: the dashboard counts the follow-ups sent
+    # since the quote (or the client's last email) to know the rhythm step, not just the last one.
+    sent_times: dict[str, dict[str, datetime]] = defaultdict(dict)
     for row in rows:
         at = _aware(row.get("sent_at"))
         if at is None:
@@ -1008,6 +1011,8 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
             if domain and domain not in FREE_MAIL_DOMAINS and domain not in OWN_DOMAINS \
                     and (oid not in domains or domains[oid][0] < at):
                 domains[oid] = (at, domain)
+        if direction == "outbound":
+            sent_times[oid][row.get("gmail_message_id") or at.isoformat()] = at
         key = (row["opportunity_id"], direction)
         if key in best and best[key] >= at:
             continue
@@ -1028,6 +1033,11 @@ def last_contacts(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]
                         if name.strip() and "@" not in name]
         if len(sender_names) == 1:
             out[row["opportunity_id"]][direction]["sender_name"] = sender_names[0]
+    for oid, times in sent_times.items():
+        outbound = out.get(oid, {}).get("outbound")
+        if outbound is not None:
+            # Oldest first, the newest 30: more than enough for a 4-step rhythm.
+            outbound["sent_times"] = [t.isoformat() for t in sorted(times.values())][-30:]
     for oid, (_, enquirer) in enquirers.items():
         # Private to `compose_pipeline` (the card's contact); stripped from the card's last_contact.
         out[oid]["inbound"]["_enquirer"] = enquirer

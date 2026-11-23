@@ -29,7 +29,7 @@ import { quoteToOpen, useMayOpenCotizador, useOpenOrCreateQuote } from "../quote
 import { isMaskedAddress } from "../redaction";
 import { STATUS_LABEL, isPaused, pauseDayIso, pausedUntil } from "../stage";
 import { nextContact } from "../nextContact";
-import { endOfDay, followUpStep, followUpsDue } from "../today";
+import { endOfDay, followUpStep, followUpStepLabel, followUpsDue } from "../today";
 import { Badge, Button, Drawer, Section, fmtDate } from "../ui";
 import { useResource } from "../useResource";
 import { CaseTimeline } from "./CaseTimeline";
@@ -188,7 +188,8 @@ function CaseDrawerBody({
   // «hoy» when it is due today or overdue, else its weekday.
   const followUp = next && (next.source === "followup" || next.source === "rhythm")
     ? {
-        step: next.source === "rhythm" && next.step ? next.step : reminderStep(card, Date.parse(next.at), now),
+        // The rhythm's own label (it knows «Cerrar · sin respuesta»); a reminder's, from its step.
+        label: next.source === "rhythm" ? next.label : followUpStepLabel(reminderStep(card, Date.parse(next.at), now)),
         day: Date.parse(next.at) <= endOfDay(now).getTime() ? "hoy" : weekdayDay(next.at),
       }
     : null;
@@ -265,7 +266,7 @@ function CaseDrawerBody({
         {card.status === "ok" ? null : <Badge tone={status.tone}>{status.label}</Badge>}
         {followUp ? (
           <span className="font-semibold text-warn" data-testid="case-drawer-followup">
-            {followUp.step < 4 ? <>Seguimiento {followUp.step} de 3 · {followUp.day}</> : <>Último correo · {followUp.day}</>}
+            {followUp.label} · {followUp.day}
           </span>
         ) : null}
         {lostState ? <span className="font-semibold text-bad">{lostState}{card.close_reason ? ` · ${card.close_reason}` : ""}</span> : null}

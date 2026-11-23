@@ -58,6 +58,7 @@ import {
   CLOSE_DAYS,
   filterQueue,
   followUpStep,
+  followUpStepLabel,
   followUpsDue,
   HOME_FILTER_KINDS,
   retakeHint,
@@ -1241,10 +1242,11 @@ const FOLLOW_UP_ACTION: Record<1 | 2 | 3 | 4, string> = {
   4: "Último correo",
 };
 
-/** Chip showing what to do on this step; «Cerrar caso» appears from day `CLOSE_DAYS` onward. */
-function FollowUpActionChip({ step, days }: { step: 1 | 2 | 3 | 4; days: number }) {
-  const label = FOLLOW_UP_ACTION[step];
-  const close = days >= CLOSE_DAYS;
+/** Chip showing what to do on this step; «Cerrar caso» appears once the closing email went unanswered
+ *  (`closed`), or from day `CLOSE_DAYS` onward. */
+function FollowUpActionChip({ step, days, closed = false }: { step: 1 | 2 | 3 | 4; days: number; closed?: boolean }) {
+  const label = closed ? "Perdida · Sin respuesta" : FOLLOW_UP_ACTION[step];
+  const close = closed || days >= CLOSE_DAYS;
   return (
     <>
       <span
@@ -1257,7 +1259,7 @@ function FollowUpActionChip({ step, days }: { step: 1 | 2 | 3 | 4; days: number 
         <span
           className="inline-flex shrink-0 items-center rounded-full bg-bad-bg px-1.5 py-px text-[10.5px] font-semibold text-bad"
           data-testid="today-followup-close-hint"
-          title="Sin respuesta en más de 45 días — considera cerrar el caso"
+          title={closed ? "Le mandamos el último correo y no respondió — ciérralo como «Perdida · Sin respuesta»" : "Sin respuesta en más de 45 días — considera cerrar el caso"}
         >
           Cerrar caso
         </span>
@@ -1424,8 +1426,8 @@ function FollowUpQueueRow({
           {name}
         </button>
         <p className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[12px] text-ink-muted">
-          <span className="font-semibold text-ink" data-testid="today-followup-step">Seguimiento {fStep} de 4</span>
-          <FollowUpActionChip step={fStep} days={f.days} />
+          <span className="font-semibold text-ink" data-testid="today-followup-step">{followUpStepLabel(fStep, f.close)}</span>
+          <FollowUpActionChip step={fStep} days={f.days} closed={f.close} />
           {draft ? (
             <a
               href={draft.url}
