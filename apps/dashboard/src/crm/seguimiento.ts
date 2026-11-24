@@ -6,8 +6,8 @@
  * day (`dateSantiago`); day counts are local calendar days, as Hoy counts them (`localDaysBetween`).
  */
 import type { ProfileCard } from "../api/authClient";
-import { isDelivered, quoteProduct } from "./caseDisplay";
-import type { OpportunityCardData, PipelineResponse } from "./crmTypes";
+import { callTouch, isDelivered, lastTouch as conversationTouch, quoteProduct } from "./caseDisplay";
+import type { OpportunityCardData, PipelineResponse, RevisionCard } from "./crmTypes";
 import { PILOT_CALLS_PER_DAY, dateSantiago } from "./goals";
 import { caseAmountClp } from "./nextSteps";
 import { nextContact, stepChannel, type NextContact } from "./nextContact";
@@ -28,7 +28,8 @@ export interface SegRow {
   channel: FollowUpChannel;
   amountClp: number | null;
   sentAt: string | null;
-  daysSinceSent: number;
+  /** Whose turn it is since the quote went out, and for how long (`answerOf`): the «Sin respuesta» pill. */
+  answer: SegAnswer;
   daysSinceTouch: number;
   lastTouch: { kind: "call" | "email"; at: string; label: string } | null;
   callsToday: number;
@@ -137,8 +138,65 @@ function daysSince(at: string, now: Date): number {
   return localDaysBetween(Date.parse(at), now);
 }
 
+/**
+ * Where the case stands since its quote went out, for the «Sin respuesta» pill, its tone and order.
+ * - `replied`: the client wrote last and expects an answer (the ball is ours);
+ * - `settled`: the client wrote last and needs no reply («retomo la próxima semana»: R18's `no_reply`);
+ * - `waiting`: we touched last — the quote, a later email of ours, or a call that reached the client.
+ * `days` counts local calendar days from `at` (0 when there is no date).
+ */
+export interface SegAnswer {
+  kind: "replied" | "settled" | "waiting";
+  at: string | null;
+  days: number;
+  from: "quote" | "email" | "call" | "client";
+}
+
+/**
+ * The card as the conversation reads it: its newest *delivered* revision as `latest_revision`. A newer
+ * revision still in the Cotizador gives the pipeline's `lastTouch` no clock (finishing it is the next
+ * step), but Seguimiento lists the case for the quote that already went out.
+ */
+function deliveredView(card: OpportunityCardData): OpportunityCardData {
+  if (isDelivered(card.latest_revision)) return card;
+  let best: RevisionCard | null = null;
+  for (const q of card.quotes) {
+    for (const r of q.revisions) {
+      if (!isDelivered(r)) continue;
+      const newer = !best || (!!r.sent_at && (!best.sent_at || Date.parse(r.sent_at) > Date.parse(best.sent_at)));
+      if (newer) best = r;
+    }
+  }
+  return best ? { ...card, latest_revision: best } : card;
+}
+
+/**
+ * The pill reads the same facts as the Pipeline (`lastTouch`: emails after the quote, the client's
+ * `no_reply`) and as Hoy's rhythm (`callTouch`: a call that reached the client is our follow-up; a missed
+ * call is not). Owner 2026-11-24: it used to count from the quote alone and read «56 d sin respuesta»
+ * for a client who had written a week before.
+ */
+export function answerOf(card: OpportunityCardData, now: Date): SegAnswer {
+  const view = deliveredView(card);
+  const touch = conversationTouch(view);
+  const call = callTouch(view);
+  // An unreadable date counts as no date: «0 d», never «NaN d» (and a NaN would break the «dias» order).
+  const days = (at: string | null) => {
+    const d = at ? daysSince(at, now) : 0;
+    return Number.isFinite(d) ? Math.max(0, d) : 0;
+  };
+  if (call && (!touch.at || Date.parse(call) > Date.parse(touch.at))) {
+    return { kind: "waiting", at: call, days: days(call), from: "call" };
+  }
+  if (touch.by === "client" || touch.by === "settled") {
+    return { kind: touch.by === "client" ? "replied" : "settled", at: touch.at, days: days(touch.at), from: "client" };
+  }
+  return { kind: "waiting", at: touch.at, days: days(touch.at), from: touch.by === "us" ? "email" : "quote" };
+}
+
+// `dateSantiago` throws on an invalid date: one unreadable timestamp must not blank the whole sheet.
 const onSantiagoDay = (at: string | null | undefined, now: Date): boolean =>
-  !!at && dateSantiago(new Date(at)) === dateSantiago(now);
+  !!at && !Number.isNaN(Date.parse(at)) && dateSantiago(new Date(at)) === dateSantiago(now);
 
 /** A call or one of our emails on the Santiago day of `now`. */
 export function touchedToday(row: SegRow, now: Date): boolean {
@@ -175,7 +233,7 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
                               next?.source === "rhythm" ? next.step : undefined),
     amountClp: caseAmountClp(card),
     sentAt,
-    daysSinceSent: sentAt ? daysSince(sentAt, now) : 0,
+    answer: answerOf(card, now),
     daysSinceTouch,
     lastTouch,
     callsToday: card.call_counts?.today ?? 0,

@@ -22,17 +22,26 @@ export const DAYS_PILL: Record<DaysTone, string> = {
   bad: "bg-bad-bg text-bad",
 };
 
-/** «Sin respuesta»: under 3 days fine, 3 to 6 a warning, a week or more bad; fine once touched today. */
+/** «Sin respuesta»: under 3 days fine, 3 to 6 a warning, a week or more bad; fine once touched today, and fine
+ *  when the client wrote last and awaits our answer (that is Hoy's «Responder», not a silence). */
 export function daysTone(row: SegRow, now: Date): DaysTone {
-  if (touchedToday(row, now)) return "ok";
-  return row.daysSinceSent >= 7 ? "bad" : row.daysSinceSent >= 3 ? "warn" : "ok";
+  if (touchedToday(row, now) || row.answer.kind === "replied") return "ok";
+  return row.answer.days >= 7 ? "bad" : row.answer.days >= 3 ? "warn" : "ok";
 }
+
+const plural = (n: number) => `${n} ${n === 1 ? "día" : "días"}`;
+const SINCE: Record<"quote" | "email" | "call", string> = {
+  quote: "que se envió la cotización",
+  email: "nuestro último correo",
+  call: "la última llamada en que contestó",
+};
 
 const santiagoTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Santiago" });
 
 /** «hoy 10:12» on today's Santiago day, else «13 nov». */
 export function whenText(iso: string, now: Date): string {
+  if (Number.isNaN(Date.parse(iso))) return "—"; // `dateSantiago` throws on it; `shortDate` says «—»
   return dateSantiago(new Date(iso)) === dateSantiago(now) ? `hoy ${santiagoTime(iso)}` : shortDate(iso, now);
 }
 
@@ -72,17 +81,26 @@ export const SCRIPT_ICON = "M3 2.5h7l3 3v8H3zM10 2.5v3h3M5.5 8h5M5.5 10.5h5";
 export const SORT_ICON = "m4 6 4-4 4 4M4 10l4 4 4-4";
 const MORE_ICON = "M3.5 8h.01M8 8h.01M12.5 8h.01";
 
-/** «Sin respuesta»: days since the quote was sent; `long` adds the words (cards, where no header says it). */
+/** «Sin respuesta» (`SegRow.answer`): «Respondió 17 nov» when the client wrote last and awaits our answer,
+ *  «Escribió 16 nov» when they wrote and needed none, else the days since our last touch; `long` adds the words
+ *  (cards, where no header says it). */
 export function DaysPill({ row, now, long = false }: { row: SegRow; now: Date; long?: boolean }) {
   const tone = daysTone(row, now);
+  const { kind, at, days, from } = row.answer;
+  const text = kind === "replied" && at ? `Respondió ${shortDate(at, now)}`
+    : kind === "settled" && at ? `Escribió ${shortDate(at, now)}`
+    : `${days} d${long ? " sin respuesta" : ""}`;
+  const title = kind === "replied" ? "El cliente escribió y espera nuestra respuesta"
+    : kind === "settled" ? `El cliente escribió hace ${plural(days)}; no pedía respuesta`
+    : `${plural(days)} sin respuesta desde ${SINCE[from === "client" ? "quote" : from]}`;
   return (
     <span
       data-testid="seg-days"
       data-tone={tone}
-      title={`${row.daysSinceSent} ${row.daysSinceSent === 1 ? "día" : "días"} desde que se envió la cotización`}
+      title={title}
       className={`inline-flex h-6 min-w-11 items-center justify-center whitespace-nowrap rounded-full px-2 text-[12px] font-bold tabular-nums ${DAYS_PILL[tone]}`}
     >
-      {row.daysSinceSent} d{long ? " sin respuesta" : ""}
+      {text}
     </span>
   );
 }
@@ -153,7 +171,9 @@ export function LastTouch({ row, now }: { row: SegRow; now: Date }) {
     <span title={`Último toque hace ${row.daysSinceTouch} ${row.daysSinceTouch === 1 ? "día" : "días"}`}>
       <b className="font-semibold text-ink">{row.lastTouch.label}</b>{" "}
       <span className="whitespace-nowrap">
-        · {whenText(row.lastTouch.at, now)} · {row.lastTouch.kind === "email" ? "automático" : row.card.last_call_any?.author_name ?? "equipo"}
+        · {whenText(row.lastTouch.at, now)}
+        {/* A person sends every email (owner 2026-11-24: «automático» was false); a call says who made it. */}
+        {row.lastTouch.kind === "call" ? ` · ${row.card.last_call_any?.author_name ?? "equipo"}` : null}
       </span>
     </span>
   );
