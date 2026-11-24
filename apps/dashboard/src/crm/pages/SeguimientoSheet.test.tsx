@@ -145,6 +145,13 @@ describe("SeguimientoSheet", () => {
     expect(pill("1016")).toHaveTextContent("8 d");
   });
 
+  it("an unreadable date never prints «NaN d»", () => {
+    renderSheet([card("1017", "1", "2026-11-10T15:00:00Z", { last_contact: {
+      outbound: { at: "not-a-date", subject: "", url: null, sender_name: "" }, inbound: null,
+    } } as Partial<OpportunityCardData>)]);
+    expect(within(screen.getByTestId("seg-row-1017")).getByTestId("seg-days").textContent).not.toMatch(/NaN/);
+  });
+
   it("an email touch is not called «automático»: a person sent it", () => {
     renderSheet([card("1008", "1", "2026-11-10T15:00:00Z", { last_contact: {
       outbound: { at: "2026-11-16T14:58:00Z", subject: "Re: Cotización", url: null, sender_name: "OrigenLab" }, inbound: null,

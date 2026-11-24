@@ -41,6 +41,7 @@ const santiagoTime = (iso: string) =>
 
 /** «hoy 10:12» on today's Santiago day, else «13 nov». */
 export function whenText(iso: string, now: Date): string {
+  if (Number.isNaN(Date.parse(iso))) return "—"; // `dateSantiago` throws on it; `shortDate` says «—»
   return dateSantiago(new Date(iso)) === dateSantiago(now) ? `hoy ${santiagoTime(iso)}` : shortDate(iso, now);
 }
 

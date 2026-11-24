@@ -180,7 +180,11 @@ export function answerOf(card: OpportunityCardData, now: Date): SegAnswer {
   const view = deliveredView(card);
   const touch = conversationTouch(view);
   const call = callTouch(view);
-  const days = (at: string | null) => (at ? Math.max(0, daysSince(at, now)) : 0);
+  // An unreadable date counts as no date: «0 d», never «NaN d» (and a NaN would break the «dias» order).
+  const days = (at: string | null) => {
+    const d = at ? daysSince(at, now) : 0;
+    return Number.isFinite(d) ? Math.max(0, d) : 0;
+  };
   if (call && (!touch.at || Date.parse(call) > Date.parse(touch.at))) {
     return { kind: "waiting", at: call, days: days(call), from: "call" };
   }
@@ -190,8 +194,9 @@ export function answerOf(card: OpportunityCardData, now: Date): SegAnswer {
   return { kind: "waiting", at: touch.at, days: days(touch.at), from: touch.by === "us" ? "email" : "quote" };
 }
 
+// `dateSantiago` throws on an invalid date: one unreadable timestamp must not blank the whole sheet.
 const onSantiagoDay = (at: string | null | undefined, now: Date): boolean =>
-  !!at && dateSantiago(new Date(at)) === dateSantiago(now);
+  !!at && !Number.isNaN(Date.parse(at)) && dateSantiago(new Date(at)) === dateSantiago(now);
 
 /** A call or one of our emails on the Santiago day of `now`. */
 export function touchedToday(row: SegRow, now: Date): boolean {
