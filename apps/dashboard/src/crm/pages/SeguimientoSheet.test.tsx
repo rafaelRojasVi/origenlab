@@ -111,6 +111,40 @@ describe("SeguimientoSheet", () => {
     expect(pill.getAttribute("data-tone")).toBe("bad");
   });
 
+  // A sent quote with a newer revision still in the Cotizador: the pipeline's `conversation` has no clock for it
+  // (the draft is the next step), but Seguimiento lists the case for the quote that went out.
+  it("a newer draft revision does not stop the clock of the quote that went out", () => {
+    const sent = { revision_id: "r-1013a", revision_no: 1, status: "sent", origin: null, sent_at: "2026-11-10T15:00:00Z", superseded_by_revision_no: null, is_active: false, document: null, gmail: null, drive: null, quote_number: "CN01013", candidates: [] };
+    const draft = { ...sent, revision_id: "r-1013b", revision_no: 2, status: "draft", sent_at: null, is_active: true };
+    renderSheet([card("1013", "1", "2026-11-10T15:00:00Z", {
+      quotes: [{ quote_id: "q-1013", quote_number: "CN01013", revisions: [sent, draft] }], latest_revision: draft,
+    } as unknown as Partial<OpportunityCardData>)]);
+    const pill = within(screen.getByTestId("seg-row-1013")).getByTestId("seg-days");
+    expect(pill).toHaveTextContent("8 d");
+    expect(pill.getAttribute("data-tone")).toBe("bad");
+  });
+
+  // Hoy counts a call that reached the client as our follow-up (`callTouch`); so does the pill. A missed call does not.
+  it("a call that reached the client restarts the count; a later client email still wins; a missed call does not", () => {
+    const quoteSent = "2026-11-01T15:00:00Z";
+    const ourMail = { at: "2026-11-10T15:00:00Z", subject: "Re: Cotización", url: null, sender_name: "OrigenLab" };
+    renderSheet([
+      card("1014", "1", quoteSent, { last_contact: { outbound: ourMail, inbound: null },
+        last_call: { at: "2026-11-16T15:00:00Z", outcome: "contesto" },
+        last_call_any: { at: "2026-11-16T15:00:00Z", outcome: "contesto", author_name: "Rafa" } } as Partial<OpportunityCardData>),
+      card("1015", "1", quoteSent, { last_contact: { outbound: ourMail, inbound: { at: "2026-11-16T15:00:00Z", subject: "Re: Cotización", url: null, sender_name: "Persona Ficticia" } },
+        last_call: { at: "2026-11-14T15:00:00Z", outcome: "contesto" },
+        last_call_any: { at: "2026-11-14T15:00:00Z", outcome: "contesto", author_name: "Rafa" } } as Partial<OpportunityCardData>),
+      card("1016", "1", quoteSent, { last_contact: { outbound: ourMail, inbound: null },
+        last_call: null, last_call_any: { at: "2026-11-17T15:00:00Z", outcome: "no_contesto", author_name: "Rafa" } } as Partial<OpportunityCardData>),
+    ]);
+    const pill = (id: string) => within(screen.getByTestId(`seg-row-${id}`)).getByTestId("seg-days");
+    expect(pill("1014")).toHaveTextContent("2 d");
+    expect(pill("1014").getAttribute("title")).toMatch(/llamada/);
+    expect(pill("1015")).toHaveTextContent("Respondió 16 nov");
+    expect(pill("1016")).toHaveTextContent("8 d");
+  });
+
   it("an email touch is not called «automático»: a person sent it", () => {
     renderSheet([card("1008", "1", "2026-11-10T15:00:00Z", { last_contact: {
       outbound: { at: "2026-11-16T14:58:00Z", subject: "Re: Cotización", url: null, sender_name: "OrigenLab" }, inbound: null,

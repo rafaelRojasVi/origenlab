@@ -272,6 +272,7 @@ export function facetCounts(rows: SegRow[], groups: FilterGroup[], filters: SegF
 /* ── orders ───────────────────────────────────────────────────────────── */
 
 const byTime = (iso: string | null) => (iso ? Date.parse(iso) : Number.POSITIVE_INFINITY);
+const silence = (row: SegRow) => (row.answer.kind === "replied" ? -1 : row.answer.days);
 
 /** The rows in `order`; ties keep the incoming order. */
 export function sortRows(rows: SegRow[], order: SegOrder): SegRow[] {
@@ -282,8 +283,8 @@ export function sortRows(rows: SegRow[], order: SegOrder): SegRow[] {
     case "monto":
       return out.sort((a, b) => (b.amountClp ?? -1) - (a.amountClp ?? -1));
     case "dias":
-      // The client wrote last: no days without an answer, so those go to the end.
-      return out.sort((a, b) => (b.silentDays ?? -1) - (a.silentDays ?? -1));
+      // The longest without an answer first; a client who wrote and awaits ours has none, so last.
+      return out.sort((a, b) => silence(b) - silence(a));
     case "proximo":
       return out.sort((a, b) => byTime(a.next?.at ?? null) - byTime(b.next?.at ?? null));
   }
