@@ -282,7 +282,8 @@ export function sortRows(rows: SegRow[], order: SegOrder): SegRow[] {
     case "monto":
       return out.sort((a, b) => (b.amountClp ?? -1) - (a.amountClp ?? -1));
     case "dias":
-      return out.sort((a, b) => b.daysSinceSent - a.daysSinceSent);
+      // The client wrote last: no days without an answer, so those go to the end.
+      return out.sort((a, b) => (b.silentDays ?? -1) - (a.silentDays ?? -1));
     case "proximo":
       return out.sort((a, b) => byTime(a.next?.at ?? null) - byTime(b.next?.at ?? null));
   }

@@ -6,7 +6,7 @@
  * day (`dateSantiago`); day counts are local calendar days, as Hoy counts them (`localDaysBetween`).
  */
 import type { ProfileCard } from "../api/authClient";
-import { isDelivered, quoteProduct } from "./caseDisplay";
+import { conversation, isDelivered, lastTouch as conversationTouch, quoteProduct } from "./caseDisplay";
 import type { OpportunityCardData, PipelineResponse } from "./crmTypes";
 import { PILOT_CALLS_PER_DAY, dateSantiago } from "./goals";
 import { caseAmountClp } from "./nextSteps";
@@ -29,6 +29,16 @@ export interface SegRow {
   amountClp: number | null;
   sentAt: string | null;
   daysSinceSent: number;
+  /**
+   * The conversation since the latest quote (`conversation`, the Pipeline's own reading): who wrote last and
+   * when. Owner 2026-11-24: the pill read the quote's age as «sin respuesta» while the client had answered.
+   */
+  talk: ReturnType<typeof conversation>;
+  /** Days without an answer from the last touch (our email or the quote); null when the client wrote last. */
+  silentDays: number | null;
+  /** The client wrote last and said nothing to answer (`no_reply`, «retomo la próxima semana»): when. The days
+   *  then count from that message. */
+  settledAt: string | null;
   daysSinceTouch: number;
   lastTouch: { kind: "call" | "email"; at: string; label: string } | null;
   callsToday: number;
@@ -166,6 +176,7 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
   const suggestedOwnerId = suggestOwner(card, profiles);
   const phone = phoneOf(card);
   const next = nextContact(card, now);
+  const talk = conversation(card, now);
   return {
     card,
     ownerId,
@@ -176,6 +187,9 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
     amountClp: caseAmountClp(card),
     sentAt,
     daysSinceSent: sentAt ? daysSince(sentAt, now) : 0,
+    talk,
+    silentDays: talk.kind === "replied" ? null : talk.days ?? 0,
+    settledAt: conversationTouch(card).by === "settled" ? talk.at : null,
     daysSinceTouch,
     lastTouch,
     callsToday: card.call_counts?.today ?? 0,

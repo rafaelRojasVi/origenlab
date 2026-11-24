@@ -22,11 +22,18 @@ export const DAYS_PILL: Record<DaysTone, string> = {
   bad: "bg-bad-bg text-bad",
 };
 
-/** «Sin respuesta»: under 3 days fine, 3 to 6 a warning, a week or more bad; fine once touched today. */
+/** «Sin respuesta»: under 3 days fine, 3 to 6 a warning, a week or more bad; fine once touched today or when the
+ *  client wrote last (the conversation is not silent). */
 export function daysTone(row: SegRow, now: Date): DaysTone {
-  if (touchedToday(row, now)) return "ok";
-  return row.daysSinceSent >= 7 ? "bad" : row.daysSinceSent >= 3 ? "warn" : "ok";
+  if (touchedToday(row, now) || row.silentDays === null) return "ok";
+  return row.silentDays >= 7 ? "bad" : row.silentDays >= 3 ? "warn" : "ok";
 }
+
+const MONTHS_ES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const dayMonth = (iso: string) => {
+  const [, m, d] = dateSantiago(new Date(iso)).split("-");
+  return `${Number(d)} ${MONTHS_ES[Number(m) - 1]}`;
+};
 
 const santiagoTime = (iso: string) =>
   new Date(iso).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Santiago" });
@@ -72,17 +79,24 @@ export const SCRIPT_ICON = "M3 2.5h7l3 3v8H3zM10 2.5v3h3M5.5 8h5M5.5 10.5h5";
 export const SORT_ICON = "m4 6 4-4 4 4M4 10l4 4 4-4";
 const MORE_ICON = "M3.5 8h.01M8 8h.01M12.5 8h.01";
 
-/** «Sin respuesta»: days since the quote was sent; `long` adds the words (cards, where no header says it). */
+/** «Sin respuesta»: days since our last touch (the quote, or a later email of ours), or «Respondió …» when the
+ *  client wrote last; `long` adds the words (cards, where no header says it). */
 export function DaysPill({ row, now, long = false }: { row: SegRow; now: Date; long?: boolean }) {
   const tone = daysTone(row, now);
+  const replied = row.silentDays === null && row.talk.at;
+  const days = row.silentDays ?? 0;
   return (
     <span
       data-testid="seg-days"
       data-tone={tone}
-      title={`${row.daysSinceSent} ${row.daysSinceSent === 1 ? "día" : "días"} desde que se envió la cotización`}
+      title={replied ? row.talk.text
+        : row.settledAt ? `El cliente escribió hace ${days} ${days === 1 ? "día" : "días"}; no pedía respuesta`
+        : `${days} ${days === 1 ? "día" : "días"} sin respuesta desde ${row.talk.kind === "followed_up" ? "nuestro último correo" : "que se envió la cotización"}`}
       className={`inline-flex h-6 min-w-11 items-center justify-center whitespace-nowrap rounded-full px-2 text-[12px] font-bold tabular-nums ${DAYS_PILL[tone]}`}
     >
-      {row.daysSinceSent} d{long ? " sin respuesta" : ""}
+      {replied ? `Respondió ${dayMonth(replied)}`
+        : row.settledAt ? `Escribió ${dayMonth(row.settledAt)}`
+        : `${days} d${long ? " sin respuesta" : ""}`}
     </span>
   );
 }
@@ -153,7 +167,9 @@ export function LastTouch({ row, now }: { row: SegRow; now: Date }) {
     <span title={`Último toque hace ${row.daysSinceTouch} ${row.daysSinceTouch === 1 ? "día" : "días"}`}>
       <b className="font-semibold text-ink">{row.lastTouch.label}</b>{" "}
       <span className="whitespace-nowrap">
-        · {whenText(row.lastTouch.at, now)} · {row.lastTouch.kind === "email" ? "automático" : row.card.last_call_any?.author_name ?? "equipo"}
+        · {whenText(row.lastTouch.at, now)}
+        {/* A person sends every email (owner 2026-11-24: «automático» was false); a call says who made it. */}
+        {row.lastTouch.kind === "call" ? ` · ${row.card.last_call_any?.author_name ?? "equipo"}` : null}
       </span>
     </span>
   );
