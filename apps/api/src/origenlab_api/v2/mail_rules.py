@@ -75,6 +75,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from origenlab_api.v2.case_commands import STAGES_REQUIRING_A_REQUESTING_INSTITUTION
 from origenlab_api.v2.case_origin import ORIGIN_CORREO, ORIGIN_WEB
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
@@ -1659,7 +1660,11 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     email left counts — on each case they belong to (a client's request and the case the Cotizador
     opened beside it), the email linked there if it is not. A closed case among them, a stage past
     «Enviada», an email a person put on another case, or an open case of its thread none of the PDFs
-    names leave the email to a person. Historical quotes are R1/R14's, never this rule's."""
+    names leave the email to a person — unless that open case is the same client: the institution of
+    one of the PDFs' cases, or a person this email went to (production 2026-11-13/24: a new request on
+    an older quote's thread, quoted from a second case). A case with no confirmed institution has its
+    revision sent but stops before «Calificada», which needs one (`advance_case_stage`). Historical
+    quotes are R1/R14's, never this rule's."""
     if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
         return None
     sent = _instant(e.sent_at)
@@ -1693,8 +1698,13 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     if set(e.linked_case_ids) - set(cases):
         return None  # a person or a rule put it on a case none of its PDFs names
     # A reply on an old thread is fine when that thread's case is closed (a client asking again on a
-    # lost quote's thread); an open case of the thread that none of the PDFs names is a person's call.
-    if any(not t.closed and t.id not in cases for t in ix.by_thread.get(e.thread_id or "", [])):
+    # lost quote's thread) or is the same client's; another open case of the thread is a person's call.
+    orgs = {c.organization_id for c in cases.values()} - {None}
+    recipients = {a for a in addresses(part for v in e.recipients for part in (v or "").split(";"))
+                  if domain_of(a) not in OWN_DOMAINS}
+    if any(not t.closed and t.id not in cases and t.organization_id not in orgs
+           and not recipients & (set(t.people) | set(t.participants))
+           for t in ix.by_thread.get(e.thread_id or "", [])):
         return None
     # Each PDF is its own case's evidence: two cases of one client (a request and the case «Nueva
     # cotización» opened beside it) each get their revision sent, the email and «Enviada». The case
@@ -1707,6 +1717,8 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                f"{', '.join(labels)}, aprobada{'s' if len(labels) > 1 else ''} en el Cotizador"]
     if len(order) > 1:
         reasons.append(f"son de {len(order)} casos del cliente: cada uno queda en «Enviada»")
+    if any(c.organization_id is None and _TO_QUOTING[c.stage] for c in order):
+        reasons.append("un caso sin institución confirmada no pasa a «Enviada» hasta que alguien la nombre")
     note = _note("R16", reasons)
     steps: list[dict[str, Any]] = []
     for c in order:
@@ -1719,7 +1731,8 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
             # whose case is another (production 2026-10-19/20: Ygaero, Golden Omega); the number and
             # revision letter of an approved quote do not.
             steps.append(_link_step(c, e.id, "mentions", note))
-        steps += [_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]]
+        steps += [_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]
+                  if c.organization_id is not None or stage not in STAGES_REQUIRING_A_REQUESTING_INSTITUTION]
     first, main = order[0], order[-1]
     return PlannedAction(e.id, "R16", AUTO, tuple(reasons), case_id=main.id, case_title=main.title,
                          organization_id=main.organization_id, quote_number=labels[0], commands=tuple(steps),

@@ -200,3 +200,31 @@ def test_the_ygaero_shape_two_cases_one_reply(world) -> None:
         assert _rows(dsn, "select stage from crm.opportunity where id = %s", (case_id,))[0]["stage"] == "quoting"
         assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
                           "and opportunity_id = %s and unlinked_at is null", (email, case_id))[0]["n"] == 1
+
+
+def test_a_client_without_institution_quoted_on_its_older_case_s_thread(world) -> None:
+    """Production 2026-11-24: a gmail-style client asked again on the thread of its older open case; the
+    Cotizador quoted it from a new case with no institution. R16 sends it and walks only to «Calificando»."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    older = _case(dsn, world["operator"], world["institution"])
+    created = _run(world, "create-quote", {"client": {"email": "compras@cliente-ficticio.test", "name": "Compras"}})
+    new_case = created["opportunity_id"]
+    assert new_case != older
+    saved = _run(world, "save-quote-draft", {"revision_id": created["revision_id"], "expected_version": created["version"],
+                                             "draft": {"items": [_catalog_item(world)],
+                                                       "terms": {"warranty_terms_es": WARRANTY}}})
+    _run(world, "approve-quote-revision", {"revision_id": created["revision_id"], "expected_version": saved["version"]})
+    thread = f"t-{uuid.uuid4().hex[:12]}"
+    _email(dsn, [], case_id=older, linked_by=admin.operator_id, sent_at=datetime.now(UTC) - timedelta(days=1),
+           thread=thread, sender="Compras <compras@cliente-ficticio.test>")
+    email, _ = _email(dsn, [_doc(f"Cotización CN{created['quote_number'][:5]} — Cliente.pdf")], case_id=None,
+                      linked_by=admin.operator_id, sent_at=datetime.now(UTC) + timedelta(minutes=1), thread=thread)
+
+    repo = _mail_rules(dsn)
+    result = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
+    assert not result["refused"], result["refused"]
+    assert _revision(dsn, created["revision_id"])["status"] == "sent"
+    stages = {r["id"]: r["stage"] for r in _rows(dsn, "select id::text as id, stage from crm.opportunity "
+                                                      "where id in (%s, %s)", (new_case, older))}
+    assert stages == {new_case: "qualifying", older: "lead"}  # the older case is not touched
