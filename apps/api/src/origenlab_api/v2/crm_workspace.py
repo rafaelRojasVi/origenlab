@@ -1332,7 +1332,8 @@ def compose_pipeline(
         elif writer and not inbound_seen.get("_enquirer"):
             contact = {"source": "gmail_recipient", "name": seen_names.get(writer), "address": writer,
                        "others": others if writing is not None else len(on_case), "address_ref": address_ref(writer)}
-            attention.append("no_crm_contact")
+            if not people:  # a saved person on the case is still a CRM contact, whoever wrote last
+                attention.append("no_crm_contact")
         elif people:
             contact = {"source": "crm_participant", "name": people[0].get("name"), "address": None, "others": len(people) - 1,
                        "person_id": people[0].get("person_id")}

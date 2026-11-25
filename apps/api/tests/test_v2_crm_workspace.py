@@ -1221,6 +1221,7 @@ def test_the_contact_is_whoever_wrote_last_by_their_name() -> None:
     # A writer who is on no row yet is still the contact; nobody writing keeps the first person.
     card = compose_pipeline([_opp("o1")], [], [], [], {}, [first], {}, seen)[0]
     assert (card["contact"]["address"], card["contact"]["name"]) == ("segunda@ejemplo.invalid", "Segunda Persona")
+    assert not any(a["code"] == "no_crm_contact" for a in card["attention"])  # the case has a saved person
     card = compose_pipeline([_opp("o1")], [], [], [], {}, [first], {}, {})[0]
     assert card["contact"]["person_id"] == "p-1"
 
