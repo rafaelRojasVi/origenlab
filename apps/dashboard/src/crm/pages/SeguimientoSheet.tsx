@@ -12,12 +12,13 @@ import type { ProfileCard } from "../../api/authClient";
 import { useMayAuthorCrm } from "../authoring/authoring";
 import { useMayRunCaseCommands, type CaseCommandReceipt } from "../caseCommands";
 import { contactLine, displayName, quoteProduct } from "../caseDisplay";
+import { stageDisplay } from "../stage";
 import { formatMoney } from "../money";
 import { useFlip, usePresence } from "../motion";
 import { quoteNumberOf, type SegRow } from "../seguimiento";
 import type { SegOrder } from "../seguimientoView";
 import { useSegUi } from "../segStore";
-import { Button } from "../ui";
+import { Badge, Button, isSafeExternalHref } from "../ui";
 import { caseGmailUrl } from "./CaseQuotes";
 import { FollowUpPicker } from "./FollowUpPicker";
 import { cardMoney, shortDate } from "./PipelineBoard";
@@ -97,7 +98,7 @@ export function SeguimientoSheet({
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   useFlip(bodyRef, rows.map(rowKey).join("|"));
   const selecting = !!selection;
-  const columns = selecting ? 8 : 7;
+  const columns = selecting ? 7 : 6;
   const allSelected = selecting && rows.length > 0 && rows.every((r) => selection.selected.has(rowKey(r)));
 
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
@@ -136,12 +137,11 @@ export function SeguimientoSheet({
       <table className="w-full table-fixed border-separate border-spacing-0 text-[13px] tabular-nums">
         <colgroup>
           {selecting ? <col className="w-11" /> : null}
-          <col className="w-[9rem]" />
           <col />
           <col className="w-[6.75rem]" />
           <col className="w-[6.5rem]" />
-          <col className="w-[11rem]" />
-          <col className="w-[8.5rem]" />
+          <col className="w-[13rem]" />
+          <col className="w-[12.5rem]" />
           <col className="w-[8.5rem]" />
         </colgroup>
         <thead>
@@ -157,8 +157,7 @@ export function SeguimientoSheet({
                 />
               </th>
             ) : null}
-            {th("Encargado")}
-            {th("Cliente, contacto y cotización")}
+            {th("Cliente, cotización y encargado")}
             {sortButton("monto", "Monto", true)}
             {sortButton("dias", "Sin respuesta")}
             {th("Último toque · Próximo")}
@@ -199,15 +198,13 @@ export function SeguimientoSheet({
                       />
                     </td>
                   ) : null}
-                  <td className={td}>
-                    {mayCommand ? (
-                      <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="owner" announce />
-                    ) : (
-                      <span className="text-[12.5px] text-ink">{profiles.find((p) => p.id === r.ownerId)?.displayName ?? "Sin confirmar"}</span>
-                    )}
-                  </td>
                   <td className={`${td} min-w-0`}>
-                    <CaseName row={r} onOpen={on.onOpen} />
+                    <div className="flex min-w-0 items-center gap-2">
+                      <div className="min-w-0">
+                        <CaseName row={r} onOpen={on.onOpen} />
+                      </div>
+                      <StageBadge row={r} now={now} />
+                    </div>
                     <div className="truncate text-[12px] text-ink-muted">{contactLine(r.card) ?? "Sin contacto"}</div>
                     <div className="truncate text-[12px] text-ink-muted" title={quoteProduct(r.card) ?? undefined}>
                       <span className="font-mono text-[11.5px] text-ink">
@@ -216,8 +213,16 @@ export function SeguimientoSheet({
                       </span>
                       {quoteProduct(r.card) ? ` · ${quoteProduct(r.card)}` : ""}
                     </div>
+                    <ClientMail row={r} now={now} />
                     <AlsoLine row={r} />
                     <LastNote row={r} now={now} />
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      {mayCommand ? (
+                        <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact announce />
+                      ) : (
+                        <span className="text-[12px] text-ink-muted">Encargado: {profiles.find((p) => p.id === r.ownerId)?.displayName ?? "Sin confirmar"}</span>
+                      )}
+                    </div>
                   </td>
                   <td className={`${td} whitespace-nowrap text-right font-bold text-ink`}>{cardMoney(r.card).text || <span className="font-normal text-ink-faint">Sin monto</span>}</td>
                   <td className={td}>
@@ -232,11 +237,12 @@ export function SeguimientoSheet({
                       <span className="text-ink-faint">Próximo:</span>
                       <NextDate due={nextReminder(r)} now={now} />
                     </div>
-                    {mayCommand ? (
-                      <div className="mt-1">
-                        <FollowUpPicker card={r.card} profiles={profiles} onChanged={on.onReceipt} onConflict={on.onConflict} compact only="channel" />
+                    {r.card.next_action?.text ? (
+                      <div className="mt-0.5 line-clamp-2 text-[11.5px] text-ink" title={r.card.next_action.text}>
+                        {r.card.next_action.text}
                       </div>
                     ) : null}
+
                   </td>
                   <td className={`${td} min-w-0`}>
                     <ContactButtons row={r} profiles={profiles} compact />
@@ -276,7 +282,7 @@ export function SeguimientoSheet({
         </tbody>
         <tfoot>
           <tr className="text-[12.5px] font-bold text-ink" data-testid="seg-total">
-            <td colSpan={selecting ? 3 : 2} className={TF}>
+            <td colSpan={selecting ? 2 : 1} className={TF}>
               {rows.length} casos
             </td>
             <td className={`${TF} whitespace-nowrap text-right`} data-testid="seg-total-money">
@@ -295,6 +301,38 @@ export function SeguimientoSheet({
 /** The header sticks under the 48 px top bar while the page scrolls. */
 const TH = "sticky top-12 z-10 border-b border-line bg-canvas-sunken";
 const TF = "sticky bottom-0 z-10 border-t border-line bg-canvas-sunken px-2.5 py-2.5";
+
+/** The case's stage (Enviada, Conversación…) beside its name. */
+function StageBadge({ row, now }: { row: SegRow; now: Date }) {
+  const stage = stageDisplay(row.card, now);
+  return (
+    <span className="shrink-0" data-testid="seg-stage">
+      <Badge tone={stage.tone} title={stage.title} glyph={false}>
+        {stage.label}
+      </Badge>
+    </span>
+  );
+}
+
+/** The client's newest email on the case: when, and its subject, linked to Gmail. */
+function ClientMail({ row, now }: { row: SegRow; now: Date }) {
+  const mail = row.card.last_contact?.inbound;
+  if (!mail) return null;
+  const first = mail.sender_name?.trim().split(/\s+/)[0] ?? "";
+  const who = first ? `${first[0].toUpperCase()}${first.slice(1).toLowerCase()} escribió` : "El cliente escribió";
+  const text = `${who} ${shortDate(mail.at, now)}${mail.subject ? ` · «${mail.subject}»` : ""}`;
+  return (
+    <div className="truncate text-[11.5px] text-ink-muted" title={text} data-testid="seg-client-mail">
+      {mail.url && isSafeExternalHref(mail.url) ? (
+        <a href={mail.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="hover:text-accent hover:underline">
+          ✉ {text}
+        </a>
+      ) : (
+        <>✉ {text}</>
+      )}
+    </div>
+  );
+}
 
 /** The case's name: a button that opens it, or plain text where no drawer is offered. */
 export function CaseName({
