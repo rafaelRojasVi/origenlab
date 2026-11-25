@@ -1870,11 +1870,18 @@ BOUNCE_SENDER = re.compile(r"^(?:mailer-daemon|postmaster|mail-daemon|bounces?)(
 AUTOMATIC_CLASSES: frozenset[str] = frozenset({"bounce", "auto_reply"})
 
 
+#: A robot's address anywhere in its local part — Google Drive's «drive-shares-dm-noreply@», Gemini's
+#: meeting notes: no person on the client's side wrote it (audit 2026-11-25: it read as «Respondió»).
+ROBOT_SENDER = re.compile(r"(?:^|[._+-])(?:no-?reply|donotreply|do-not-reply)(?:[._+-]|@)|^gemini-notes@",
+                          re.IGNORECASE)
+
+
 def is_automatic_mail(sender: str | None, triage_class: str | None) -> bool:
-    """A bounce or an automatic reply: by the triage's class, else by a delivery system's address."""
+    """A bounce, an automatic reply or a robot's notice: by the triage's class, else by its address."""
     if triage_class in AUTOMATIC_CLASSES:
         return True
-    return any(BOUNCE_SENDER.match(addr) for _, addr in getaddresses([sender or ""]) if "@" in addr)
+    return any(BOUNCE_SENDER.match(addr) or ROBOT_SENDER.search(addr)
+               for _, addr in getaddresses([sender or ""]) if "@" in addr)
 
 
 def _from_the_client(e: MailEvidence, ix: _Index) -> bool:
