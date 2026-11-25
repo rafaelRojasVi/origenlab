@@ -440,8 +440,12 @@ _SQL_PIPELINE_PHONES = """
         select distinct on (lower(a.value->>'sender_address'))
                'signature:' || lower(a.value->>'sender_address'), a.value->'signature'->>'phone', false
           from evidence.assertion a
-         where a.value_norm = 'people:v1' and coalesce(a.value->'signature'->>'phone', '') <> ''
+         where a.kind = 'message_triage' and a.value_norm = 'people:v1'
            and position('@' in coalesce(a.value->>'sender_address', '')) > 0
+           -- Checked before choosing the newest, so a bad value never hides an older good phone:
+           -- 8 to 15 digits, and never a RUT («12.345.678-5») the model took for a phone.
+           and length(regexp_replace(coalesce(a.value->'signature'->>'phone', ''), '[^0-9]', '', 'g')) between 8 and 15
+           and a.value->'signature'->>'phone' !~ '^[[:space:]]*[0-9]{1,2}[.]?[0-9]{3}[.]?[0-9]{3}-[0-9kK][[:space:]]*$'
          order by lower(a.value->>'sender_address'), a.created_at desc
     ) signature_phones
 """
@@ -1007,11 +1011,6 @@ def _only_to_us_or_suppliers(recipients: str | None, suppliers: set[str]) -> boo
     domains = {a.rsplit("@", 1)[1].strip().lower() for _, a in getaddresses([(recipients or "").replace(";", ",")])
                if "@" in a}
     return bool(domains) and domains <= set(OWN_DOMAINS) | suppliers
-
-
-def _looks_like_phone(value: str | None) -> bool:
-    """A signature phone worth offering: 8 to 15 digits (a Chilean mobile, a landline with its code)."""
-    return 8 <= len(re.sub(r"\D", "", value or "")) <= 15
 
 
 def last_contacts(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
@@ -1882,8 +1881,7 @@ class CrmWorkspaceRepository:
             calls = [{"day": r["day"], "outcome": r["outcome"], "count": int(r["count"])}
                      for r in self._rows(cur_calls)]
             last_calls = self._rows(cur_last_calls)
-            phones = {r["key"]: r for r in self._rows(cur_phones)
-                      if not r["key"].startswith("signature:") or _looks_like_phone(r["phone"])}
+            phones = {r["key"]: r for r in self._rows(cur_phones)}
             call_counts = {r["opportunity_id"]: r for r in self._rows(cur_call_counts)}
             last_calls_any = self._rows(cur_last_call_any)
             calls_by_operator = self._rows(cur_calls_by_operator)
