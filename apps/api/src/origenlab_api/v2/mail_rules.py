@@ -1659,8 +1659,8 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     Cotizador's (`origin = 'authored'`), approved, not superseded, not yet sent and approved before the
     email left counts — on each case they belong to (a client's request and the case the Cotizador
     opened beside it), the email linked there if it is not. A closed case among them, a stage past
-    «Enviada», an email a person put on another case, or an open case of its thread none of the PDFs
-    names leave the email to a person — unless that open case is the same client: the institution of
+    «Enviada», an email on another case, or an open case of its thread none of the PDFs names leave
+    the email to a person — unless that other open case is the same client: the institution of
     one of the PDFs' cases, or a person this email went to (production 2026-11-13/24: a new request on
     an older quote's thread, quoted from a second case). A case with no confirmed institution has its
     revision sent but stops before «Calificada», which needs one (`advance_case_stage`). Historical
@@ -1695,15 +1695,22 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     cases = {c.id: c for c, _, _, _ in found.values()}
     if any(c.closed or c.stage not in _TO_QUOTING for c in cases.values()):
         return None
-    if set(e.linked_case_ids) - set(cases):
-        return None  # a person or a rule put it on a case none of its PDFs names
-    # A reply on an old thread is fine when that thread's case is closed (a client asking again on a
-    # lost quote's thread) or is the same client's; another open case of the thread is a person's call.
     orgs = {c.organization_id for c in cases.values()} - {None}
     recipients = {a for a in addresses(part for v in e.recipients for part in (v or "").split(";"))
                   if domain_of(a) not in OWN_DOMAINS}
-    if any(not t.closed and t.id not in cases and t.organization_id not in orgs
-           and not recipients & (set(t.people) | set(t.participants))
+
+    def same_client(t: CaseState) -> bool:
+        return t.organization_id in orgs or bool(recipients & (set(t.people) | set(t.participants)))
+
+    # On a case none of its PDFs names: a person's call, unless it is the same client's open case
+    # (production 2026-11-25: a request answered with the quote of the case the Cotizador opened
+    # beside it; R23 then closes the request as its duplicate).
+    others = [ix.cases.get(cid) for cid in set(e.linked_case_ids) - set(cases)]
+    if any(t is None or t.closed or not same_client(t) for t in others):
+        return None
+    # A reply on an old thread is fine when that thread's case is closed (a client asking again on a
+    # lost quote's thread) or is the same client's; another open case of the thread is a person's call.
+    if any(not t.closed and t.id not in cases and not same_client(t)
            for t in ix.by_thread.get(e.thread_id or "", [])):
         return None
     # Each PDF is its own case's evidence: two cases of one client (a request and the case «Nueva
