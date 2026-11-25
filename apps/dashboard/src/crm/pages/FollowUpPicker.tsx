@@ -108,8 +108,8 @@ export function FollowUpPicker({
   const ids = `follow-up-${card.opportunity_id}`;
 
   return (
-    <div className={compact ? "flex flex-wrap items-end gap-2" : "grid gap-3 sm:grid-cols-2"} data-testid="follow-up-picker">
-      {only !== "channel" ? <div className="min-w-0">
+    <div className={compact ? "flex flex-wrap items-center gap-x-3 gap-y-1" : "grid gap-3 sm:grid-cols-2"} data-testid="follow-up-picker">
+      {only !== "channel" ? <div className={compact ? "flex min-w-0 items-center gap-1.5" : "min-w-0"}>
         <label htmlFor={`${ids}-owner`} className={label}>Encargado</label>
         <SelectInput
           id={`${ids}-owner`}
@@ -120,7 +120,7 @@ export function FollowUpPicker({
           onChange={(v) => void save(v === "" ? null : v, shownChannel)}
         />
         {suggested ? (
-          <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-muted">
+          <div className={`flex items-center gap-2 text-[12px] text-ink-muted ${compact ? "" : "mt-1"}`}>
             <span>{compact ? "Sugerido" : `${suggestedName} es el sugerido.`}</span>
             <Button
               className="max-sm:h-11"
@@ -134,8 +134,9 @@ export function FollowUpPicker({
           </div>
         ) : null}
       </div> : null}
-      {only !== "owner" ? <div className="min-w-0">
+      {only !== "owner" ? <div className={compact ? "flex min-w-0 items-center gap-1.5" : "min-w-0"}>
         <label htmlFor={`${ids}-channel`} className={label}>Próximo contacto</label>
+        {compact ? <span aria-hidden="true" className="text-[12px] text-ink-faint">por</span> : null}
         <SelectInput
           id={`${ids}-channel`}
           value={shownChannel}
