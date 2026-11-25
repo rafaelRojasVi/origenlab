@@ -6,6 +6,8 @@ identity. Every name, address, number and hash below is invented; the repository
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import json
 from pathlib import Path
 
@@ -1188,3 +1190,39 @@ def test_dashboard_names_the_same_origins_as_the_api() -> None:
     block = re.search(r"export const CASE_ORIGINS = \[(.*?)\] as const;", ts, re.S)
     assert block is not None
     assert re.findall(r'"([a-z_]+)"', block.group(1)) == list(CASE_ORIGINS)
+
+
+def test_stuck_codes_name_what_a_rule_should_have_done() -> None:
+    """Owner 2026-11-25: emailed quotes sat in «Solicitada» for days and nothing said so."""
+    from origenlab_api.v2.crm_workspace import stuck_codes
+
+    now = datetime(2026, 11, 25, 15, tzinfo=UTC)
+    approved = {"status": "approved", "origin": "authored", "_approved_at": "2026-11-24T12:00:00+00:00"}
+    sent = {"status": "sent", "origin": "authored", "sent_at": "2026-11-10T12:00:00+00:00"}
+    lead, quoting = {"stage": "lead"}, {"stage": "quoting"}
+    # Emailed but not recorded: at once, whatever its age.
+    assert stuck_codes(lead, [{**approved, "_emailed_at": "2026-11-24T13:00:00+00:00"}], None, now) == ["stuck_quote_emailed"]
+    # Approved and never sent: only after 2 days, and not while paused.
+    assert stuck_codes(lead, [approved], None, now) == []
+    old = {**approved, "_approved_at": "2026-11-20T12:00:00+00:00"}
+    assert stuck_codes(lead, [old], None, now) == ["stuck_quote_not_sent"]
+    assert stuck_codes({**lead, "paused_until": "2026-12-01"}, [old], None, now) == []
+    assert stuck_codes(lead, [{**old, "_superseded": True}], None, now) == []
+    # A sent quote and the case still «Solicitada».
+    assert stuck_codes(lead, [sent], None, now) == ["stuck_stage_behind"]
+    assert stuck_codes(quoting, [sent], None, now) == []
+    # The client wrote after the quote, over 2 days ago, and the case is still «Enviada».
+    reply = {"at": "2026-11-20T12:00:00+00:00"}
+    assert stuck_codes(quoting, [sent], reply, now) == ["stuck_reply_waiting"]
+    assert stuck_codes(quoting, [sent], {**reply, "no_reply": True}, now) == []        # R18: needs no answer
+    assert stuck_codes(quoting, [sent], {"at": "2026-11-25T10:00:00+00:00"}, now) == []  # not 2 days yet
+    assert stuck_codes({"stage": "negotiating"}, [sent], reply, now) == []
+    assert stuck_codes(lead, [sent], None, None) == []  # no clock, no codes
+
+
+def test_stuck_cases_read_pendiente_on_the_card() -> None:
+    card = compose_pipeline([_opp("o1", stage="lead")], [], [{"quote_id": "q1", "opportunity_id": "o1", "quote_number": "09876-26"}],
+                            [{**_rev("r1", "q1", 1, SHA_A), "status": "sent", "sent_at": "2026-11-10T12:00:00+00:00"}],
+                            SOURCES, [], {}, now=datetime(2026, 11, 25, tzinfo=UTC))[0]
+    stuck = [a for a in card["attention"] if a["code"] == "stuck_stage_behind"]
+    assert stuck and stuck[0]["owner"] == "person" and not stuck[0]["blocking"] and card["status"] in ("pending", "blocked")
