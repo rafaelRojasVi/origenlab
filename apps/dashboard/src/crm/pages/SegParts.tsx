@@ -9,7 +9,7 @@ import { callOutcomeLabel, defaultCallBody, type CallOutcome } from "../callOutc
 import { chileanMobile } from "../company";
 import { dateSantiago } from "../goals";
 import { isMaskedPhone } from "../redaction";
-import { channelsFor, touchedToday, type SegRow } from "../seguimiento";
+import { channelsFor, quoteNumberOf, touchedToday, type SegRow } from "../seguimiento";
 import { shownOwner } from "../seguimientoView";
 import { useSegUi } from "../segStore";
 import { shortDate } from "./PipelineBoard";
@@ -254,6 +254,17 @@ function useAway(open: boolean, ref: RefObject<HTMLElement | null>, close: () =>
  * The newest call or note under the client (outcome, the first ~80 characters, author, when).
  * Hover, focus or a tap shows the last three.
  */
+/** The other open cases of this client on the same thread, by their quotes (one row for the conversation). */
+export function AlsoLine({ row }: { row: SegRow }) {
+  if (!row.also.length) return null;
+  const quotes = row.also.map((c) => quoteNumberOf(c) ?? c.title).join(", ");
+  return (
+    <div className="truncate text-[11.5px] text-ink-faint" title={`Mismo cliente y mismo hilo de correo: ${quotes}`}>
+      también {quotes}
+    </div>
+  );
+}
+
 export function LastNote({ row, now }: { row: SegRow; now: Date }) {
   const notes = rowNotes(row);
   const [ui, act] = useSegUi();

@@ -14,7 +14,7 @@ import { cardMoney } from "./PipelineBoard";
 import { FollowUpPicker } from "./FollowUpPicker";
 import { CallForm } from "./SeguimientoCallRow";
 import { Actions, CaseName } from "./SeguimientoSheet";
-import { ContactButtons, DaysPill, LastNote, LastTouch, NextDate, nextReminder, type RowAction } from "./SegParts";
+import { AlsoLine, ContactButtons, DaysPill, LastNote, LastTouch, NextDate, nextReminder, type RowAction } from "./SegParts";
 
 export interface CardHandlers {
   onOpen: (id: string) => void;
@@ -84,6 +84,7 @@ export function SegCard({
         ) : null}
         <div className="min-w-0 flex-1">
           <CaseName row={row} onOpen={on.onOpen} wrap sub={contactLine(row.card) ?? "Sin contacto"} />
+          <AlsoLine row={row} />
         </div>
         <span className="shrink-0 text-[13px] font-bold tabular-nums text-ink">{money || <span className="font-normal text-ink-faint">Sin monto</span>}</span>
       </div>
