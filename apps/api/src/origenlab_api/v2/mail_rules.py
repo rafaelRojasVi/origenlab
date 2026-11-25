@@ -75,6 +75,7 @@ from email.utils import getaddresses
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from origenlab_api.v2.case_commands import STAGES_REQUIRING_A_REQUESTING_INSTITUTION
 from origenlab_api.v2.case_origin import ORIGIN_CORREO, ORIGIN_WEB
 
 RULE_IDS: tuple[str, ...] = ("R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13",
@@ -239,6 +240,9 @@ class CaseState:
     people: tuple[str, ...] = ()
     #: «En pausa hasta…»: the due date of the case's open «Retomar: …» task still in the future (R17).
     paused_until: str | None = None
+    #: The Santiago day a pause of the case ended, when it is today or past (R17 reads a reply that came
+    #: in while it was paused from that day).
+    pause_ended: str | None = None
     #: Lower-case addresses of the case's current participants (R21 adds the ones still missing).
     participants: tuple[str, ...] = ()
     #: The quote whose `create-quote` opened this case — «Nueva cotización» for a client (R23).
@@ -595,6 +599,11 @@ class _Index:
         self.late_quote_since = snapshot.late_quote_since
         self.reply_since = snapshot.reply_since
         self.cases = {c.id: c for c in snapshot.cases}
+        #: The name each address signs its mail with (R16 names a «persona natural» by it).
+        self.sender_names: dict[str, str] = {
+            addr.strip().lower(): name.strip().strip('"')
+            for e in sorted(snapshot.evidence, key=lambda x: x.sent_at or "") if e.direction == "inbound"
+            for name, addr in getaddresses([e.sender or ""]) if "@" in addr and name.strip() and "@" not in name}
         #: Per case, the newest email a person on the client's side sent us — linked to it, or on one
         #: of its threads and not linked yet (R1 may link it this very pass). Supplier free-mail
         #: addresses and automatic senders are excluded; only _from_the_client emails count (Goal 5,
@@ -638,6 +647,8 @@ class _Index:
                 self.by_domain.setdefault(d.lower(), []).append(o)
         #: New quote keys and new domains an earlier email in this same plan already claims.
         self.claimed_keys: dict[tuple[int, int], str] = {}
+        #: Cases R17 moves to «Conversación» in this pass: two replies never move one case twice.
+        self.moved_by_reply: set[str] = set()
         self.claimed_domains: dict[str, str] = {}
         #: Our own price requests to suppliers: (when sent, the supplier domains it went to). V1
         #: marks ANY outbound «RFQ / request for quotation» subject as `supplier_rfq` — a reply to
@@ -1658,8 +1669,12 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     Cotizador's (`origin = 'authored'`), approved, not superseded, not yet sent and approved before the
     email left counts — on each case they belong to (a client's request and the case the Cotizador
     opened beside it), the email linked there if it is not. A closed case among them, a stage past
-    «Enviada», an email a person put on another case, or an open case of its thread none of the PDFs
-    names leave the email to a person. Historical quotes are R1/R14's, never this rule's."""
+    «Enviada», an email on another case, or an open case of its thread none of the PDFs names leave
+    the email to a person — unless that other open case is the same client: the institution of
+    one of the PDFs' cases, or a person this email went to (production 2026-11-13/24: a new request on
+    an older quote's thread, quoted from a second case). A case with no confirmed institution has its
+    revision sent but stops before «Calificada», which needs one (`advance_case_stage`). Historical
+    quotes are R1/R14's, never this rule's."""
     if e.direction != "outbound" or _sender(e) != CONTACT_SENDER or (e.direction_hint or "") in NOT_CUSTOMER_HINTS:
         return None
     sent = _instant(e.sent_at)
@@ -1690,11 +1705,23 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     cases = {c.id: c for c, _, _, _ in found.values()}
     if any(c.closed or c.stage not in _TO_QUOTING for c in cases.values()):
         return None
-    if set(e.linked_case_ids) - set(cases):
-        return None  # a person or a rule put it on a case none of its PDFs names
+    orgs = {c.organization_id for c in cases.values()} - {None}
+    recipients = {a for a in addresses(part for v in e.recipients for part in (v or "").split(";"))
+                  if domain_of(a) not in OWN_DOMAINS}
+
+    def same_client(t: CaseState) -> bool:
+        return t.organization_id in orgs or bool(recipients & (set(t.people) | set(t.participants)))
+
+    # On a case none of its PDFs names: a person's call, unless it is the same client's open case
+    # (production 2026-11-25: a request answered with the quote of the case the Cotizador opened
+    # beside it; R23 then closes the request as its duplicate).
+    others = [ix.cases.get(cid) for cid in set(e.linked_case_ids) - set(cases)]
+    if any(t is None or t.closed or not same_client(t) for t in others):
+        return None
     # A reply on an old thread is fine when that thread's case is closed (a client asking again on a
-    # lost quote's thread); an open case of the thread that none of the PDFs names is a person's call.
-    if any(not t.closed and t.id not in cases for t in ix.by_thread.get(e.thread_id or "", [])):
+    # lost quote's thread) or is the same client's; another open case of the thread is a person's call.
+    if any(not t.closed and t.id not in cases and not same_client(t)
+           for t in ix.by_thread.get(e.thread_id or "", [])):
         return None
     # Each PDF is its own case's evidence: two cases of one client (a request and the case «Nueva
     # cotización» opened beside it) each get their revision sent, the email and «Enviada». The case
@@ -1707,6 +1734,14 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                f"{', '.join(labels)}, aprobada{'s' if len(labels) > 1 else ''} en el Cotizador"]
     if len(order) > 1:
         reasons.append(f"son de {len(order)} casos del cliente: cada uno queda en «Enviada»")
+    # A free-mail client is a person, not an institution (owner 2026-11-25): the case gets a «persona
+    # natural» named after them, so it reaches «Enviada»; any other case with none stops before it.
+    client = next(iter(sorted(a for a in recipients if domain_of(a) in FREE_MAIL_DOMAINS)), None)
+    particular = f"{ix.sender_names.get(client) or client} (particular)" if client and len(recipients) == 1 else None
+    if particular and any(c.organization_id is None for c in order):
+        reasons.append(f"cliente persona natural: el caso queda a nombre de «{particular}»")
+    elif any(c.organization_id is None and _TO_QUOTING[c.stage] for c in order):
+        reasons.append("un caso sin institución confirmada no pasa a «Enviada» hasta que alguien la nombre")
     note = _note("R16", reasons)
     steps: list[dict[str, Any]] = []
     for c in order:
@@ -1719,7 +1754,13 @@ def _authored_sent_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
             # whose case is another (production 2026-10-19/20: Ygaero, Golden Omega); the number and
             # revision letter of an approved quote do not.
             steps.append(_link_step(c, e.id, "mentions", note))
-        steps += [_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]]
+        if c.organization_id is None and particular and _TO_QUOTING[c.stage]:
+            steps.append({"command": "add_case_organization", "inputs": {
+                "opportunity_id": "@case", "opportunity_version": "@case_version", "role": "requesting_institution",
+                "new_organization": {"name": particular[:500], "kind": "individual"}, "note": note}})
+        named = c.organization_id is not None or particular is not None
+        steps += [_advance_step(stage, note) for stage in _TO_QUOTING[c.stage]
+                  if named or stage not in STAGES_REQUIRING_A_REQUESTING_INSTITUTION]
     first, main = order[0], order[-1]
     return PlannedAction(e.id, "R16", AUTO, tuple(reasons), case_id=main.id, case_title=main.title,
                          organization_id=main.organization_id, quote_number=labels[0], commands=tuple(steps),
@@ -1741,7 +1782,7 @@ def _duplicate_request_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None
 
     Only when: the email is on exactly one case the Cotizador opened (`opened_with_quote_id`), whose
     opening quote is now sent; one of the email's recipients is one of the people of exactly one other
-    open request (`_WAITING_STAGES`, not «En pausa», not on this email) holding no approved or sent
+    open request (`_WAITING_STAGES`, not «En pausa»; on this email too — the quote answered it, owner 2026-11-25) holding no approved or sent
     quote (a draft or a voided one may stay on it); and the two name the same institution, or one of
     them none, or the Cotizador case's is the name typed when it was opened (`organization_typed`).
     Two such requests, a closed one, a quote of its own already out, or another institution → nothing.
@@ -1761,7 +1802,7 @@ def _duplicate_request_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None
     recipients = {a for a in addresses(part for v in e.recipients for part in (v or "").split(";"))
                   if domain_of(a) not in OWN_DOMAINS}
     found = [c for c in ix.cases.values()
-             if c.id not in e.linked_case_ids and not c.closed and c.stage in _WAITING_STAGES
+             if c.id != sending.id and not c.closed and c.stage in _WAITING_STAGES
              and c.paused_until is None and recipients & set(c.people)
              and not any(r.status in ("approved", "sent") for q in c.quotes for r in q.revisions)]
     if len(found) != 1:
@@ -1793,28 +1834,38 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     Only an email already on exactly one open case in «Enviada» (R1, R12 or a person put it there),
     sent after that case's live quote and in the last `REPLY_WINDOW_DAYS`. Never our own mail, a
     supplier's, or an automatic reply, and never a case put «En pausa»: a reply like «se evaluará el
-    año entrante» is why it was paused. «Quitar» moves the case back to «Enviada»."""
-    if e.direction != "inbound" or len(e.linked_case_ids) != 1:
+    año entrante» is why it was paused. Once the pause is over, a reply that came in before its last
+    day is read, however old (owner 2026-11-25). A reply linked to no case, on a thread whose open
+    cases are all that client's (one institution, or the sender is one of the people of each), moves
+    every one of them in «Enviada», however old (owner 2026-11-25: R1 cannot say which quote it
+    answers). One pass moves a case once, whichever reply it reads first.
+    «Quitar» moves them back to «Enviada»."""
+    if e.direction != "inbound":
+        return None
+    if not e.linked_case_ids:
+        return _shared_thread_reply(e, ix)
+    if len(e.linked_case_ids) != 1:
         return None
     at, since = _instant(e.sent_at), _instant(ix.reply_since)
-    if at is None or since is None or at < since:
+    if at is None or since is None:
         return None
     c = ix.cases.get(e.linked_case_ids[0])
     if c is None or c.closed or c.stage != "quoting" or c.paused_until is not None:
         return None
-    sender = _sender(e)
-    if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+    if at < since:
+        # A reply that came in while the case was paused is read once the pause is over, within the
+        # same window from that day (audit 2026-11-25: a client replied during its pause, and the
+        # window had passed by the time it came back).
+        back = _instant(f"{c.pause_ended}T00:00:00-03:00") if c.pause_ended else None
+        if back is None or at > back:
+            return None
+    if not _reply_from_the_client(e, ix) or c.id in ix.moved_by_reply:
         return None
-    if sender is not None and ix.is_supplier_address(sender):
+    answered = _answered(c, at)
+    if answered is None:
         return None
-    subject = fold(e.subject)
-    if any(p in subject for p in AUTO_REPLY_PHRASES):
-        return None
-    answered = [(sent, q, r) for q in c.quotes for r in _live_revisions(q)
-                if (sent := _instant(r.sent_at)) is not None and sent < at]
-    if not answered:
-        return None
-    _, q, r = max(answered, key=lambda x: x[0])
+    ix.moved_by_reply.add(c.id)
+    q, r = answered
     label = _revision_label(q.quote_number, r.revision_no)
     reasons = [f"el cliente respondió en el caso después de recibir la cotización {label}"]
     note = _note("R17", reasons)
@@ -1822,6 +1873,65 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                          organization_id=c.organization_id, quote_number=label,
                          commands=(_advance_step("negotiating", note),),
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+def _reply_from_the_client(e: MailEvidence, ix: _Index) -> bool:
+    """R17's sender test: not ours, not a supplier's, not an automatic reply."""
+    sender = _sender(e)
+    if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+        return False
+    if ix.is_supplier_address(sender) or is_automatic_mail(e.sender, e.triage_class):
+        return False
+    subject = fold(e.subject)
+    return not any(p in subject for p in AUTO_REPLY_PHRASES)
+
+
+def _answered(c: CaseState, at: datetime) -> tuple[CaseQuote, QuoteRevision] | None:
+    """The newest live quote of the case sent before `at`: what a reply then answers."""
+    answered = [(sent, q, r) for q in c.quotes for r in _live_revisions(q)
+                if (sent := _instant(r.sent_at)) is not None and sent < at]
+    if not answered:
+        return None
+    _, q, r = max(answered, key=lambda x: x[0])
+    return q, r
+
+
+def _shared_thread_reply(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R17 on a thread two open cases of one client share (production 2026-10-26): R1 links the
+    reply to neither, so each case in «Enviada» moves on its own step (see `_client_reply_rule`)."""
+    # No window here (owner 2026-11-25: «move all»): the backlog on the 2026-11-23 replica was two
+    # clients' cases, and a reply nobody linked has no other way to move them.
+    at = _instant(e.sent_at)
+    if at is None or not e.thread_id or not _reply_from_the_client(e, ix):
+        return None
+    open_cases = sorted((t for t in ix.by_thread.get(e.thread_id, []) if not t.closed), key=lambda t: t.id)
+    if len(open_cases) < 2:
+        return None  # one open case: R1 links the reply there and R17 reads it next pass
+    sender = (_sender(e) or "").lower()
+    orgs = {t.organization_id for t in open_cases}
+    if not ((len(orgs) == 1 and None not in orgs)
+            or all(sender in set(t.people) | set(t.participants) for t in open_cases)):
+        return None  # not all one client's: a person decides
+    moving = [(t, a) for t in open_cases if t.stage == "quoting" and t.paused_until is None
+              and t.id not in ix.moved_by_reply and (a := _answered(t, at)) is not None]
+    if not moving:
+        return None
+    ix.moved_by_reply.update(t.id for t, _ in moving)
+    labels = [_revision_label(q.quote_number, r.revision_no) for _, (q, r) in moving]
+    reasons = [f"el cliente respondió en el hilo de {'las cotizaciones' if len(labels) > 1 else 'la cotización'} "
+               f"{', '.join(labels)}, de {len(open_cases)} casos suyos: "
+               f"{'pasan' if len(moving) > 1 else 'pasa'} a «Conversación»"]
+    note = _note("R17", reasons)
+    first = moving[0][0]
+    return PlannedAction(e.id, "R17", AUTO, tuple(reasons), case_id=first.id, case_title=first.title,
+                         organization_id=first.organization_id, quote_number=labels[0],
+                         # The action's own case moves last: the executor's context ends on it, so
+                         # the receipt names that case (review 2026-11-25).
+                         commands=tuple({"command": "advance_case_stage", "inputs": {
+                             "opportunity_id": t.id, "opportunity_version": t.version,
+                             "stage": "negotiating", "note": note}} for t, _ in [*moving[1:], moving[0]]),
+                         candidates=tuple(t.id for t, _ in moving) if len(moving) > 1 else (),
+                         context={"case": first.id, "case_version": first.version, "from_stage": first.stage})
 
 
 #: How much of the triage's summary R18's reason quotes.
@@ -1834,11 +1944,18 @@ BOUNCE_SENDER = re.compile(r"^(?:mailer-daemon|postmaster|mail-daemon|bounces?)(
 AUTOMATIC_CLASSES: frozenset[str] = frozenset({"bounce", "auto_reply"})
 
 
+#: A robot's address anywhere in its local part — Google Drive's «drive-shares-dm-noreply@», Gemini's
+#: meeting notes: no person on the client's side wrote it (audit 2026-11-25: it read as «Respondió»).
+ROBOT_SENDER = re.compile(r"(?:^|[._+-])(?:no-?reply|donotreply|do-not-reply)(?:[._+-]|@)|^gemini-notes@",
+                          re.IGNORECASE)
+
+
 def is_automatic_mail(sender: str | None, triage_class: str | None) -> bool:
-    """A bounce or an automatic reply: by the triage's class, else by a delivery system's address."""
+    """A bounce, an automatic reply or a robot's notice: by the triage's class, else by its address."""
     if triage_class in AUTOMATIC_CLASSES:
         return True
-    return any(BOUNCE_SENDER.match(addr) for _, addr in getaddresses([sender or ""]) if "@" in addr)
+    return any(BOUNCE_SENDER.match(addr) or ROBOT_SENDER.search(addr)
+               for _, addr in getaddresses([sender or ""]) if "@" in addr)
 
 
 def _from_the_client(e: MailEvidence, ix: _Index) -> bool:

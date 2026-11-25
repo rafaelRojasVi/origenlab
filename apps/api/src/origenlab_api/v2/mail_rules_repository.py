@@ -246,7 +246,9 @@ _CASES_SQL = """
 select o.id::text as id, o.title, o.stage, o.version, o.organization_id::text as organization_id,
        o.closed_at is not null as closed,
        case when o.paused_until > (now() at time zone 'America/Santiago')::date
-            then o.paused_until end as paused_until
+            then o.paused_until end as paused_until,
+       case when o.paused_until <= (now() at time zone 'America/Santiago')::date
+            then o.paused_until end as pause_ended
   from crm.opportunity o
  where o.kind = 'sale'
 """
@@ -516,6 +518,7 @@ def read_snapshot(cur: Any, *, settle_days: int = SETTLE_DAYS) -> tuple[Snapshot
                   quotes=tuple(by_case.get(r["id"], ())),
                   people=tuple(sorted(case_people.get(r["id"], ()))),
                   paused_until=r["paused_until"].isoformat() if r["paused_until"] else None,
+                  pause_ended=r["pause_ended"].isoformat() if r["pause_ended"] else None,
                   participants=tuple(sorted(participants.get(r["id"], ()))),
                   opened_with_quote_id=opened_by_cotizador.get(r["id"], (None, False))[0],
                   organization_typed=opened_by_cotizador.get(r["id"], (None, False))[1])
@@ -984,11 +987,21 @@ class MailRulesRepository(V2CaseCommandRepository):
                     done.append({"command": "end_case_participant", "participant_id": participant_id})
         if rule == "R17":
             # Back to «Enviada» — unless a person moved the case since; then there is nothing of ours to undo.
-            cur.execute("select stage, version from crm.opportunity where id = %s for update", (case_id,))
-            row = cur.fetchone()
-            if row is not None and row[0] == "negotiating":
-                run(ADVANCE_CASE_STAGE, {"opportunity_id": case_id, "opportunity_version": int(row[1]),
-                                         "stage": "quoting", "note": note})
+            # A reply on a shared thread moved several cases, one step each (`_shared_thread_reply`).
+            moved = [s.get("opportunity_id") for s in action.get("steps") or []
+                     if s.get("command") == ADVANCE_CASE_STAGE and s.get("opportunity_id")] or [case_id]
+            for moved_id in dict.fromkeys(moved):
+                cur.execute("select stage, version from crm.opportunity where id = %s for update", (moved_id,))
+                row = cur.fetchone()
+                # Only while R17's move is still the case's latest: a person who moved it back and
+                # forth since made a decision of their own (review 2026-11-25).
+                cur.execute("select command_receipt_id::text from crm.domain_event where aggregate_id = %s "
+                            "and event_type = 'opportunity.staged' order by seq desc limit 1", (moved_id,))
+                last = cur.fetchone()
+                ours = last is None or last[0] is None or last[0] == action.get("command_receipt_id")
+                if row is not None and row[0] == "negotiating" and ours:
+                    run(ADVANCE_CASE_STAGE, {"opportunity_id": moved_id, "opportunity_version": int(row[1]),
+                                             "stage": "quoting", "note": note})
         if rule == "R23":
             # The request back where it was — unless a person reopened or closed it otherwise since.
             cur.execute("select stage, version, close_reason from crm.opportunity where id = %s for update", (case_id,))

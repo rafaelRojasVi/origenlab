@@ -158,3 +158,10 @@ def test_the_revision_letter_is_the_sent_one() -> None:
                        revisions=(rev("r-1", "void"), rev("r-2", "sent", no=2)))
     [a] = r23(replace(cotizador_case(), quotes=(sent_b,)), request_case())
     assert a.quote_number == "01342A-26"
+
+
+def test_a_request_answered_on_its_own_thread_is_closed_too() -> None:
+    # Production 2026-11-25: the quote of the Cotizador case was sent as the reply to the request, so
+    # the email is on both cases; the request, with no quote of its own, is the same purchase.
+    [a] = r23(cotizador_case(), request_case(), evidence=mail(linked_case_ids=("c-cotizador", "c-request")))
+    assert a.case_id == "c-request"

@@ -189,7 +189,8 @@ def test_email_only_participant_resolves_to_the_person_who_later_owns_the_addres
                 "valid_from, confirmation) values (%s, %s, 'quote_recipient', true, current_date, "
                 "'machine_proposed')", (case_id, point))
     card, _ = _card(dsn, case_id)
-    assert card["contact"] is None or card["contact"]["source"] != "crm_participant", "no person yet: not a CRM contact"
+    # No person yet: not a CRM person, but the case's contact all the same, by its address.
+    assert (card["contact"]["source"], card["contact"]["address"]) == ("gmail_recipient", address)
 
     person = _owner(dsn, "insert into crm.person (display_name, confirmation) values ('Persona Tardía', "
                          "'machine_proposed') returning id")[0][0]
