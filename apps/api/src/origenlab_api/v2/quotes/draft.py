@@ -40,10 +40,14 @@ class DraftItemLine(_Model):
                                        decimal_places=6)  # None + markup: default by item type
     typed_unit_price: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=6)
     is_principal: bool = False
+    # «Descuento %»: the fraction off the line's price, 0.09 = 9 %. 0 or None = no discount.
+    discount_pct: Decimal | None = Field(default=None, ge=0, lt=1, max_digits=5, decimal_places=4)
     line_note_es: Annotated[str | None, StringConstraints(min_length=1, max_length=1000)] = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "DraftItemLine":
+        if self.discount_pct == 0:
+            self.discount_pct = None
         if (self.unit_cost is None) != (self.cost_currency is None):
             raise ValueError("unit_cost and cost_currency go together")
         if self.margin_mode == "none" and self.typed_unit_price is None:

@@ -115,13 +115,13 @@ insert into crm.quote_line
     (quote_revision_id, line_no, line_kind, description, product_id, quantity,
      cost_currency, unit_cost, fx_rate, fx_as_of, fx_source, margin_mode, margin_pct,
      unit_price_qc, line_total_qc, is_principal, allocated_to_line_no, item_type, expense_method,
-     calc_inputs, supplier_organization_id, cost_observation_id, line_note_es)
+     calc_inputs, supplier_organization_id, cost_observation_id, line_note_es, discount_pct, list_unit_price_qc)
 values (%(revision_id)s::uuid, %(line_no)s, %(line_kind)s, %(description)s, %(product_id)s::uuid,
         %(quantity)s::numeric, %(cost_currency)s, %(unit_cost)s::numeric, %(fx_rate)s::numeric,
         %(fx_as_of)s::date, %(fx_source)s, %(margin_mode)s, %(margin_pct)s::numeric,
         %(unit_price_qc)s::numeric, %(line_total_qc)s::numeric, %(is_principal)s, %(allocated_to_line_no)s,
         %(item_type)s, %(expense_method)s, %(calc_inputs)s::jsonb, %(supplier_organization_id)s::uuid,
-        %(cost_observation_id)s::uuid, %(line_note_es)s)
+        %(cost_observation_id)s::uuid, %(line_note_es)s, %(discount_pct)s::numeric, %(list_unit_price_qc)s::numeric)
 """
 
 
@@ -721,7 +721,7 @@ def _insert_lines(cur: Any, revision_id: str, resolved: Resolved, result: Any, t
     computed = {r.line_no: r for r in result.lines}
     blank = {"product_id": None, "item_type": None, "expense_method": None, "calc_inputs": None,
              "supplier_organization_id": None, "cost_observation_id": None, "line_note_es": None,
-             "allocated_to_line_no": None}
+             "allocated_to_line_no": None, "discount_pct": None, "list_unit_price_qc": None}
     rows = []
     for item in resolved.items:
         r = computed[item.line_no]
@@ -734,6 +734,8 @@ def _insert_lines(cur: Any, revision_id: str, resolved: Resolved, result: Any, t
             "unit_price_qc": r.unit_price, "line_total_qc": r.line_total, "is_principal": r.is_principal,
             "item_type": item.item_type, "supplier_organization_id": item.supplier_organization_id,
             "cost_observation_id": item.cost_observation_id, "line_note_es": item.draft.line_note_es,
+            "discount_pct": r.discount_pct,  # kept on a line not priced yet, so reopening the draft keeps it
+            "list_unit_price_qc": r.list_price if r.discount_pct is not None else None,
         })
     target = expense_target(resolved, result)
     for expense in resolved.expenses:
@@ -1020,7 +1022,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
                principal_rule = %(principal_rule)s, fx_override_reasons = %(fx_override_reasons)s::jsonb,
                recipient_participant_id = coalesce(%(recipient)s::uuid, recipient_participant_id),
                client_details = %(client_details)s::jsonb, tax_rate = %(tax_rate)s::numeric,
-               subtotal = %(net)s, discount_total = 0, tax_base = %(net)s, tax_total = %(iva)s,
+               subtotal = %(subtotal)s, discount_total = %(discount)s, tax_base = %(net)s, tax_total = %(iva)s,
                grand_total = %(total)s, totals_computed_at = now(), version = version + 1, updated_at = now()
          where id = %(id)s::uuid and version = %(version)s
         returning version, recipient_participant_id::text as recipient_participant_id
@@ -1033,7 +1035,7 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
          "validity_days": terms.validity_days, "expense_method": draft.expense_method,
          "allocation_mode": draft.allocation_mode, "principal_rule": draft.principal_rule,
          "fx_override_reasons": json.dumps(fx_override_reasons(draft), ensure_ascii=False),
-         "recipient": recipient, "net": result.net, "iva": result.iva, "total": result.total,
+         "recipient": recipient, "subtotal": result.subtotal, "discount": result.discount_total, "net": result.net, "iva": result.iva, "total": result.total,
          "client_details": (json.dumps(stored, ensure_ascii=False)
                             if draft.client and (stored := draft.client.stored()) else None),
          "tax_rate": tax_rate, "id": revision_id, "version": expected_version},
@@ -1377,14 +1379,15 @@ def _handle_approve_quote_revision(self: "V2QuoteRepository", cur: Any, operator
         """
         update crm.quote_revision
            set status = 'approved', approved_at = now(), approved_by_operator_id = %(operator)s::uuid,
-               valid_until = %(valid_until)s, subtotal = %(net)s, discount_total = 0, tax_base = %(net)s,
+               valid_until = %(valid_until)s, subtotal = %(subtotal)s, discount_total = %(discount)s, tax_base = %(net)s,
                tax_total = %(iva)s, grand_total = %(total)s, totals_computed_at = now(),
                party_snapshot = %(snapshot)s::jsonb, party_snapshot_version = 1,
                version = version + 1, updated_at = now()
          where id = %(id)s::uuid and version = %(version)s
         returning version
         """,
-        {"operator": operator.operator_id, "valid_until": valid_until, "net": result.net, "iva": result.iva,
+        {"operator": operator.operator_id, "valid_until": valid_until, "subtotal": result.subtotal,
+         "discount": result.discount_total, "net": result.net, "iva": result.iva,
          "total": result.total, "snapshot": json.dumps(snapshot, ensure_ascii=False), "id": revision_id,
          "version": expected_version},
     )
@@ -1478,7 +1481,7 @@ _LINE_COPY_COLUMNS = (
     "line_no", "line_kind", "description", "product_id", "quantity", "cost_currency", "unit_cost", "fx_rate",
     "fx_as_of", "fx_source", "margin_mode", "margin_pct", "unit_price_qc", "line_total_qc", "is_principal",
     "allocated_to_line_no", "item_type", "expense_method", "calc_inputs", "supplier_organization_id",
-    "cost_observation_id", "line_note_es",
+    "cost_observation_id", "line_note_es", "discount_pct", "list_unit_price_qc",
 )
 _OPEN_REVISION = "quote_revision_one_open_per_quote"
 

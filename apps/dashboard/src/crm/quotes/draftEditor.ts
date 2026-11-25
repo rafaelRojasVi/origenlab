@@ -170,6 +170,7 @@ const OPTIONAL_ITEM_FIELDS = [
   "cost_observation_id",
   "margin_pct",
   "typed_unit_price",
+  "discount_pct",
   "line_note_es",
 ] as const;
 
@@ -501,6 +502,10 @@ export function draftProblems(draft: QuoteDraft): DraftProblem[] {
       add("items.typed_unit_price", `Escribe el precio de la línea ${n}.`, i);
     } else if (!blank(item.typed_unit_price)) {
       add("items.typed_unit_price", decimalProblem(item.typed_unit_price, "el precio"), i);
+    }
+    if (!blank(item.discount_pct)) {
+      const bad = decimalProblem(item.discount_pct, "el descuento", { places: 4, digits: null });
+      add("items.discount_pct", bad ?? (Number(item.discount_pct) >= 1 ? `El descuento de la línea ${n} debe ser menor que 100 %.` : null), i);
     }
     if (tooLong(item.line_note_es, 1000)) add("items.line_note_es", `La nota de la línea ${n} es demasiado larga (máximo 1000).`, i);
   });

@@ -319,6 +319,12 @@ def fx_overrides_from_row(value: dict[str, Any] | None) -> list[DraftFxOverride]
     return out
 
 
+def _typed_price(row: dict[str, Any]) -> Any:
+    """A typed (`none`) line's price: its list price when discounted, else the stored unit price."""
+    listed = row.get("list_unit_price_qc")
+    return listed if listed is not None else row["unit_price_qc"]
+
+
 def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> QuoteDraft:
     """The draft a stored revision was saved from (the inverse of `save-quote-draft`).
 
@@ -341,8 +347,9 @@ def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> Qu
                 supplier_organization_id=row["supplier_organization_id"],
                 cost_observation_id=row["cost_observation_id"], margin_mode=row["margin_mode"],
                 margin_pct=None if none else row["margin_pct"],
-                typed_unit_price=row["unit_price_qc"] if none else None,
-                is_principal=bool(row["is_principal"]) and manual, line_note_es=row["line_note_es"]))
+                typed_unit_price=_typed_price(row) if none else None,
+                is_principal=bool(row["is_principal"]) and manual, discount_pct=row.get("discount_pct"),
+                line_note_es=row["line_note_es"]))
         elif row["expense_method"] == "manual":
             expenses.append(DraftExpenseLine(label=row["description"], amount=row["unit_cost"],
                                              currency=row["cost_currency"]))
@@ -383,7 +390,8 @@ def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]
     items = tuple(
         ItemLine(r["line_no"], Decimal(r["quantity"]), r["item_type"] or "other", r["unit_cost"], r["cost_currency"],
                  False, r["margin_mode"], None if r["margin_mode"] == "none" else r["margin_pct"],
-                 r["unit_price_qc"] if r["margin_mode"] == "none" else None, bool(r["is_principal"]))
+                 _typed_price(r) if r["margin_mode"] == "none" else None, bool(r["is_principal"]),
+                 r.get("discount_pct"))
         for r in ordered if r["line_kind"] == "item")
     expenses = tuple(
         ExpenseLine(r["line_no"], r["description"], r["unit_cost"] or Decimal(0), r["cost_currency"] or "CLP",
@@ -463,7 +471,8 @@ def resolve_draft(cur: Any, draft: QuoteDraft, params: dict[str, Decimal | str],
     engine_input = EngineInput(
         fx=fx,
         items=tuple(ItemLine(i.line_no, i.draft.quantity, i.item_type, i.unit_cost, i.cost_currency, i.imported,
-                             i.draft.margin_mode, i.margin_pct, i.draft.typed_unit_price, i.draft.is_principal)
+                             i.draft.margin_mode, i.margin_pct, i.draft.typed_unit_price, i.draft.is_principal,
+                             i.draft.discount_pct)
                     for i in items),
         expenses=tuple(expenses),
         principal_rule=draft.principal_rule,
@@ -503,6 +512,7 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
             "margin_mode": item.draft.margin_mode, "margin_pct": _s(item.margin_pct),
             "cost_clp_unit": _s(r.cost_clp_unit), "expense_to_line": _s(r.expense_to_line),
             "unit_base": _s(r.unit_base), "unit_price": _s(r.unit_price), "line_total": _s(r.line_total),
+            "list_price": _s(r.list_price), "discount_pct": _s(r.discount_pct), "discount_total": _s(r.discount_total),
             "real_markup": _s(r.real_markup), "gross_margin": _s(r.gross_margin),
             "margin_state": r.margin_state, "is_principal": r.is_principal,
         })
@@ -515,7 +525,8 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
         "expenses": [{"line_no": e.line_no, "label": e.label, "amount": _s(e.amount), "currency": e.currency,
                       "method": e.method, "calc_inputs": e.calc_inputs, "allocated_to_line_no": target}
                      for e in resolved.expenses],
-        "totals": {"net": _s(result.net), "iva": _s(result.iva), "total": _s(result.total),
+        "totals": {"subtotal": _s(result.subtotal), "discount_total": _s(result.discount_total),
+                   "net": _s(result.net), "iva": _s(result.iva), "total": _s(result.total),
                    "cost_base": _s(result.cost_base), "expenses_clp": _s(result.expenses_clp),
                    "markup": _s(result.markup), "margin": _s(result.margin), "margin_state": result.margin_state},
         "principal_line_no": result.principal_line_no,

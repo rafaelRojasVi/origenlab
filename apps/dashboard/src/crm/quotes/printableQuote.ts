@@ -15,6 +15,7 @@
 import { computedLineFor, type DraftEditorState } from "./draftEditor";
 import { type ClientLines, clientLines, PRINTED_TERMS, readSnapshot } from "./IssuedView";
 import type { QuoteRecipientPick, QuoteWorkspace } from "./quoteApi";
+import { subtractAmounts } from "./quoteFormat";
 import { quoteLabel } from "./quoteLabel";
 
 export interface PrintLine {
@@ -23,8 +24,11 @@ export interface PrintLine {
   productId: string | null;
   note: string | null;
   quantity: string | null;
+  /** The charged unit price (after any discount). */
   unitPrice: string | null;
   total: string | null;
+  /** Only a discounted line: the list price, the discount as a fraction and the per-unit amount off. */
+  discount?: { listPrice: string; pct: string; perUnit: string } | null;
   /** A tender offer only: this line's IVA, and its neto plus IVA. */
   iva?: string | null;
   grossTotal?: string | null;
@@ -44,6 +48,8 @@ export interface PrintableQuote {
   client: ClientLines;
   lines: PrintLine[];
   totals: { net: string | null; iva: string | null; total: string | null };
+  /** Only when some line has a discount: the list subtotal and the amount off, above the neto. */
+  discountTotals: { subtotal: string; discount: string } | null;
   taxRate: string | null;
   terms: { label: string; value: string }[];
   clientNote: string | null;
@@ -173,6 +179,15 @@ function termsOf(source: Record<string, unknown>, validityDays: number | null) {
   return out;
 }
 
+function discountOf(pct: string | null | undefined, list: string | null | undefined, final: string | null | undefined) {
+  const perUnit = subtractAmounts(list, final);
+  return pct && Number(pct) > 0 && list && perUnit ? { listPrice: list, pct, perUnit } : null;
+}
+
+function discountTotalsOf(subtotal: string | null | undefined, discount: string | null | undefined) {
+  return subtotal && discount && Number(discount) > 0 ? { subtotal, discount } : null;
+}
+
 export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorState; stale: boolean } | null, now = new Date()): PrintableQuote | null {
   const cur = ws.current;
   if (!cur || !isPrintable(ws)) return null;
@@ -195,6 +210,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
         quantity: l.quantity,
         unitPrice: l.unit_price_qc,
         total: l.line_total_qc,
+        discount: discountOf(l.discount_pct, l.list_unit_price_qc, l.unit_price_qc),
       }));
     return {
       label,
@@ -205,9 +221,10 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       institution: snap?.institution ?? caseInstitution,
       recipient: snap?.recipient ?? null,
       client: snap?.client ?? clientLines(null),
-      lines: tender && !isWithoutIva(cur.tax_rate) ? withIva(lines, cur.tax_rate ?? "0.19", cur.subtotal, cur.tax_total) : lines,
+      lines: tender && !isWithoutIva(cur.tax_rate) ? withIva(lines, cur.tax_rate ?? "0.19", cur.tax_base ?? cur.subtotal, cur.tax_total) : lines,
       tender,
-      totals: { net: cur.subtotal, iva: cur.tax_total, total: cur.grand_total },
+      totals: { net: cur.tax_base ?? cur.subtotal, iva: cur.tax_total, total: cur.grand_total },
+      discountTotals: discountTotalsOf(cur.subtotal, cur.discount_total),
       taxRate: cur.tax_rate,
       terms: termsOf(snap?.terms ?? {}, snap?.validityDays ?? cur.validity_days),
       clientNote: text(snap?.terms.client_notes_es),
@@ -230,6 +247,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
       quantity: item.quantity,
       unitPrice: priced?.unit_price ?? null,
       total: priced?.line_total ?? null,
+      discount: discountOf(priced?.discount_pct, priced?.list_price, priced?.unit_price),
     };
   });
   // The draft's rate: 0 «Sin IVA»; a revision stored at 0 and unticked prices at the usual rate again.
@@ -256,6 +274,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
     lines: tender && !draft.without_iva ? withIva(lines, draftRate, computed?.totals.net ?? null, computed?.totals.iva ?? null) : lines,
     tender,
     totals: computed ? { net: computed.totals.net, iva: computed.totals.iva, total: computed.totals.total } : { net: null, iva: null, total: null },
+    discountTotals: computed ? discountTotalsOf(computed.totals.subtotal, computed.totals.discount_total) : null,
     taxRate: draft.without_iva ? "0" : draftRate,
     terms: termsOf(terms, validity ?? null),
     clientNote: text(draft.terms.client_notes_es),

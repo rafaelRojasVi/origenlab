@@ -344,6 +344,29 @@ describe("ProductsSection — the table", () => {
     expect(screen.getByLabelText("Recargo de la línea 1")).toHaveValue("40");
   });
 
+  it("«Dcto. %» sends the fraction; the price box keeps the list price and the final price is shown", async () => {
+    const { latest } = await setup();
+    const dcto = screen.getByLabelText("Descuento (%) de la línea 1");
+    fireEvent.focus(dcto);
+    fireEvent.change(dcto, { target: { value: "9" } });
+    expect(latest.draft.items[0]).toMatchObject({ discount_pct: "0.09", margin_mode: "markup" });
+    fireEvent.change(dcto, { target: { value: "" } });
+    expect(latest.draft.items[0].discount_pct).toBeNull();
+    fireEvent.change(dcto, { target: { value: "100" } });
+    expect(draftProblems(latest.draft).map((p) => p.field)).toContain("items.discount_pct");
+    expect(dcto).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("a discounted line shows its list price in the box, the final price and what is taken off", async () => {
+    const priced = computed();
+    priced.lines[0] = { ...priced.lines[0], list_price: "11620000", discount_pct: "0.09", unit_price: "10574200", line_total: "10574200" };
+    await setup({ priced, initial: { ...draft(), items: [{ ...draft().items[0], discount_pct: "0.09" }, draft().items[1]] } });
+    expect(screen.getByLabelText("Precio unitario de la línea 1")).toHaveValue("$ 11.620.000");
+    expect(screen.getByLabelText("Descuento (%) de la línea 1")).toHaveValue("9");
+    expect(screen.getByText(/\$ 10\.574\.200/, { selector: "span.font-semibold" })).toBeInTheDocument();
+    expect(screen.getByText(/−\$ 1\.045\.800/)).toBeInTheDocument();
+  });
+
   it("edits the quantity with a decimal comma", async () => {
     const { latest } = await setup();
     const qty = screen.getByLabelText("Cantidad de la línea 2");

@@ -8,7 +8,7 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 grant origenlab_api to session_user with set true, inherit false;
 set role origenlab_owner;
-select plan(27);
+select plan(33);
 
 -- Fixture (rolled back): an operator, an organization, a case, a quote, one authored draft
 -- revision and two approved revisions.
@@ -118,6 +118,24 @@ select throws_ok($$ update crm.quote_revision set status = 'approved'
   where id = '97000000-0000-4000-8000-000000000083' $$, '23514', null, 'a void revision never comes back');
 select throws_ok($$ delete from crm.quote_revision where id = '97000000-0000-4000-8000-000000000083' $$,
   '23514', null, 'an issued revision is never deleted');
+
+-- Slice 9: a line discount is a fraction in (0, 1), only on an item line, always with its list price.
+select has_column('crm', 'quote_line', 'discount_pct', 'quote_line.discount_pct exists');
+select lives_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, item_type, discount_pct, list_unit_price_qc, unit_price_qc, line_total_qc)
+  values ('97000000-0000-4000-8000-000000000082', 21, 'item', 'Equipo con descuento', 1, 'equipment', 0.09, 1000, 910, 910) $$,
+  'an item line takes a discount with its list price');
+select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, item_type, discount_pct, list_unit_price_qc)
+  values ('97000000-0000-4000-8000-000000000082', 22, 'item', 'Descuento total', 1, 'equipment', 1, 1000) $$,
+  '23514', null, 'a discount of 100 % is refused');
+select lives_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, item_type, discount_pct)
+  values ('97000000-0000-4000-8000-000000000082', 23, 'item', 'Sin precio aún', 1, 'equipment', 0.1) $$,
+  'a line not priced yet keeps its discount');
+select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, item_type, list_unit_price_qc)
+  values ('97000000-0000-4000-8000-000000000082', 25, 'item', 'Lista sin descuento', 1, 'equipment', 100) $$,
+  '23514', null, 'a list price goes only with a discount');
+select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, discount_pct, list_unit_price_qc)
+  values ('97000000-0000-4000-8000-000000000082', 24, 'logistics', 'Flete', 1, 0.1, 100) $$,
+  '23514', null, 'only an item line takes a discount');
 
 select * from finish();
 rollback;

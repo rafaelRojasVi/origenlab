@@ -215,6 +215,10 @@
 .qp-col-no { width: 28px; color: #4b5c57; }
 .qp-item { display: block; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
 .qp-model { font-family: var(--font-mono, "IBM Plex Mono", ui-monospace, monospace); font-weight: 500; color: #0f766e; }
+.qp-was, .qp-off, .qp-final { display: block; }
+.qp-was { color: #4b5c57; text-decoration: line-through; }
+.qp-off { font-size: 11px; color: #4b5c57; }
+.qp-final { font-weight: 700; }
 .qp-note { display: block; margin-top: 3px; font-size: 12px; color: #4b5c57; white-space: pre-line; }
 
 /* ── totals ──────────────────────────────────────────────────────────────────*/
