@@ -240,6 +240,9 @@ class CaseState:
     people: tuple[str, ...] = ()
     #: «En pausa hasta…»: the due date of the case's open «Retomar: …» task still in the future (R17).
     paused_until: str | None = None
+    #: The Santiago day a pause of the case ended, when it is today or past (R17 reads a reply that came
+    #: in while it was paused from that day).
+    pause_ended: str | None = None
     #: Lower-case addresses of the case's current participants (R21 adds the ones still missing).
     participants: tuple[str, ...] = ()
     #: The quote whose `create-quote` opened this case — «Nueva cotización» for a client (R23).
@@ -644,6 +647,8 @@ class _Index:
                 self.by_domain.setdefault(d.lower(), []).append(o)
         #: New quote keys and new domains an earlier email in this same plan already claims.
         self.claimed_keys: dict[tuple[int, int], str] = {}
+        #: Cases R17 moves to «Conversación» in this pass: two replies never move one case twice.
+        self.moved_by_reply: set[str] = set()
         self.claimed_domains: dict[str, str] = {}
         #: Our own price requests to suppliers: (when sent, the supplier domains it went to). V1
         #: marks ANY outbound «RFQ / request for quotation» subject as `supplier_rfq` — a reply to
@@ -1829,28 +1834,38 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     Only an email already on exactly one open case in «Enviada» (R1, R12 or a person put it there),
     sent after that case's live quote and in the last `REPLY_WINDOW_DAYS`. Never our own mail, a
     supplier's, or an automatic reply, and never a case put «En pausa»: a reply like «se evaluará el
-    año entrante» is why it was paused. «Quitar» moves the case back to «Enviada»."""
-    if e.direction != "inbound" or len(e.linked_case_ids) != 1:
+    año entrante» is why it was paused. Once the pause is over, a reply that came in before its last
+    day is read, however old (owner 2026-11-25). A reply linked to no case, on a thread whose open
+    cases are all that client's (one institution, or the sender is one of the people of each), moves
+    every one of them in «Enviada», however old (owner 2026-11-25: R1 cannot say which quote it
+    answers). One pass moves a case once, whichever reply it reads first.
+    «Quitar» moves them back to «Enviada»."""
+    if e.direction != "inbound":
+        return None
+    if not e.linked_case_ids:
+        return _shared_thread_reply(e, ix)
+    if len(e.linked_case_ids) != 1:
         return None
     at, since = _instant(e.sent_at), _instant(ix.reply_since)
-    if at is None or since is None or at < since:
+    if at is None or since is None:
         return None
     c = ix.cases.get(e.linked_case_ids[0])
     if c is None or c.closed or c.stage != "quoting" or c.paused_until is not None:
         return None
-    sender = _sender(e)
-    if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+    if at < since:
+        # A reply that came in while the case was paused is read once the pause is over, within the
+        # same window from that day (audit 2026-11-25: a client replied during its pause, and the
+        # window had passed by the time it came back).
+        back = _instant(f"{c.pause_ended}T00:00:00-03:00") if c.pause_ended else None
+        if back is None or at > back:
+            return None
+    if not _reply_from_the_client(e, ix) or c.id in ix.moved_by_reply:
         return None
-    if sender is not None and ix.is_supplier_address(sender):
+    answered = _answered(c, at)
+    if answered is None:
         return None
-    subject = fold(e.subject)
-    if any(p in subject for p in AUTO_REPLY_PHRASES):
-        return None
-    answered = [(sent, q, r) for q in c.quotes for r in _live_revisions(q)
-                if (sent := _instant(r.sent_at)) is not None and sent < at]
-    if not answered:
-        return None
-    _, q, r = max(answered, key=lambda x: x[0])
+    ix.moved_by_reply.add(c.id)
+    q, r = answered
     label = _revision_label(q.quote_number, r.revision_no)
     reasons = [f"el cliente respondió en el caso después de recibir la cotización {label}"]
     note = _note("R17", reasons)
@@ -1858,6 +1873,65 @@ def _client_reply_rule(e: MailEvidence, ix: _Index) -> PlannedAction | None:
                          organization_id=c.organization_id, quote_number=label,
                          commands=(_advance_step("negotiating", note),),
                          context={"case": c.id, "case_version": c.version, "from_stage": c.stage})
+
+
+def _reply_from_the_client(e: MailEvidence, ix: _Index) -> bool:
+    """R17's sender test: not ours, not a supplier's, not an automatic reply."""
+    sender = _sender(e)
+    if sender is None or domain_of(sender) in OWN_DOMAINS or ix.is_supplier_domain(domain_of(sender)):
+        return False
+    if ix.is_supplier_address(sender) or is_automatic_mail(e.sender, e.triage_class):
+        return False
+    subject = fold(e.subject)
+    return not any(p in subject for p in AUTO_REPLY_PHRASES)
+
+
+def _answered(c: CaseState, at: datetime) -> tuple[CaseQuote, QuoteRevision] | None:
+    """The newest live quote of the case sent before `at`: what a reply then answers."""
+    answered = [(sent, q, r) for q in c.quotes for r in _live_revisions(q)
+                if (sent := _instant(r.sent_at)) is not None and sent < at]
+    if not answered:
+        return None
+    _, q, r = max(answered, key=lambda x: x[0])
+    return q, r
+
+
+def _shared_thread_reply(e: MailEvidence, ix: _Index) -> PlannedAction | None:
+    """R17 on a thread two open cases of one client share (production 2026-10-26): R1 links the
+    reply to neither, so each case in «Enviada» moves on its own step (see `_client_reply_rule`)."""
+    # No window here (owner 2026-11-25: «move all»): the backlog on the 2026-11-23 replica was two
+    # clients' cases, and a reply nobody linked has no other way to move them.
+    at = _instant(e.sent_at)
+    if at is None or not e.thread_id or not _reply_from_the_client(e, ix):
+        return None
+    open_cases = sorted((t for t in ix.by_thread.get(e.thread_id, []) if not t.closed), key=lambda t: t.id)
+    if len(open_cases) < 2:
+        return None  # one open case: R1 links the reply there and R17 reads it next pass
+    sender = (_sender(e) or "").lower()
+    orgs = {t.organization_id for t in open_cases}
+    if not ((len(orgs) == 1 and None not in orgs)
+            or all(sender in set(t.people) | set(t.participants) for t in open_cases)):
+        return None  # not all one client's: a person decides
+    moving = [(t, a) for t in open_cases if t.stage == "quoting" and t.paused_until is None
+              and t.id not in ix.moved_by_reply and (a := _answered(t, at)) is not None]
+    if not moving:
+        return None
+    ix.moved_by_reply.update(t.id for t, _ in moving)
+    labels = [_revision_label(q.quote_number, r.revision_no) for _, (q, r) in moving]
+    reasons = [f"el cliente respondió en el hilo de {'las cotizaciones' if len(labels) > 1 else 'la cotización'} "
+               f"{', '.join(labels)}, de {len(open_cases)} casos suyos: "
+               f"{'pasan' if len(moving) > 1 else 'pasa'} a «Conversación»"]
+    note = _note("R17", reasons)
+    first = moving[0][0]
+    return PlannedAction(e.id, "R17", AUTO, tuple(reasons), case_id=first.id, case_title=first.title,
+                         organization_id=first.organization_id, quote_number=labels[0],
+                         # The action's own case moves last: the executor's context ends on it, so
+                         # the receipt names that case (review 2026-11-25).
+                         commands=tuple({"command": "advance_case_stage", "inputs": {
+                             "opportunity_id": t.id, "opportunity_version": t.version,
+                             "stage": "negotiating", "note": note}} for t, _ in [*moving[1:], moving[0]]),
+                         candidates=tuple(t.id for t, _ in moving) if len(moving) > 1 else (),
+                         context={"case": first.id, "case_version": first.version, "from_stage": first.stage})
 
 
 #: How much of the triage's summary R18's reason quotes.

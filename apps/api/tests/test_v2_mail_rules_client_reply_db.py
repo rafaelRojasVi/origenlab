@@ -20,10 +20,12 @@ from v2_command_harness import needs_db
 pytestmark = needs_db
 
 
-def _reply(dsn: str, case_id: str, linked_by: str, sent_at: datetime, subject: str = "Re: Cotización") -> str:
-    """The client's inbound answer, already on the case (as R1 leaves it)."""
+def _reply(dsn: str, case_id: str | None, linked_by: str, sent_at: datetime, subject: str = "Re: Cotización",
+           thread: str | None = None) -> str:
+    """The client's inbound answer, already on the case (as R1 leaves it) unless `case_id` is None."""
     gid = uuid.uuid4().hex[:16]
-    payload = {"gmail_message_id": gid, "gmail_thread_id": f"t-{gid}", "sender": "Persona <persona@cliente-ficticio.test>",
+    thread = thread or f"t-{gid}"
+    payload = {"gmail_message_id": gid, "gmail_thread_id": thread, "sender": "Persona <persona@cliente-ficticio.test>",
                "recipients": "contacto@origenlab.cl", "subject_raw": subject, "sent_at": sent_at.isoformat(),
                "documents": []}
     [(record,)] = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
@@ -32,9 +34,10 @@ def _reply(dsn: str, case_id: str, linked_by: str, sent_at: datetime, subject: s
     [(mailbox,)] = _owner(dsn, "insert into comms.mailbox (address_norm) values (%s) returning id",
                           (f"mbox-{gid}@example.test",))
     _owner(dsn, "insert into comms.message (mailbox_id, provider_message_id, provider_thread_id, direction, "
-                "internal_date) values (%s, %s, %s, 'inbound', now())", (mailbox, gid, f"t-{gid}"))
-    _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
-                "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case_id, record, linked_by))
+                "internal_date) values (%s, %s, %s, 'inbound', now())", (mailbox, gid, thread))
+    if case_id is not None:
+        _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                    "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (case_id, record, linked_by))
     return record
 
 
@@ -124,3 +127,57 @@ def test_a_pause_whose_day_came_no_longer_holds_the_case(world) -> None:
     repo = _mail_rules(dsn)
     assert "R17" in _planned(repo, on_back)
     assert "R17" in _planned(repo, on_legacy)
+
+
+def test_a_reply_on_a_thread_two_cases_share_moves_both_and_quitar_moves_both_back(world) -> None:
+    """Production 2026-10-26: two quotes of one client, one thread; R1 linked the reply to neither."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    one, two = _sent_case(world, admin), _sent_case(world, admin)
+    thread = f"t-{uuid.uuid4().hex[:12]}"
+    ours, _ = _email(dsn, [], case_id=one, linked_by=admin.operator_id, sent_at=datetime.now(UTC) + timedelta(minutes=2),
+                     thread=thread)
+    _owner(dsn, "insert into crm.opportunity_evidence (opportunity_id, source_record_id, relation, "
+                "linked_by_operator_id) values (%s, %s, 'mentions', %s)", (two, ours, admin.operator_id))
+    answer = _reply(dsn, None, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5), thread=thread)
+
+    repo = _mail_rules(dsn)
+    result = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R17"}])
+    assert not result["refused"], result["refused"]
+    assert sorted(s["opportunity_id"] for s in result["applied"][0]["steps"]) == sorted([one, two])
+    assert result["applied"][0]["case_id"] == result["applied"][0]["steps"][-1]["opportunity_id"]
+    assert (_stage(dsn, one), _stage(dsn, two)) == ("negotiating", "negotiating")
+
+    undone = repo.undo(admin, result["applied"][0]["command_receipt_id"], "no era respuesta")
+    assert len(undone["steps"]) == 2
+    assert (_stage(dsn, one), _stage(dsn, two)) == ("quoting", "quoting")
+
+
+def test_quitar_leaves_a_case_a_person_moved_since(world) -> None:
+    """Review 2026-11-25: R17's move is undone only while it is still the case's latest stage change."""
+    import psycopg
+
+    from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+    from origenlab_api.v2.case_commands import AdvanceCaseStageBody, validated_case
+    import pytest
+
+    from origenlab_api.v2.commands import CommandRefused, request_digest
+    from v2_command_harness import runtime_dsn
+
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_id = _sent_case(world, admin)
+    answer = _reply(dsn, case_id, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+    repo = _mail_rules(dsn)
+    applied = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R17"}])["applied"][0]
+    # A person moves it back to «Enviada» and on to «Conversación» again: their own decision.
+    for stage in ("quoting", "negotiating"):
+        version = _rows(dsn, "select version from crm.opportunity where id = %s", (case_id,))[0]["version"]
+        body = AdvanceCaseStageBody(opportunity_id=case_id, opportunity_version=version, stage=stage, note="decisión propia")
+        V2CaseCommandRepository(psycopg.connect, runtime_dsn(dsn)).execute(
+            command_name="advance_case_stage", operator=admin, fields=validated_case("advance_case_stage", body),
+            idempotency_key=uuid.uuid4().hex, digest=request_digest("advance_case_stage", body))
+    # Nothing of R17's is left to reverse: «Quitar» says so, and the person's stage stands.
+    with pytest.raises(CommandRefused):
+        repo.undo(admin, applied["command_receipt_id"], "no era respuesta")
+    assert _stage(dsn, case_id) == "negotiating"
