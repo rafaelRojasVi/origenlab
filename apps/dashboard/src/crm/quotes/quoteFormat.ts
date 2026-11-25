@@ -96,3 +96,26 @@ export function decimalEditText(value: string | null | undefined): string {
   const frac = m[2].replace(/0+$/, "");
   return frac ? `${m[1]},${frac}` : m[1];
 }
+
+/**
+ * `a − b` for two plain decimal strings, exact (scaled integers, no float): the per-unit discount
+ * between a line's list and charged price. Null when either is missing or not a plain number.
+ */
+export function subtractAmounts(a: string | null | undefined, b: string | null | undefined): string | null {
+  const pa = PLAIN.exec((a ?? "").trim());
+  const pb = PLAIN.exec((b ?? "").trim());
+  if (!pa || !pb) return null;
+  const scale = Math.max((pa[2] ?? "").length, (pb[2] ?? "").length);
+  const big = (m: RegExpExecArray) => BigInt(m[1] + (m[2] ?? "").padEnd(scale, "0"));
+  const diff = big(pa) - big(pb);
+  const abs = (diff < 0n ? -diff : diff).toString().padStart(scale + 1, "0");
+  const int = abs.slice(0, abs.length - scale);
+  const frac = abs.slice(abs.length - scale).replace(/0+$/, "");
+  return `${diff < 0n ? "-" : ""}${int}${frac ? `.${frac}` : ""}`;
+}
+
+/** «9 %», «7,5 %» from "0.09" / "0.075": the discount as the operator typed it. */
+export function discountText(ratio: string | null | undefined): string | null {
+  const t = decimalToPercentText(ratio);
+  return t ? `${t} %` : null;
+}

@@ -38,6 +38,8 @@ export interface QuoteDraftItem {
   margin_mode: "markup" | "margin" | "none";
   margin_pct?: Decimal | null;
   typed_unit_price?: Decimal | null;
+  /** «Dcto. %» as the API's fraction ("0.09" = 9 %); null or absent = no discount. */
+  discount_pct?: Decimal | null;
   is_principal?: boolean;
   line_note_es?: string | null;
   /**
@@ -130,6 +132,9 @@ export interface ComputedLine {
   unit_base: Decimal | null;
   unit_price: Decimal | null;
   line_total: Decimal | null;
+  /** Before the discount (absent from an older API: then `unit_price`). `unit_price` is the final price. */
+  list_price?: Decimal | null;
+  discount_pct?: Decimal | null;
   real_markup: Decimal | null;
   gross_margin: Decimal | null;
   margin_state: string;
@@ -185,6 +190,9 @@ export interface Computed {
     calc_inputs?: unknown;
   }[];
   totals: {
+    /** Sum of the list line totals; `net` = subtotal − discount_total. Absent from an older API. */
+    subtotal?: Decimal;
+    discount_total?: Decimal;
     net: Decimal;
     iva: Decimal;
     total: Decimal;
@@ -254,6 +262,8 @@ export interface QuoteStoredLine {
   margin_pct: Decimal | null;
   unit_price_qc: Decimal | null;
   line_total_qc: Decimal | null;
+  discount_pct?: Decimal | null;
+  list_unit_price_qc?: Decimal | null;
   is_principal: boolean | null;
   allocated_to_line_no: number | null;
   expense_method: string | null;
@@ -277,6 +287,9 @@ export interface QuoteWorkspaceCurrent {
   quote_currency: string | null;
   tax_rate: Decimal | null;
   subtotal: Decimal | null;
+  discount_total?: Decimal | null;
+  /** The net charged (subtotal − discount_total). */
+  tax_base?: Decimal | null;
   tax_total: Decimal | null;
   grand_total: Decimal | null;
   totals_computed_at: string | null;

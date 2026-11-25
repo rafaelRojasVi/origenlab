@@ -46,6 +46,7 @@ class ItemLine:
     margin_pct: Decimal | None
     typed_unit_price: Decimal | None
     is_principal: bool = False  # only read when principal_rule == "manual": the lines that carry the expenses
+    discount_pct: Decimal | None = None  # fraction off the list price (0.09 = 9 %); None = no discount
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,9 @@ class LineResult:
     gross_margin: Decimal | None
     margin_state: str
     is_principal: bool
+    list_price: Decimal | None = None   # the unit price before the discount (== unit_price without one)
+    discount_pct: Decimal | None = None
+    discount_total: Decimal = ZERO      # list total - line_total
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,8 @@ class EngineResult:
     margin: Decimal | None
     margin_state: str
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    subtotal: Decimal = ZERO        # sum of the list line totals; net == subtotal - discount_total
+    discount_total: Decimal = ZERO
 
 
 def _rate(inp: EngineInput, currency: str) -> Decimal:
@@ -185,6 +191,8 @@ def _guard(inp: EngineInput) -> None:
             raise EngineError(f"quantity_invalid:{l.line_no}")
         if l.margin_mode == "margin" and l.margin_pct is not None and l.margin_pct >= ONE:
             raise EngineError(f"margin_pct_invalid:{l.line_no}")
+        if l.discount_pct is not None and not ZERO < l.discount_pct < ONE:
+            raise EngineError(f"discount_pct_invalid:{l.line_no}")
 
 
 def compute(inp: EngineInput) -> EngineResult:
@@ -198,7 +206,7 @@ def compute(inp: EngineInput) -> EngineResult:
     alloc = _allocate(inp, costs, principal, expenses_clp)
     marked = set(_marked(inp))
     out: list[LineResult] = []
-    cost_base, net, any_missing = ZERO, ZERO, False
+    cost_base, net, subtotal, any_missing = ZERO, ZERO, ZERO, False
     for l in inp.items:
         cost = costs[l.line_no]
         exp = alloc[l.line_no]
@@ -211,23 +219,29 @@ def compute(inp: EngineInput) -> EngineResult:
             price = peso(base / (ONE - l.margin_pct))
         else:
             price = peso(base * (ONE + l.margin_pct))                                     # S15
+        list_price = price
+        if price is not None and l.discount_pct is not None:
+            price = peso(list_price * (ONE - l.discount_pct))                             # final = list x (1 - pct)
         total = None if price is None else peso(l.quantity * price)                       # W15
+        list_total = None if list_price is None else peso(l.quantity * list_price)
         if cost is None:
             any_missing = True
             warnings.append(f"no_cost:{l.line_no}")
         real_markup = None if (price is None or not base) else price / base - ONE         # U15
         gross = None if (price is None or base is None or price == 0) else (price - base) / price   # V15
         out.append(LineResult(l.line_no, cost, exp, base, price, total, real_markup, gross,
-                              _state(gross, inp), l.line_no == principal or l.line_no in marked))
+                              _state(gross, inp), l.line_no == principal or l.line_no in marked,
+                              list_price, l.discount_pct, ZERO if total is None else list_total - total))
         if total is not None:
             net += total                                                                  # K3
+            subtotal += list_total
             if base is not None:
                 cost_base += l.quantity * base                                            # J3
     iva = peso(net * inp.iva_rate)                                                        # L3
     markup = None if (cost_base == 0 or any_missing) else net / cost_base - ONE
     margin = None if (net == 0 or any_missing) else (net - cost_base) / net
     return EngineResult(tuple(out), expenses_clp, principal, cost_base, net, iva, net + iva,
-                        markup, margin, _state(margin, inp), tuple(warnings))
+                        markup, margin, _state(margin, inp), tuple(warnings), subtotal, subtotal - net)
 
 
 __all__ = ["EngineError", "EngineInput", "EngineResult", "ExpenseLine", "FxRate", "ItemLine",

@@ -557,7 +557,7 @@ select org.id::text as organization_id, org.name as organization_name,
 
 #: The revision columns `current` carries besides its draft or stored lines.
 _REVISION_FIELDS = (
-    "id", "revision_no", "status", "origin", "version", "quote_currency", "tax_rate", "subtotal", "tax_total",
+    "id", "revision_no", "status", "origin", "version", "quote_currency", "tax_rate", "subtotal", "discount_total", "tax_base", "tax_total",
     "grand_total", "totals_computed_at", "validity_days", "valid_until", "approved_at", "sent_at",
     "superseded_by_revision_no", "recipient_participant_id", "expense_method", "expense_allocation_mode",
     "principal_rule", "updated_at",
@@ -567,7 +567,7 @@ _LINE_FIELDS = (
     "line_no", "line_kind", "description", "product_id", "quantity", "item_type", "cost_currency", "unit_cost",
     "fx_rate", "fx_as_of", "fx_source", "margin_mode", "margin_pct", "unit_price_qc", "line_total_qc",
     "is_principal", "allocated_to_line_no", "expense_method", "supplier_organization_id", "cost_observation_id",
-    "line_note_es",
+    "line_note_es", "discount_pct", "list_unit_price_qc",
 )
 
 
@@ -646,7 +646,7 @@ def _decimal_or_none(value: Any) -> Decimal | None:
 
 def _saved_view(revision: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
     """What the draft's last save stored, which approval freezes: its totals and each item line's prices."""
-    return {"totals": {"net": revision["subtotal"], "iva": revision["tax_total"], "total": revision["grand_total"]},
+    return {"totals": {"net": revision["tax_base"], "iva": revision["tax_total"], "total": revision["grand_total"]},
             "lines": [{"line_no": r["line_no"], "unit_price_qc": r["unit_price_qc"],
                        "line_total_qc": r["line_total_qc"]}
                       for r in sorted(lines, key=lambda r: r["line_no"]) if r["line_kind"] == "item"]}

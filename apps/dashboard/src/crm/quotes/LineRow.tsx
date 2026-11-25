@@ -17,7 +17,7 @@ import { formatMoney } from "../money";
 import type { DraftProblem } from "./draftEditor";
 import { CostStrip } from "./CostStrip";
 import type { ComputedLine, LineEconomics, QuoteDraftItem } from "./quoteApi";
-import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity } from "./quoteFormat";
+import { amountTextToDecimal, decimalToPercentText, formatPct, percentTextToDecimal, priceTextToDecimal, readQuantity, subtractAmounts } from "./quoteFormat";
 import { ProductImage } from "../catalog/ProductImage";
 
 /**
@@ -269,6 +269,10 @@ export function LineRow({
   const rowProblems = problems.filter((p) => p.field.startsWith("items."));
   // A value with a problem is shown as typed, never re-formatted.
   const priceProblem = rowProblems.some((p) => p.field === "items.typed_unit_price");
+  const discountProblem = rowProblems.some((p) => p.field === "items.discount_pct");
+  // The price box holds the LIST price; the engine's `unit_price` is what is charged after the discount.
+  const listPrice = line?.list_price ?? line?.unit_price;
+  const discounted = !!line && !!line.discount_pct && Number(line.discount_pct) > 0 && !!line.unit_price && !!listPrice;
   // A free line has no catalog text: its description box is always there. A catalog line opens it on demand.
   const showNote = noteOpen || !!item.line_note_es || free;
   const recargoDefault = item.margin_pct ? undefined : decimalToPercentText(line?.margin_pct) || undefined;
@@ -419,12 +423,35 @@ export function LineRow({
             display={
               priceProblem
                 ? (item.typed_unit_price ?? "")
-                : (money(line?.unit_price) ?? (byPrice ? (money(item.typed_unit_price) ?? "") : ""))
+                : (money(listPrice) ?? (byPrice ? (money(item.typed_unit_price) ?? "") : ""))
             }
-            editValue={(byPrice ? item.typed_unit_price : line?.unit_price) ?? ""}
+            editValue={(byPrice ? item.typed_unit_price : listPrice) ?? ""}
             disabled={disabled}
             onChange={(t) => onPatch({ margin_mode: "none", typed_unit_price: priceTextToDecimal(t) })}
           />
+          <div className="mt-1 flex items-center justify-end gap-1.5">
+            <span aria-hidden="true" className="whitespace-nowrap text-[11.5px] font-semibold text-ink-muted">
+              Dcto. %
+            </span>
+            <span className="w-[68px]">
+              <NumberInput
+                label={`Descuento (%) de la línea ${n}`}
+                display={decimalToPercentText(item.discount_pct)}
+                editValue={decimalToPercentText(item.discount_pct)}
+                placeholder="0"
+                suffix="%"
+                disabled={disabled}
+                invalid={discountProblem}
+                onChange={(t) => onPatch({ discount_pct: percentTextToDecimal(t) })}
+              />
+            </span>
+          </div>
+          {discounted ? (
+            <p className="mt-1 flex flex-wrap justify-end gap-x-1.5 text-right text-[12px] tabular-nums text-ink-muted" aria-live="polite">
+              <span className="whitespace-nowrap font-semibold text-ink">{money(line.unit_price)} final</span>
+              <span className="whitespace-nowrap text-good">−{money(subtractAmounts(listPrice, line.unit_price))}</span>
+            </p>
+          ) : null}
         </div>
 
         <div role="cell" {...busy} className={`text-right font-mono text-[14px] font-medium tabular-nums text-ink${dim}`}>

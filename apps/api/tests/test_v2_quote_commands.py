@@ -29,6 +29,7 @@ from origenlab_api.v2.quotes.commands import (
 from origenlab_api.v2.quotes.draft import QUOTE_BODIES, DraftFxOverride, QuoteDraft
 from origenlab_api.v2.quotes.inputs import (
     draft_from_rows,
+    engine_input_from_rows,
     fx_overrides_from_row,
     load_parameters,
     resolve_draft,
@@ -602,6 +603,44 @@ def test_draft_from_rows_reprices_exactly_what_was_saved(world) -> None:
     items = [r for r in rows if r["line_kind"] == "item"]
     assert [line.unit_price for line in result.lines] == [r["unit_price_qc"] for r in items]
     assert len(resolved.expenses) == len(rows) - len(items)
+
+
+@needs_db
+def test_save_persists_a_line_discount_and_the_totals_split(world) -> None:
+    dsn = world["dsn"]
+    created = _new_quote(world)
+    draft = {"items": [
+        {"description": "Equipo con descuento", "quantity": "2", "margin_mode": "none",
+         "typed_unit_price": "2950000", "unit_cost": "1000000", "cost_currency": "CLP", "discount_pct": "0.09"},
+        {"description": "Equipo sin descuento", "quantity": "1", "margin_mode": "none", "typed_unit_price": "100000",
+         "unit_cost": "50000", "cost_currency": "CLP", "discount_pct": "0"},
+    ], "terms": {"payment_terms": "30 días", "warranty_terms_es": WARRANTY}}
+    _save(world, created, draft)
+    revision = _revision(dsn, created["revision_id"])
+    rows = [r for r in _lines(dsn, created["revision_id"]) if r["line_kind"] == "item"]
+    assert (rows[0]["discount_pct"], rows[0]["list_unit_price_qc"], rows[0]["unit_price_qc"],
+            rows[0]["line_total_qc"]) == (Decimal("0.09"), Decimal(2950000), Decimal(2684500), Decimal(5369000))
+    assert (rows[1]["discount_pct"], rows[1]["list_unit_price_qc"]) == (None, None)   # 0 normalises to none
+    assert (revision["subtotal"], revision["discount_total"], revision["tax_base"]) == (
+        Decimal(6000000), Decimal(531000), Decimal(5469000))
+    assert revision["tax_total"] == Decimal(1039110) and revision["grand_total"] == Decimal(6508110)
+
+    # A discount typed before the cost is kept on a line that cannot be priced yet.
+    unpriced = {"items": [{"description": "Sin costo aún", "quantity": "1", "margin_pct": "0.3",
+                           "discount_pct": "0.1"}], "terms": draft["terms"]}
+    _save(world, created, unpriced, version=revision["version"])
+    again = _lines(dsn, created["revision_id"])
+    assert (again[0]["discount_pct"], again[0]["list_unit_price_qc"]) == (Decimal("0.1"), None)
+    _save(world, created, draft, version=_revision(dsn, created["revision_id"])["version"])
+
+    rebuilt = draft_from_rows(revision, rows)
+    assert [i.discount_pct for i in rebuilt.items] == [Decimal("0.09"), None]
+    assert rebuilt.items[0].typed_unit_price == Decimal(2950000)     # the list price, never the charged one
+    with psycopg.connect(runtime_dsn(dsn)) as conn, conn.cursor() as cur:
+        params = {**load_parameters(cur), "iva_rate": Decimal(revision["tax_rate"])}
+        resolved = resolve_draft(cur, rebuilt, params, fake_fx, TODAY)
+    assert compute(resolved.engine_input).net == revision["tax_base"]
+    assert compute(engine_input_from_rows(revision, rows, params)).net == revision["tax_base"]
 
 
 # ------------------------------------------------------------------ check_approvable (pure)

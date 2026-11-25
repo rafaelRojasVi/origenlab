@@ -26,6 +26,7 @@ import { loadCatalogIndex, type CatalogIndex } from "../catalog/catalogIndex";
 import { fitsQr, QrSvg } from "../../lib/qr";
 import { formatMoney } from "../money";
 import { formatWhatsappNumber, WHATSAPP_NUMBER, whatsappQuoteUrl } from "../company";
+import { discountText } from "./quoteFormat";
 import { isWithoutIva, type PrintableQuote, type PrintLine } from "./printableQuote";
 import { paginate, PAGE_USABLE_H, BLOCK_GAP_PX, A4_HEIGHT_PX } from "./quotePaginate";
 import type { PagedResult } from "./quotePaginate";
@@ -185,7 +186,19 @@ function BodyRow({ l, money, models, ivaColumns, blockId }: { l: PrintLine; bloc
         {l.note ? <span className="qp-note">{l.note}</span> : null}
       </td>
       <td className="qp-num qp-mono">{qty(l.quantity)}</td>
-      <td className="qp-num qp-mono">{money(l.unitPrice)}</td>
+      <td className="qp-num qp-mono">
+        {l.discount ? (
+          <>
+            <span className="qp-was">{money(l.discount.listPrice)}</span>
+            <span className="qp-off">
+              Dcto. {discountText(l.discount.pct)} −{money(l.discount.perUnit)}
+            </span>
+            <span className="qp-final">{money(l.unitPrice)}</span>
+          </>
+        ) : (
+          money(l.unitPrice)
+        )}
+      </td>
       {ivaColumns ? (
         <>
           <td className="qp-num qp-mono">{money(l.total)}</td>
@@ -202,6 +215,18 @@ function BodyRow({ l, money, models, ivaColumns, blockId }: { l: PrintLine; bloc
 function TotalsBlock({ quote, money, noIva }: Pick<SharedProps, "quote" | "money" | "noIva">) {
   return (
     <dl className="qp-totals" aria-label="Totales">
+      {quote.discountTotals ? (
+        <>
+          <div>
+            <dt>Subtotal</dt>
+            <dd className="qp-mono">{money(quote.discountTotals.subtotal)}</dd>
+          </div>
+          <div>
+            <dt>Descuento</dt>
+            <dd className="qp-mono">−{money(quote.discountTotals.discount)}</dd>
+          </div>
+        </>
+      ) : null}
       {noIva ? null : (
         <>
           <div>

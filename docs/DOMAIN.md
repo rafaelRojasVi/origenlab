@@ -373,6 +373,14 @@ are lineage, never the rendering authority. A quote never carries an outcome;
 the opportunity records which revision won. Currency, FX, margin, snapshot and
 supersession rules are owned by [`WORKFLOWS.md`](WORKFLOWS.md) §W3a–W3b.
 
+**Line discount** (2026-11-25). An item line may carry `discount_pct` (a fraction, 0 < x < 1, null = none)
+and the `list_unit_price_qc` it was taken from. The engine prices the line as before (markup, margin or
+typed price = the list price), then charges `list × (1 − pct)` rounded to the peso: `unit_price_qc` and
+`line_total_qc` are always what the client pays, and the margin is measured on that. On the revision,
+`subtotal` is the sum of list totals, `discount_total` the sum of the discounts and `tax_base` the
+neto charged (`subtotal − discount_total`); IVA and total follow the neto. Only a discounted line shows
+its list price and discount on the PDF.
+
 **Authored quotes** (the Cotizador, built 2026-10-15). A revision with `origin = 'authored'` is
 written by five commands (`create-quote`, `save-quote-draft`, `approve-quote-revision`,
 `void-quote-revision`, `create-quote-revision`) and priced by one engine on the server; its lines,

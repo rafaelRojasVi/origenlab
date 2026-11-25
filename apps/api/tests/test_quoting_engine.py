@@ -151,3 +151,37 @@ def test_margin_of_100_percent_is_refused():
 def test_clp_cost_needs_no_rate():
     r = compute(inp([item(1, cost="100000", cur="CLP", imported=False)], fx={}))
     assert r.lines[0].cost_clp_unit == D(100000)
+
+
+def _discounted(line, pct):
+    from dataclasses import replace
+    return replace(line, discount_pct=D(pct))
+
+
+def test_discount_on_a_markup_line_charges_the_final_price():
+    r = compute(inp([_discounted(item(1, qty="2", cost="1234.56"), "0.09")]))
+    line = r.lines[0]
+    assert line.list_price == D(1728384) and line.unit_price == D(1572829)   # round(1728384 × 0.91)
+    assert line.line_total == D(3145658) and line.discount_total == D(3456768 - 3145658)
+    assert r.subtotal == D(3456768) and r.discount_total == D(311110) and r.net == D(3145658)
+    assert r.iva == peso(r.net * D("0.19")) and r.total == r.net + r.iva
+
+
+def test_discount_on_a_typed_line_and_margin_on_the_final_price():
+    r = compute(inp([_discounted(item(1, cost="1000", mode="none", pct=None, typed="2950000"), "0.09")]))
+    line = r.lines[0]
+    assert line.list_price == D(2950000) and line.unit_price == D(2684500)
+    assert D(2950000) - D(2684500) == D(265500)
+    assert line.gross_margin == (D(2684500) - D(1000000)) / D(2684500)   # margin is on what is charged
+    assert r.margin == line.gross_margin
+
+
+def test_no_discount_computes_as_before_and_subtotal_equals_net():
+    r = compute(inp([item(1, cost="1234.56")]))
+    assert r.lines[0].list_price == r.lines[0].unit_price and r.discount_total == 0 and r.subtotal == r.net
+
+
+@pytest.mark.parametrize("pct", ["0", "1", "-0.1"])
+def test_discount_out_of_range_is_refused(pct):
+    with pytest.raises(EngineError):
+        compute(inp([_discounted(item(1), pct)]))

@@ -112,6 +112,42 @@ function expectClientSafe(el: HTMLElement) {
   expect(el.innerHTML).not.toContain(SUPPLIER);
 }
 
+describe("Vista previa PDF — a discounted line", () => {
+  function discounted(): QuoteWorkspace {
+    const ws = approved();
+    const cur = ws.current!;
+    return {
+      ...ws,
+      current: {
+        ...cur,
+        subtotal: "2000000", discount_total: "180000", tax_base: "1820000", tax_total: "345800", grand_total: "2165800",
+        lines: [
+          { ...stored(1, "item", "Centrífuga de prueba", "910000", "1820000"), discount_pct: "0.09", list_unit_price_qc: "1000000" },
+          stored(2, "logistics", "Flete aéreo internacional", "0", "0"),
+        ],
+      },
+    };
+  }
+
+  it("prints list price, percentage with amount, final price and the Subtotal / Descuento rows", async () => {
+    const dialog = show(discounted());
+    const sheet = within(dialog);
+    expect(sheet.getByText("$ 1.000.000")).toBeInTheDocument();
+    expect(sheet.getByText("Dcto. 9 % −$ 90.000")).toBeInTheDocument();
+    expect(sheet.getByText("$ 910.000")).toBeInTheDocument();
+    const totals = within(sheet.getByLabelText("Totales"));
+    expect(totals.getByText("Subtotal").nextSibling).toHaveTextContent("$ 2.000.000");
+    expect(totals.getByText("Descuento").nextSibling).toHaveTextContent("−$ 180.000");
+    expect(totals.getByText("Neto").nextSibling).toHaveTextContent("$ 1.820.000");
+    expect(totals.getByText(/^Total/).nextSibling).toHaveTextContent("$ 2.165.800");
+  });
+
+  it("prints no discount wording when no line has one", async () => {
+    const dialog = show(approved());
+    expect(dialog.textContent).not.toMatch(/Dcto\.|Descuento|Subtotal/);
+  });
+});
+
 describe("Vista previa PDF — an approved revision", () => {
   it("prints the number, client, lines, totals, conditions and who approved it", async () => {
     const dialog = show(approved());

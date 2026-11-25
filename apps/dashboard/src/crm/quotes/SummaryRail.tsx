@@ -262,7 +262,10 @@ function TotalsCard({
   const cur = state.workspace.current;
   const currency = cur?.quote_currency ?? "CLP";
   const totals = editable ? state.computed?.totals ?? null : null;
-  const net = editable ? totals?.net : cur?.subtotal;
+  const net = editable ? totals?.net : (cur?.tax_base ?? cur?.subtotal);
+  const subtotal = editable ? totals?.subtotal : cur?.subtotal;
+  const discount = editable ? totals?.discount_total : cur?.discount_total;
+  const discounted = !!discount && Number(discount) > 0;
   const iva = editable ? totals?.iva : cur?.tax_total;
   const total = editable ? totals?.total : cur?.grand_total;
   const money = (v: string | null | undefined) => formatMoney(v, currency) ?? "—";
@@ -274,6 +277,18 @@ function TotalsCard({
       aria-busy={stale || undefined}
       className={`flex flex-col gap-3 rounded-[14px] bg-[#141617] dark:ring-1 dark:ring-line-strong px-5 py-[18px] text-[#f4f6f5]${stale ? " opacity-60" : ""}`}
     >
+      {discounted ? (
+        <>
+          <div className="flex justify-between text-sm">
+            <span className="text-[#a9bdb7]">Subtotal</span>
+            <span className="font-mono tabular-nums">{money(subtotal)}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-[#a9bdb7]">Descuento</span>
+            <span className="font-mono tabular-nums">−{money(discount)}</span>
+          </div>
+        </>
+      ) : null}
       <div className="flex justify-between text-sm">
         <span className="text-[#a9bdb7]">Neto</span>
         <span className="font-mono tabular-nums">{money(net)}</span>

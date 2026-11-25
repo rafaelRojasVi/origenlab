@@ -179,3 +179,11 @@ def test_the_tax_rate_of_a_draft() -> None:
     assert draft_tax_rate(QuoteDraft(), Decimal("0.18"), params) == Decimal("0.18")   # the revision's own
     assert draft_tax_rate(QuoteDraft(), Decimal(0), params) == Decimal("0.19")        # «Sin IVA» unticked
     assert draft_tax_rate(QuoteDraft(), None, {}) == Decimal("0.19")
+
+
+def test_discount_pct_is_a_fraction_below_one_and_zero_means_none() -> None:
+    assert DraftItemLine(**_LINE, discount_pct="0.09").discount_pct == Decimal("0.09")
+    assert DraftItemLine(**_LINE, discount_pct="0").discount_pct is None
+    for bad in ("1", "-0.01", "0.12345"):
+        with pytest.raises(ValidationError):
+            DraftItemLine(**_LINE, discount_pct=bad)

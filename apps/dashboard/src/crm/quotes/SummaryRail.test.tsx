@@ -156,6 +156,20 @@ describe("SummaryRail — totals and margin", () => {
     expect(band.querySelector("[data-marker]")).toHaveStyle({ left: "calc(29.37% - 6px)" });
   });
 
+  it("shows Subtotal and Descuento above Neto only when something is discounted", async () => {
+    const base = priced();
+    setup({ state: stateFor({ computed: priced({ totals: { ...base.totals, subtotal: "1920000", discount_total: "171214", net: "1748786" } }) }) });
+    await settled();
+    const totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).getByText("Subtotal").nextSibling).toHaveTextContent("$ 1.920.000");
+    expect(within(totals).getByText("Descuento").nextSibling).toHaveTextContent("−$ 171.214");
+    expect(within(totals).getByText("Neto").nextSibling).toHaveTextContent("$ 1.748.786");
+    cleanup();
+    setup();
+    await settled();
+    expect(within(screen.getByRole("region", { name: "Totales" })).queryByText("Descuento")).not.toBeInTheDocument();
+  });
+
   it("«Sin IVA» sets the draft without IVA; ticked, the rail shows no IVA row and «Total sin IVA»", async () => {
     const { applied } = setup();
     await settled();
