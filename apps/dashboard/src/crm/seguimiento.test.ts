@@ -70,6 +70,24 @@ function card(over: Partial<OpportunityCardData> & { revs?: RevisionCard[]; phon
 }
 
 describe("seguimientoRows", () => {
+  it("shows two cases of one client on the same thread as one row, led by the newest quote (owner 2026-11-25)", () => {
+    const mail = (url: string) => ({ outbound: { at: "2026-11-20T12:00:00Z", subject: "Re: Cotización", url }, inbound: null });
+    const older = card({ opportunity_id: "o-old", revs: [rev({ sent_at: "2026-10-20T15:00:00Z", quote_number: "CN09870" })],
+                         quote_numbers: ["CN09870"], last_contact: mail("https://mail.invalid/m1"), clp: "900000" });
+    const newer = card({ opportunity_id: "o-new", revs: [rev({ sent_at: "2026-11-06T15:00:00Z", quote_number: "CN09876" })],
+                         last_contact: mail("https://mail.invalid/m1") });
+    const other = card({ opportunity_id: "o-other", last_contact: mail("https://mail.invalid/m2") });
+    const rows = seguimientoRows([older, newer, other], profiles, NOW);
+    expect(rows.map((r) => r.card.opportunity_id).sort()).toEqual(["o-new", "o-other"]);
+    const lead = rows.find((r) => r.card.opportunity_id === "o-new")!;
+    expect(lead.also.map((c) => c.opportunity_id)).toEqual(["o-old"]);
+    expect(lead.amountClp).toBe(500000); // counted once: the row's own quote
+    // A paused case never leads: the page hides paused rows, its sibling must stay in sight.
+    const paused = { ...newer, paused_until: "2099-01-01" } as OpportunityCardData;
+    const [row] = seguimientoRows([older, paused], profiles, NOW);
+    expect([row.card.opportunity_id, row.also.map((c) => c.opportunity_id)]).toEqual(["o-old", ["o-new"]]);
+  });
+
   it("excludes draft-only and void-only cases", () => {
     const rows = seguimientoRows(
       [card({ revs: [rev({ status: "draft" })] }), card({ revs: [rev({ status: "void" })] }), card()],

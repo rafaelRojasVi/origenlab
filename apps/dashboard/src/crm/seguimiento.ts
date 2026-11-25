@@ -12,7 +12,7 @@ import { PILOT_CALLS_PER_DAY, dateSantiago } from "./goals";
 import { caseAmountClp } from "./nextSteps";
 import { nextContact, stepChannel, type NextContact } from "./nextContact";
 import { isMaskedPhone } from "./redaction";
-import { localDaysBetween } from "./stage";
+import { localDaysBetween, pausedUntil } from "./stage";
 import { isOpenCase } from "./today";
 
 /** Profile keys allowed to use WhatsApp; the owner confirms the real key during the local test. */
@@ -44,6 +44,12 @@ export interface SegRow {
   next: NextContact | null;
   /** Its próximo contacto's Santiago day is past; with none, `LATE_AFTER_DAYS` without a touch. */
   late: boolean;
+  /**
+   * Other open cases of the same client on the same email thread (our newest email is the same
+   * one): one conversation, one row (owner 2026-11-25). The row is the case whose quote went out
+   * last; these only name their quotes, and their amounts are not added again.
+   */
+  also: OpportunityCardData[];
 }
 
 /** Days without a touch from which a case with no próximo contacto is «Atrasado». */
@@ -244,14 +250,33 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
     next,
     // One clock with the Agenda (QA 2026-11-22: a case set for tomorrow read «Atrasado»).
     late: next ? dateSantiago(new Date(next.at)) < dateSantiago(now) : daysSinceTouch >= LATE_AFTER_DAYS,
+    also: [],
   };
+}
+
+/** Rows whose newest email of ours is the same message: one row, the newest quote's, naming the rest. */
+function oneRowPerThread(rows: SegRow[], now: Date): SegRow[] {
+  const byMail = new Map<string, SegRow[]>();
+  const out: SegRow[] = [];
+  for (const r of rows) {
+    const mail = r.card.last_contact?.outbound?.url;
+    if (!mail) out.push(r);
+    else byMail.set(mail, [...(byMail.get(mail) ?? []), r]);
+  }
+  for (const group of byMail.values()) {
+    // A paused case never leads: the page hides paused rows, and its sibling must stay in sight.
+    const paused = (r: SegRow) => Number(pausedUntil(r.card, now) !== null);
+    const [lead, ...rest] = [...group].sort((a, b) => paused(a) - paused(b)
+      || (Date.parse(b.sentAt ?? "") || 0) - (Date.parse(a.sentAt ?? "") || 0));
+    out.push({ ...lead, also: rest.map((r) => r.card) });
+  }
+  return out;
 }
 
 /** Open sale cases with a delivered revision, late first, then score, then the longest untouched. */
 export function seguimientoRows(cards: OpportunityCardData[], profiles: ProfileCard[], now: Date): SegRow[] {
-  return cards
-    .filter((c) => isOpenCase(c) && hasDelivered(c))
-    .map((c) => buildRow(c, profiles, now))
+  const rows = cards.filter((c) => isOpenCase(c) && hasDelivered(c)).map((c) => buildRow(c, profiles, now));
+  return oneRowPerThread(rows, now)
     .sort((a, b) => Number(b.late) - Number(a.late) || b.score - a.score || b.daysSinceTouch - a.daysSinceTouch);
 }
 

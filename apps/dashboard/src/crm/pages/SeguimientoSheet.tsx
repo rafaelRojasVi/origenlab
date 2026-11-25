@@ -26,6 +26,7 @@ import {
   ContactButtons,
   DaysPill,
   Icon,
+  AlsoLine,
   LastNote,
   LastTouch,
   NextDate,
@@ -215,6 +216,7 @@ export function SeguimientoSheet({
                       </span>
                       {quoteProduct(r.card) ? ` · ${quoteProduct(r.card)}` : ""}
                     </div>
+                    <AlsoLine row={r} />
                     <LastNote row={r} now={now} />
                   </td>
                   <td className={`${td} whitespace-nowrap text-right font-bold text-ink`}>{cardMoney(r.card).text || <span className="font-normal text-ink-faint">Sin monto</span>}</td>
