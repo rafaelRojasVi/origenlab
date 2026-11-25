@@ -431,6 +431,19 @@ _SQL_PIPELINE_PHONES = """
     select 'email:' || e.value_norm, b.phone, b.confirmed
       from best b
       join crm.contact_point e on e.person_id = b.person_id and e.kind = 'email' and e.status = 'active'
+    union all
+    -- The phone each writer's own signature states (the triage's `people:v1` reading, newest), keyed
+    -- `signature:<address>`: «por confirmar» on the card when the CRM has no phone for them (owner
+    -- 2026-11-25: 40 of 44 Seguimiento rows had none). Read only, nothing is saved; one statement
+    -- with the saved phones (the pipeline's statement budget, test_v2_connection_pool).
+    select * from (
+        select distinct on (lower(a.value->>'sender_address'))
+               'signature:' || lower(a.value->>'sender_address'), a.value->'signature'->>'phone', false
+          from evidence.assertion a
+         where a.value_norm = 'people:v1' and coalesce(a.value->'signature'->>'phone', '') <> ''
+           and position('@' in coalesce(a.value->>'sender_address', '')) > 0
+         order by lower(a.value->>'sender_address'), a.created_at desc
+    ) signature_phones
 """
 # Every live call (`crm.note`, note_kind 'llamada'), one row each: an edit is a new row, so only the
 # newest revision counts, on the day of the root (when the call was first logged) and under the
@@ -996,6 +1009,11 @@ def _only_to_us_or_suppliers(recipients: str | None, suppliers: set[str]) -> boo
     return bool(domains) and domains <= set(OWN_DOMAINS) | suppliers
 
 
+def _looks_like_phone(value: str | None) -> bool:
+    """A signature phone worth offering: 8 to 15 digits (a Chilean mobile, a landline with its code)."""
+    return 8 <= len(re.sub(r"\D", "", value or "")) <= 15
+
+
 def last_contacts(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
     """Per case, the newest email OrigenLab sent and the newest one it received on its threads.
 
@@ -1366,6 +1384,12 @@ def compose_pipeline(
             if phone is None and contact.get("address"):
                 bare = addresses_in(contact["address"])
                 phone = (phones or {}).get("email:" + normalize_email(bare[0])) if bare else None
+            if phone is None:
+                # None saved: the one their own signature states, «por confirmar».
+                person = contact.get("person_id")
+                own = [e for p in on_case if person and p.get("person_id") == person for e in p.get("emails") or ()]
+                own += [normalize_email(a) for a in addresses_in(contact.get("address") or "")]
+                phone = next(((phones or {})["signature:" + e] for e in own if "signature:" + e in (phones or {})), None)
         if contact is not None:
             contact["phone"] = phone["phone"] if phone else None
             contact["phone_confirmed"] = bool(phone["confirmed"]) if phone else None
@@ -1858,7 +1882,8 @@ class CrmWorkspaceRepository:
             calls = [{"day": r["day"], "outcome": r["outcome"], "count": int(r["count"])}
                      for r in self._rows(cur_calls)]
             last_calls = self._rows(cur_last_calls)
-            phones = {r["key"]: r for r in self._rows(cur_phones)}
+            phones = {r["key"]: r for r in self._rows(cur_phones)
+                      if not r["key"].startswith("signature:") or _looks_like_phone(r["phone"])}
             call_counts = {r["opportunity_id"]: r for r in self._rows(cur_call_counts)}
             last_calls_any = self._rows(cur_last_call_any)
             calls_by_operator = self._rows(cur_calls_by_operator)
