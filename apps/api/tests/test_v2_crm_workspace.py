@@ -1230,6 +1230,22 @@ def test_the_contact_is_whoever_wrote_last_by_their_name() -> None:
     assert card["contact"]["address"] == "segunda@ejemplo.invalid"
 
 
+def test_a_signature_phone_is_offered_por_confirmar_when_the_crm_has_none() -> None:
+    """Owner 2026-11-25: the phone a client's own signature states, read by the triage, not saved."""
+    rows = [_mail_row("m1", "2026-10-23T12:00:00Z", "Ana Ficticia <ana@ejemplo.invalid>")]
+    sig = {"signature:ana@ejemplo.invalid": {"phone": "+56 9 1234 5678", "confirmed": False}}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, last_contacts(rows), phones=sig)[0]
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1234 5678", False)
+    # A saved phone wins; a person's signature counts through any of their addresses.
+    saved = {**sig, "email:ana@ejemplo.invalid": {"phone": "+56 2 2222 3333", "confirmed": True}}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, last_contacts(rows), phones=saved)[0]
+    assert card["contact"]["phone"] == "+56 2 2222 3333"
+    person = {"opportunity_id": "o1", "name": "Ana", "person_id": "p-1", "address": None,
+              "emails": ["ana@ejemplo.invalid"]}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [person], {}, {}, phones=sig)[0]
+    assert (card["contact"]["person_id"], card["contact"]["phone"]) == ("p-1", "+56 9 1234 5678")
+
+
 def test_no_reply_only_marks_the_email_r18_read() -> None:
     closing = _mail_row("m1", "2026-10-23T12:00:00Z", "Persona <persona@ejemplo.invalid>", no_reply=True)
     assert last_contacts([closing])["o1"]["inbound"]["no_reply"] is True

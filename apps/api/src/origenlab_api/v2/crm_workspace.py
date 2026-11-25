@@ -431,6 +431,23 @@ _SQL_PIPELINE_PHONES = """
     select 'email:' || e.value_norm, b.phone, b.confirmed
       from best b
       join crm.contact_point e on e.person_id = b.person_id and e.kind = 'email' and e.status = 'active'
+    union all
+    -- The phone each writer's own signature states (the triage's `people:v1` reading, newest), keyed
+    -- `signature:<address>`: «por confirmar» on the card when the CRM has no phone for them (owner
+    -- 2026-11-25: 40 of 44 Seguimiento rows had none). Read only, nothing is saved; one statement
+    -- with the saved phones (the pipeline's statement budget, test_v2_connection_pool).
+    select * from (
+        select distinct on (lower(a.value->>'sender_address'))
+               'signature:' || lower(a.value->>'sender_address'), a.value->'signature'->>'phone', false
+          from evidence.assertion a
+         where a.kind = 'message_triage' and a.value_norm = 'people:v1'
+           and position('@' in coalesce(a.value->>'sender_address', '')) > 0
+           -- Checked before choosing the newest, so a bad value never hides an older good phone:
+           -- 8 to 15 digits, and never a RUT («12.345.678-5») the model took for a phone.
+           and length(regexp_replace(coalesce(a.value->'signature'->>'phone', ''), '[^0-9]', '', 'g')) between 8 and 15
+           and a.value->'signature'->>'phone' !~ '^[[:space:]]*[0-9]{1,2}[.]?[0-9]{3}[.]?[0-9]{3}-[0-9kK][[:space:]]*$'
+         order by lower(a.value->>'sender_address'), a.created_at desc
+    ) signature_phones
 """
 # Every live call (`crm.note`, note_kind 'llamada'), one row each: an edit is a new row, so only the
 # newest revision counts, on the day of the root (when the call was first logged) and under the
@@ -1366,6 +1383,12 @@ def compose_pipeline(
             if phone is None and contact.get("address"):
                 bare = addresses_in(contact["address"])
                 phone = (phones or {}).get("email:" + normalize_email(bare[0])) if bare else None
+            if phone is None:
+                # None saved: the one their own signature states, «por confirmar».
+                person = contact.get("person_id")
+                own = [e for p in on_case if person and p.get("person_id") == person for e in p.get("emails") or ()]
+                own += [normalize_email(a) for a in addresses_in(contact.get("address") or "")]
+                phone = next(((phones or {})["signature:" + e] for e in own if "signature:" + e in (phones or {})), None)
         if contact is not None:
             contact["phone"] = phone["phone"] if phone else None
             contact["phone_confirmed"] = bool(phone["confirmed"]) if phone else None
