@@ -1224,6 +1224,10 @@ def test_the_contact_is_whoever_wrote_last_by_their_name() -> None:
     assert not any(a["code"] == "no_crm_contact" for a in card["attention"])  # the case has a saved person
     card = compose_pipeline([_opp("o1")], [], [], [], {}, [first], {}, {})[0]
     assert card["contact"]["person_id"] == "p-1"
+    # An earlier web-form visitor does not override someone who wrote directly afterwards (review).
+    with_form = {"o1": {**seen["o1"], "inbound": {**seen["o1"]["inbound"], "_enquirer": "visitante@ejemplo.invalid"}}}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, with_form)[0]
+    assert card["contact"]["address"] == "segunda@ejemplo.invalid"
 
 
 def test_no_reply_only_marks_the_email_r18_read() -> None:

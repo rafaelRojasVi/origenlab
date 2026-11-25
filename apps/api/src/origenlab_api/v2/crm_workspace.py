@@ -1329,7 +1329,9 @@ def compose_pipeline(
         if writing is not None and writing.get("person_id"):
             contact = {"source": "crm_participant", "name": writing.get("name"), "address": None, "others": others,
                        "person_id": writing.get("person_id")}
-        elif writer and not inbound_seen.get("_enquirer"):
+        elif writer and writer != (inbound_seen.get("_enquirer") or "").lower():
+            # `_writer` is only set by a direct email (a form submission never sets it), so a person
+            # who wrote after an earlier web-form visitor is the contact; the visitor replying is not.
             contact = {"source": "gmail_recipient", "name": seen_names.get(writer), "address": writer,
                        "others": others if writing is not None else len(on_case), "address_ref": address_ref(writer)}
             if not people:  # a saved person on the case is still a CRM contact, whoever wrote last
