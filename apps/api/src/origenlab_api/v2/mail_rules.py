@@ -1889,9 +1889,11 @@ def _shared_thread_reply(e: MailEvidence, ix: _Index) -> PlannedAction | None:
     first = moving[0][0]
     return PlannedAction(e.id, "R17", AUTO, tuple(reasons), case_id=first.id, case_title=first.title,
                          organization_id=first.organization_id, quote_number=labels[0],
+                         # The action's own case moves last: the executor's context ends on it, so
+                         # the receipt names that case (review 2026-11-25).
                          commands=tuple({"command": "advance_case_stage", "inputs": {
                              "opportunity_id": t.id, "opportunity_version": t.version,
-                             "stage": "negotiating", "note": note}} for t, _ in moving),
+                             "stage": "negotiating", "note": note}} for t, _ in [*moving[1:], moving[0]]),
                          candidates=tuple(t.id for t, _ in moving) if len(moving) > 1 else (),
                          context={"case": first.id, "case_version": first.version, "from_stage": first.stage})
 

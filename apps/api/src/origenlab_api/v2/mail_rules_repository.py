@@ -993,7 +993,13 @@ class MailRulesRepository(V2CaseCommandRepository):
             for moved_id in dict.fromkeys(moved):
                 cur.execute("select stage, version from crm.opportunity where id = %s for update", (moved_id,))
                 row = cur.fetchone()
-                if row is not None and row[0] == "negotiating":
+                # Only while R17's move is still the case's latest: a person who moved it back and
+                # forth since made a decision of their own (review 2026-11-25).
+                cur.execute("select command_receipt_id::text from crm.domain_event where aggregate_id = %s "
+                            "and event_type = 'opportunity.staged' order by seq desc limit 1", (moved_id,))
+                last = cur.fetchone()
+                ours = last is None or last[0] is None or last[0] == action.get("command_receipt_id")
+                if row is not None and row[0] == "negotiating" and ours:
                     run(ADVANCE_CASE_STAGE, {"opportunity_id": moved_id, "opportunity_version": int(row[1]),
                                              "stage": "quoting", "note": note})
         if rule == "R23":

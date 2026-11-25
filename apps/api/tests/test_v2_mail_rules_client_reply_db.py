@@ -145,8 +145,39 @@ def test_a_reply_on_a_thread_two_cases_share_moves_both_and_quitar_moves_both_ba
     result = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R17"}])
     assert not result["refused"], result["refused"]
     assert sorted(s["opportunity_id"] for s in result["applied"][0]["steps"]) == sorted([one, two])
+    assert result["applied"][0]["case_id"] == result["applied"][0]["steps"][-1]["opportunity_id"]
     assert (_stage(dsn, one), _stage(dsn, two)) == ("negotiating", "negotiating")
 
     undone = repo.undo(admin, result["applied"][0]["command_receipt_id"], "no era respuesta")
     assert len(undone["steps"]) == 2
     assert (_stage(dsn, one), _stage(dsn, two)) == ("quoting", "quoting")
+
+
+def test_quitar_leaves_a_case_a_person_moved_since(world) -> None:
+    """Review 2026-11-25: R17's move is undone only while it is still the case's latest stage change."""
+    import psycopg
+
+    from origenlab_api.v2.case_command_repository import V2CaseCommandRepository
+    from origenlab_api.v2.case_commands import AdvanceCaseStageBody, validated_case
+    import pytest
+
+    from origenlab_api.v2.commands import CommandRefused, request_digest
+    from v2_command_harness import runtime_dsn
+
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    case_id = _sent_case(world, admin)
+    answer = _reply(dsn, case_id, admin.operator_id, datetime.now(UTC) + timedelta(minutes=5))
+    repo = _mail_rules(dsn)
+    applied = repo.apply(admin, [{"evidence_id": answer, "rule_id": "R17"}])["applied"][0]
+    # A person moves it back to «Enviada» and on to «Conversación» again: their own decision.
+    for stage in ("quoting", "negotiating"):
+        version = _rows(dsn, "select version from crm.opportunity where id = %s", (case_id,))[0]["version"]
+        body = AdvanceCaseStageBody(opportunity_id=case_id, opportunity_version=version, stage=stage, note="decisión propia")
+        V2CaseCommandRepository(psycopg.connect, runtime_dsn(dsn)).execute(
+            command_name="advance_case_stage", operator=admin, fields=validated_case("advance_case_stage", body),
+            idempotency_key=uuid.uuid4().hex, digest=request_digest("advance_case_stage", body))
+    # Nothing of R17's is left to reverse: «Quitar» says so, and the person's stage stands.
+    with pytest.raises(CommandRefused):
+        repo.undo(admin, applied["command_receipt_id"], "no era respuesta")
+    assert _stage(dsn, case_id) == "negotiating"

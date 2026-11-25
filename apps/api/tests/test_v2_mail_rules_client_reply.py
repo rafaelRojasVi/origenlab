@@ -110,7 +110,8 @@ def test_a_reply_on_a_thread_two_cases_of_the_client_share_moves_both() -> None:
     one, two = case(), case(other, id="c-2", version=3)
     [a] = r17(reply(linked_case_ids=()), cases=(one, two))
     assert [(c["inputs"]["opportunity_id"], c["inputs"]["opportunity_version"], c["inputs"]["stage"])
-            for c in a.commands] == [("c-1", 9, "negotiating"), ("c-2", 3, "negotiating")]
+            for c in a.commands] == [("c-2", 3, "negotiating"), ("c-1", 9, "negotiating")]
+    assert a.case_id == "c-1"  # the action's case moves last, so the receipt names it
     assert a.candidates == ("c-1", "c-2") and "2 casos" in a.reasons[0]
     # Only those in «Enviada», not paused, whose quote went out before the reply.
     [b] = r17(reply(linked_case_ids=()), cases=(one, replace(two, stage="negotiating")))
