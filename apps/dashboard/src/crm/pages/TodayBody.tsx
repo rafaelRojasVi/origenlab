@@ -62,6 +62,7 @@ import {
   followUpsDue,
   HOME_FILTER_KINDS,
   retakeHint,
+  stuckCases,
   tenderClosingLines,
   wroteAfterWinning,
   type CotizarQueueItem,
@@ -230,6 +231,7 @@ export function TodayBody({
   // each shows only in a view that holds that work, like the queue.
   const showTenders = HOME_FILTER_KINDS[view].has("licitacion");
   const tenderLines = useMemo(() => (showTenders ? tenderClosingLines(tendersClosing) : []), [tendersClosing, showTenders]);
+  const stuck = useMemo(() => stuckCases(items), [items]);
   const totalQueue = queue.length + forwards.length + tenderLines.length;
   const showPreview = HOME_FILTER_KINDS[view].has("followup");
   // Coming up: quotes and follow-ups younger than day 3 — every older one is already in today's queue.
@@ -259,6 +261,9 @@ export function TodayBody({
               />
             </div>
           ) : null}
+
+          {/* ─── «Atascados» — what a rule should have done and did not (every view) ─── */}
+          {stuck.length > 0 ? <StuckSection stuck={stuck} onOpen={(id) => openCase(id)} /> : null}
 
           {/* ─── «Para hoy» unified queue ─── */}
           <ParaTiSection
@@ -324,6 +329,32 @@ export function TodayBody({
       />
     </div>
     </OpenCaseContext.Provider>
+  );
+}
+
+/* ─────────────────────────────────────────────────────── «Atascados» ── */
+
+function StuckSection({ stuck, onOpen }: { stuck: ReturnType<typeof stuckCases>; onOpen: (id: string) => void }) {
+  return (
+    <section aria-label="Casos atascados" data-testid="today-stuck" className="overflow-hidden rounded-xl border border-bad/30 bg-bad-bg">
+      <h2 className="px-4 pt-3 text-[13px] font-bold text-bad">
+        {stuck.length === 1 ? "1 caso atascado" : `${stuck.length} casos atascados`} — una regla no hizo lo que debía
+      </h2>
+      <ul className="divide-y divide-bad/20">
+        {stuck.map(({ card, reasons }) => (
+          <li key={card.opportunity_id}>
+            <button
+              type="button"
+              onClick={() => onOpen(card.opportunity_id)}
+              className="flex min-h-[44px] w-full flex-col items-start px-4 py-2 text-left text-[13px] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+            >
+              <span className="font-semibold text-ink">{card.organization?.name ?? card.title}</span>
+              <span className="text-bad">{reasons.join(" · ")}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

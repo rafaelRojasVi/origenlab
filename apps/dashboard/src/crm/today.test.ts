@@ -6,6 +6,7 @@ import { AuthSessionContext } from "../context/AuthSessionContext";
 import type { OpportunityCardData, RevisionCard } from "./crmTypes";
 import {
   buildParaTiQueue,
+  stuckCases,
   callTouch,
   filterQueue,
   followUpsDue,
@@ -384,5 +385,19 @@ describe("Seguimiento gaps (owner 2026-11-23)", () => {
     const c = sentTo(chasedBy([4]), "ref-2");
     const rows = buildParaTiQueue([a, b, c], NOW, null).filter((q) => q.kind === "followup");
     expect(rows.map((r) => r.opportunity_id)).toEqual([a.opportunity_id, c.opportunity_id]);
+  });
+});
+
+
+describe("stuckCases", () => {
+  it("lists open cases the API marked «Atascado», with the reasons", () => {
+    const stuck = { code: "stuck_quote_emailed", label: "Atascado: la cotización salió por correo pero no quedó como enviada", blocking: false, owner: "person" };
+    const other = { code: "no_crm_contact", label: "Sin persona", blocking: false, owner: "info" };
+    const open = { opportunity_id: "o1", stage: "lead", closed_at: null, attention: [stuck, other] } as unknown as OpportunityCardData;
+    const fine = { opportunity_id: "o2", stage: "lead", closed_at: null, attention: [other] } as unknown as OpportunityCardData;
+    const closed = { opportunity_id: "o3", stage: "lost", closed_at: "2026-11-01T00:00:00Z", attention: [stuck] } as unknown as OpportunityCardData;
+    expect(stuckCases([open, fine, closed])).toEqual([
+      { card: open, reasons: ["la cotización salió por correo pero no quedó como enviada"] },
+    ]);
   });
 });

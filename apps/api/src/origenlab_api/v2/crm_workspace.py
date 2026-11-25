@@ -336,6 +336,22 @@ _SQL_PIPELINE_REVISIONS = f"""
            -- The Cotizador's own amounts, written at approval: its PDF is never read.
            qr.quote_currency, qr.tax_base::text as authored_net, qr.tax_total::text as authored_tax,
            qr.grand_total::text as authored_gross,
+           qr.approved_at::text as approved_at,
+           -- An approved Cotizador revision whose PDF contacto@ already emailed (the newest such email):
+           -- rule R16 should have recorded it sent; set means it did not (owner 2026-11-25, «atascado»).
+           -- shortcut: scans the captured mail per approved revision (a handful); index it if that grows.
+           case when qr.status = 'approved' and qr.origin = 'authored' and qr.superseded_by_revision_no is null then (
+               select max(s.payload->>'sent_at')
+                 from crm.quote q2
+                 join evidence.source_record s on s.kind = 'gmail_message'
+                where q2.id = qr.quote_id
+                  and lower(coalesce(s.payload->>'sender', '')) like '%contacto@origenlab.cl%'
+                  and (s.payload->>'sent_at')::timestamptz > qr.approved_at
+                  and exists (select 1 from jsonb_array_elements(coalesce(s.payload->'documents', '[]'::jsonb)) doc
+                               where doc->>'filename' ilike '%.pdf' and doc->>'filename' not ilike '%borrador%'
+                                 and doc->>'filename' ~* ('CN0*' || ltrim(split_part(q2.quote_number, '-', 1), '0')
+                                                          || '([^0-9]|$)'))
+           ) end as emailed_unrecorded_at,
            {QUOTE_DOCUMENT_COLUMNS}
       from crm.quote_revision qr
       left join evidence.source_record d
@@ -659,6 +675,10 @@ ATTENTION_OWNER: dict[str, str] = {
     "document_pending_drive": "system",
     "no_gmail_evidence": "info",
     "no_crm_contact": "info",
+    "stuck_quote_emailed": "person",
+    "stuck_quote_not_sent": "person",
+    "stuck_stage_behind": "person",
+    "stuck_reply_waiting": "person",
 }
 
 #: Stages after which a case waits on nothing (`crm.opportunity` terminal stages).
@@ -673,7 +693,16 @@ ATTENTION_LABELS_ES: dict[str, str] = {
     "no_gmail_evidence": "Sin correo de Gmail vinculado a la última revisión",
     "no_quote": "Caso sin cotización registrada",
     "no_crm_contact": "Sin persona de contacto guardada en el CRM",
+    # «Atascado» (owner 2026-11-25): what the rules should have done by now and did not.
+    "stuck_quote_emailed": "Atascado: la cotización salió por correo pero no quedó como enviada",
+    "stuck_quote_not_sent": "Atascado: cotización aprobada hace más de 2 días y nunca registrada como enviada",
+    "stuck_stage_behind": "Atascado: tiene una cotización enviada y sigue en «Solicitada»",
+    "stuck_reply_waiting": "Atascado: el cliente respondió hace más de 2 días y el caso sigue en «Enviada»",
 }
+#: The «Atascado» codes (`stuck_codes`), shown first in Hoy.
+STUCK_CODES: frozenset[str] = frozenset(c for c in ATTENTION_OWNER if c.startswith("stuck_"))
+#: How long a step may wait for its rule before the case reads «Atascado».
+STUCK_AFTER = timedelta(days=2)
 
 
 def live_drive_overview(
@@ -1141,6 +1170,32 @@ def forwarded_requester(email: str | None, company: str | None) -> tuple[str | N
     return name, domain
 
 
+def stuck_codes(opp: Mapping[str, Any], revisions: list[Mapping[str, Any]],
+                inbound: Mapping[str, Any] | None, now: datetime | None) -> list[str]:
+    """«Atascado»: a step a rule should have taken and has not (owner 2026-11-25, three emailed quotes
+    sat in «Solicitada» for days). Read from the card's own rows, on every load; nothing is written.
+    No clock (`now` None), no codes."""
+    if now is None:
+        return []
+    stage = opp.get("stage")
+    paused = bool(opp.get("paused_until")) and str(opp["paused_until"]) > now.astimezone(SANTIAGO).date().isoformat()
+    live = [r for r in revisions if not r.get("_superseded")]
+    approved = [r for r in live if r.get("status") == "approved" and r.get("origin") == "authored"]
+    sent = [t for r in live if r.get("status") == "sent" and (t := _aware(r.get("sent_at")))]
+    out: list[str] = []
+    if any(r.get("_emailed_at") for r in approved):
+        out.append("stuck_quote_emailed")
+    elif not paused and any((t := _aware(r.get("_approved_at"))) and now - t > STUCK_AFTER for r in approved):
+        out.append("stuck_quote_not_sent")
+    if sent and stage in ("lead", "qualifying", "qualified"):
+        out.append("stuck_stage_behind")
+    wrote = _aware((inbound or {}).get("at"))
+    if (stage == "quoting" and not paused and sent and wrote and not (inbound or {}).get("no_reply")
+            and wrote > max(sent) and now - wrote > STUCK_AFTER):
+        out.append("stuck_reply_waiting")
+    return out
+
+
 def compose_pipeline(
     opportunities: list[Mapping[str, Any]],
     case_organizations: list[Mapping[str, Any]],
@@ -1158,6 +1213,7 @@ def compose_pipeline(
     call_counts: Mapping[str, Mapping[str, Any]] | None = None,
     last_calls_any: list[Mapping[str, Any]] | None = None,
     recent_notes: list[Mapping[str, Any]] | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Build one card per opportunity. Pure: every input is a plain row, so this is unit-tested
     without a database. Never invents a value — an absent field stays ``None`` and is explained
@@ -1288,6 +1344,9 @@ def compose_pipeline(
                     "_quote_id": q["quote_id"],
                     "contents": quote_contents(r) or authored_contents(r),
                     "_recipients": src.get("recipients"),
+                    "_approved_at": r.get("approved_at"),
+                    "_emailed_at": r.get("emailed_unrecorded_at"),
+                    "_superseded": r.get("superseded_by_revision_no") is not None,
                 }
                 rev_cards.append(rc)
                 all_revs.append(rc)
@@ -1412,6 +1471,7 @@ def compose_pipeline(
             if last_out["gmail"] is None:
                 attention.append("no_gmail_evidence")
 
+        attention += stuck_codes(opp, all_revs, ((contacts or {}).get(oid) or {}).get("inbound"), now)
         seen: set[str] = set()
         ordered = [c for c in attention if not (c in seen or seen.add(c))]
         # A closed case keeps its notes but never blocks (owner decision 2026-10-09): nothing
@@ -1891,7 +1951,7 @@ class CrmWorkspaceRepository:
         cards = compose_pipeline(
             opps, case_orgs, quotes, revisions, sources, participants, drive, contacts, tasks, notes,
             documents=documents, last_calls=last_calls, phones=phones, call_counts=call_counts,
-            last_calls_any=last_calls_any, recent_notes=recent_notes,
+            last_calls_any=last_calls_any, recent_notes=recent_notes, now=now or datetime.now(UTC),
         )
         return {
             "items": cards,

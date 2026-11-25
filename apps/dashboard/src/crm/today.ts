@@ -625,3 +625,18 @@ export function useHomeFilter(): HomeFilter {
   const f = session.kind === "signed_in" ? session.profile?.homeFilter : null;
   return f && Object.prototype.hasOwnProperty.call(HOME_FILTER_KINDS, f) ? f : "todo";
 }
+
+
+/**
+ * «Atascados» (owner 2026-11-25): cases where a rule should have moved something and did not — the
+ * API names it (`stuck_*` attention codes) on every read. Open cases only, each with its reasons.
+ */
+export function stuckCases(items: OpportunityCardData[]): { card: OpportunityCardData; reasons: string[] }[] {
+  return items
+    .filter(isOpenCase)
+    .map((card) => ({
+      card,
+      reasons: card.attention.filter((a) => a.code.startsWith("stuck_")).map((a) => a.label.replace(/^Atascado:\s*/, "")),
+    }))
+    .filter((s) => s.reasons.length > 0);
+}
