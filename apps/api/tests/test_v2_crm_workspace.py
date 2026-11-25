@@ -379,6 +379,10 @@ def test_last_contact_is_the_newest_email_each_way_on_the_case_threads() -> None
     # The «Asignar institución» suggestion rides on inbound as private keys (stripped from the card).
     assert out["o1"]["inbound"].pop("_requester_domain") == "ejemplo.invalid"
     assert out["o1"]["inbound"].pop("_requester_read") is None
+    # Who wrote last, and the name each client address carries: the card's contact (stripped too).
+    assert out["o1"]["inbound"].pop("_writer") == "persona@ejemplo.invalid"
+    assert out["o1"]["inbound"].pop("_names") == out["o1"]["outbound"].pop("_names") == {
+        "persona@ejemplo.invalid": "Persona"}
     assert out["o1"] == {
         # Every email of ours once, oldest first: m3 came through two threads.
         "outbound": {"at": "2026-09-20T10:00:00-03:00", "subject": "Re: seguimiento",
@@ -416,7 +420,10 @@ def test_mail_only_to_us_or_a_supplier_is_not_a_contact_with_the_client() -> Non
     # Whom we wrote to rides as an opaque ref, never the address.
     quote_only = last_contacts(rows[:1])["o1"]["outbound"]
     assert quote_only["to_ref"] == address_ref("persona@ejemplo.invalid")
-    assert "persona@" not in json.dumps(quote_only)
+    # Private keys (`_names`) stay server-side: the card strips them before it leaves.
+    assert "persona@" not in json.dumps({k: v for k, v in quote_only.items() if not k.startswith("_")})
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, last_contacts(rows[:1]))[0]
+    assert "persona@" not in json.dumps(card["last_contact"]) and "_names" not in json.dumps(card)
     assert out["inbound"] is None  # the supplier's answer is not the client writing back
     # Without the supplier list the price check and its answer count, as before.
     plain = last_contacts(rows)["o1"]
@@ -659,10 +666,26 @@ def test_requesting_institution_from_case_role_and_other_roles_kept_apart() -> N
 
 def test_crm_participant_wins_over_gmail_recipient() -> None:
     card = compose_pipeline(
-        [_opp("o1")], [], [], [], {}, [{"opportunity_id": "o1", "name": "Persona Ejemplo"}], {}
+        [_opp("o1")], [], [], [], {}, [{"opportunity_id": "o1", "name": "Persona Ejemplo", "person_id": "p-1"}], {}
     )[0]
     assert card["contact"]["source"] == "crm_participant"
     assert not any(a["code"] == "no_crm_contact" for a in card["attention"])
+
+
+def test_a_participant_known_only_by_its_address_is_the_contact_before_a_quote_recipient() -> None:
+    # R21 adds whoever writes on a case by address; with no person yet it was dropped («Sin contacto»).
+    rows = [{"opportunity_id": "o1", "name": None, "person_id": None, "address": "ana@ejemplo.invalid"},
+            {"opportunity_id": "o1", "name": None, "person_id": None, "address": "luis@ejemplo.invalid"}]
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, rows, {})[0]
+    assert {k: card["contact"][k] for k in ("source", "address", "others")} == (
+        {"source": "gmail_recipient", "address": "ana@ejemplo.invalid", "others": 1})
+    assert card["contact"]["address_ref"]
+    assert any(a["code"] == "no_crm_contact" for a in card["attention"])  # still no CRM person
+    # A person on the case wins, and is the only one counted.
+    person = {"opportunity_id": "o1", "name": "Persona Ejemplo", "person_id": "p-1", "address": None}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [*rows, person], {})[0]
+    assert (card["contact"]["source"], card["contact"]["person_id"], card["contact"]["others"]) == (
+        "crm_participant", "p-1", 0)
 
 
 def test_drive_archive_separates_in_crm_from_not_imported(tmp_path: Path) -> None:
@@ -1162,6 +1185,65 @@ def test_last_contacts_skips_automatic_mail() -> None:
         _mail_row("m4", "2026-10-26T17:00:00Z", "postmaster@correo.invalid", triage_class="bounce"),
     ]
     assert last_contacts(rows)["o1"]["inbound"]["at"] == "2026-10-23T12:00:00+00:00"
+
+
+def test_a_robot_notice_is_not_the_client_writing() -> None:
+    """Audit 2026-11-25: a Drive share request and Gemini's notes read as «Respondió» and as the contact."""
+    rows = [
+        _mail_row("m1", "2026-10-23T12:00:00Z", "Persona <persona@ejemplo.invalid>"),
+        _mail_row("m2", "2026-10-26T15:02:00Z", '"Ana (mediante Documentos de Google)" <drive-shares-dm-noreply@google.com>'),
+        _mail_row("m3", "2026-10-26T16:00:00Z", "Gemini <gemini-notes@google.com>"),
+    ]
+    inbound = last_contacts(rows)["o1"]["inbound"]
+    assert (inbound["at"], inbound["_writer"]) == ("2026-10-23T12:00:00+00:00", "persona@ejemplo.invalid")
+
+
+def test_the_contact_is_whoever_wrote_last_by_their_name() -> None:
+    """Owner 2026-11-25: the first person saved is not the contact when someone else writes."""
+    rows = [
+        _mail_row("m1", "2026-10-20T12:00:00Z", "Primera Persona <primera@ejemplo.invalid>"),
+        _mail_row("m2", "2026-10-23T12:00:00Z", "Segunda Persona <segunda@ejemplo.invalid>"),
+    ]
+    seen = last_contacts(rows)
+    first = {"opportunity_id": "o1", "name": "Primera Persona", "person_id": "p-1", "address": None,
+             "emails": ["primera@ejemplo.invalid"]}
+    second_by_address = {"opportunity_id": "o1", "name": None, "person_id": None, "address": "segunda@ejemplo.invalid",
+                         "emails": ["segunda@ejemplo.invalid"]}
+    # The writer known only by address: their address, under the name their email carries.
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [first, second_by_address], {}, seen)[0]
+    assert {k: card["contact"][k] for k in ("source", "name", "address", "others")} == (
+        {"source": "gmail_recipient", "name": "Segunda Persona", "address": "segunda@ejemplo.invalid", "others": 1})
+    # The writer saved as a person: that person (and their phone).
+    second = {**second_by_address, "name": "Segunda P.", "person_id": "p-2", "address": None}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [first, second], {}, seen)[0]
+    assert (card["contact"]["source"], card["contact"]["person_id"], card["contact"]["others"]) == (
+        "crm_participant", "p-2", 1)
+    # A writer who is on no row yet is still the contact; nobody writing keeps the first person.
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [first], {}, seen)[0]
+    assert (card["contact"]["address"], card["contact"]["name"]) == ("segunda@ejemplo.invalid", "Segunda Persona")
+    assert not any(a["code"] == "no_crm_contact" for a in card["attention"])  # the case has a saved person
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [first], {}, {})[0]
+    assert card["contact"]["person_id"] == "p-1"
+    # An earlier web-form visitor does not override someone who wrote directly afterwards (review).
+    with_form = {"o1": {**seen["o1"], "inbound": {**seen["o1"]["inbound"], "_enquirer": "visitante@ejemplo.invalid"}}}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, with_form)[0]
+    assert card["contact"]["address"] == "segunda@ejemplo.invalid"
+
+
+def test_a_signature_phone_is_offered_por_confirmar_when_the_crm_has_none() -> None:
+    """Owner 2026-11-25: the phone a client's own signature states, read by the triage, not saved."""
+    rows = [_mail_row("m1", "2026-10-23T12:00:00Z", "Ana Ficticia <ana@ejemplo.invalid>")]
+    sig = {"signature:ana@ejemplo.invalid": {"phone": "+56 9 1234 5678", "confirmed": False}}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, last_contacts(rows), phones=sig)[0]
+    assert (card["contact"]["phone"], card["contact"]["phone_confirmed"]) == ("+56 9 1234 5678", False)
+    # A saved phone wins; a person's signature counts through any of their addresses.
+    saved = {**sig, "email:ana@ejemplo.invalid": {"phone": "+56 2 2222 3333", "confirmed": True}}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [], {}, last_contacts(rows), phones=saved)[0]
+    assert card["contact"]["phone"] == "+56 2 2222 3333"
+    person = {"opportunity_id": "o1", "name": "Ana", "person_id": "p-1", "address": None,
+              "emails": ["ana@ejemplo.invalid"]}
+    card = compose_pipeline([_opp("o1")], [], [], [], {}, [person], {}, {}, phones=sig)[0]
+    assert (card["contact"]["person_id"], card["contact"]["phone"]) == ("p-1", "+56 9 1234 5678")
 
 
 def test_no_reply_only_marks_the_email_r18_read() -> None:
