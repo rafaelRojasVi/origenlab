@@ -6,6 +6,8 @@ Every address, domain, name and number here is fictitious (`.test`).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from origenlab_api.v2.mail_rules import (
     RULE_IDS,
     CaseQuote,
@@ -84,6 +86,52 @@ def test_not_on_a_case_yet_waits_for_the_link() -> None:
 def test_never_a_case_put_en_pausa() -> None:
     # «Se evaluará el año entrante» is why the case was paused: it stays «Enviada» until it comes back.
     assert r17(reply(), cases=(case(paused_until="2027-03-01T12:00:00+00:00"),)) == []
+
+
+def test_a_reply_during_a_pause_is_read_once_the_pause_is_over() -> None:
+    # Audit 2026-11-25: the client answered while the case was paused; when it came back the 14-day
+    # window had passed and the case stayed «Enviada» for good.
+    old_reply = reply(sent_at="2026-10-01T12:00:00+00:00")
+    early_quote = sent_quote(sent_at="2026-09-20T12:00:00+00:00")
+    [a] = r17(old_reply, cases=(case(early_quote, pause_ended="2026-10-20"),))
+    assert a.commands[0]["inputs"]["stage"] == "negotiating"
+    # However long ago the pause ended (owner 2026-11-25: «the rule catches old ones too»).
+    assert len(r17(old_reply, cases=(case(early_quote, pause_ended="2026-10-05"),))) == 1
+    # Not while the pause is still ahead, and not a reply that came after the pause ended (that one is
+    # simply old: a person's call).
+    assert r17(old_reply, cases=(case(early_quote, pause_ended="2026-10-20", paused_until="2027-01-01"),)) == []
+    assert r17(reply(sent_at="2026-10-08T12:00:00+00:00"), cases=(case(early_quote, pause_ended="2026-10-03"),)) == []
+
+
+def test_a_reply_on_a_thread_two_cases_of_the_client_share_moves_both() -> None:
+    # Production 2026-10-26: two quotes, two cases, one thread; R1 linked the reply to neither.
+    other = CaseQuote(id="q-2", quote_number="09877-26", revisions=(QuoteRevision(
+        id="r-2", revision_no=1, status="sent", version=2, superseded=False, sent_at=QUOTE_SENT),))
+    one, two = case(), case(other, id="c-2", version=3)
+    [a] = r17(reply(linked_case_ids=()), cases=(one, two))
+    assert [(c["inputs"]["opportunity_id"], c["inputs"]["opportunity_version"], c["inputs"]["stage"])
+            for c in a.commands] == [("c-1", 9, "negotiating"), ("c-2", 3, "negotiating")]
+    assert a.candidates == ("c-1", "c-2") and "2 casos" in a.reasons[0]
+    # Only those in «Enviada», not paused, whose quote went out before the reply.
+    [b] = r17(reply(linked_case_ids=()), cases=(one, replace(two, stage="negotiating")))
+    assert [c["inputs"]["opportunity_id"] for c in b.commands] == ["c-1"]
+    assert r17(reply(linked_case_ids=()), cases=(replace(one, paused_until="2027-01-01"), replace(two, stage="lead"))) == []
+    # Two clients on one thread: a person decides — unless the sender is one of the people of each.
+    other_client = replace(two, organization_id="o-9")
+    assert r17(reply(linked_case_ids=()), cases=(one, other_client)) == []
+    both = (replace(one, people=("persona@cliente.test",)), replace(other_client, participants=("persona@cliente.test",)))
+    assert len(r17(reply(linked_case_ids=()), cases=both)) == 1
+    # One open case on the thread is R1's to link; a supplier or an old reply never moves anything.
+    assert r17(reply(linked_case_ids=()), cases=(one, replace(two, closed=True, stage="lost"))) == []
+    assert r17(reply(linked_case_ids=(), sender="ventas@fabricante.test"), cases=(one, two)) == []
+    # However old (owner 2026-11-25), as long as the quotes went out before it.
+    late_quotes = (one, replace(two, quotes=(CaseQuote(id="q-2", quote_number="09877-26", revisions=(QuoteRevision(
+        id="r-2", revision_no=1, status="sent", version=2, superseded=False, sent_at="2026-09-01T12:00:00+00:00"),)),)))
+    [old] = r17(reply(linked_case_ids=(), sent_at="2026-10-01T12:00:00+00:00"), cases=late_quotes)
+    assert [c["inputs"]["opportunity_id"] for c in old.commands] == ["c-2"]
+    # Two replies in one pass move each case once.
+    acts = r17(reply(linked_case_ids=()), reply(id="e-10", linked_case_ids=()), cases=(one, two))
+    assert sorted(c["inputs"]["opportunity_id"] for a in acts for c in a.commands) == ["c-1", "c-2"]
 
 
 def test_only_from_enviada() -> None:
