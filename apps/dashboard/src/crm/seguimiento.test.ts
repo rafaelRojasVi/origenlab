@@ -85,6 +85,9 @@ describe("seguimientoRows", () => {
     // Two institutions on one thread are two clients: two rows (review 2026-11-25).
     const otherClient = { ...older, organization: { organization_id: "org-y", name: "Otra", version: 1 } } as OpportunityCardData;
     expect(seguimientoRows([otherClient, newer], profiles, NOW)).toHaveLength(2);
+    // No institution and no contact: nothing says they are one client, so two rows (review).
+    const unknown = (c: OpportunityCardData) => ({ ...c, organization: null, contact: null }) as OpportunityCardData;
+    expect(seguimientoRows([unknown(older), unknown(newer)], profiles, NOW)).toHaveLength(2);
     // A paused case never leads: the page hides paused rows, its sibling must stay in sight.
     const paused = { ...newer, paused_until: "2099-01-01" } as OpportunityCardData;
     const [row] = seguimientoRows([older, paused], profiles, NOW);

@@ -260,8 +260,10 @@ function oneRowPerThread(rows: SegRow[], now: Date): SegRow[] {
   const out: SegRow[] = [];
   for (const r of rows) {
     const mail = r.card.last_contact?.outbound?.url;
-    // The same email AND the same institution: two clients' cases on one thread stay two rows.
-    const key = mail ? `${mail}|${r.card.organization?.organization_id ?? ""}` : null;
+    // The same email AND the same client: two clients' cases on one thread stay two rows. With no
+    // institution, the contact person stands for the client; with neither, the row stays alone.
+    const who = r.card.organization?.organization_id ?? r.card.contact?.person_id ?? r.card.contact?.address ?? null;
+    const key = mail && who ? `${mail}|${who}` : null;
     if (!key) out.push(r);
     else byMail.set(key, [...(byMail.get(key) ?? []), r]);
   }
