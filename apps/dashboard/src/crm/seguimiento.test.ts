@@ -82,6 +82,9 @@ describe("seguimientoRows", () => {
     const lead = rows.find((r) => r.card.opportunity_id === "o-new")!;
     expect(lead.also.map((c) => c.opportunity_id)).toEqual(["o-old"]);
     expect(lead.amountClp).toBe(500000); // counted once: the row's own quote
+    // Two institutions on one thread are two clients: two rows (review 2026-11-25).
+    const otherClient = { ...older, organization: { organization_id: "org-y", name: "Otra", version: 1 } } as OpportunityCardData;
+    expect(seguimientoRows([otherClient, newer], profiles, NOW)).toHaveLength(2);
     // A paused case never leads: the page hides paused rows, its sibling must stay in sight.
     const paused = { ...newer, paused_until: "2099-01-01" } as OpportunityCardData;
     const [row] = seguimientoRows([older, paused], profiles, NOW);

@@ -254,14 +254,16 @@ function buildRow(card: OpportunityCardData, profiles: ProfileCard[], now: Date)
   };
 }
 
-/** Rows whose newest email of ours is the same message: one row, the newest quote's, naming the rest. */
+/** Rows of one institution whose newest email of ours is the same message: one row, the newest quote's, naming the rest. */
 function oneRowPerThread(rows: SegRow[], now: Date): SegRow[] {
   const byMail = new Map<string, SegRow[]>();
   const out: SegRow[] = [];
   for (const r of rows) {
     const mail = r.card.last_contact?.outbound?.url;
-    if (!mail) out.push(r);
-    else byMail.set(mail, [...(byMail.get(mail) ?? []), r]);
+    // The same email AND the same institution: two clients' cases on one thread stay two rows.
+    const key = mail ? `${mail}|${r.card.organization?.organization_id ?? ""}` : null;
+    if (!key) out.push(r);
+    else byMail.set(key, [...(byMail.get(key) ?? []), r]);
   }
   for (const group of byMail.values()) {
     // A paused case never leads: the page hides paused rows, and its sibling must stay in sight.
