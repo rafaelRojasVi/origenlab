@@ -52,12 +52,13 @@ def _admin(dsn: str) -> OperatorIdentity:
 
 
 def _email(dsn: str, documents: list[dict], *, case_id: str | None, linked_by: str, sent_at: datetime,
-           thread: str | None = None, sender: str = "Tatiana <contacto@origenlab.cl>") -> tuple[str, str]:
+           thread: str | None = None, sender: str = "Tatiana <contacto@origenlab.cl>",
+           recipients: str = "compras@cliente-ficticio.test") -> tuple[str, str]:
     """A captured outbound Gmail message from contacto@, its stored copy, and its link to the case (R2's)."""
     gid = uuid.uuid4().hex[:16]
     thread = thread or f"t-{gid}"
     payload = {"gmail_message_id": gid, "gmail_thread_id": thread, "direction_hint": "external",
-               "sender": sender, "recipients": "compras@cliente-ficticio.test",
+               "sender": sender, "recipients": recipients,
                "subject_raw": "Cotizaciones", "sent_at": sent_at.isoformat(), "documents": documents}
     [(record,)] = _owner(dsn, "insert into evidence.source_record (kind, dedupe_key, payload, source_uri) "
                               "values ('gmail_message', %s, %s::jsonb, %s) returning id::text",
@@ -200,3 +201,52 @@ def test_the_ygaero_shape_two_cases_one_reply(world) -> None:
         assert _rows(dsn, "select stage from crm.opportunity where id = %s", (case_id,))[0]["stage"] == "quoting"
         assert _rows(dsn, "select count(*) as n from crm.opportunity_evidence where source_record_id = %s "
                           "and opportunity_id = %s and unlinked_at is null", (email, case_id))[0]["n"] == 1
+
+
+def test_a_client_without_institution_quoted_on_its_older_case_s_thread(world) -> None:
+    """Production 2026-11-24: a gmail-style client asked again on the thread of its older open case; the
+    Cotizador quoted it from a new case with no institution. R16 sends it and walks only to «Calificando»."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    older = _case(dsn, world["operator"], world["institution"])
+    created = _run(world, "create-quote", {"client": {"email": "compras@cliente-ficticio.test", "name": "Compras"}})
+    new_case = created["opportunity_id"]
+    assert new_case != older
+    saved = _run(world, "save-quote-draft", {"revision_id": created["revision_id"], "expected_version": created["version"],
+                                             "draft": {"items": [_catalog_item(world)],
+                                                       "terms": {"warranty_terms_es": WARRANTY}}})
+    _run(world, "approve-quote-revision", {"revision_id": created["revision_id"], "expected_version": saved["version"]})
+    thread = f"t-{uuid.uuid4().hex[:12]}"
+    _email(dsn, [], case_id=older, linked_by=admin.operator_id, sent_at=datetime.now(UTC) - timedelta(days=1),
+           thread=thread, sender="Compras <compras@cliente-ficticio.test>")
+    email, _ = _email(dsn, [_doc(f"Cotización CN{created['quote_number'][:5]} — Cliente.pdf")], case_id=None,
+                      linked_by=admin.operator_id, sent_at=datetime.now(UTC) + timedelta(minutes=1), thread=thread)
+
+    repo = _mail_rules(dsn)
+    result = repo.apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
+    assert not result["refused"], result["refused"]
+    assert _revision(dsn, created["revision_id"])["status"] == "sent"
+    stages = {r["id"]: r["stage"] for r in _rows(dsn, "select id::text as id, stage from crm.opportunity "
+                                                      "where id in (%s, %s)", (new_case, older))}
+    assert stages == {new_case: "qualifying", older: "lead"}  # the older case is not touched
+
+
+def test_a_free_mail_client_gets_a_persona_natural_and_reaches_enviada(world) -> None:
+    """Owner 2026-11-25: the quote to a gmail client stayed «Solicitada» for want of an institution."""
+    dsn = world["dsn"]
+    admin = _admin(dsn)
+    address = f"ficticia.{uuid.uuid4().hex[:6]}@gmail.com"
+    created = _run(world, "create-quote", {"client": {"email": address, "name": "Ana Ficticia"}})
+    saved = _run(world, "save-quote-draft", {"revision_id": created["revision_id"], "expected_version": created["version"],
+                                             "draft": {"items": [_catalog_item(world)],
+                                                       "terms": {"warranty_terms_es": WARRANTY}}})
+    _run(world, "approve-quote-revision", {"revision_id": created["revision_id"], "expected_version": saved["version"]})
+    email, _ = _email(dsn, [_doc(f"Cotización CN{created['quote_number'][:5]} — {address}.pdf")],
+                      case_id=created["opportunity_id"], linked_by=admin.operator_id,
+                      sent_at=datetime.now(UTC) + timedelta(minutes=1), recipients=address)
+    result = _mail_rules(dsn).apply(admin, [{"evidence_id": email, "rule_id": "R16"}])
+    assert not result["refused"], result["refused"]
+    assert "add_case_organization" in [s["command"] for s in result["applied"][0]["steps"]]  # R16 named it
+    [row] = _rows(dsn, "select o.stage, og.name, og.kind from crm.opportunity o join crm.organization og "
+                       "on og.id = o.organization_id where o.id = %s", (created["opportunity_id"],))
+    assert row["stage"] == "quoting" and row["kind"] == "individual" and row["name"].endswith("(particular)")

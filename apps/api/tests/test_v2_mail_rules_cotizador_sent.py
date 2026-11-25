@@ -119,7 +119,7 @@ def test_needs_contacto_outbound_on_the_case_and_an_open_stage() -> None:
     assert r16(mail(doc, direction="inbound", sender="compras@cliente.test"), cases=(case(q),)) == []
     assert r16(mail(doc, direction_hint="internal_only"), cases=(case(q),)) == []
     assert r16(mail(doc, linked_case_ids=()), cases=(case(q),)) == []  # R1 links it first (its thread)
-    assert r16(mail(doc, linked_case_ids=("c-9",)), cases=(case(q), case(id="c-9"))) == []
+    assert r16(mail(doc, linked_case_ids=("c-9",)), cases=(case(q), case(id="c-9", organization_id="o-9"))) == []
     assert r16(mail(doc), cases=(case(q, stage="won", closed=True),)) == []
     assert r16(mail(doc), cases=(case(q, stage="lost", closed=True),)) == []
     [already] = r16(mail(doc), cases=(case(q, stage="quoting"),))
@@ -149,7 +149,7 @@ def test_pdfs_of_two_cases_move_both_the_ygaero_shape() -> None:
     assert "2 casos" in a.reasons[1]
     # One of them closed, or an email a person put on a third case → a person decides.
     assert r16(e, cases=(a_case, replace(b_case, stage="lost", closed=True))) == []
-    assert r16(replace(e, linked_case_ids=("c-x",)), cases=(a_case, b_case, case(id="c-x"))) == []
+    assert r16(replace(e, linked_case_ids=("c-x",)), cases=(a_case, b_case, case(id="c-x", organization_id="o-9"))) == []
 
 
 def test_an_old_lost_thread_does_not_block_the_golden_omega_shape() -> None:
@@ -160,9 +160,48 @@ def test_an_old_lost_thread_does_not_block_the_golden_omega_shape() -> None:
     [a] = r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, lost))
     assert a.case_id == "c-new" and [c["command"] for c in a.commands][:2] == ["record_authored_quote_sent",
                                                                                "link_case_evidence"]
-    # The same reply on an OPEN case's thread that no PDF names stays with a person.
-    open_other = replace(lost, stage="quoting", closed=False)
+    # The same reply on another client's OPEN case's thread that no PDF names stays with a person.
+    open_other = replace(lost, stage="quoting", closed=False, organization_id="o-2")
     assert r16(mail(pdf("Cotización CN01276 — goldenomega.cl.pdf"), linked_case_ids=()), cases=(new_case, open_other)) == []
+
+
+def test_an_open_case_of_the_same_client_on_the_thread_does_not_block() -> None:
+    # Production 2026-11-13 and 11-24: a new request arrived on the thread of the client's older open
+    # case (another quote), and the Cotizador quoted it from a second case. Same client, no person needed.
+    q = quote("01276-26", authored("r-1", 1))
+    new_case = case(q, id="c-new", stage="lead", thread_ids=())
+    older = case(quote("01250-26", authored("r-0", 1, status="sent")), id="c-old", stage="quoting",
+                 thread_ids=("t-1",), organization_id="o-2")
+    e = mail(pdf("Cotización CN01276 — Cliente.pdf"), linked_case_ids=())
+    # The same institution...
+    [a] = r16(e, cases=(new_case, replace(older, organization_id="o-1")))
+    assert a.case_id == "c-new" and a.commands[0]["inputs"]["quote_revision_id"] == "r-1"
+    # ...or a person the email went to, though the institutions differ.
+    assert r16(e, cases=(new_case, older)) == []
+    [b] = r16(replace(e, recipients=("Ana <Ana@Cliente.test>; otra@origenlab.cl",)),
+              cases=(new_case, replace(older, people=("ana@cliente.test",))))
+    assert b.case_id == "c-new"
+    [c] = r16(e, cases=(new_case, replace(older, participants=("compras@cliente.test",))))
+    assert c.case_id == "c-new"
+    # Our own address on both is no evidence of one client.
+    assert r16(replace(e, recipients=("contacto@origenlab.cl",)),
+               cases=(new_case, replace(older, people=("contacto@origenlab.cl",)))) == []
+
+
+def test_a_case_with_no_confirmed_institution_is_sent_but_stops_before_calificada() -> None:
+    # Production 2026-11-24: a Cotizador case for a gmail.com client has no institution, and
+    # «Calificada» onward refuse one without it. The revision is still sent; a person names who asks.
+    q = quote("01276-26", authored("r-1", 1))
+    [a] = r16(mail(pdf("CN01276-Cliente.pdf")), cases=(case(q, stage="lead", organization_id=None),))
+    assert [c["command"] for c in a.commands] == ["record_authored_quote_sent", "advance_case_stage"]
+    assert a.commands[1]["inputs"]["stage"] == "qualifying"
+    assert "sin institución confirmada" in a.reasons[-1]
+    [b] = r16(mail(pdf("CN01276-Cliente.pdf")), cases=(case(q, stage="qualifying", organization_id=None),))
+    assert [c["command"] for c in b.commands] == ["record_authored_quote_sent"]
+    # With one, nothing changes.
+    [c] = r16(mail(pdf("CN01276-Cliente.pdf")), cases=(case(q, stage="lead"),))
+    assert [x["inputs"]["stage"] for x in c.commands[1:]] == ["qualifying", "qualified", "quoting"]
+    assert all("sin institución" not in r for r in c.reasons)
 
 
 def test_a_pdf_naming_two_quotes_leaves_it_to_a_person() -> None:
@@ -249,3 +288,38 @@ def test_a_browser_named_pdf_on_a_new_thread_is_linked_by_r16_itself() -> None:
         "Sistema (correo) R16")
     # On another case's thread it stays with a person.
     assert r16(fresh, cases=(case(q), case(id="c-2", thread_ids=("t-new",)))) == []
+
+
+def test_a_request_answered_with_the_quote_of_the_case_beside_it() -> None:
+    # Production 2026-11-25: a web request (its own case, no quote, no institution) was answered on
+    # its thread with the PDF of the quote the Cotizador put on a second case. Same client: sent.
+    q = quote("01276-26", authored("r-1", 1))
+    quoted = case(q, id="c-quote", stage="lead", thread_ids=())
+    request = case(id="c-request", stage="lead", organization_id=None, people=("compras@cliente.test",))
+    e = mail(pdf("Cotización CN01276 — Cliente.pdf"), linked_case_ids=("c-request",))
+    [a] = r16(e, cases=(quoted, request))
+    assert a.case_id == "c-quote" and a.commands[0]["inputs"]["quote_revision_id"] == "r-1"
+    assert "link_case_evidence" in [c["command"] for c in a.commands]
+    # Another client's case, or a closed one, still leaves it to a person.
+    assert r16(e, cases=(quoted, replace(request, people=("otra@otro.test",)))) == []
+    assert r16(e, cases=(quoted, replace(request, closed=True, stage="lost"))) == []
+
+
+def test_a_free_mail_client_gets_a_persona_natural_and_the_case_reaches_enviada() -> None:
+    # Owner 2026-11-25: a quote emailed to a gmail client stayed «Solicitada» for want of an institution.
+    q = quote("01276-26", authored("r-1", 1))
+    e = mail(pdf("CN01276-Cliente.pdf"), recipients=("ana.ficticia@gmail.com",))
+    request = MailEvidence(id="e-0", thread_id="t-1", direction="inbound", sender="Ana Ficticia <ana.ficticia@gmail.com>",
+                           recipients=("contacto@origenlab.cl",), subject="Cotización", sent_at=APPROVED,
+                           linked_case_ids=("c-1",))
+    [a] = r16(e, request, cases=(case(q, stage="lead", organization_id=None),))
+    steps = [c["command"] for c in a.commands]
+    assert steps == ["record_authored_quote_sent", "add_case_organization",
+                     "advance_case_stage", "advance_case_stage", "advance_case_stage"]
+    added = next(c["inputs"] for c in a.commands if c["command"] == "add_case_organization")
+    assert added["new_organization"] == {"name": "Ana Ficticia (particular)", "kind": "individual"}
+    assert added["role"] == "requesting_institution"
+    assert a.commands[-1]["inputs"]["stage"] == "quoting"
+    # Two recipients, or a company address: nobody to name, the case stops before «Calificada».
+    [b] = r16(replace(e, recipients=("ana.ficticia@gmail.com", "otra@gmail.com")), cases=(case(q, stage="lead", organization_id=None),))
+    assert "add_case_organization" not in [c["command"] for c in b.commands]
