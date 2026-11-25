@@ -606,12 +606,19 @@ _SQL_CASE_THREADS = """
 # resolved through the contact point (`coalesce(p.person_id, cp.person_id)`), so its name and phone
 # follow (owner, 2026-10-22; phone-load fix 2026-11-19). Until then it is found by
 # client_open_cases but not shown here.
+# A participant R7/R21 added by its address alone has no person yet (`person_id` null): the card's
+# contact is then that address, not «Sin contacto» (52 such on 45 open cases, replica 2026-11-23).
 _SQL_PIPELINE_PARTICIPANTS = """
-    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, pe.id::text as person_id
+    select p.opportunity_id::text, pe.display_name as name, p.role, p.is_primary, pe.id::text as person_id,
+           case when cp.kind = 'email' then cp.value_display end as address,
+           -- Every address of the participant, so the case's newest writer finds their row.
+           array(select lower(e.value_norm) from crm.contact_point e
+                  where e.kind = 'email' and e.status = 'active'
+                    and (e.id = p.contact_point_id or (pe.id is not null and e.person_id = pe.id))) as emails
       from crm.opportunity_participant p
       left join crm.contact_point cp on cp.id = p.contact_point_id
-      join crm.person pe on pe.id = coalesce(p.person_id, cp.person_id)
-     where p.valid_to is null
+      left join crm.person pe on pe.id = coalesce(p.person_id, cp.person_id)
+     where p.valid_to is null and (pe.id is not null or cp.kind = 'email')
      order by p.is_primary desc
 """
 
@@ -1010,6 +1017,9 @@ def last_contacts(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[
     # Every email OrigenLab sent on the case, once each: the dashboard counts the follow-ups sent
     # since the quote (or the client's last email) to know the rhythm step, not just the last one.
     sent_times: dict[str, dict[str, datetime]] = defaultdict(dict)
+    # The name each client address carries on the case's mail (its newest display name): the card
+    # shows the person's name, not the bare address, for a contact the CRM knows only by address.
+    names: dict[str, dict[str, tuple[datetime, str]]] = defaultdict(dict)
     for row in rows:
         at = _aware(row.get("sent_at"))
         if at is None:
@@ -1041,6 +1051,12 @@ def last_contacts(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[
                 domains[oid] = (at, domain)
         if direction == "outbound":
             sent_times[oid][row.get("gmail_message_id") or at.isoformat()] = at
+        if not enquirer:
+            for name, address in getaddresses([row.get("sender") or "", row.get("recipients") or ""]):
+                address, name = address.strip().lower(), name.strip().strip('"')
+                if name and "@" not in name and "@" in address and address.rsplit("@", 1)[1] not in OWN_DOMAINS \
+                        and (address not in names[oid] or names[oid][address][0] < at):
+                    names[oid][address] = (at, name)
         key = (row["opportunity_id"], direction)
         if key in best and best[key] >= at:
             continue
@@ -1068,6 +1084,15 @@ def last_contacts(rows: Iterable[Mapping[str, Any]], supplier_domains: Iterable[
                         if name.strip() and "@" not in name]
         if len(sender_names) == 1:
             out[row["opportunity_id"]][direction]["sender_name"] = sender_names[0]
+        if direction == "inbound":
+            # Private to `compose_pipeline`: who wrote last is the case's contact (owner 2026-11-25).
+            writer = next((a.strip().lower() for _, a in getaddresses([row.get("sender") or ""]) if "@" in a), None)
+            if writer:
+                out[row["opportunity_id"]][direction]["_writer"] = writer
+    for oid, seen in names.items():
+        for direction in ("inbound", "outbound"):
+            if (out.get(oid) or {}).get(direction) is not None:
+                out[oid][direction]["_names"] = {a: n for a, (_, n) in seen.items()}
     for oid, times in sent_times.items():
         outbound = out.get(oid, {}).get("outbound")
         if outbound is not None:
@@ -1291,14 +1316,31 @@ def compose_pipeline(
         if not quote_cards:
             attention.append("no_quote")
 
-        people = people_by_opp.get(oid, [])
+        on_case = people_by_opp.get(oid, [])
+        people = [p for p in on_case if p.get("person_id")]
+        by_address = [p["address"] for p in on_case if not p.get("person_id") and p.get("address")]
+        inbound_seen = ((contacts or {}).get(oid) or {}).get("inbound") or {}
+        seen_names = inbound_seen.get("_names") or (((contacts or {}).get(oid) or {}).get("outbound") or {}).get("_names") or {}
+        # Who wrote last is the contact (owner 2026-11-25: the person writing, not the first one saved).
+        writer = inbound_seen.get("_writer")
+        writing = next((p for p in on_case if writer and writer in (p.get("emails") or ())), None) if writer else None
         contact: dict[str, Any] | None = None
-        if people:
+        others = max(len({p.get("person_id") or p.get("address") for p in on_case}) - 1, 0)
+        if writing is not None and writing.get("person_id"):
+            contact = {"source": "crm_participant", "name": writing.get("name"), "address": None, "others": others,
+                       "person_id": writing.get("person_id")}
+        elif writer and not inbound_seen.get("_enquirer"):
+            contact = {"source": "gmail_recipient", "name": seen_names.get(writer), "address": writer,
+                       "others": others if writing is not None else len(on_case), "address_ref": address_ref(writer)}
+            attention.append("no_crm_contact")
+        elif people:
             contact = {"source": "crm_participant", "name": people[0].get("name"), "address": None, "others": len(people) - 1,
                        "person_id": people[0].get("person_id")}
         else:
             address, n = _first_address(latest.get("_recipients") if latest else None)
             enquirer = (((contacts or {}).get(oid) or {}).get("inbound") or {}).get("_enquirer")
+            if not address and not enquirer and by_address:
+                address, n = by_address[0], len(by_address)
             if not address and enquirer:
                 # Nobody on the case and no quote sent yet, but it came from the web form: the
                 # visitor who filled it in (its Reply-To) is the contact.
@@ -1307,7 +1349,8 @@ def compose_pipeline(
             elif address:
                 bare = addresses_in(address)
                 contact = {
-                    "source": "gmail_recipient", "name": None, "address": address, "others": max(n - 1, 0),
+                    "source": "gmail_recipient", "name": seen_names.get(bare[0].lower()) if bare else None,
+                    "address": address, "others": max(n - 1, 0),
                     # Joins this card to its equipment interests even when the address is masked.
                     "address_ref": address_ref(bare[0]) if bare else None,
                 }
