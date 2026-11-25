@@ -303,3 +303,23 @@ def test_a_request_answered_with_the_quote_of_the_case_beside_it() -> None:
     # Another client's case, or a closed one, still leaves it to a person.
     assert r16(e, cases=(quoted, replace(request, people=("otra@otro.test",)))) == []
     assert r16(e, cases=(quoted, replace(request, closed=True, stage="lost"))) == []
+
+
+def test_a_free_mail_client_gets_a_persona_natural_and_the_case_reaches_enviada() -> None:
+    # Owner 2026-11-25: a quote emailed to a gmail client stayed «Solicitada» for want of an institution.
+    q = quote("01276-26", authored("r-1", 1))
+    e = mail(pdf("CN01276-Cliente.pdf"), recipients=("ana.ficticia@gmail.com",))
+    request = MailEvidence(id="e-0", thread_id="t-1", direction="inbound", sender="Ana Ficticia <ana.ficticia@gmail.com>",
+                           recipients=("contacto@origenlab.cl",), subject="Cotización", sent_at=APPROVED,
+                           linked_case_ids=("c-1",))
+    [a] = r16(e, request, cases=(case(q, stage="lead", organization_id=None),))
+    steps = [c["command"] for c in a.commands]
+    assert steps == ["record_authored_quote_sent", "add_case_organization",
+                     "advance_case_stage", "advance_case_stage", "advance_case_stage"]
+    added = next(c["inputs"] for c in a.commands if c["command"] == "add_case_organization")
+    assert added["new_organization"] == {"name": "Ana Ficticia (particular)", "kind": "individual"}
+    assert added["role"] == "requesting_institution"
+    assert a.commands[-1]["inputs"]["stage"] == "quoting"
+    # Two recipients, or a company address: nobody to name, the case stops before «Calificada».
+    [b] = r16(replace(e, recipients=("ana.ficticia@gmail.com", "otra@gmail.com")), cases=(case(q, stage="lead", organization_id=None),))
+    assert "add_case_organization" not in [c["command"] for c in b.commands]
