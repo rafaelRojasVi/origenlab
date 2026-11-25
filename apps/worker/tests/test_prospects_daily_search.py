@@ -505,6 +505,11 @@ class TestCandidateToFindingDict:
 class TestRunSearchDryRun:
     """run_search with dry_run=True skips DB, Claude and network — uses a CSV file."""
 
+    @pytest.fixture(autouse=True)
+    def _no_live_epmc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # dry_run still enriches; without this the test calls the real Europe PMC and times out in CI
+        monkeypatch.setattr("origenlab_worker.prospects.daily.search_epmc", lambda *a, **kw: None)
+
     def _write_csv(self, tmp_path: Any) -> str:
         content = _csv([_FICTITIOUS_ROW, _FICTITIOUS_ROW_FONDEQUIP])
         path = tmp_path / "ficticio_anid.csv"
