@@ -397,6 +397,11 @@ export function setWithoutIva(draft: QuoteDraft, on: boolean): QuoteDraft {
   return { ...draft, without_iva: on };
 }
 
+/** «Moneda» (owner, 2026-11-26): a USD quote is for export, so it goes «Sin IVA»; back to pesos restores IVA. */
+export function setQuoteCurrency(draft: QuoteDraft, currency: "CLP" | "USD"): QuoteDraft {
+  return { ...draft, quote_currency: currency, without_iva: currency === "USD" };
+}
+
 export function setRecipient(draft: QuoteDraft, pick: QuoteRecipientPick | null): QuoteDraft {
   return { ...draft, recipient: pick };
 }

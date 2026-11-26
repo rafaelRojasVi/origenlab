@@ -986,6 +986,12 @@ def _lock_case_and_quote(cur: Any, revision_id: str, *, quote_lock: str) -> dict
     return {**owner, **case}
 
 
+def _quote_fx(resolved: Any, currency: str) -> dict[str, Any]:
+    """The rate a quote not in pesos was converted at, frozen on the revision (none for CLP)."""
+    fx = None if currency == "CLP" else resolved.fx[currency]
+    return {"qfx_rate": fx and fx.clp_per_unit, "qfx_as_of": fx and fx.as_of, "qfx_source": fx and fx.source}
+
+
 def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: OperatorIdentity,
                              fields: dict[str, Any], receipt_id: str) -> dict[str, Any]:
     revision_id, expected_version = fields["revision_id"], fields["expected_version"]
@@ -1022,6 +1028,8 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
                principal_rule = %(principal_rule)s, fx_override_reasons = %(fx_override_reasons)s::jsonb,
                recipient_participant_id = coalesce(%(recipient)s::uuid, recipient_participant_id),
                client_details = %(client_details)s::jsonb, tax_rate = %(tax_rate)s::numeric,
+               quote_currency = %(currency)s, price_decimals = %(decimals)s, quote_fx_rate = %(qfx_rate)s,
+               quote_fx_as_of = %(qfx_as_of)s, quote_fx_source = %(qfx_source)s,
                subtotal = %(subtotal)s, discount_total = %(discount)s, tax_base = %(net)s, tax_total = %(iva)s,
                grand_total = %(total)s, totals_computed_at = now(), version = version + 1, updated_at = now()
          where id = %(id)s::uuid and version = %(version)s
@@ -1038,7 +1046,9 @@ def _handle_save_quote_draft(self: "V2QuoteRepository", cur: Any, operator: Oper
          "recipient": recipient, "subtotal": result.subtotal, "discount": result.discount_total, "net": result.net, "iva": result.iva, "total": result.total,
          "client_details": (json.dumps(stored, ensure_ascii=False)
                             if draft.client and (stored := draft.client.stored()) else None),
-         "tax_rate": tax_rate, "id": revision_id, "version": expected_version},
+         "tax_rate": tax_rate, "id": revision_id, "version": expected_version,
+         "currency": draft.quote_currency, "decimals": 0 if draft.quote_currency == "CLP" else 2,
+         **_quote_fx(resolved, draft.quote_currency)},
     )
     updated = _one(cur)
     if updated is None:  # pragma: no cover - the row is locked; kept as the compare-and-set's other half
@@ -1475,7 +1485,7 @@ _REVISION_COPY_COLUMNS = (
     "billing_address_id", "delivery_address_id", "recipient_participant_id", "signatory_participant_id",
     "warranty_terms_es", "delivery_place_es", "installation_terms_es", "client_notes_es", "terms_extra",
     "validity_days", "expense_method", "expense_allocation_mode", "principal_rule", "fx_override_reasons",
-    "client_details",
+    "client_details", "quote_fx_rate", "quote_fx_as_of", "quote_fx_source",
 )
 _LINE_COPY_COLUMNS = (
     "line_no", "line_kind", "description", "product_id", "quantity", "cost_currency", "unit_cost", "fx_rate",

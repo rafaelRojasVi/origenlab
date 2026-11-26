@@ -170,6 +170,21 @@ describe("SummaryRail — totals and margin", () => {
     expect(within(screen.getByRole("region", { name: "Totales" })).queryByText("Descuento")).not.toBeInTheDocument();
   });
 
+  it("«Moneda» USD sets the draft in dollars and «Sin IVA»; the totals print in US$", async () => {
+    const { applied } = setup();
+    await settled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Moneda" }), { target: { value: "USD" } });
+    expect(applied().quote_currency).toBe("USD");
+    expect(applied().without_iva).toBe(true);
+    cleanup();
+    const base = stateFor();
+    setup({ state: { ...base, draft: { ...base.draft, quote_currency: "USD", without_iva: true } } });
+    await settled();
+    const totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).getAllByText(/^US\$/).length).toBeGreaterThan(0);
+    expect(within(totals).getByRole("combobox", { name: "Moneda" })).toHaveValue("USD");
+  });
+
   it("«Sin IVA» sets the draft without IVA; ticked, the rail shows no IVA row and «Total sin IVA»", async () => {
     const { applied } = setup();
     await settled();

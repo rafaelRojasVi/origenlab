@@ -290,6 +290,35 @@ def test_sin_iva_stores_a_zero_rate_and_unticking_restores_it(world) -> None:
 
 
 @needs_db
+def test_usd_quote_stores_cents_and_the_rate_and_approves_at_that_rate(world) -> None:
+    dsn = world["dsn"]
+    clp_created, clp_out = _approvable(world)
+    created, out = _approvable(world, quote_currency="USD", without_iva=True)
+    rev = _revision(dsn, created["revision_id"])
+    assert (rev["quote_currency"], rev["price_decimals"]) == ("USD", 2)
+    assert (rev["quote_fx_rate"], rev["quote_fx_source"]) == (RATES["USD"], "bcentral")
+    clp_net = _revision(dsn, clp_created["revision_id"])["tax_base"]
+    # Priced in pesos, then converted and rounded to the cent (the CLP quote's neto is itself peso-rounded).
+    assert abs(rev["tax_base"] - clp_net / RATES["USD"]) <= Decimal("0.01") and rev["tax_total"] == 0
+    assert rev["tax_base"] == rev["tax_base"].quantize(Decimal("0.01"))
+    rebuilt = draft_from_rows(rev, _lines(dsn, created["revision_id"]))
+    assert rebuilt.quote_currency == "USD" and rebuilt.without_iva is True
+
+    # Approval prices at the frozen rate: a different day's rate changes nothing.
+    moved = lambda currency, on: {**fake_fx(currency, on), "clp_per_unit": RATES[currency] + 50}  # noqa: E731
+    _approve(world, created["revision_id"], out["version"], fx=moved)
+    after = _revision(dsn, created["revision_id"])
+    assert (after["status"], after["tax_base"], after["quote_fx_rate"]) == ("approved", rev["tax_base"], RATES["USD"])
+
+    # Back to pesos: the rate goes, the prices are whole pesos again.
+    created2, out2 = _approvable(world, quote_currency="USD")
+    _save(world, created2, {"items": [_catalog_item(world)]}, version=out2["version"])
+    back = _revision(dsn, created2["revision_id"])
+    assert (back["quote_currency"], back["price_decimals"], back["quote_fx_rate"]) == ("CLP", 0, None)
+    assert back["tax_base"] == clp_net
+
+
+@needs_db
 def test_save_with_stale_version_writes_nothing(world) -> None:
     dsn = world["dsn"]
     created = _new_quote(world)

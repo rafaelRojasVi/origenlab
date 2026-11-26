@@ -3,6 +3,10 @@
 Pure: no database, no clock, no I/O. Every rule cites the spreadsheet cell it reproduces
 (10-05 spec §5). CLP amounts are rounded to the peso half-up; the unit cost in CLP is rounded
 before expenses are added (J15), the unit base is not (R15), prices are (S15/T15).
+
+A quote in another currency (USD, owner 2026-11-26) is priced the same way in pesos, then each line's base
+is divided by that currency's rate and its prices and totals are rounded to the cent. The typed price is
+in the quote's currency.
 """
 from __future__ import annotations
 
@@ -15,9 +19,17 @@ ONE = Decimal(1)
 ZERO = Decimal(0)
 
 
+CENT = Decimal("0.01")
+
+
 def peso(x: Decimal) -> Decimal:
     """Excel ROUND(x, 0) for money: half away from zero, to the peso."""
     return x.quantize(ONE, rounding=ROUND_HALF_UP)
+
+
+def cent(x: Decimal) -> Decimal:
+    """ROUND(x, 2): half away from zero, to the cent (a quote in a foreign currency)."""
+    return x.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 class EngineError(ValueError):
@@ -70,6 +82,7 @@ class EngineInput:
     principal_threshold_eur: Decimal
     margin_target_min: Decimal
     margin_target_max: Decimal
+    quote_currency: str = "CLP"   # prices, totals and the typed price are in this currency
 
 
 @dataclass(frozen=True)
@@ -205,39 +218,42 @@ def compute(inp: EngineInput) -> EngineResult:
         warnings.append("principal_missing")
     alloc = _allocate(inp, costs, principal, expenses_clp)
     marked = set(_marked(inp))
+    rate = _rate(inp, inp.quote_currency)
+    money = peso if inp.quote_currency == "CLP" else cent
     out: list[LineResult] = []
     cost_base, net, subtotal, any_missing = ZERO, ZERO, ZERO, False
     for l in inp.items:
         cost = costs[l.line_no]
         exp = alloc[l.line_no]
         base = None if cost is None else cost + (exp / l.quantity)                        # Q15, R15
+        base_q = None if base is None else base / rate                                   # the base in the quote's currency
         if l.margin_mode == "none":
-            price = None if l.typed_unit_price is None else peso(l.typed_unit_price)     # T15
-        elif base is None or l.margin_pct is None:
+            price = None if l.typed_unit_price is None else money(l.typed_unit_price)    # T15
+        elif base_q is None or l.margin_pct is None:
             price = None
         elif l.margin_mode == "margin":
-            price = peso(base / (ONE - l.margin_pct))
+            price = money(base_q / (ONE - l.margin_pct))
         else:
-            price = peso(base * (ONE + l.margin_pct))                                     # S15
+            price = money(base_q * (ONE + l.margin_pct))                                  # S15
         list_price = price
         if price is not None and l.discount_pct is not None:
-            price = peso(list_price * (ONE - l.discount_pct))                             # final = list x (1 - pct)
-        total = None if price is None else peso(l.quantity * price)                       # W15
-        list_total = None if list_price is None else peso(l.quantity * list_price)
+            price = money(list_price * (ONE - l.discount_pct))                            # final = list x (1 - pct)
+        total = None if price is None else money(l.quantity * price)                      # W15
+        list_total = None if list_price is None else money(l.quantity * list_price)
         if cost is None:
             any_missing = True
             warnings.append(f"no_cost:{l.line_no}")
-        real_markup = None if (price is None or not base) else price / base - ONE         # U15
-        gross = None if (price is None or base is None or price == 0) else (price - base) / price   # V15
+        real_markup = None if (price is None or not base_q) else price / base_q - ONE     # U15
+        gross = None if (price is None or base_q is None or price == 0) else (price - base_q) / price   # V15
         out.append(LineResult(l.line_no, cost, exp, base, price, total, real_markup, gross,
                               _state(gross, inp), l.line_no == principal or l.line_no in marked,
                               list_price, l.discount_pct, ZERO if total is None else list_total - total))
         if total is not None:
             net += total                                                                  # K3
             subtotal += list_total
-            if base is not None:
-                cost_base += l.quantity * base                                            # J3
-    iva = peso(net * inp.iva_rate)                                                        # L3
+            if base_q is not None:
+                cost_base += l.quantity * base_q                                          # J3
+    iva = money(net * inp.iva_rate)                                                       # L3
     markup = None if (cost_base == 0 or any_missing) else net / cost_base - ONE
     margin = None if (net == 0 or any_missing) else (net - cost_base) / net
     return EngineResult(tuple(out), expenses_clp, principal, cost_base, net, iva, net + iva,
@@ -245,4 +261,4 @@ def compute(inp: EngineInput) -> EngineResult:
 
 
 __all__ = ["EngineError", "EngineInput", "EngineResult", "ExpenseLine", "FxRate", "ItemLine",
-           "LineResult", "compute", "expense_clp", "margin_state", "peso"]
+           "LineResult", "cent", "compute", "expense_clp", "margin_state", "peso"]

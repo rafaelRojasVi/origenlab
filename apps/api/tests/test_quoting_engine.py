@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date
 from decimal import Decimal as D
 
@@ -185,3 +186,35 @@ def test_no_discount_computes_as_before_and_subtotal_equals_net():
 def test_discount_out_of_range_is_refused(pct):
     with pytest.raises(EngineError):
         compute(inp([_discounted(item(1), pct)]))
+
+
+def usd_quote(items, expenses=(), **kw):
+    return dataclasses.replace(inp(items, expenses, **kw), quote_currency="USD")
+
+
+def test_usd_quote_prices_in_cents_from_the_clp_base():
+    # cost 2,400 USD → 2,160,000 CLP; gastos 490,000 CLP → base 2,650,000 CLP = 2,944.44… USD; +45 %.
+    r = compute(usd_quote([item(1, cost="2400", cur="USD", pct="0.45", principal=True)],
+                          [ExpenseLine(1, "Flete", D("490000"), "CLP", "manual")], rule="manual"))
+    line = r.lines[0]
+    assert line.cost_clp_unit == D(2160000) and line.unit_base == D(2650000)   # still pesos, for the cost strip
+    assert line.unit_price == D("4269.44")                                       # 2,650,000 / 900 × 1.45, to the cent
+    assert r.net == D("4269.44") and r.iva == D("811.19") and r.total == D("5080.63")
+    assert round(r.cost_base, 2) == D("2944.44")
+    assert round(r.margin, 4) == round(compute(inp([item(1, cost="2400", cur="USD", pct="0.45", principal=True)],
+                                                   [ExpenseLine(1, "Flete", D("490000"), "CLP", "manual")],
+                                                   rule="manual")).margin, 4)
+
+
+def test_usd_quote_typed_price_is_in_dollars_and_discount_rounds_to_cents():
+    line = compute(usd_quote([item(1, cost="2400", cur="USD", mode="none", pct=None, typed="4999.995")])).lines[0]
+    assert line.unit_price == D("5000.00")
+    disc = dataclasses.replace(item(1, cost="2400", cur="USD", mode="none", pct=None, typed="1000"), discount_pct=D("0.0333"))
+    r = compute(usd_quote([dataclasses.replace(disc, quantity=D(3))]))
+    assert r.lines[0].unit_price == D("966.70") and r.net == D("2900.10") and r.discount_total == D("99.90")
+
+
+def test_usd_quote_without_a_usd_rate_is_refused():
+    with pytest.raises(EngineError) as e:
+        compute(usd_quote([item(1)], fx={"EUR": EUR}))
+    assert e.value.code == "fx_missing:USD"
