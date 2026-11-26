@@ -154,6 +154,8 @@ class QuoteDraft(_Model):
     client: DraftClientDetails | None = None
     # «Sin IVA» (owner 2026-10-21): the revision is priced and printed at a tax rate of 0.
     without_iva: bool = False
+    # A quote in dollars (owner 2026-11-26, export clients): priced in pesos, converted at the USD rate.
+    quote_currency: Literal["CLP", "USD"] = "CLP"
 
     @model_validator(mode="after")
     def _consistent(self) -> "QuoteDraft":

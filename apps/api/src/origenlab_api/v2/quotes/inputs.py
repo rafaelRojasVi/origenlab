@@ -367,7 +367,8 @@ def draft_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]) -> Qu
                                  if revision["recipient_participant_id"] is not None else None),
                       client=(DraftClientDetails(**revision["client_details"])
                               if revision.get("client_details") else None),
-                      without_iva=revision.get("tax_rate") is not None and Decimal(revision["tax_rate"]) == 0)
+                      without_iva=revision.get("tax_rate") is not None and Decimal(revision["tax_rate"]) == 0,
+                      quote_currency="USD" if revision.get("quote_currency") == "USD" else "CLP")
 
 
 def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]],
@@ -386,6 +387,10 @@ def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]
         if currency and currency != "CLP" and row["fx_rate"] is not None:
             fx.setdefault(currency, FxRate(currency, Decimal(row["fx_rate"]), _as_date(row["fx_as_of"]),
                                            row["fx_source"]))
+    quote_currency = revision.get("quote_currency") or "CLP"
+    if revision.get("quote_fx_rate") is not None:  # the rate the prices were converted at wins
+        fx[quote_currency] = FxRate(quote_currency, Decimal(revision["quote_fx_rate"]),
+                                    _as_date(revision["quote_fx_as_of"]), revision["quote_fx_source"])
     ordered = sorted(lines, key=lambda r: r["line_no"])
     items = tuple(
         ItemLine(r["line_no"], Decimal(r["quantity"]), r["item_type"] or "other", r["unit_cost"], r["cost_currency"],
@@ -403,6 +408,7 @@ def engine_input_from_rows(revision: dict[str, Any], lines: list[dict[str, Any]]
         principal_threshold_eur=_decimal_param(params, "principal_threshold_eur"),
         margin_target_min=_decimal_param(params, "margin_target_min"),
         margin_target_max=_decimal_param(params, "margin_target_max"),
+        quote_currency=quote_currency,
     )
 
 
@@ -448,6 +454,7 @@ def resolve_draft(cur: Any, draft: QuoteDraft, params: dict[str, Decimal | str],
     currencies = {i.cost_currency for i in items if i.cost_currency} | {e.currency for e in draft.manual_expenses}
     if draft.expense_method == "dhl_calc" and shipping:
         currencies.add("USD")  # the DHL card and the FOB threshold are in dollars
+    currencies.add(draft.quote_currency)  # a USD quote is converted at the USD rate
     fx = _resolve_fx(cur, draft, currencies, fx_resolver, today)
     usd = fx["USD"].clp_per_unit if "USD" in fx else None
 
@@ -481,6 +488,7 @@ def resolve_draft(cur: Any, draft: QuoteDraft, params: dict[str, Decimal | str],
         principal_threshold_eur=_decimal_param(params, "principal_threshold_eur"),
         margin_target_min=_decimal_param(params, "margin_target_min"),
         margin_target_max=_decimal_param(params, "margin_target_max"),
+        quote_currency=draft.quote_currency,
     )
     return Resolved(items, expenses, fx, engine_input, warnings)
 
@@ -530,6 +538,8 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
                    "cost_base": _s(result.cost_base), "expenses_clp": _s(result.expenses_clp),
                    "markup": _s(result.markup), "margin": _s(result.margin), "margin_state": result.margin_state},
         "principal_line_no": result.principal_line_no,
+        # The currency every price and total above is in: a screen never labels them with another.
+        "quote_currency": resolved.engine_input.quote_currency,
         "fx": [{"currency": f.currency, "clp_per_unit": _s(f.clp_per_unit), "as_of": f.as_of.isoformat(),
                 "source": f.source} for _, f in sorted(resolved.fx.items())],
         "warnings": [*resolved.warnings, *result.warnings],

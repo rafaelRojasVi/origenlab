@@ -267,7 +267,7 @@ export function printableQuote(ws: QuoteWorkspace, live: { state: DraftEditorSta
     draft: true,
     date: today(now),
     validUntil: null,
-    currency,
+    currency: computed?.quote_currency ?? currency,
     institution,
     recipient: recipient && text(typed.contact_name) ? { ...recipient, name: text(typed.contact_name) } : recipient,
     client: clientLines(typed),

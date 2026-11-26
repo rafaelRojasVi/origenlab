@@ -8,7 +8,7 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 grant origenlab_api to session_user with set true, inherit false;
 set role origenlab_owner;
-select plan(33);
+select plan(39);
 
 -- Fixture (rolled back): an operator, an organization, a case, a quote, one authored draft
 -- revision and two approved revisions.
@@ -136,6 +136,20 @@ select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line
 select throws_ok($$ insert into crm.quote_line (quote_revision_id, line_no, line_kind, description, quantity, discount_pct, list_unit_price_qc)
   values ('97000000-0000-4000-8000-000000000082', 24, 'logistics', 'Flete', 1, 0.1, 100) $$,
   '23514', null, 'only an item line takes a discount');
+
+-- Slice 9: a quote in USD keeps the rate its prices were converted at; a CLP quote has none.
+select has_column('crm', 'quote_revision', 'quote_fx_rate', 'quote_revision.quote_fx_rate exists');
+select lives_ok($$ update crm.quote_revision set quote_currency = 'USD', price_decimals = 2, quote_fx_rate = 935.12,
+  quote_fx_as_of = '2026-11-26', quote_fx_source = 'bcentral' where id = '97000000-0000-4000-8000-000000000082' $$,
+  'a draft in USD takes its rate');
+select throws_ok($$ update crm.quote_revision set quote_fx_rate = 'NaN'::numeric
+  where id = '97000000-0000-4000-8000-000000000082' $$, '23514', null, 'a NaN rate is refused');
+select throws_ok($$ update crm.quote_revision set quote_fx_as_of = null where id = '97000000-0000-4000-8000-000000000082' $$,
+  '23514', null, 'the rate goes with its day and source');
+select throws_ok($$ update crm.quote_revision set quote_currency = 'CLP', price_decimals = 0
+  where id = '97000000-0000-4000-8000-000000000082' $$, '23514', null, 'a CLP revision has no quote rate');
+select throws_ok($$ update crm.quote_revision set quote_fx_source = 'guess'
+  where id = '97000000-0000-4000-8000-000000000082' $$, '23514', null, 'the quote rate names a known source');
 
 select * from finish();
 rollback;

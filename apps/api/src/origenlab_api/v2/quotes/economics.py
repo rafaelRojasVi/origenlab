@@ -58,6 +58,11 @@ def _split() -> dict[str, Decimal]:
     return {c: ZERO for c in EXPENSE_CATEGORIES}
 
 
+def _to_clp(inp: EngineInput, amount: Decimal) -> Decimal:
+    """A price of a quote in another currency (USD) back in pesos, at the rate it was converted at."""
+    return amount if inp.quote_currency == "CLP" else peso(amount * inp.fx[inp.quote_currency].clp_per_unit)
+
+
 def economics(inp: EngineInput, result: EngineResult) -> dict[str, Any]:
     """One quote's economics from the engine's input and result, in Decimals (the reads print them)."""
     by_no = {line.line_no: line for line in inp.items}
@@ -71,7 +76,7 @@ def economics(inp: EngineInput, result: EngineResult) -> dict[str, Any]:
     missing = sum(1 for r in result.lines if r.cost_clp_unit is None)
     lines = len(result.lines)
     coverage = "none" if lines == 0 or missing == lines else ("partial" if missing else "full")
-    sale = result.net
+    sale = _to_clp(inp, result.net)
     margin = pct = None
     if coverage == "full":
         margin = sale - product_cost - imports
@@ -109,7 +114,7 @@ def line_economics(inp: EngineInput, result: EngineResult) -> list[dict[str, Any
     out: list[dict[str, Any]] = []
     for r in result.lines:
         quantity = by_no[r.line_no].quantity
-        sale = None if r.line_total is None else peso(r.line_total)
+        sale = None if r.line_total is None else peso(_to_clp(inp, r.line_total))
         product = None if r.cost_clp_unit is None else peso(quantity * r.cost_clp_unit)
         expenses = peso(r.expense_to_line) if sale is not None else ZERO
         cost = None if product is None else peso(quantity * r.cost_clp_unit + expenses)

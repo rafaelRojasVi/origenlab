@@ -24,7 +24,7 @@ import { formatMoney } from "../money";
 import { EconomicsCard } from "./EconomicsCard";
 import { EnteredExpensesCard } from "./EnteredExpensesCard";
 import { Button } from "../ui";
-import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, setWithoutIva, type DraftEditorState } from "./draftEditor";
+import { draftProblems, isEditable, principalItemOf, rowOfLine, setFxOverride, setQuoteCurrency, setWithoutIva, type DraftEditorState } from "./draftEditor";
 import type { QuoteDraft, QuotePreferences, QuoteWorkspace } from "./quoteApi";
 import { quoteRefusalText } from "./quoteRefusal";
 import { MARGIN_TARGET_FALLBACK, compareDecimal } from "./preferenceFields";
@@ -260,7 +260,9 @@ function TotalsCard({
   edit?: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
 }) {
   const cur = state.workspace.current;
-  const currency = cur?.quote_currency ?? "CLP";
+  // While editing, the currency the shown prices were computed in (a pending «Moneda» change never relabels them).
+  const currency = (editable ? state.computed?.quote_currency : null) ?? cur?.quote_currency ?? "CLP";
+  const selected = (editable ? state.draft.quote_currency : null) ?? currency;
   const totals = editable ? state.computed?.totals ?? null : null;
   const net = editable ? totals?.net : (cur?.tax_base ?? cur?.subtotal);
   const subtotal = editable ? totals?.subtotal : cur?.subtotal;
@@ -317,6 +319,23 @@ function TotalsCard({
             className="h-4 w-4 accent-[#5eead4]"
           />
           Sin IVA
+        </label>
+      ) : null}
+      {editable && edit ? (
+        <label className="flex items-center gap-2 text-[13px] text-[#a9bdb7]">
+          Moneda
+          <select
+            value={selected === "USD" ? "USD" : "CLP"}
+            disabled={disabled}
+            onChange={(e) => {
+              const next = e.target.value === "USD" ? "USD" : "CLP";
+              edit((d) => setQuoteCurrency(d, next));
+            }}
+            className="rounded-md bg-[#1f2324] px-2 py-1 text-[#f4f6f5] ring-1 ring-[#2c3433]"
+          >
+            <option value="CLP">Pesos (CLP)</option>
+            <option value="USD">Dólares (USD)</option>
+          </select>
         </label>
       ) : null}
       {editable && !totals ? <p className="text-[12.5px] text-[#a9bdb7]">Todavía no hay precios calculados.</p> : null}

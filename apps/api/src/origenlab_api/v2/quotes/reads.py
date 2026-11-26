@@ -375,7 +375,7 @@ with cur as (
    order by r.quote_id, (r.status in ('draft', 'in_review')) desc, (r.status <> 'void') desc, r.revision_no desc
 ), authored as (
   select c.id as revision_id, c.quote_id, c.revision_no, c.status, c.quote_currency, c.tax_rate,
-         c.expense_allocation_mode, q.opportunity_id, o.won_quote_id,
+         c.expense_allocation_mode, c.quote_fx_rate, c.quote_fx_as_of, c.quote_fx_source, q.opportunity_id, o.won_quote_id,
          case when c.status = 'in_review' then 'draft' else c.status end as bucket,
          case when c.status in ('draft', 'in_review') then c.updated_at
               else coalesce(c.approved_at, c.sent_at, c.updated_at) end as at
@@ -398,7 +398,8 @@ with cur as (
 
 _ECONOMICS_ROWS_SQL = _ECONOMICS_BASE_SQL + """
 select d.revision_id::text as revision_id, d.quote_id::text as quote_id, q.quote_number, d.revision_no, d.status,
-       d.bucket, d.quote_currency, d.tax_rate, d.expense_allocation_mode, d.local_at::date as day,
+       d.bucket, d.quote_currency, d.tax_rate, d.expense_allocation_mode, d.quote_fx_rate, d.quote_fx_as_of,
+       d.quote_fx_source, d.local_at::date as day,
        to_char(d.local_at, 'YYYY-MM') as month, inst.name as institution_name
   from dated d
   join crm.quote q on q.id = d.quote_id
@@ -560,7 +561,7 @@ _REVISION_FIELDS = (
     "id", "revision_no", "status", "origin", "version", "quote_currency", "tax_rate", "subtotal", "discount_total", "tax_base", "tax_total",
     "grand_total", "totals_computed_at", "validity_days", "valid_until", "approved_at", "sent_at",
     "superseded_by_revision_no", "recipient_participant_id", "expense_method", "expense_allocation_mode",
-    "principal_rule", "updated_at",
+    "principal_rule", "updated_at", "quote_fx_rate", "quote_fx_as_of", "quote_fx_source",
 )
 #: Stored line columns shown for an issued revision (the draft of a draft is rebuilt instead).
 _LINE_FIELDS = (

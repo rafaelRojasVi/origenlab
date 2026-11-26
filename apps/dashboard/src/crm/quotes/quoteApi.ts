@@ -100,6 +100,8 @@ export interface QuoteDraft {
   client?: QuoteClientDetails | null;
   /** «Sin IVA»: priced and printed at a tax rate of 0. */
   without_iva?: boolean;
+  /** «Moneda»: a USD quote is priced in pesos, then converted at the USD rate and printed in dollars. */
+  quote_currency?: "CLP" | "USD";
 }
 
 /** «Datos del cliente» typed in the Cotizador, frozen into the PDF at approval. */
@@ -203,6 +205,8 @@ export interface Computed {
     margin_state: string;
   };
   principal_line_no: number | null;
+  /** The currency the prices and totals above are in (absent from older responses: CLP). */
+  quote_currency?: "CLP" | "USD";
   fx: { currency: string; clp_per_unit: Decimal; as_of: string; source: string }[];
   warnings: string[];
   /** Absent from an older API. */

@@ -381,6 +381,14 @@ typed price = the list price), then charges `list × (1 − pct)` rounded to the
 neto charged (`subtotal − discount_total`); IVA and total follow the neto. Only a discounted line shows
 its list price and discount on the PDF.
 
+**Quote currency** (2026-11-26). An authored revision is in CLP or USD (`quote_currency`, «Moneda» in
+the Cotizador). A USD revision is priced in pesos exactly as a CLP one (costs, expenses, margins), then
+each line's base is divided by the USD rate and its prices, totals and IVA are rounded to the cent
+(`price_decimals = 2`); a typed price is in dollars. The rate — the day's Banco Central rate or the
+operator's override — is frozen on the revision (`quote_fx_rate`, `quote_fx_as_of`, `quote_fx_source`),
+so approval re-prices at it. Choosing USD ticks «Sin IVA» (export). Totals across cases, Finanzas and
+invoice matching stay CLP-only; «Rentabilidad» converts a USD sale back to pesos at the frozen rate.
+
 **Authored quotes** (the Cotizador, built 2026-10-15). A revision with `origin = 'authored'` is
 written by five commands (`create-quote`, `save-quote-draft`, `approve-quote-revision`,
 `void-quote-revision`, `create-quote-revision`) and priced by one engine on the server; its lines,
