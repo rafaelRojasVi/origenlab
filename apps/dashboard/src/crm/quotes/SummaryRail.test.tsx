@@ -178,11 +178,19 @@ describe("SummaryRail — totals and margin", () => {
     expect(applied().without_iva).toBe(true);
     cleanup();
     const base = stateFor();
+    // Chosen but not yet re-priced: the pesos shown stay labelled as pesos.
     setup({ state: { ...base, draft: { ...base.draft, quote_currency: "USD", without_iva: true } } });
     await settled();
-    const totals = screen.getByRole("region", { name: "Totales" });
-    expect(within(totals).getAllByText(/^US\$/).length).toBeGreaterThan(0);
+    let totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).queryAllByText(/^US\$/)).toHaveLength(0);
     expect(within(totals).getByRole("combobox", { name: "Moneda" })).toHaveValue("USD");
+    cleanup();
+    // Re-priced in dollars: the totals are the computation's, labelled US$.
+    const usd = { ...base.computed!, quote_currency: "USD" as const, totals: { ...base.computed!.totals, net: "4269.44", total: "4269.44", iva: "0" } };
+    setup({ state: { ...base, computed: usd, draft: { ...base.draft, quote_currency: "USD", without_iva: true } } });
+    await settled();
+    totals = screen.getByRole("region", { name: "Totales" });
+    expect(within(totals).getAllByText("US$ 4.269,44").length).toBeGreaterThan(0);
   });
 
   it("«Sin IVA» sets the draft without IVA; ticked, the rail shows no IVA row and «Total sin IVA»", async () => {

@@ -8,7 +8,7 @@ create extension if not exists pgtap with schema extensions;
 grant usage on schema extensions to origenlab_owner;
 grant origenlab_api to session_user with set true, inherit false;
 set role origenlab_owner;
-select plan(38);
+select plan(39);
 
 -- Fixture (rolled back): an operator, an organization, a case, a quote, one authored draft
 -- revision and two approved revisions.
@@ -142,6 +142,8 @@ select has_column('crm', 'quote_revision', 'quote_fx_rate', 'quote_revision.quot
 select lives_ok($$ update crm.quote_revision set quote_currency = 'USD', price_decimals = 2, quote_fx_rate = 935.12,
   quote_fx_as_of = '2026-11-26', quote_fx_source = 'bcentral' where id = '97000000-0000-4000-8000-000000000082' $$,
   'a draft in USD takes its rate');
+select throws_ok($$ update crm.quote_revision set quote_fx_rate = 'NaN'::numeric
+  where id = '97000000-0000-4000-8000-000000000082' $$, '23514', null, 'a NaN rate is refused');
 select throws_ok($$ update crm.quote_revision set quote_fx_as_of = null where id = '97000000-0000-4000-8000-000000000082' $$,
   '23514', null, 'the rate goes with its day and source');
 select throws_ok($$ update crm.quote_revision set quote_currency = 'CLP', price_decimals = 0

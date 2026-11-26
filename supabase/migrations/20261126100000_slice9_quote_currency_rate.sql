@@ -17,7 +17,7 @@ alter table crm.quote_revision
   add constraint quote_revision_quote_fx_complete check (
     (quote_fx_rate is null) = (quote_fx_as_of is null) and (quote_fx_rate is null) = (quote_fx_source is null)),
   add constraint quote_revision_quote_fx_shape check (
-    quote_fx_rate is null or (quote_fx_rate > 0 and quote_currency <> 'CLP' and quote_fx_source in ('bcentral', 'supplier_quote', 'manual')));
+    quote_fx_rate is null or (quote_fx_rate > 0 and quote_fx_rate <> 'NaN'::numeric and quote_currency <> 'CLP' and quote_fx_source in ('bcentral', 'supplier_quote', 'manual')));
 
 comment on column crm.quote_revision.quote_fx_rate is
   'Authored revisions not in CLP: the pesos per unit of quote_currency the prices were converted at; null otherwise.';

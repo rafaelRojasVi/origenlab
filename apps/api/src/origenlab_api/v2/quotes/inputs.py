@@ -538,6 +538,8 @@ def result_json(resolved: Resolved, result: EngineResult) -> dict[str, Any]:
                    "cost_base": _s(result.cost_base), "expenses_clp": _s(result.expenses_clp),
                    "markup": _s(result.markup), "margin": _s(result.margin), "margin_state": result.margin_state},
         "principal_line_no": result.principal_line_no,
+        # The currency every price and total above is in: a screen never labels them with another.
+        "quote_currency": resolved.engine_input.quote_currency,
         "fx": [{"currency": f.currency, "clp_per_unit": _s(f.clp_per_unit), "as_of": f.as_of.isoformat(),
                 "source": f.source} for _, f in sorted(resolved.fx.items())],
         "warnings": [*resolved.warnings, *result.warnings],

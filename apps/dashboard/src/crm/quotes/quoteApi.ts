@@ -205,6 +205,8 @@ export interface Computed {
     margin_state: string;
   };
   principal_line_no: number | null;
+  /** The currency the prices and totals above are in (absent from older responses: CLP). */
+  quote_currency?: "CLP" | "USD";
   fx: { currency: string; clp_per_unit: Decimal; as_of: string; source: string }[];
   warnings: string[];
   /** Absent from an older API. */

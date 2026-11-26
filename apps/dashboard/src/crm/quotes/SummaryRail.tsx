@@ -260,8 +260,9 @@ function TotalsCard({
   edit?: (fn: (draft: QuoteDraft) => QuoteDraft) => void;
 }) {
   const cur = state.workspace.current;
-  // The draft's «Moneda» while editing, else the revision's stored currency.
-  const currency = (editable ? state.draft.quote_currency : null) ?? cur?.quote_currency ?? "CLP";
+  // While editing, the currency the shown prices were computed in (a pending «Moneda» change never relabels them).
+  const currency = (editable ? state.computed?.quote_currency : null) ?? cur?.quote_currency ?? "CLP";
+  const selected = (editable ? state.draft.quote_currency : null) ?? currency;
   const totals = editable ? state.computed?.totals ?? null : null;
   const net = editable ? totals?.net : (cur?.tax_base ?? cur?.subtotal);
   const subtotal = editable ? totals?.subtotal : cur?.subtotal;
@@ -324,7 +325,7 @@ function TotalsCard({
         <label className="flex items-center gap-2 text-[13px] text-[#a9bdb7]">
           Moneda
           <select
-            value={currency === "USD" ? "USD" : "CLP"}
+            value={selected === "USD" ? "USD" : "CLP"}
             disabled={disabled}
             onChange={(e) => {
               const next = e.target.value === "USD" ? "USD" : "CLP";

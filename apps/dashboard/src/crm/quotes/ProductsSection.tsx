@@ -103,7 +103,7 @@ export function ProductsSection({
 
   const byId = useMemo(() => new Map((index?.items ?? []).map((i) => [i.id, i])), [index]);
   const supplierName = useMemo(() => new Map((index?.suppliers ?? []).map((s) => [s.id, s.display_name])), [index]);
-  const currency = draft.quote_currency ?? workspace.current?.quote_currency ?? "CLP";
+  const currency = computed?.quote_currency ?? workspace.current?.quote_currency ?? "CLP";
   const onQuote = new Set(draft.items.map((i) => i.product_id).filter(Boolean));
 
   const lineOf = (i: number): ComputedLine | null => computedLineFor(computed, computedKeys, draft.items[i].uid);
